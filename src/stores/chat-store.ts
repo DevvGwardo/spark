@@ -11,6 +11,7 @@ interface ChatState {
   selectConversation: (id: string) => void;
   deleteConversation: (id: string) => Promise<void>;
   renameConversation: (id: string, title: string) => Promise<void>;
+  pinConversation: (id: string, pinned: boolean) => Promise<void>;
   setSearchQuery: (q: string) => void;
   clearActiveConversation: () => void;
 }
@@ -39,7 +40,6 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     };
     await db.conversations.add(conversation);
     await get().loadConversations();
-    set({ activeConversationId: id });
     return id;
   },
 
@@ -49,6 +49,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
 
   deleteConversation: async (id) => {
     await db.messages.deleteByConversation(id);
+    await db.conversationFiles.delete(id);
     await db.conversations.delete(id);
     const { activeConversationId } = get();
     if (activeConversationId === id) {
@@ -59,6 +60,11 @@ export const useChatStore = create<ChatState>()((set, get) => ({
 
   renameConversation: async (id, title) => {
     await db.conversations.update(id, { title, updatedAt: new Date().toISOString() });
+    await get().loadConversations();
+  },
+
+  pinConversation: async (id, pinned) => {
+    await db.conversations.update(id, { pinned });
     await get().loadConversations();
   },
 

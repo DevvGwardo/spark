@@ -2,7 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { Github, FolderGit2, FileCode, ChevronRight, ChevronDown, Loader2, ExternalLink, AlertCircle, RefreshCw, Edit3, X } from 'lucide-react';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useChangesetStore } from '@/stores/changeset-store';
+import { usePanelStore } from '@/stores/panel-store';
 import { cn } from '@/lib/utils';
+import { getApiBaseUrl } from '@/lib/api';
 
 interface GitHubRepo {
   id: number;
@@ -34,7 +36,11 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
   onSelectRepo,
 }) => {
   const { githubPAT } = useSettingsStore();
-  const { activeRepo, isRepoMode, setActiveRepo, clearActiveRepo, getChangeCount } = useChangesetStore();
+  const focusedPanelId = usePanelStore((s) => s.focusedPanelId);
+  const { getChangeset, setActiveRepo: setActiveRepoForPanel, clearActiveRepo: clearActiveRepoForPanel, getChangeCount } = useChangesetStore();
+  const { activeRepo, isRepoMode } = getChangeset(focusedPanelId);
+  const setActiveRepo = (repo: Parameters<typeof setActiveRepoForPanel>[1]) => setActiveRepoForPanel(focusedPanelId, repo);
+  const clearActiveRepo = () => clearActiveRepoForPanel(focusedPanelId);
   const [repos, setRepos] = useState<GitHubRepo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -50,7 +56,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
     
     try {
       const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/github-integration`,
+        `${getApiBaseUrl()}/functions/v1/github-integration`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -74,7 +80,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
   const fetchContents = async (owner: string, repo: string, path = '') => {
     try {
       const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/github-integration`,
+        `${getApiBaseUrl()}/functions/v1/github-integration`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -136,7 +142,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
     setLoadingFile(path);
     try {
       const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/github-integration`,
+        `${getApiBaseUrl()}/functions/v1/github-integration`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -172,7 +178,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
   };
 
   const handleDisableEditMode = () => {
-    const changeCount = getChangeCount();
+    const changeCount = getChangeCount(focusedPanelId);
     if (changeCount > 0) {
       if (!window.confirm(`You have ${changeCount} pending change${changeCount > 1 ? 's' : ''}. Disable editing mode? Changes will be lost.`)) {
         return;
@@ -309,9 +315,9 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
             </div>
           </div>
         ) : (
-          <div className="py-1">
+          <div className="p-3">
             {isRepoMode && activeRepo && (
-              <div className="flex items-center gap-2 px-3 py-1.5 mb-1 bg-primary/10 border-b border-primary/20 text-xs">
+              <div className="flex items-center gap-2 px-3 py-1.5 mb-3 bg-primary/10 border border-primary/20 rounded-lg text-xs">
                 <Edit3 className="h-3 w-3 text-primary shrink-0" />
                 <span className="text-primary font-medium truncate flex-1">
                   Editing: {activeRepo.fullName}
@@ -325,66 +331,67 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
                 </button>
               </div>
             )}
-            {repos.map(repo => {
-              const isActive = isRepoMode && activeRepo?.fullName === repo.full_name;
-              return (
-                <div
-                  key={repo.id}
-                  className={cn(
-                    'flex items-center gap-2 px-3 py-2 hover:bg-secondary/50 transition-colors',
-                    isActive && 'bg-primary/5'
-                  )}
-                >
-                  <button
+            <div className="grid grid-cols-2 gap-2 lg:grid-cols-3">
+              {repos.map(repo => {
+                const isActive = isRepoMode && activeRepo?.fullName === repo.full_name;
+                return (
+                  <div
+                    key={repo.id}
+                    className={cn(
+                      'group relative flex flex-col gap-2 p-3 rounded-lg border border-border bg-card hover:bg-secondary/50 transition-colors cursor-pointer',
+                      isActive && 'border-primary/40 bg-primary/5'
+                    )}
                     onClick={() => handleSelectRepo(repo)}
-                    className="flex items-center gap-2 flex-1 min-w-0 text-left"
                   >
-                    <FolderGit2 className={cn('h-4 w-4 shrink-0', isActive ? 'text-primary' : 'text-muted-foreground')} />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-sm font-medium truncate">{repo.name}</span>
-                        {repo.private && (
-                          <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
-                            Private
-                          </span>
+                    {/* Action buttons */}
+                    <div className="absolute top-2 right-2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={e => { e.stopPropagation(); if (isActive) { handleDisableEditMode(); } else { handleEnableEditMode(repo); } }}
+                        className={cn(
+                          'p-1 rounded transition-colors',
+                          isActive
+                            ? 'hover:bg-primary/20 text-primary'
+                            : 'hover:bg-secondary text-muted-foreground hover:text-foreground'
                         )}
-                        {isActive && (
-                          <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-primary/20 text-primary">
-                            Editing
-                          </span>
-                        )}
-                      </div>
-                      {repo.description && (
-                        <p className="text-xs text-muted-foreground truncate">{repo.description}</p>
+                        title={isActive ? 'Disable editing' : 'Enable editing mode'}
+                      >
+                        <Edit3 className="h-3 w-3" />
+                      </button>
+                      <a
+                        href={repo.html_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={e => e.stopPropagation()}
+                        className="p-1 hover:bg-secondary rounded text-muted-foreground"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    </div>
+
+                    {/* Repo info */}
+                    <div className="flex items-center gap-2 min-w-0">
+                      <FolderGit2 className={cn('h-4 w-4 shrink-0', isActive ? 'text-primary' : 'text-muted-foreground')} />
+                      <span className="text-sm font-medium truncate">{repo.name}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {repo.private && (
+                        <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                          Private
+                        </span>
+                      )}
+                      {isActive && (
+                        <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-primary/20 text-primary">
+                          Editing
+                        </span>
                       )}
                     </div>
-                  </button>
-                  <div className="flex items-center gap-0.5 shrink-0">
-                    <button
-                      onClick={e => { e.stopPropagation(); if (isActive) { handleDisableEditMode(); } else { handleEnableEditMode(repo); } }}
-                      className={cn(
-                        'p-1 rounded transition-colors text-xs',
-                        isActive
-                          ? 'hover:bg-primary/20 text-primary'
-                          : 'hover:bg-secondary text-muted-foreground hover:text-foreground'
-                      )}
-                      title={isActive ? 'Disable editing' : 'Enable editing mode'}
-                    >
-                      <Edit3 className="h-3 w-3" />
-                    </button>
-                    <a
-                      href={repo.html_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={e => e.stopPropagation()}
-                      className="p-1 hover:bg-secondary rounded"
-                    >
-                      <ExternalLink className="h-3 w-3 text-muted-foreground" />
-                    </a>
+                    {repo.description && (
+                      <p className="text-xs text-muted-foreground line-clamp-2">{repo.description}</p>
+                    )}
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         )}
       </div>

@@ -2,13 +2,14 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
 export type Provider =
-  | 'lovable' | 'openai' | 'anthropic' | 'google' | 'xai'
+  | 'openai' | 'anthropic' | 'google' | 'xai'
   | 'groq' | 'deepseek' | 'mistral' | 'together'
-  | 'minimax' | 'minimax-payg' | 'kimi'
+  | 'minimax' | 'minimax-payg' | 'kimi' | 'kimi-coding'
   | 'cerebras' | 'openrouter' | 'sambanova';
 
 export type ThemeMode = 'light' | 'dark' | 'system';
 export type FontSize = 'small' | 'medium' | 'large';
+export type FontFamily = 'inter' | 'mono' | 'serif';
 
 export interface ProviderConfig {
   apiKey: string;
@@ -23,6 +24,7 @@ interface SettingsState {
   providers: Record<Provider, ProviderConfig>;
   theme: ThemeMode;
   fontSize: FontSize;
+  fontFamily: FontFamily;
   defaultSystemPrompt: string;
   isSetupComplete: boolean;
   githubPAT: string;
@@ -31,28 +33,29 @@ interface SettingsState {
   updateProviderConfig: (p: Provider, config: Partial<ProviderConfig>) => void;
   setTheme: (t: ThemeMode) => void;
   setFontSize: (f: FontSize) => void;
+  setFontFamily: (f: FontFamily) => void;
   setDefaultSystemPrompt: (s: string) => void;
   completeSetup: () => void;
   setGithubPAT: (pat: string) => void;
 }
 
 function makeDefault(model: string): ProviderConfig {
-  return { apiKey: '', model, temperature: 0.7, topP: 0.9, maxTokens: 4096 };
+  return { apiKey: '', model, temperature: 0.7, topP: 0.9, maxTokens: 16384 };
 }
 
 const defaultProviders: Record<Provider, ProviderConfig> = {
-  lovable: makeDefault('google/gemini-3-flash-preview'),
-  openai: makeDefault('gpt-4o'),
-  anthropic: makeDefault('claude-sonnet-4-20250514'),
-  google: makeDefault('gemini-2.5-flash-preview-05-20'),
-  xai: makeDefault('grok-3-mini'),
+  openai: makeDefault('gpt-5.2'),
+  anthropic: makeDefault('claude-sonnet-4-5-20250929'),
+  google: makeDefault('gemini-2.5-flash'),
+  xai: makeDefault('grok-4-fast-reasoning'),
   groq: makeDefault('llama-3.3-70b-versatile'),
   deepseek: makeDefault('deepseek-chat'),
   mistral: makeDefault('mistral-large-latest'),
   together: makeDefault('meta-llama/Llama-3.3-70B-Instruct-Turbo'),
   minimax: makeDefault('MiniMax-M2.5'),
   'minimax-payg': makeDefault('MiniMax-M2.5'),
-  kimi: makeDefault('kimi-k2-0711-preview'),
+  kimi: makeDefault('moonshot-v1-32k'),
+  'kimi-coding': makeDefault('kimi-for-coding'),
   cerebras: makeDefault('llama-3.3-70b'),
   openrouter: makeDefault('openai/gpt-oss-120b:free'),
   sambanova: makeDefault('Meta-Llama-3.3-70B-Instruct'),
@@ -61,10 +64,11 @@ const defaultProviders: Record<Provider, ProviderConfig> = {
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
-      activeProvider: 'lovable',
+      activeProvider: 'openai',
       providers: defaultProviders,
       theme: 'system',
       fontSize: 'medium',
+      fontFamily: 'inter',
       defaultSystemPrompt: 'You are a helpful assistant.',
       isSetupComplete: false,
       githubPAT: '',
@@ -79,18 +83,19 @@ export const useSettingsStore = create<SettingsState>()(
         })),
       setTheme: (t) => set({ theme: t }),
       setFontSize: (f) => set({ fontSize: f }),
+      setFontFamily: (f) => set({ fontFamily: f }),
       setDefaultSystemPrompt: (s) => set({ defaultSystemPrompt: s }),
       completeSetup: () => set({ isSetupComplete: true }),
       setGithubPAT: (pat) => set({ githubPAT: pat }),
     }),
     {
       name: 'cloudchat-settings',
-      version: 4,
-      migrate: (persisted: any, version: number) => {
-        const state = persisted as any;
+      version: 8,
+      migrate: (persisted: unknown, version: number) => {
+        const state = (persisted ?? {}) as Partial<SettingsState> & { providers?: Partial<Record<Provider, ProviderConfig>> };
         if (version < 3) {
           const existing = state?.providers || {};
-          state.providers = { ...defaultProviders, ...existing };
+          state.providers = { ...defaultProviders, ...existing } as Record<Provider, ProviderConfig>;
           for (const key of Object.keys(defaultProviders)) {
             if (!state.providers[key]) {
               state.providers[key] = defaultProviders[key as Provider];
@@ -101,6 +106,41 @@ export const useSettingsStore = create<SettingsState>()(
           // Fix deprecated OpenRouter model
           if (state?.providers?.openrouter?.model === 'deepseek/deepseek-r1:free') {
             state.providers.openrouter.model = 'openai/gpt-oss-120b:free';
+          }
+        }
+        if (version < 5) {
+          state.fontFamily = 'inter';
+        }
+        if (version < 6) {
+          // Add kimi-coding provider for existing users
+          if (!state?.providers?.['kimi-coding']) {
+            state.providers = { ...state.providers, 'kimi-coding': makeDefault('kimi-for-coding') };
+          }
+        }
+        if (version < 7 && state?.providers) {
+          const replaceIfLegacy = (provider: Provider, legacyModels: string[], nextModel: string) => {
+            const currentModel = state.providers?.[provider]?.model;
+            if (!currentModel || legacyModels.includes(currentModel)) {
+              state.providers[provider] = {
+                ...state.providers[provider],
+                model: nextModel,
+              };
+            }
+          };
+
+          replaceIfLegacy('openai', ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'o1', 'o1-mini', 'o3-mini'], 'gpt-5.2');
+          replaceIfLegacy('google', ['gemini-2.5-pro-preview-06-05', 'gemini-2.5-flash-preview-05-20', 'gemini-1.5-pro'], 'gemini-2.5-flash');
+          replaceIfLegacy('xai', ['grok-3-mini', 'grok-2'], 'grok-4-fast-reasoning');
+          replaceIfLegacy('groq', ['mixtral-8x7b-32768', 'gemma2-9b-it'], 'llama-3.3-70b-versatile');
+          replaceIfLegacy('kimi', ['kimi-k2-0711-preview'], 'moonshot-v1-32k');
+        }
+        if (version < 8) {
+          // Remove lovable provider; migrate users to openai
+          if ((state as any).activeProvider === 'lovable') {
+            state.activeProvider = 'openai' as Provider;
+          }
+          if (state.providers) {
+            delete (state.providers as any).lovable;
           }
         }
         return state;

@@ -2,10 +2,12 @@ import React, { useState } from 'react';
 import { X, GitPullRequest, Loader2, Check, AlertCircle, ExternalLink } from 'lucide-react';
 import { useSettingsStore } from '@/stores/settings-store';
 import { cn } from '@/lib/utils';
+import { getApiBaseUrl } from '@/lib/api';
 
 interface FileChange {
   path: string;
   content: string;
+  action?: 'create' | 'edit' | 'delete';
   originalContent?: string;
 }
 
@@ -45,7 +47,7 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
 
     try {
       const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/github-integration`,
+        `${getApiBaseUrl()}/functions/v1/github-integration`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -58,7 +60,7 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
             body,
             branch: branchName,
             baseBranch,
-            files: files.map(f => ({ path: f.path, content: f.content })),
+            files: files.map(f => ({ path: f.path, content: f.content, action: f.action || 'edit' })),
           }),
         }
       );
@@ -108,15 +110,23 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
               <p className="text-xs text-muted-foreground mb-4">
                 PR #{success.number} has been created successfully.
               </p>
-              <a
-                href={success.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
-              >
-                View on GitHub
-                <ExternalLink className="h-3.5 w-3.5" />
-              </a>
+              <div className="flex items-center justify-center gap-2">
+                <button
+                  onClick={onClose}
+                  className="px-4 py-2 rounded-lg border border-input text-sm font-medium hover:bg-secondary transition-colors"
+                >
+                  Done
+                </button>
+                <a
+                  href={success.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
+                >
+                  View on GitHub
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              </div>
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -136,6 +146,14 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
                 <div className="rounded-lg border border-input bg-secondary/30 max-h-24 overflow-y-auto">
                   {files.map(file => (
                     <div key={file.path} className="flex items-center gap-2 px-3 py-1.5 text-xs border-b border-border last:border-0">
+                      <span className={cn(
+                        'text-[10px] font-medium uppercase px-1.5 py-0.5 rounded',
+                        file.action === 'create' ? 'bg-emerald-500/10 text-emerald-500' :
+                        file.action === 'delete' ? 'bg-destructive/10 text-destructive' :
+                        'bg-amber-500/10 text-amber-500'
+                      )}>
+                        {file.action || 'edit'}
+                      </span>
                       <span className="font-mono truncate">{file.path}</span>
                     </div>
                   ))}

@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 
 export type ProjectType = 'html' | 'react' | 'nextjs';
-export type FileType = 'html' | 'css' | 'js' | 'jsx' | 'tsx' | 'ts';
+export type FileType = 'html' | 'css' | 'js' | 'jsx' | 'tsx' | 'ts' | 'md';
 
 export interface PreviewFile {
   id: string;
@@ -11,22 +11,35 @@ export interface PreviewFile {
   timestamp: string;
 }
 
-interface PreviewState {
+export interface PanelPreviewState {
   isOpen: boolean;
   files: PreviewFile[];
   activeFileId: string | null;
   projectType: ProjectType;
-  
-  // Actions
-  setOpen: (open: boolean) => void;
-  togglePreview: () => void;
-  addFile: (file: Omit<PreviewFile, 'id' | 'timestamp'>) => void;
-  updateFile: (id: string, content: string) => void;
-  removeFile: (id: string) => void;
-  setActiveFile: (id: string | null) => void;
-  clearFiles: () => void;
-  getActiveFile: () => PreviewFile | null;
-  setProjectType: (type: ProjectType) => void;
+}
+
+const EMPTY_PREVIEW: PanelPreviewState = {
+  isOpen: false,
+  files: [],
+  activeFileId: null,
+  projectType: 'html',
+};
+
+interface PreviewState {
+  panelPreviews: Record<string, PanelPreviewState>;
+
+  setOpen: (panelId: string, open: boolean) => void;
+  togglePreview: (panelId: string) => void;
+  addFile: (panelId: string, file: Omit<PreviewFile, 'id' | 'timestamp'>) => void;
+  updateFile: (panelId: string, id: string, content: string) => void;
+  removeFile: (panelId: string, id: string) => void;
+  setActiveFile: (panelId: string, id: string | null) => void;
+  clearFiles: (panelId: string) => void;
+  resetPreview: (panelId: string) => void;
+  replacePreview: (panelId: string, preview: PanelPreviewState) => void;
+  getActiveFile: (panelId: string) => PreviewFile | null;
+  setProjectType: (panelId: string, type: ProjectType) => void;
+  getPreview: (panelId: string) => PanelPreviewState;
 }
 
 function inferProjectType(files: PreviewFile[], newFile?: Omit<PreviewFile, 'id' | 'timestamp'>): ProjectType {
@@ -51,55 +64,156 @@ function inferProjectType(files: PreviewFile[], newFile?: Omit<PreviewFile, 'id'
   return 'html';
 }
 
+function getOrDefault(state: PreviewState, panelId: string): PanelPreviewState {
+  return state.panelPreviews[panelId] || EMPTY_PREVIEW;
+}
+
 export const usePreviewStore = create<PreviewState>((set, get) => ({
-  isOpen: false,
-  files: [],
-  activeFileId: null,
-  projectType: 'html',
-  
-  setOpen: (open) => set({ isOpen: open }),
-  
-  togglePreview: () => set((state) => ({ isOpen: !state.isOpen })),
-  
-  addFile: (file) => {
+  panelPreviews: {},
+
+  setOpen: (panelId, open) =>
+    set((state) => {
+      const existing = getOrDefault(state, panelId);
+      return {
+        panelPreviews: {
+          ...state.panelPreviews,
+          [panelId]: { ...existing, isOpen: open },
+        },
+      };
+    }),
+
+  togglePreview: (panelId) =>
+    set((state) => {
+      const existing = getOrDefault(state, panelId);
+      return {
+        panelPreviews: {
+          ...state.panelPreviews,
+          [panelId]: { ...existing, isOpen: !existing.isOpen },
+        },
+      };
+    }),
+
+  addFile: (panelId, file) => {
     const id = crypto.randomUUID();
     const newFile: PreviewFile = {
       ...file,
       id,
       timestamp: new Date().toISOString(),
     };
-    
+
     set((state) => {
-      const updatedFiles = [...state.files, newFile];
+      const existing = getOrDefault(state, panelId);
+      const updatedFiles = [...existing.files, newFile];
       const newProjectType = inferProjectType(updatedFiles);
-      
+
       return {
-        files: updatedFiles,
-        activeFileId: id,
-        projectType: newProjectType,
+        panelPreviews: {
+          ...state.panelPreviews,
+          [panelId]: {
+            ...existing,
+            isOpen: true,
+            files: updatedFiles,
+            activeFileId: id,
+            projectType: newProjectType,
+          },
+        },
       };
     });
   },
-  
-  updateFile: (id, content) => set((state) => ({
-    files: state.files.map((file) =>
-      file.id === id ? { ...file, content, timestamp: new Date().toISOString() } : file
-    ),
-  })),
-  
-  removeFile: (id) => set((state) => ({
-    files: state.files.filter((file) => file.id !== id),
-    activeFileId: state.activeFileId === id ? null : state.activeFileId,
-  })),
-  
-  setActiveFile: (id) => set({ activeFileId: id }),
-  
-  clearFiles: () => set({ files: [], activeFileId: null }),
-  
-  getActiveFile: () => {
-    const { files, activeFileId } = get();
-    return files.find((file) => file.id === activeFileId) || null;
+
+  updateFile: (panelId, id, content) =>
+    set((state) => {
+      const existing = getOrDefault(state, panelId);
+      return {
+        panelPreviews: {
+          ...state.panelPreviews,
+          [panelId]: {
+            ...existing,
+            files: existing.files.map((file) =>
+              file.id === id ? { ...file, content, timestamp: new Date().toISOString() } : file
+            ),
+          },
+        },
+      };
+    }),
+
+  removeFile: (panelId, id) =>
+    set((state) => {
+      const existing = getOrDefault(state, panelId);
+      const files = existing.files.filter((file) => file.id !== id);
+      return {
+        panelPreviews: {
+          ...state.panelPreviews,
+          [panelId]: {
+            ...existing,
+            files,
+            activeFileId: existing.activeFileId === id ? files[0]?.id ?? null : existing.activeFileId,
+            projectType: inferProjectType(files),
+            isOpen: files.length > 0 ? existing.isOpen : false,
+          },
+        },
+      };
+    }),
+
+  setActiveFile: (panelId, id) =>
+    set((state) => {
+      const existing = getOrDefault(state, panelId);
+      return {
+        panelPreviews: {
+          ...state.panelPreviews,
+          [panelId]: { ...existing, activeFileId: id },
+        },
+      };
+    }),
+
+  clearFiles: (panelId) =>
+    set((state) => {
+      const existing = getOrDefault(state, panelId);
+      return {
+        panelPreviews: {
+          ...state.panelPreviews,
+          [panelId]: {
+            ...existing,
+            files: [],
+            activeFileId: null,
+            projectType: 'html',
+            isOpen: false,
+          },
+        },
+      };
+    }),
+
+  resetPreview: (panelId) =>
+    set((state) => ({
+      panelPreviews: {
+        ...state.panelPreviews,
+        [panelId]: { ...EMPTY_PREVIEW },
+      },
+    })),
+
+  replacePreview: (panelId, preview) =>
+    set((state) => ({
+      panelPreviews: {
+        ...state.panelPreviews,
+        [panelId]: { ...preview },
+      },
+    })),
+
+  getActiveFile: (panelId) => {
+    const preview = getOrDefault(get(), panelId);
+    return preview.files.find((file) => file.id === preview.activeFileId) || null;
   },
 
-  setProjectType: (type) => set({ projectType: type }),
+  setProjectType: (panelId, type) =>
+    set((state) => {
+      const existing = getOrDefault(state, panelId);
+      return {
+        panelPreviews: {
+          ...state.panelPreviews,
+          [panelId]: { ...existing, projectType: type },
+        },
+      };
+    }),
+
+  getPreview: (panelId) => getOrDefault(get(), panelId),
 }));
