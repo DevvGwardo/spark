@@ -7,7 +7,6 @@ export interface ProviderInfo {
   label: string;
   description: string;
   needsApiKey: boolean;
-  baseURL: string;
   models: string[];
   defaultModel: string;
   category: ProviderCategory;
@@ -21,99 +20,75 @@ export const CATEGORY_LABELS: Record<ProviderCategory, string> = {
 };
 
 export const PROVIDERS: Record<Provider, ProviderInfo> = {
-  lovable: {
-    id: 'lovable',
-    label: 'Lovable AI',
-    description: 'Built-in — no API key needed',
-    needsApiKey: false,
-    baseURL: 'https://ai.gateway.lovable.dev/v1',
-    category: 'featured',
-    badge: 'Free',
-    models: [
-      'google/gemini-3-flash-preview',
-      'google/gemini-2.5-flash',
-      'google/gemini-2.5-pro',
-      'google/gemini-3.1-pro-preview',
-      'openai/gpt-5',
-      'openai/gpt-5-mini',
-      'openai/gpt-5.2',
-    ],
-    defaultModel: 'google/gemini-3-flash-preview',
-  },
   openai: {
     id: 'openai',
     label: 'OpenAI',
-    description: 'GPT-4o, o1, o3 models',
+    description: 'GPT-5, Codex, and smaller GPT-5 variants',
     needsApiKey: true,
-    baseURL: 'https://api.openai.com/v1',
     category: 'featured',
     models: [
-      'gpt-4o',
-      'gpt-4o-mini',
-      'gpt-4-turbo',
-      'o1',
-      'o1-mini',
-      'o3-mini',
+      'gpt-5.4',
+      'gpt-5.2',
+      'gpt-5.2-codex',
+      'gpt-5-mini',
+      'gpt-5-nano',
     ],
-    defaultModel: 'gpt-4o',
+    defaultModel: 'gpt-5.2',
   },
   anthropic: {
     id: 'anthropic',
     label: 'Anthropic',
-    description: 'Claude Sonnet, Opus & Haiku',
+    description: 'Claude 4.6, 4.5, and 4-family models',
     needsApiKey: true,
-    baseURL: 'https://api.anthropic.com/v1',
     category: 'featured',
     models: [
+      'claude-opus-4-6-20260210',
+      'claude-sonnet-4-5-20250929',
+      'claude-haiku-4-5-20251001',
       'claude-sonnet-4-20250514',
-      'claude-3-5-sonnet-20241022',
-      'claude-3-opus-20240229',
-      'claude-3-haiku-20240307',
     ],
-    defaultModel: 'claude-sonnet-4-20250514',
+    defaultModel: 'claude-sonnet-4-5-20250929',
   },
   google: {
     id: 'google',
     label: 'Google Gemini',
-    description: 'Gemini 2.5 Pro & Flash',
+    description: 'Gemini 2.5 Pro, Flash, and Flash-Lite',
     needsApiKey: true,
-    baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai',
     category: 'featured',
     models: [
-      'gemini-2.5-pro-preview-06-05',
-      'gemini-2.5-flash-preview-05-20',
+      'gemini-2.5-pro',
+      'gemini-2.5-flash',
+      'gemini-2.5-flash-lite',
       'gemini-2.0-flash',
-      'gemini-1.5-pro',
     ],
-    defaultModel: 'gemini-2.5-flash-preview-05-20',
+    defaultModel: 'gemini-2.5-flash',
   },
   xai: {
     id: 'xai',
     label: 'xAI (Grok)',
-    description: 'Grok-2 & Grok-3',
+    description: 'Grok 4, fast reasoning, and coding models',
     needsApiKey: true,
-    baseURL: 'https://api.x.ai/v1',
     category: 'featured',
     models: [
+      'grok-4',
+      'grok-4-fast-reasoning',
       'grok-3',
-      'grok-3-mini',
-      'grok-2',
+      'grok-code-fast-1',
     ],
-    defaultModel: 'grok-3-mini',
+    defaultModel: 'grok-4-fast-reasoning',
   },
   groq: {
     id: 'groq',
     label: 'Groq',
-    description: 'Ultra-fast Llama & Mixtral',
+    description: 'Ultra-fast open models and GPT-OSS',
     needsApiKey: true,
-    baseURL: 'https://api.groq.com/openai/v1',
     category: 'open-source',
     badge: 'Fast',
     models: [
       'llama-3.3-70b-versatile',
       'llama-3.1-8b-instant',
-      'mixtral-8x7b-32768',
-      'gemma2-9b-it',
+      'openai/gpt-oss-120b',
+      'openai/gpt-oss-20b',
     ],
     defaultModel: 'llama-3.3-70b-versatile',
   },
@@ -122,7 +97,6 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     label: 'DeepSeek',
     description: 'V3 & R1 reasoning',
     needsApiKey: true,
-    baseURL: 'https://api.deepseek.com',
     category: 'open-source',
     models: [
       'deepseek-chat',
@@ -135,7 +109,6 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     label: 'Mistral',
     description: 'Large, Medium & Small',
     needsApiKey: true,
-    baseURL: 'https://api.mistral.ai/v1',
     category: 'open-source',
     models: [
       'mistral-large-latest',
@@ -150,7 +123,6 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     label: 'Together AI',
     description: 'Hosted open-source models',
     needsApiKey: true,
-    baseURL: 'https://api.together.xyz/v1',
     category: 'open-source',
     models: [
       'meta-llama/Llama-3.3-70B-Instruct-Turbo',
@@ -163,9 +135,8 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
   minimax: {
     id: 'minimax',
     label: 'MiniMax (Coding Plan)',
-    description: 'Coding Plan — Anthropic-compatible API',
+    description: 'Coding Plan — OpenAI-compatible API',
     needsApiKey: true,
-    baseURL: 'https://api.minimax.io/anthropic',
     category: 'specialized',
     badge: 'Coding',
     models: [
@@ -180,9 +151,8 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
   'minimax-payg': {
     id: 'minimax-payg',
     label: 'MiniMax (Pay-as-you-go)',
-    description: 'Standard API — OpenAI-compatible',
+    description: 'Pay-as-you-go — OpenAI-compatible API',
     needsApiKey: true,
-    baseURL: 'https://api.minimax.chat/v1',
     category: 'specialized',
     models: [
       'MiniMax-M2.5',
@@ -196,30 +166,41 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
   kimi: {
     id: 'kimi',
     label: 'Kimi',
-    description: 'K2 long context MoE',
+    description: 'Moonshot long-context and reasoning models',
     needsApiKey: true,
-    baseURL: 'https://api.moonshot.cn/v1',
     category: 'specialized',
     models: [
-      'kimi-k2-0711-preview',
+      'kimi-thinking-preview',
       'moonshot-v1-128k',
       'moonshot-v1-32k',
       'moonshot-v1-8k',
     ],
-    defaultModel: 'kimi-k2-0711-preview',
+    defaultModel: 'moonshot-v1-32k',
+  },
+  'kimi-coding': {
+    id: 'kimi-coding',
+    label: 'Kimi (Coding Plan)',
+    description: 'Coding Plan — OpenAI-compatible API',
+    needsApiKey: true,
+    category: 'specialized',
+    badge: 'Coding',
+    models: [
+      'kimi-for-coding',
+    ],
+    defaultModel: 'kimi-for-coding',
   },
   cerebras: {
     id: 'cerebras',
     label: 'Cerebras',
     description: 'Ultra-fast free inference',
     needsApiKey: true,
-    baseURL: 'https://api.cerebras.ai/v1',
     category: 'open-source',
     badge: 'Free',
     models: [
       'llama-3.3-70b',
-      'llama-3.1-8b',
       'qwen-3-32b',
+      'openai/gpt-oss-120b',
+      'llama-3.1-8b',
     ],
     defaultModel: 'llama-3.3-70b',
   },
@@ -228,7 +209,6 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     label: 'OpenRouter',
     description: 'Free models from multiple providers',
     needsApiKey: true,
-    baseURL: 'https://openrouter.ai/api/v1',
     category: 'open-source',
     badge: 'Free',
     models: [
@@ -244,7 +224,6 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     label: 'SambaNova',
     description: 'Fast open-source inference',
     needsApiKey: true,
-    baseURL: 'https://api.sambanova.ai/v1',
     category: 'open-source',
     badge: 'Free',
     models: [
@@ -258,9 +237,9 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
 
 // Ordered list for UI display
 export const PROVIDER_ORDER: Provider[] = [
-  'lovable', 'openai', 'anthropic', 'google', 'xai',
+  'openai', 'anthropic', 'google', 'xai',
   'groq', 'cerebras', 'openrouter', 'sambanova',
-  'deepseek', 'mistral', 'together', 'minimax', 'minimax-payg', 'kimi',
+  'deepseek', 'mistral', 'together', 'minimax', 'minimax-payg', 'kimi', 'kimi-coding',
 ];
 
 export function getProviderLabel(provider: Provider): string {

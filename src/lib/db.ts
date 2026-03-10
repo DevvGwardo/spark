@@ -6,6 +6,7 @@ export interface Conversation {
   systemPrompt: string;
   createdAt: string;
   updatedAt: string;
+  pinned?: boolean;
 }
 
 export interface Message {
@@ -18,42 +19,64 @@ export interface Message {
   error?: string;
 }
 
+/** Persisted file state for a conversation (changesets + preview files). */
+export interface ConversationFiles {
+  conversationId: string;
+  changeset: {
+    activeRepo: { owner: string; name: string; defaultBranch: string; fullName: string } | null;
+    isRepoMode: boolean;
+    changes: Record<string, { path: string; action: 'create' | 'edit' | 'delete'; content: string; originalContent?: string }>;
+    repoFileTree: string[];
+  };
+  preview: {
+    files: Array<{ id: string; filename: string; content: string; type: string; timestamp: string }>;
+    activeFileId: string | null;
+    projectType: string;
+  };
+}
+
 const DB_NAME = 'cloudchat';
+
+const REQUIRED_STORES = ['conversations', 'messages', 'conversationFiles'];
+
+function createStoresIfNeeded(db: IDBDatabase) {
+  if (!db.objectStoreNames.contains('conversations')) {
+    const convStore = db.createObjectStore('conversations', { keyPath: 'id' });
+    convStore.createIndex('updatedAt', 'updatedAt');
+  }
+  if (!db.objectStoreNames.contains('messages')) {
+    const msgStore = db.createObjectStore('messages', { keyPath: 'id' });
+    msgStore.createIndex('conversationId', 'conversationId');
+    msgStore.createIndex('timestamp', 'timestamp');
+  }
+  if (!db.objectStoreNames.contains('conversationFiles')) {
+    db.createObjectStore('conversationFiles', { keyPath: 'conversationId' });
+  }
+}
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const probe = indexedDB.open(DB_NAME);
     probe.onsuccess = () => {
-      const db = probe.result;
-      const needsUpgrade =
-        !db.objectStoreNames.contains('conversations') ||
-        !db.objectStoreNames.contains('messages');
-      const currentVersion = db.version;
-      db.close();
+      const probeDb = probe.result;
+      const needsUpgrade = REQUIRED_STORES.some(
+        (s) => !probeDb.objectStoreNames.contains(s)
+      );
+      const currentVersion = probeDb.version;
+      probeDb.close();
 
       if (!needsUpgrade) {
-        // Re-open at same version (no upgrade needed)
         const req = indexedDB.open(DB_NAME, currentVersion);
         req.onerror = () => reject(req.error);
         req.onsuccess = () => resolve(req.result);
         return;
       }
 
-      // Bump version to trigger onupgradeneeded
       const req = indexedDB.open(DB_NAME, currentVersion + 1);
       req.onerror = () => reject(req.error);
       req.onsuccess = () => resolve(req.result);
       req.onupgradeneeded = (event) => {
-        const upgradedDb = (event.target as IDBOpenDBRequest).result;
-        if (!upgradedDb.objectStoreNames.contains('conversations')) {
-          const convStore = upgradedDb.createObjectStore('conversations', { keyPath: 'id' });
-          convStore.createIndex('updatedAt', 'updatedAt');
-        }
-        if (!upgradedDb.objectStoreNames.contains('messages')) {
-          const msgStore = upgradedDb.createObjectStore('messages', { keyPath: 'id' });
-          msgStore.createIndex('conversationId', 'conversationId');
-          msgStore.createIndex('timestamp', 'timestamp');
-        }
+        createStoresIfNeeded((event.target as IDBOpenDBRequest).result);
       };
     };
     probe.onerror = () => {
@@ -61,16 +84,7 @@ function openDB(): Promise<IDBDatabase> {
       request.onerror = () => reject(request.error);
       request.onsuccess = () => resolve(request.result);
       request.onupgradeneeded = (event) => {
-        const db = (event.target as IDBOpenDBRequest).result;
-        if (!db.objectStoreNames.contains('conversations')) {
-          const convStore = db.createObjectStore('conversations', { keyPath: 'id' });
-          convStore.createIndex('updatedAt', 'updatedAt');
-        }
-        if (!db.objectStoreNames.contains('messages')) {
-          const msgStore = db.createObjectStore('messages', { keyPath: 'id' });
-          msgStore.createIndex('conversationId', 'conversationId');
-          msgStore.createIndex('timestamp', 'timestamp');
-        }
+        createStoresIfNeeded((event.target as IDBOpenDBRequest).result);
       };
     };
   });
@@ -100,7 +114,11 @@ export const db = {
       const { store, complete } = await getTx('conversations', 'readonly');
       const all = await reqToPromise<Conversation[]>(store.getAll());
       await complete;
-      return all.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+      return all.sort((a, b) => {
+        if (a.pinned && !b.pinned) return -1;
+        if (!a.pinned && b.pinned) return 1;
+        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+      });
     },
     async add(conv: Conversation): Promise<void> {
       const { store, complete } = await getTx('conversations', 'readwrite');
@@ -149,6 +167,24 @@ export const db = {
       for (const key of keys) {
         store.delete(key);
       }
+      await complete;
+    },
+  },
+  conversationFiles: {
+    async get(conversationId: string): Promise<ConversationFiles | undefined> {
+      const { store, complete } = await getTx('conversationFiles', 'readonly');
+      const result = await reqToPromise<ConversationFiles | undefined>(store.get(conversationId));
+      await complete;
+      return result;
+    },
+    async save(data: ConversationFiles): Promise<void> {
+      const { store, complete } = await getTx('conversationFiles', 'readwrite');
+      store.put(data);
+      await complete;
+    },
+    async delete(conversationId: string): Promise<void> {
+      const { store, complete } = await getTx('conversationFiles', 'readwrite');
+      store.delete(conversationId);
       await complete;
     },
   },

@@ -24,6 +24,7 @@ export const PROVIDER_KEY_URLS: Partial<Record<Provider, string>> = {
   minimax: 'https://www.minimax.io/',
   'minimax-payg': 'https://www.minimax.io/',
   kimi: 'https://platform.moonshot.cn/console/api-keys',
+  'kimi-coding': 'https://www.kimi.com/code',
   cerebras: 'https://cloud.cerebras.ai/platform',
   openrouter: 'https://openrouter.ai/keys',
   sambanova: 'https://cloud.sambanova.ai/apis',

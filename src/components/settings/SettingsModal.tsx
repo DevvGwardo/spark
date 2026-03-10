@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
-import { X, Eye, EyeOff, Search, Check, Sparkles, Zap, ChevronDown, ExternalLink, Github } from 'lucide-react';
+import { X, Eye, EyeOff, Search, Check, Zap, ChevronDown, ExternalLink, Github, Code2, Network, Info } from 'lucide-react';
 import { useSettingsStore, type Provider } from '@/stores/settings-store';
+import { useOrchestratorStore } from '@/stores/orchestrator-store';
 import { useUIStore } from '@/stores/ui-store';
 import { PROVIDERS, PROVIDER_ORDER, CATEGORY_LABELS, type ProviderCategory } from '@/lib/providers';
 import { KnowledgePanel } from './KnowledgePanel';
@@ -8,14 +9,214 @@ import { PROVIDER_KEY_URLS } from '@/components/chat/ApiKeyModal';
 import { cn } from '@/lib/utils';
 
 const ProviderIcon: React.FC<{ provider: Provider; className?: string }> = ({ provider, className }) => {
-  if (provider === 'lovable') return <Sparkles className={className} />;
-  if (PROVIDERS[provider].badge === 'Fast') return <Zap className={className} />;
+  if (PROVIDERS[provider]?.badge === 'Fast') return <Zap className={className} />;
   return (
     <span className={cn('flex items-center justify-center rounded-md bg-muted text-[10px] font-bold uppercase leading-none', className)}>
       {PROVIDERS[provider].label.slice(0, 2)}
     </span>
   );
 };
+
+
+
+// ---------------------------------------------------------------------------
+// RolesTab — Coding Agent provider override configuration
+// ---------------------------------------------------------------------------
+
+function RolesTab() {
+  const {
+    enabled,
+    setEnabled,
+    planningProvider,
+    planningModel,
+    codingProvider,
+    codingModel,
+    maxSubAgents,
+    setPlanningProvider,
+    setPlanningModel,
+    setCodingProvider,
+    setCodingModel,
+    setMaxSubAgents,
+  } = useOrchestratorStore();
+
+  const handlePlanProviderChange = (p: Provider) => {
+    setPlanningProvider(p);
+    setPlanningModel(PROVIDERS[p].defaultModel);
+  };
+
+  const handleCodeProviderChange = (p: Provider) => {
+    setCodingProvider(p);
+    setCodingModel(PROVIDERS[p].defaultModel);
+  };
+
+  const selectClasses =
+    'w-full appearance-none rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary/50 transition-colors cursor-pointer';
+
+  return (
+    <div className="flex-1 overflow-y-auto p-5 space-y-5">
+      {/* Header */}
+      <div className="flex items-center gap-3">
+        <div className="h-10 w-10 rounded-xl bg-secondary flex items-center justify-center">
+          <Network className="h-5 w-5" />
+        </div>
+        <div className="flex-1">
+          <h3 className="text-sm font-semibold">Coding Agent</h3>
+          <p className="text-xs text-muted-foreground">
+            Plan model breaks down the task, code model implements each step
+          </p>
+        </div>
+        <button
+          onClick={() => setEnabled(!enabled)}
+          className={cn(
+            'relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',
+            enabled ? 'bg-primary' : 'bg-border'
+          )}
+        >
+          <span
+            className={cn(
+              'inline-block h-4 w-4 rounded-full bg-background shadow-sm transition-transform duration-200',
+              enabled ? 'translate-x-6' : 'translate-x-1'
+            )}
+          />
+        </button>
+      </div>
+
+      {!enabled && (
+        <div className="rounded-lg bg-accent border border-border px-4 py-3">
+          <div className="flex items-start gap-2.5">
+            <Info className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <p className="text-xs text-foreground font-medium">How it works</p>
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                When enabled, the plan model analyzes your request and breaks it into sub-tasks.
+                The code model then executes each sub-task in parallel. Finally, the plan model
+                synthesizes the results into a single response.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {enabled && (
+        <div className="space-y-4">
+          {/* Planning model */}
+          <div className="rounded-xl border border-border bg-background overflow-hidden">
+            <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
+              <div className="h-8 w-8 rounded-lg bg-background/80 flex items-center justify-center">
+                <Network className="h-4 w-4" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h4 className="text-sm font-semibold">Plan Model</h4>
+                <p className="text-[11px] text-muted-foreground">Breaks down requests and synthesizes results</p>
+              </div>
+            </div>
+
+            <div className="p-4 space-y-3">
+              <div className="relative">
+                <select
+                  value={planningProvider}
+                  onChange={(e) => handlePlanProviderChange(e.target.value as Provider)}
+                  className={selectClasses}
+                >
+                  {PROVIDER_ORDER.map((p) => (
+                    <option key={p} value={p}>
+                      {PROVIDERS[p].label}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+              </div>
+
+              <div className="relative">
+                <select
+                  value={planningModel}
+                  onChange={(e) => setPlanningModel(e.target.value)}
+                  className={selectClasses}
+                >
+                  {PROVIDERS[planningProvider]?.models.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+              </div>
+            </div>
+          </div>
+
+          {/* Coding model */}
+          <div className="rounded-xl border border-border bg-background overflow-hidden">
+            <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
+              <div className="h-8 w-8 rounded-lg bg-background/80 flex items-center justify-center">
+                <Code2 className="h-4 w-4" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h4 className="text-sm font-semibold">Code Model</h4>
+                <p className="text-[11px] text-muted-foreground">Executes each sub-task in parallel</p>
+              </div>
+            </div>
+
+            <div className="p-4 space-y-3">
+              <div className="relative">
+                <select
+                  value={codingProvider}
+                  onChange={(e) => handleCodeProviderChange(e.target.value as Provider)}
+                  className={selectClasses}
+                >
+                  {PROVIDER_ORDER.map((p) => (
+                    <option key={p} value={p}>
+                      {PROVIDERS[p].label}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+              </div>
+
+              <div className="relative">
+                <select
+                  value={codingModel}
+                  onChange={(e) => setCodingModel(e.target.value)}
+                  className={selectClasses}
+                >
+                  {PROVIDERS[codingProvider]?.models.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+              </div>
+            </div>
+          </div>
+
+          {/* Max sub-agents */}
+          <div className="rounded-xl border border-border bg-background overflow-hidden">
+            <div className="p-4">
+              <label className="block text-sm font-semibold mb-1.5">Max Sub-agents</label>
+              <p className="text-[11px] text-muted-foreground mb-3">
+                How many parallel tasks the code model can run at once
+              </p>
+              <div className="relative">
+                <select
+                  value={maxSubAgents}
+                  onChange={(e) => setMaxSubAgents(Number(e.target.value))}
+                  className={selectClasses}
+                >
+                  {[1, 2, 3, 4, 5, 6].map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export const SettingsModal: React.FC = () => {
   const { settingsOpen, setSettingsOpen } = useUIStore();
@@ -24,19 +225,21 @@ export const SettingsModal: React.FC = () => {
     providers,
     theme,
     fontSize,
+    fontFamily,
     defaultSystemPrompt,
     githubPAT,
     setActiveProvider,
     updateProviderConfig,
     setTheme,
     setFontSize,
+    setFontFamily,
     setDefaultSystemPrompt,
     setGithubPAT,
   } = useSettingsStore();
 
   const [showKey, setShowKey] = useState(false);
   const [showGithubKey, setShowGithubKey] = useState(false);
-  const [tab, setTab] = useState<'providers' | 'github' | 'knowledge' | 'general'>('providers');
+  const [tab, setTab] = useState<'providers' | 'roles' | 'github' | 'knowledge' | 'general'>('providers');
   const [search, setSearch] = useState('');
 
   const config = providers[activeProvider];
@@ -73,11 +276,11 @@ export const SettingsModal: React.FC = () => {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-foreground/10 backdrop-blur-[2px]" onClick={() => setSettingsOpen(false)} />
-      <div className="relative bg-background border border-border rounded-xl w-full max-w-2xl mx-4 max-h-[85vh] overflow-hidden flex flex-col shadow-lg">
+      <div className="relative bg-background border border-border rounded-xl w-full max-w-3xl mx-4 max-h-[85vh] overflow-hidden flex flex-col shadow-lg">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-border">
           <div className="flex items-center gap-1">
-            {(['providers', 'github', 'knowledge', 'general'] as const).map((t) => (
+            {(['providers', 'roles', 'github', 'knowledge', 'general'] as const).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
@@ -273,6 +476,8 @@ export const SettingsModal: React.FC = () => {
           </div>
         )}
 
+        {tab === 'roles' && <RolesTab />}
+
         {tab === 'github' && (
           <div className="flex-1 overflow-y-auto p-5 space-y-5">
             {/* GitHub header */}
@@ -400,6 +605,37 @@ export const SettingsModal: React.FC = () => {
                     )}
                   >
                     {f}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Font</label>
+              <div className="flex gap-1.5">
+                {([
+                  { key: 'inter', label: 'Sans', preview: 'Inter' },
+                  { key: 'mono', label: 'Mono', preview: 'JetBrains' },
+                  { key: 'serif', label: 'Serif', preview: 'Source Serif' },
+                ] as const).map((f) => (
+                  <button
+                    key={f.key}
+                    onClick={() => setFontFamily(f.key)}
+                    className={cn(
+                      'flex-1 flex flex-col items-center gap-1 px-3 py-2.5 rounded-lg transition-colors duration-100',
+                      fontFamily === f.key
+                        ? 'bg-secondary text-foreground'
+                        : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground'
+                    )}
+                  >
+                    <span className={cn(
+                      'text-base font-medium',
+                      f.key === 'mono' && "font-['JetBrains_Mono',monospace]",
+                      f.key === 'serif' && "font-['Source_Serif_4',serif]",
+                      f.key === 'inter' && "font-['Inter',sans-serif]",
+                    )}>
+                      Aa
+                    </span>
+                    <span className="text-[10px]">{f.label}</span>
                   </button>
                 ))}
               </div>

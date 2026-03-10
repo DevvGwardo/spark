@@ -53,61 +53,73 @@
   }
 
   .dark {
-    --background: 0 0% 4%;
-    --foreground: 0 0% 98%;
+    --background: 0 0% 10%;
+    --foreground: 0 0% 93%;
 
-    --card: 0 0% 4%;
-    --card-foreground: 0 0% 98%;
+    --card: 0 0% 12%;
+    --card-foreground: 0 0% 93%;
 
-    --popover: 0 0% 7%;
-    --popover-foreground: 0 0% 98%;
+    --popover: 0 0% 12%;
+    --popover-foreground: 0 0% 93%;
 
-    --primary: 0 0% 98%;
-    --primary-foreground: 0 0% 4%;
+    --primary: 0 0% 93%;
+    --primary-foreground: 0 0% 10%;
 
-    --secondary: 0 0% 15%;
-    --secondary-foreground: 0 0% 98%;
+    --secondary: 0 0% 16%;
+    --secondary-foreground: 0 0% 93%;
 
-    --muted: 0 0% 15%;
+    --muted: 0 0% 16%;
     --muted-foreground: 0 0% 55%;
 
-    --accent: 0 0% 15%;
-    --accent-foreground: 0 0% 98%;
+    --accent: 0 0% 16%;
+    --accent-foreground: 0 0% 93%;
 
     --destructive: 0 63% 31%;
     --destructive-foreground: 0 0% 98%;
 
-    --border: 0 0% 15%;
-    --input: 0 0% 15%;
-    --ring: 0 0% 98%;
+    --border: 0 0% 18%;
+    --input: 0 0% 18%;
+    --ring: 0 0% 93%;
 
-    --sidebar-bg: 0 0% 3%;
-    --sidebar-foreground: 0 0% 98%;
-    --sidebar-border: 0 0% 15%;
-    --sidebar-hover: 0 0% 10%;
-    --sidebar-active: 0 0% 13%;
+    --sidebar-bg: 0 0% 8%;
+    --sidebar-foreground: 0 0% 93%;
+    --sidebar-border: 0 0% 16%;
+    --sidebar-hover: 0 0% 14%;
+    --sidebar-active: 0 0% 17%;
 
-    --code-bg: 0 0% 7%;
+    --code-bg: 0 0% 13%;
 
-    --sidebar-background: 0 0% 3%;
-    --sidebar-primary: 0 0% 98%;
-    --sidebar-primary-foreground: 0 0% 4%;
-    --sidebar-accent: 0 0% 10%;
-    --sidebar-accent-foreground: 0 0% 98%;
-    --sidebar-ring: 0 0% 98%;
+    --sidebar-background: 0 0% 8%;
+    --sidebar-primary: 0 0% 93%;
+    --sidebar-primary-foreground: 0 0% 10%;
+    --sidebar-accent: 0 0% 14%;
+    --sidebar-accent-foreground: 0 0% 93%;
+    --sidebar-ring: 0 0% 93%;
   }
 }
 
 @layer base {
-  * {
-    @apply border-border;
+  *,
+  ::before,
+  ::after {
+    border-color: hsl(var(--border));
+    border-width: 0;
+    border-style: solid;
   }
 
   body {
     @apply bg-background text-foreground;
-    font-family: 'Geist Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+  }
+
+  body.font-mono-ui {
+    font-family: 'JetBrains Mono', 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  body.font-serif-ui {
+    font-family: 'Source Serif 4', 'Georgia', 'Times New Roman', serif;
   }
 
   /* Custom scrollbar */
@@ -137,6 +149,27 @@ code, pre, .font-mono {
   background: hsl(var(--code-bg)) !important;
 }
 
+/* Glimmer text animation for latest action */
+@keyframes glimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.glimmer-text {
+  background: linear-gradient(
+    90deg,
+    hsl(var(--muted-foreground)) 0%,
+    hsl(var(--foreground)) 40%,
+    hsl(var(--foreground)) 60%,
+    hsl(var(--muted-foreground)) 100%
+  );
+  background-size: 200% 100%;
+  animation: glimmer 2s ease-in-out infinite;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
 /* Streaming cursor animation */
 @keyframes pulse-opacity {
   0%, 100% { opacity: 1; }
@@ -153,6 +186,74 @@ code, pre, .font-mono {
 .katex-display {
   overflow-x: auto;
   overflow-y: hidden;
+}
+
+/* ── Shoelace component overrides ─────────────────────────────────── */
+
+/* Thinking details */
+sl-details.thinking-details {
+  --sl-spacing-medium: 0.5rem;
+}
+sl-details.thinking-details::part(base) {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+}
+sl-details.thinking-details::part(header) {
+  padding: 0.25rem 0;
+  background: transparent;
+}
+sl-details.thinking-details::part(summary-icon) {
+  color: hsl(var(--muted-foreground));
+  rotate: none;
+}
+sl-details.thinking-details[open]::part(summary-icon) {
+  rotate: 90deg;
+}
+sl-details.thinking-details::part(content) {
+  padding: 0.5rem 0 0 0;
+}
+
+/* Tool invocation details */
+sl-details.tool-details {
+  --sl-spacing-medium: 0.5rem;
+}
+sl-details.tool-details::part(base) {
+  background: hsl(var(--muted) / 0.3);
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.5rem;
+}
+sl-details.tool-details::part(header) {
+  padding: 0.5rem 0.75rem;
+  background: transparent;
+}
+sl-details.tool-details::part(header):hover {
+  background: hsl(var(--muted) / 0.5);
+}
+sl-details.tool-details::part(summary-icon) {
+  color: hsl(var(--muted-foreground));
+  rotate: none;
+}
+sl-details.tool-details[open]::part(summary-icon) {
+  rotate: 90deg;
+}
+sl-details.tool-details::part(content) {
+  padding: 0 0.75rem 0.5rem;
+  border-top: 1px solid hsl(var(--border));
+}
+
+/* Shoelace copy button in code blocks */
+.sl-copy-btn {
+  --sl-color-primary-600: hsl(var(--foreground));
+  --sl-color-success-600: hsl(var(--foreground));
+}
+.sl-copy-btn::part(button) {
+  color: hsl(var(--muted-foreground));
+  padding: 0.125rem;
+  font-size: 0.75rem;
+}
+.sl-copy-btn::part(button):hover {
+  color: hsl(var(--foreground));
 }
 
 /* Transition utilities */
