@@ -7,8 +7,11 @@ import { ApiKeyModal } from './ApiKeyModal';
 import { ChangeApprovalModal } from './ChangeApprovalModal';
 import { getProviderLabel } from '@/lib/providers';
 import { findPendingProposal, type ProposalToolInvocationLike } from '@/lib/proposed-changes';
+import { getContextUsage } from '@/lib/tokens';
 import type { QueuedMessage } from '@/lib/chat-queue';
 import { useSettingsStore } from '@/stores/settings-store';
+import { useContextUsageStore } from '@/stores/context-usage-store';
+import { usePanelId } from '@/contexts/PanelContext';
 import { AlertCircle, X } from 'lucide-react';
 
 interface ChatPartLike {
@@ -56,6 +59,7 @@ interface ChatAreaProps {
   apiKeyModalOpen: boolean;
   setApiKeyModalOpen: (v: boolean) => void;
   activeProvider: string;
+  activeModel: string;
 }
 
 export const ChatArea: React.FC<ChatAreaProps> = ({
@@ -75,13 +79,17 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   apiKeyModalOpen,
   setApiKeyModalOpen,
   activeProvider,
+  activeModel,
 }) => {
+  const panelId = usePanelId();
   const scrollRef = useRef<HTMLDivElement>(null);
   const isAutoScroll = useRef(true);
   const [dismissedError, setDismissedError] = useState<string | null>(null);
   const [acceptingProposalId, setAcceptingProposalId] = useState<string | null>(null);
   const autoApproveRepoChanges = useSettingsStore((state) => state.autoApproveRepoChanges);
   const setAutoApproveRepoChanges = useSettingsStore((state) => state.setAutoApproveRepoChanges);
+  const setPanelUsage = useContextUsageStore((state) => state.setPanelUsage);
+  const clearPanelUsage = useContextUsageStore((state) => state.clearPanelUsage);
 
   // Reset dismissed error when a new error comes in
   const errorMessage = error?.message || null;
@@ -106,6 +114,22 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages]);
+
+  useEffect(() => {
+    const hasMessageHistory = messages.some((message) => message.content.trim().length > 0);
+    if (!hasMessageHistory) {
+      clearPanelUsage(panelId);
+      return;
+    }
+
+    setPanelUsage(panelId, {
+      provider: activeProvider,
+      model: activeModel,
+      ...getContextUsage(messages, activeModel),
+    });
+  }, [activeModel, activeProvider, clearPanelUsage, messages, panelId, setPanelUsage]);
+
+  useEffect(() => () => clearPanelUsage(panelId), [clearPanelUsage, panelId]);
 
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
@@ -176,6 +200,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             isStreaming={isStreaming}
             toolCallCount={toolCallCount}
             messages={messages}
+            activeProvider={activeProvider}
+            activeModel={activeModel}
             queuedMessages={queuedMessages}
             onRemoveQueuedMessage={handleRemoveQueuedMessage}
             onSteerQueuedMessage={handleSteerQueuedMessage}
@@ -266,6 +292,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         isStreaming={isStreaming}
         toolCallCount={toolCallCount}
         messages={messages}
+        activeProvider={activeProvider}
+        activeModel={activeModel}
         queuedMessages={queuedMessages}
         onRemoveQueuedMessage={handleRemoveQueuedMessage}
         onSteerQueuedMessage={handleSteerQueuedMessage}

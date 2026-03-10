@@ -1,4 +1,5 @@
 import { app, BrowserWindow, globalShortcut, Menu, Tray, nativeImage } from 'electron'
+import { existsSync } from 'fs'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { startEmbeddedServer } from './server'
@@ -6,6 +7,17 @@ import { startEmbeddedServer } from './server'
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let apiPort: number = 3001
+
+function resolvePreloadPath() {
+  const candidates = [
+    join(__dirname, '../preload/index.js'),
+    join(__dirname, '../preload/index.mjs'),
+    join(__dirname, '../preload/preload.js'),
+    join(__dirname, '../preload/preload.mjs')
+  ]
+
+  return candidates.find((file) => existsSync(file)) ?? candidates[0]
+}
 
 async function createWindow() {
   // Start embedded Express server
@@ -24,7 +36,7 @@ async function createWindow() {
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 15, y: 15 },
     webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
+      preload: resolvePreloadPath(),
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: false // Required: preload needs process.env for API port

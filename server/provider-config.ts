@@ -1,6 +1,8 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
 
+type ReasoningEffort = 'low' | 'medium' | 'high';
+
 export const OPENAI_COMPATIBLE: Record<string, string> = {
   lovable: 'https://ai.gateway.lovable.dev/v1',
   openai: 'https://api.openai.com/v1',
@@ -77,4 +79,37 @@ export function createProviderModel(
   });
 
   return openai(model);
+}
+
+export function supportsReasoningEffort(provider: string, model?: string): boolean {
+  if (provider !== 'openai' || !model) {
+    return false;
+  }
+
+  const normalizedModel = model.toLowerCase();
+  return normalizedModel.startsWith('gpt-5') || normalizedModel.startsWith('o');
+}
+
+export function getReasoningProviderOptions(
+  provider: string,
+  model: string,
+  reasoningEffort?: string,
+) {
+  if (!supportsReasoningEffort(provider, model) || !reasoningEffort) {
+    return undefined;
+  }
+
+  if (
+    reasoningEffort !== 'low' &&
+    reasoningEffort !== 'medium' &&
+    reasoningEffort !== 'high'
+  ) {
+    return undefined;
+  }
+
+  return {
+    openai: {
+      reasoningEffort: reasoningEffort as ReasoningEffort,
+    },
+  };
 }

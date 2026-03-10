@@ -2,10 +2,11 @@ import React, { useRef, useEffect } from 'react';
 import { ArrowUp, Square, Plus, ChevronDown, Mic, CornerDownLeft } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSettingsStore } from '@/stores/settings-store';
-import { PROVIDERS } from '@/lib/providers';
+import { PROVIDERS, REASONING_EFFORTS, supportsReasoningEffort } from '@/lib/providers';
 import type { QueuedMessage } from '@/lib/chat-queue';
 import { StreamingStatusBar } from './StreamingStatusBar';
 import { QueuedMessageTray } from './QueuedMessageTray';
+import { ContextUsageBar } from './ContextUsageBar';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -22,12 +23,18 @@ interface ChatInputProps {
   toolCallCount?: number;
   disabled?: boolean;
   messages?: { role: string; content: string }[];
+  activeProvider?: string;
+  activeModel?: string;
   queuedMessages?: QueuedMessage[];
   onRemoveQueuedMessage?: (messageId: string) => void;
   onSteerQueuedMessage?: (messageId: string) => void;
 }
 
-const REASONING_LEVELS = ['Low', 'Medium', 'High', 'Extra High'] as const;
+const REASONING_EFFORT_LABELS = {
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+} as const;
 
 export const ChatInput: React.FC<ChatInputProps> = ({
   value,
@@ -38,16 +45,20 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   toolCallCount = 0,
   disabled,
   messages = [],
+  activeModel,
   queuedMessages = [],
   onRemoveQueuedMessage,
   onSteerQueuedMessage,
 }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { activeProvider, providers, updateProviderConfig } = useSettingsStore();
-  const config = providers[activeProvider];
-  const providerInfo = PROVIDERS[activeProvider];
+  const { activeProvider: selectedProvider, providers, updateProviderConfig } = useSettingsStore();
+  const config = providers[selectedProvider];
+  const providerInfo = PROVIDERS[selectedProvider];
   const models = providerInfo?.models || [];
   const displayModel = config.model.split('/').pop() || config.model;
+  const meterModel = activeModel ?? config.model;
+  const reasoningSupported = supportsReasoningEffort(selectedProvider, config.model);
+  const reasoningLabel = REASONING_EFFORT_LABELS[config.reasoningEffort];
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -67,6 +78,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   };
 
   const hasContent = messages.length > 0;
+  const hasMessageHistory = messages.some((message) => message.content.trim().length > 0);
   const hasQueuedMessages = queuedMessages.length > 0;
   const canQueueDraft = isStreaming && !!safeValue.trim() && !disabled;
 
@@ -92,6 +104,15 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             toolCallCount={toolCallCount}
             embedded
           />
+
+          {hasMessageHistory && (
+            <div className="flex justify-end px-3 pt-3 pb-0">
+              <ContextUsageBar
+                messages={messages}
+                model={meterModel}
+              />
+            </div>
+          )}
 
           {/* Textarea area */}
           <div className="flex items-end gap-2 px-4 py-3">
@@ -136,7 +157,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   return (
                     <DropdownMenuItem
                       key={model}
-                      onClick={() => updateProviderConfig(activeProvider, { model })}
+                      onClick={() => updateProviderConfig(selectedProvider, { model })}
                       className={model === config.model ? 'bg-accent' : ''}
                     >
                       <span className="text-xs">{label}</span>
@@ -146,22 +167,31 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               </DropdownMenuContent>
             </DropdownMenu>
 
-            {/* Reasoning effort selector */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors duration-100">
-                  Extra High
-                  <ChevronDown className="h-3 w-3" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start">
-                {REASONING_LEVELS.map((level) => (
-                  <DropdownMenuItem key={level} className={level === 'Extra High' ? 'bg-accent' : ''}>
-                    <span className="text-xs">{level}</span>
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {reasoningSupported && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    aria-label={`Reasoning effort: ${reasoningLabel}`}
+                    title="Adjust reasoning effort"
+                    className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors duration-100"
+                  >
+                    {`Reasoning: ${reasoningLabel}`}
+                    <ChevronDown className="h-3 w-3" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  {REASONING_EFFORTS.map((level) => (
+                    <DropdownMenuItem
+                      key={level}
+                      onClick={() => updateProviderConfig(selectedProvider, { reasoningEffort: level })}
+                      className={level === config.reasoningEffort ? 'bg-accent' : ''}
+                    >
+                      <span className="text-xs">{REASONING_EFFORT_LABELS[level]}</span>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
 
             <div className="flex-1" />
 

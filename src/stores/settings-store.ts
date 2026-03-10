@@ -7,6 +7,7 @@ export type Provider =
   | 'minimax' | 'minimax-payg' | 'kimi' | 'kimi-coding'
   | 'cerebras' | 'openrouter' | 'sambanova';
 
+export type ReasoningEffort = 'low' | 'medium' | 'high';
 export type ThemeMode = 'light' | 'dark' | 'system';
 export type FontSize = 'small' | 'medium' | 'large';
 export type FontFamily = 'inter' | 'mono' | 'serif';
@@ -17,7 +18,15 @@ export interface ProviderConfig {
   temperature: number;
   topP: number;
   maxTokens: number;
+  reasoningEffort: ReasoningEffort;
 }
+
+type PersistedSettingsState = Partial<SettingsState> & {
+  activeProvider?: Provider | 'lovable';
+  providers?: Partial<Record<Provider, ProviderConfig>> & {
+    lovable?: ProviderConfig;
+  };
+};
 
 interface SettingsState {
   activeProvider: Provider;
@@ -42,7 +51,14 @@ interface SettingsState {
 }
 
 function makeDefault(model: string): ProviderConfig {
-  return { apiKey: '', model, temperature: 0.7, topP: 0.9, maxTokens: 16384 };
+  return {
+    apiKey: '',
+    model,
+    temperature: 0.7,
+    topP: 0.9,
+    maxTokens: 16384,
+    reasoningEffort: 'high',
+  };
 }
 
 const defaultProviders: Record<Provider, ProviderConfig> = {
@@ -94,9 +110,9 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'cloudchat-settings',
-      version: 9,
+      version: 10,
       migrate: (persisted: unknown, version: number) => {
-        const state = (persisted ?? {}) as Partial<SettingsState> & { providers?: Partial<Record<Provider, ProviderConfig>> };
+        const state = (persisted ?? {}) as PersistedSettingsState;
         if (version < 3) {
           const existing = state?.providers || {};
           state.providers = { ...defaultProviders, ...existing } as Record<Provider, ProviderConfig>;
@@ -140,15 +156,32 @@ export const useSettingsStore = create<SettingsState>()(
         }
         if (version < 8) {
           // Remove lovable provider; migrate users to openai
-          if ((state as any).activeProvider === 'lovable') {
-            state.activeProvider = 'openai' as Provider;
+          if (state.activeProvider === 'lovable') {
+            state.activeProvider = 'openai';
           }
           if (state.providers) {
-            delete (state.providers as any).lovable;
+            delete state.providers.lovable;
           }
         }
         if (version < 9) {
           state.autoApproveRepoChanges = false;
+        }
+        if (version < 10) {
+          const existing = state?.providers || {};
+          state.providers = { ...defaultProviders, ...existing } as Record<Provider, ProviderConfig>;
+          for (const key of Object.keys(defaultProviders) as Provider[]) {
+            const current = state.providers[key] || defaultProviders[key];
+            state.providers[key] = {
+              ...defaultProviders[key],
+              ...current,
+              reasoningEffort:
+                current.reasoningEffort === 'low' ||
+                current.reasoningEffort === 'medium' ||
+                current.reasoningEffort === 'high'
+                  ? current.reasoningEffort
+                  : 'high',
+            };
+          }
         }
         return state;
       },

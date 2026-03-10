@@ -15,6 +15,13 @@ export function estimateMessagesTokens(messages: { role: string; content: string
   }, 3); // 3 tokens for chat format priming
 }
 
+export function getContextUsage(messages: { role: string; content: string }[], model: string) {
+  const total = getModelContextWindow(model);
+  const used = messages.length > 0 ? estimateMessagesTokens(messages) : 0;
+  const percentage = total > 0 ? Math.min((used / total) * 100, 100) : 0;
+  return { used, total, percentage };
+}
+
 /**
  * Context window sizes (in tokens) per model.
  * Falls back to provider-level defaults when model isn't listed.

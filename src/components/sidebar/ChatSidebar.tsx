@@ -91,24 +91,24 @@ export const ChatSidebar: React.FC = () => {
   const hasMore = conversations.length > 15 && !showAll;
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full flex-col bg-transparent text-foreground">
       {/* New thread button + thread menu */}
-      <div className="p-3 pt-8 flex items-center gap-1">
+      <div className="flex items-center gap-2 border-b border-border/40 px-3 pb-3 pt-6">
         <button
           onClick={handleNew}
-          className="flex-1 flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-medium border border-border/40 hover:border-border/60 hover:bg-[hsl(var(--sidebar-hover))] transition-colors duration-100"
+          className="flex h-10 flex-1 items-center gap-2 rounded-xl border border-border/50 bg-background/55 px-3 text-sm font-medium text-foreground transition-colors duration-100 hover:bg-background/75"
         >
-          <Plus className="h-4 w-4" />
+          <Plus className="h-3.5 w-3.5 text-muted-foreground" />
           New thread
         </button>
         <div className="relative" ref={menuRef}>
           <button
             onClick={() => setThreadMenuOpen((v) => !v)}
             className={cn(
-              'p-2 rounded-lg border transition-colors duration-100',
+              'inline-flex h-10 w-10 items-center justify-center rounded-xl border border-border/50 bg-background/50 transition-colors duration-100',
               threadMenuOpen
-                ? 'bg-[hsl(var(--sidebar-active))] text-foreground border-border/50'
-                : 'text-muted-foreground hover:text-foreground hover:bg-[hsl(var(--sidebar-hover))] border-border/40 hover:border-border/60'
+                ? 'bg-background/70 text-foreground'
+                : 'text-muted-foreground hover:bg-background/60 hover:text-foreground'
             )}
             title="Thread options"
           >
@@ -198,31 +198,32 @@ export const ChatSidebar: React.FC = () => {
       </div>
 
       {/* Nav items — GitHub, Analyzer, Knowledge */}
-      <div className="px-2 pb-2">
+      <div className="px-3 py-3">
         {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             onClick={() => setActiveTab(id)}
             className={cn(
-              'w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] transition-colors duration-100 mb-1 border',
+              'mb-1 flex h-9 w-full items-center gap-2.5 rounded-xl px-3 text-[13px] transition-colors duration-100',
               activeTab === id
-                ? 'bg-[hsl(var(--sidebar-active))] text-foreground font-medium border-border/50'
-                : 'text-muted-foreground hover:text-foreground hover:bg-[hsl(var(--sidebar-hover))] border-border/30 hover:border-border/50'
+                ? 'bg-background/80 text-foreground'
+                : 'text-muted-foreground hover:bg-background/55 hover:text-foreground'
             )}
           >
-            <Icon className="h-4 w-4" />
+            <Icon className="h-4 w-4 text-muted-foreground" />
             {label}
           </button>
         ))}
       </div>
 
       {/* Threads section header */}
-      <div className="flex items-center justify-between px-5 py-2 border-t border-[hsl(var(--sidebar-border))]">
-        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Threads</span>
+      <div className="flex items-center justify-between px-4 py-3">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/80">Threads</span>
+        <span className="text-[11px] font-mono text-muted-foreground/55">{conversations.length}</span>
       </div>
 
       {/* Thread list */}
-      <div className="flex-1 overflow-y-auto px-2 py-1">
+      <div className="flex-1 overflow-y-auto px-3 pb-3">
         {visibleConversations.map((conv) => {
           const isFocused = activeTab === 'chat' && focusedConvId === conv.id;
           const isInAnotherPanel = !isFocused && panels.some((p) => p.conversationId === conv.id);
@@ -236,20 +237,18 @@ export const ChatSidebar: React.FC = () => {
               key={conv.id}
               onClick={() => handleSelectConversation(conv.id)}
               className={cn(
-                'group flex flex-col gap-0.5 px-3 py-2 rounded-lg text-[13px] cursor-pointer mb-0.5 transition-colors duration-100',
+                'group mb-1 flex cursor-pointer flex-col gap-0.5 rounded-xl px-3 py-2.5 text-[13px] transition-colors duration-100',
                 isFocused
-                  ? 'bg-[hsl(var(--sidebar-active))] text-foreground'
+                  ? 'border border-border/60 bg-background/82 text-foreground'
                   : isInAnotherPanel
-                    ? 'bg-[hsl(var(--sidebar-active))]/50 text-foreground/80'
-                    : 'hover:bg-[hsl(var(--sidebar-hover))] text-foreground/70 hover:text-foreground'
+                    ? 'bg-background/55 text-foreground/85'
+                    : 'text-foreground/75 hover:bg-background/50 hover:text-foreground'
               )}
             >
               {/* Top row: title + time + actions */}
               <div className="flex items-center gap-2">
                 {editingId === conv.id ? (
                   <>
-                    <span className="h-3 w-3 shrink-0" aria-hidden="true" />
-                    <span className="h-4 w-4 shrink-0" aria-hidden="true" />
                     <input
                       autoFocus
                       value={editTitle}
@@ -265,11 +264,11 @@ export const ChatSidebar: React.FC = () => {
                   </>
                 ) : (
                   <>
-                    <span className="flex h-3 w-3 shrink-0 items-center justify-center" aria-hidden="true">
-                      {isProcessing ? (
+                    {isProcessing && (
+                      <span className="flex h-3 w-3 shrink-0 items-center justify-center" aria-hidden="true">
                         <Loader2 className="h-3 w-3 animate-spin text-primary" />
-                      ) : null}
-                    </span>
+                      </span>
+                    )}
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -279,7 +278,7 @@ export const ChatSidebar: React.FC = () => {
                         'flex h-4 w-4 shrink-0 items-center justify-center rounded-sm transition-all duration-200 ease-out',
                         showPinned
                           ? 'text-foreground/75'
-                          : 'text-muted-foreground/55 opacity-0 scale-90 group-hover:opacity-100 group-hover:scale-100 hover:text-foreground'
+                          : 'text-muted-foreground/50 opacity-0 scale-90 group-hover:opacity-100 group-hover:scale-100 hover:text-foreground'
                       )}
                       title={conv.pinned ? 'Unpin thread' : 'Pin thread'}
                       aria-label={conv.pinned ? 'Unpin thread' : 'Pin thread'}
@@ -287,7 +286,7 @@ export const ChatSidebar: React.FC = () => {
                       <Pin className={cn('h-3 w-3 transition-transform duration-200', showPinned ? 'fill-current' : 'group-hover:rotate-6')} />
                     </button>
                     <span
-                      className="flex-1 truncate transition-transform duration-200 ease-out"
+                      className="flex-1 truncate font-medium transition-transform duration-200 ease-out"
                       onDoubleClick={(e) => {
                         e.stopPropagation();
                         setEditingId(conv.id);
@@ -296,7 +295,7 @@ export const ChatSidebar: React.FC = () => {
                     >
                       {conv.title}
                     </span>
-                    <span className="text-[11px] text-muted-foreground/60 shrink-0 tabular-nums">
+                    <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground/60">
                       {relativeTime(conv.updatedAt || conv.createdAt)}
                     </span>
                   </>
@@ -312,11 +311,11 @@ export const ChatSidebar: React.FC = () => {
                     </button>
                   </div>
                 ) : (
-                  <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-all duration-100 shrink-0">
+                  <div className="flex shrink-0 gap-0.5 opacity-0 transition-all duration-100 group-hover:opacity-100">
                     {panels.length < 4 && (
                       <button
                         onClick={(e) => { e.stopPropagation(); openPanel(conv.id); }}
-                        className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+                        className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-background/80 hover:text-foreground"
                         title="Open in new panel"
                       >
                         <Columns2 className="h-3 w-3" />
@@ -324,7 +323,7 @@ export const ChatSidebar: React.FC = () => {
                     )}
                     <button
                       onClick={(e) => { e.stopPropagation(); setDeleteConfirm(conv.id); }}
-                      className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-destructive"
+                      className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-background/80 hover:text-destructive"
                     >
                       <Trash2 className="h-3 w-3" />
                     </button>
@@ -347,7 +346,7 @@ export const ChatSidebar: React.FC = () => {
         {hasMore && (
           <button
             onClick={() => setShowAll(true)}
-            className="w-full text-[12px] text-muted-foreground hover:text-foreground py-2 transition-colors duration-100"
+            className="mt-2 w-full rounded-lg py-2 text-[12px] text-muted-foreground transition-colors duration-100 hover:bg-background/40 hover:text-foreground"
           >
             Show more
           </button>
@@ -361,12 +360,12 @@ export const ChatSidebar: React.FC = () => {
       </div>
 
       {/* Footer — Settings only */}
-      <div className="p-3 border-t border-[hsl(var(--sidebar-border))]">
+      <div className="border-t border-border/40 px-3 py-3">
         <button
           onClick={() => setSettingsOpen(true)}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-muted-foreground hover:text-foreground border border-border/30 hover:border-border/50 hover:bg-[hsl(var(--sidebar-hover))] transition-colors duration-100"
+          className="flex h-10 w-full items-center gap-2 rounded-xl px-3 text-sm text-muted-foreground transition-colors duration-100 hover:bg-background/50 hover:text-foreground"
         >
-          <Settings className="h-4 w-4" />
+          <Settings className="h-4 w-4 text-muted-foreground" />
           Settings
         </button>
       </div>

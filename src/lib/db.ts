@@ -36,6 +36,7 @@ export interface ConversationFiles {
     files: Array<{ id: string; filename: string; content: string; type: string; timestamp: string }>;
     activeFileId: string | null;
     projectType: string;
+    isOpen?: boolean;
     activeView?: string;
   };
 }

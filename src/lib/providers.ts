@@ -1,4 +1,4 @@
-import type { Provider } from '@/stores/settings-store';
+import type { Provider, ReasoningEffort } from '@/stores/settings-store';
 
 export type ProviderCategory = 'featured' | 'open-source' | 'specialized';
 
@@ -12,6 +12,8 @@ export interface ProviderInfo {
   category: ProviderCategory;
   badge?: string;
 }
+
+export const REASONING_EFFORTS: readonly ReasoningEffort[] = ['low', 'medium', 'high'];
 
 export const CATEGORY_LABELS: Record<ProviderCategory, string> = {
   featured: 'Featured',
@@ -244,4 +246,13 @@ export const PROVIDER_ORDER: Provider[] = [
 
 export function getProviderLabel(provider: Provider): string {
   return PROVIDERS[provider]?.label || provider;
+}
+
+export function supportsReasoningEffort(provider: string, model?: string): boolean {
+  if (provider !== 'openai' || !model) {
+    return false;
+  }
+
+  const normalizedModel = model.toLowerCase();
+  return normalizedModel.startsWith('gpt-5') || normalizedModel.startsWith('o');
 }

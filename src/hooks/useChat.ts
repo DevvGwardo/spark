@@ -6,10 +6,10 @@ import { useKnowledgeStore } from '@/stores/knowledge-store';
 import { useChangesetStore } from '@/stores/changeset-store';
 import { usePreviewStore, type FileType, type PreviewFile, type ProjectType } from '@/stores/preview-store';
 import { useActivityStore } from '@/stores/activity-store';
-import { db } from '@/lib/db';
+import { db, type Message as StoredMessage } from '@/lib/db';
 import { getApiBaseUrl } from '@/lib/api';
 import { createQueuedMessage, moveQueuedMessageToFront, removeQueuedMessage, type QueuedMessage } from '@/lib/chat-queue';
-import { PROVIDERS } from '@/lib/providers';
+import { PROVIDERS, supportsReasoningEffort } from '@/lib/providers';
 import { findPendingProposal, type ProposalMessageLike } from '@/lib/proposed-changes';
 
 function countLines(content: string): number {
@@ -77,6 +77,14 @@ function toStoredAIMessages(msgs: Awaited<ReturnType<typeof db.messages.getByCon
   return sanitizePartialToolCalls(restored);
 }
 
+async function upsertStoredMessage(message: StoredMessage): Promise<void> {
+  try {
+    await db.messages.add(message);
+  } catch {
+    await db.messages.update(message.id, message);
+  }
+}
+
 function isProposalApprovalMessage(content: string): boolean {
   const normalized = content.trim().toLowerCase();
   if (!normalized) return false;
@@ -118,6 +126,9 @@ export function useChat(
   const effectiveProvider = providerOverride?.provider ?? activeProvider;
   const config = providers[effectiveProvider];
   const effectiveModel = providerOverride?.model ?? config.model;
+  const reasoningEffort = supportsReasoningEffort(effectiveProvider, effectiveModel)
+    ? config.reasoningEffort
+    : undefined;
 
   // Build system prompt with knowledge context and active repo
   let fullSystemPrompt = knowledgeContext
@@ -156,6 +167,9 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
 
   // Skip the next IndexedDB reload when we just created a conversation and are about to append
   const skipNextLoadRef = useRef(false);
+  // Keep a just-created conversation local until the first send settles.
+  // Switching the panel immediately remounts the chat tree and drops the in-flight transcript.
+  const pendingConversationIdRef = useRef<string | null>(null);
 
   const resetPanelFileState = useCallback(() => {
     const csStore = useChangesetStore.getState();
@@ -188,6 +202,8 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
         files: ps.files,
         activeFileId: ps.activeFileId,
         projectType: ps.projectType,
+        isOpen: ps.isOpen,
+        activeView: ps.activeView,
       },
     });
   }, [panelId]);
@@ -196,12 +212,29 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
   const [apiKeyModalOpen, setApiKeyModalOpen] = useState(false);
   const [providerUnavailableOpen, setProviderUnavailableOpen] = useState(false);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
-  const chatSessionId = conversationId ? `${conversationId}:${panelId}` : undefined;
+  const activeConversationId = conversationId ?? pendingConversationIdRef.current;
+  const chatSessionId = `${activeConversationId ?? 'draft'}:${panelId}`;
   const autoSendingQueuedRef = useRef<string | null>(null);
   const pauseForProposalRef = useRef(false);
   const awaitingProposalApprovalRef = useRef(false);
   const proposalApprovedRef = useRef(false);
+  const pausedProposalIdRef = useRef<string | null>(null);
   const repoFileCacheRef = useRef<Record<string, string>>({});
+
+  const persistAssistantSnapshot = useCallback(async (message: Record<string, unknown>, convId: string) => {
+    const messageId = typeof message.id === 'string' && message.id ? message.id : crypto.randomUUID();
+    await upsertStoredMessage({
+      id: messageId,
+      conversationId: convId,
+      role: 'assistant',
+      content: typeof message.content === 'string' ? message.content : '',
+      timestamp: new Date().toISOString(),
+      parts: message.parts as unknown[] | undefined,
+      toolInvocations: message.toolInvocations as unknown[] | undefined,
+    });
+    await db.conversations.update(convId, { updatedAt: new Date().toISOString() });
+    await loadConversations();
+  }, [loadConversations]);
 
   const {
     messages,
@@ -219,6 +252,7 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
       temperature: config.temperature,
       top_p: config.topP,
       max_tokens: config.maxTokens,
+      ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
       api_key: config.apiKey,
       system_prompt: fullSystemPrompt,
       ...(isRepoMode && activeRepo ? { activeRepo } : {}),
@@ -235,17 +269,7 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
       if (!convId) return;
 
       // Persist assistant message (including parts and tool invocations)
-      await db.messages.add({
-        id: message.id || crypto.randomUUID(),
-        conversationId: convId,
-        role: 'assistant',
-        content: message.content,
-        timestamp: new Date().toISOString(),
-        parts: (message as Record<string, unknown>).parts as unknown[] | undefined,
-        toolInvocations: (message as Record<string, unknown>).toolInvocations as unknown[] | undefined,
-      });
-      await db.conversations.update(convId, { updatedAt: new Date().toISOString() });
-      await loadConversations();
+      await persistAssistantSnapshot(message as Record<string, unknown>, convId);
     },
     onToolCall: async ({ toolCall }) => {
       // Handle file creation tools (artifacts/preview)
@@ -268,15 +292,6 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
           previewStore.updateFile(panelId, existing.id, content);
         } else {
           previewStore.addFile(panelId, { filename, content, type: fileType });
-        }
-        // Only auto-open the preview panel when there's previewable content
-        // (an HTML file exists, or we just added one)
-        const PREVIEWABLE_TYPES: Set<string> = new Set(['html', 'css', 'md']);
-        const hasPreviewable =
-          previewStore.getPreview(panelId).files.some((f) => PREVIEWABLE_TYPES.has(f.type)) ||
-          PREVIEWABLE_TYPES.has(fileType);
-        if (hasPreviewable) {
-          previewStore.setOpen(panelId, true);
         }
         return JSON.stringify({ success: true, filename, message: `Created ${filename}` });
       }
@@ -431,13 +446,34 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
   const pendingProposal = findPendingProposal(messages as ProposalMessageLike[]);
 
   useEffect(() => {
+    if (!pendingProposal) {
+      pausedProposalIdRef.current = null;
+      return;
+    }
     if (!isStreaming) return;
     if (!pauseForProposalRef.current) return;
-    if (!pendingProposal) return;
+    if (pausedProposalIdRef.current === pendingProposal.messageId) return;
 
+    pausedProposalIdRef.current = pendingProposal.messageId;
     pauseForProposalRef.current = false;
-    stop();
-  }, [isStreaming, pendingProposal, stop]);
+
+    const convId = convIdRef.current;
+    const latestAssistant = [...messages].reverse().find((message) => message.role === 'assistant');
+
+    void (async () => {
+      if (convId && latestAssistant) {
+        await persistAssistantSnapshot(latestAssistant as Record<string, unknown>, convId);
+      }
+
+      stop();
+
+      if (!conversationId && pendingConversationIdRef.current) {
+        const createdConversationId = pendingConversationIdRef.current;
+        pendingConversationIdRef.current = null;
+        onConversationCreated?.(createdConversationId);
+      }
+    })();
+  }, [conversationId, isStreaming, messages, onConversationCreated, pendingProposal, persistAssistantSnapshot, stop]);
 
   useEffect(() => {
     const convId = convIdRef.current;
@@ -478,10 +514,11 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
           csStore.addChange(panelId, change);
         }
         psStore.replacePreview(panelId, {
-          isOpen: preview.files.length > 0,
+          isOpen: preview.isOpen ?? false,
           files: preview.files as PreviewFile[],
           activeFileId: preview.activeFileId,
           projectType: preview.projectType as ProjectType,
+          activeView: preview.activeView === 'changes' ? 'changes' : 'preview',
         });
       } else {
         repoFileCacheRef.current = {};
@@ -501,6 +538,10 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
   useEffect(() => {
     const prevConvId = prevConversationIdRef.current;
     prevConversationIdRef.current = conversationId;
+
+    if (conversationId && pendingConversationIdRef.current === conversationId) {
+      pendingConversationIdRef.current = null;
+    }
 
     // Update convIdRef for callbacks (onFinish, onToolCall).
     // When switching from a conversation to null (new thread), keep the old ID briefly
@@ -593,16 +634,16 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
       return;
     }
 
-    let convId = conversationId;
+    let convId = conversationId ?? pendingConversationIdRef.current;
+    let createdConversationId: string | null = null;
 
     // Create conversation if needed
     if (!convId) {
       try {
         convId = await createConversation(effectiveProvider, effectiveModel, defaultSystemPrompt);
-        // Mark to skip the IndexedDB reload that will be triggered by the conversationId change —
-        // append() below will add the user message to AI SDK state directly.
-        skipNextLoadRef.current = true;
-        onConversationCreated?.(convId);
+        createdConversationId = convId;
+        pendingConversationIdRef.current = convId;
+        convIdRef.current = convId;
       } catch (e) {
         console.error('Failed to create conversation:', e);
         return;
@@ -645,7 +686,24 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
       setMessages(sanitized);
     }
 
-    await append({ role: 'user', content });
+    try {
+      await append({ role: 'user', content });
+    } catch (error) {
+      const message = error instanceof Error ? error.message.toLowerCase() : '';
+      const expectedAbort =
+        message.includes('abort') ||
+        message.includes('cancel') ||
+        message.includes('stopped');
+      if (!expectedAbort) {
+        throw error;
+      }
+    }
+
+    if (createdConversationId && pendingConversationIdRef.current === createdConversationId) {
+      skipNextLoadRef.current = true;
+      pendingConversationIdRef.current = null;
+      onConversationCreated?.(createdConversationId);
+    }
     return true;
   }, [conversationId, effectiveProvider, effectiveModel, config, defaultSystemPrompt, createConversation, renameConversation, append, onConversationCreated, messages, setMessages]);
 
@@ -727,5 +785,6 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
     providerUnavailableOpen,
     setProviderUnavailableOpen,
     activeProvider: effectiveProvider,
+    activeModel: effectiveModel,
   };
 }

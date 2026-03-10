@@ -11,11 +11,18 @@ import { cn } from '@/lib/utils';
 const ProviderIcon: React.FC<{ provider: Provider; className?: string }> = ({ provider, className }) => {
   if (PROVIDERS[provider]?.badge === 'Fast') return <Zap className={className} />;
   return (
-    <span className={cn('flex items-center justify-center rounded-md bg-muted text-[10px] font-bold uppercase leading-none', className)}>
+    <span className={cn('flex items-center justify-center rounded-lg bg-muted/70 text-[10px] font-bold uppercase leading-none', className)}>
       {PROVIDERS[provider].label.slice(0, 2)}
     </span>
   );
 };
+
+const settingsCardClass = 'rounded-2xl border border-border/60 bg-background/55';
+const fieldLabelClass = 'text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80';
+const textInputClass = 'w-full rounded-xl border border-border/60 bg-background/70 px-3 py-2.5 text-sm text-foreground outline-none transition-colors duration-100 placeholder:text-muted-foreground focus:border-primary/40 focus:ring-1 focus:ring-primary/30';
+const selectInputClass = `${textInputClass} appearance-none pr-9 cursor-pointer font-mono`;
+const toggleTrackClass = 'relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2';
+const toggleThumbClass = 'inline-block h-4 w-4 rounded-full bg-background transition-transform duration-200';
 
 
 
@@ -49,32 +56,31 @@ function RolesTab() {
     setCodingModel(PROVIDERS[p].defaultModel);
   };
 
-  const selectClasses =
-    'w-full appearance-none rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary/50 transition-colors cursor-pointer';
+  const selectClasses = selectInputClass;
 
   return (
-    <div className="flex-1 overflow-y-auto p-5 space-y-5">
+    <div className="flex-1 overflow-y-auto p-6 space-y-5">
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <div className="h-10 w-10 rounded-xl bg-secondary flex items-center justify-center">
+      <div className={cn(settingsCardClass, 'flex items-center gap-4 px-5 py-4')}>
+        <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-border/60 bg-background/70">
           <Network className="h-5 w-5" />
         </div>
         <div className="flex-1">
-          <h3 className="text-sm font-semibold">Coding Agent</h3>
+          <h3 className="text-sm font-semibold tracking-[-0.01em]">Coding Agent</h3>
           <p className="text-xs text-muted-foreground">
-            Plan model breaks down the task, code model implements each step
+            Route planning and execution through dedicated models when you want multi-step coding help.
           </p>
         </div>
         <button
           onClick={() => setEnabled(!enabled)}
           className={cn(
-            'relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',
+            toggleTrackClass,
             enabled ? 'bg-primary' : 'bg-border'
           )}
         >
           <span
             className={cn(
-              'inline-block h-4 w-4 rounded-full bg-background shadow-sm transition-transform duration-200',
+              toggleThumbClass,
               enabled ? 'translate-x-6' : 'translate-x-1'
             )}
           />
@@ -82,7 +88,7 @@ function RolesTab() {
       </div>
 
       {!enabled && (
-        <div className="rounded-lg bg-accent border border-border px-4 py-3">
+        <div className={cn(settingsCardClass, 'px-4 py-3')}>
           <div className="flex items-start gap-2.5">
             <Info className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
             <div className="space-y-1">
@@ -100,9 +106,9 @@ function RolesTab() {
       {enabled && (
         <div className="space-y-4">
           {/* Planning model */}
-          <div className="rounded-xl border border-border bg-background overflow-hidden">
-            <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
-              <div className="h-8 w-8 rounded-lg bg-background/80 flex items-center justify-center">
+          <div className={cn(settingsCardClass, 'overflow-hidden')}>
+            <div className="flex items-center gap-3 border-b border-border/60 px-4 py-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-border/60 bg-background/80">
                 <Network className="h-4 w-4" />
               </div>
               <div className="flex-1 min-w-0">
@@ -111,7 +117,7 @@ function RolesTab() {
               </div>
             </div>
 
-            <div className="p-4 space-y-3">
+            <div className="space-y-3 p-4">
               <div className="relative">
                 <select
                   value={planningProvider}
@@ -145,9 +151,9 @@ function RolesTab() {
           </div>
 
           {/* Coding model */}
-          <div className="rounded-xl border border-border bg-background overflow-hidden">
-            <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
-              <div className="h-8 w-8 rounded-lg bg-background/80 flex items-center justify-center">
+          <div className={cn(settingsCardClass, 'overflow-hidden')}>
+            <div className="flex items-center gap-3 border-b border-border/60 px-4 py-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-border/60 bg-background/80">
                 <Code2 className="h-4 w-4" />
               </div>
               <div className="flex-1 min-w-0">
@@ -156,7 +162,7 @@ function RolesTab() {
               </div>
             </div>
 
-            <div className="p-4 space-y-3">
+            <div className="space-y-3 p-4">
               <div className="relative">
                 <select
                   value={codingProvider}
@@ -190,7 +196,7 @@ function RolesTab() {
           </div>
 
           {/* Max sub-agents */}
-          <div className="rounded-xl border border-border bg-background overflow-hidden">
+          <div className={cn(settingsCardClass, 'overflow-hidden')}>
             <div className="p-4">
               <label className="block text-sm font-semibold mb-1.5">Max Sub-agents</label>
               <p className="text-[11px] text-muted-foreground mb-3">
@@ -275,55 +281,76 @@ export const SettingsModal: React.FC = () => {
     }
   };
 
+  const tabItems = [
+    { id: 'providers', label: 'Providers' },
+    { id: 'roles', label: 'Roles' },
+    { id: 'github', label: 'GitHub' },
+    { id: 'knowledge', label: 'Knowledge' },
+    { id: 'general', label: 'General' },
+  ] as const;
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-foreground/10 backdrop-blur-[2px]" onClick={() => setSettingsOpen(false)} />
-      <div className="relative bg-background border border-border rounded-xl w-full max-w-3xl mx-4 max-h-[85vh] overflow-hidden flex flex-col shadow-lg">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" onClick={() => setSettingsOpen(false)} />
+      <div className="relative flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-[28px] border border-border/70 bg-background/96">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-border">
-          <div className="flex items-center gap-1">
-            {(['providers', 'roles', 'github', 'knowledge', 'general'] as const).map((t) => (
+        <div className="border-b border-border/60 px-6 py-5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-1">
+              <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-foreground">Workspace Settings</h2>
+              <p className="text-sm text-muted-foreground">
+                Configure providers, model routing, GitHub access, and workspace defaults for this app.
+              </p>
+            </div>
+            <button
+              onClick={() => setSettingsOpen(false)}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-border/60 bg-background/60 text-muted-foreground transition-colors duration-100 hover:bg-background hover:text-foreground"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {tabItems.map((t) => (
               <button
-                key={t}
-                onClick={() => setTab(t)}
+                key={t.id}
+                onClick={() => setTab(t.id)}
                 className={cn(
-                  'px-3 py-1.5 rounded-lg text-sm font-medium transition-colors duration-100 capitalize',
-                  tab === t ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground'
+                  'rounded-xl border px-3 py-2 text-sm font-medium transition-colors duration-100',
+                  tab === t.id
+                    ? 'border-border/70 bg-background/85 text-foreground'
+                    : 'border-transparent text-muted-foreground hover:border-border/50 hover:bg-background/55 hover:text-foreground'
                 )}
               >
-                {t === 'github' ? 'GitHub' : t}
+                {t.label}
               </button>
             ))}
           </div>
-          <button onClick={() => setSettingsOpen(false)} className="p-1.5 rounded-lg hover:bg-secondary transition-colors duration-100 text-muted-foreground hover:text-foreground">
-            <X className="h-4 w-4" />
-          </button>
         </div>
 
         {/* Content */}
         {tab === 'providers' && (
-          <div className="flex flex-1 overflow-hidden min-h-0">
+          <div className="flex min-h-0 flex-1 overflow-hidden">
             {/* Left: Provider list */}
-            <div className="w-[220px] border-r border-border flex flex-col overflow-hidden shrink-0">
-              <div className="p-2">
+            <div className="flex w-[280px] shrink-0 flex-col border-r border-border/60 bg-muted/10">
+              <div className="border-b border-border/60 p-4">
                 <div className="relative">
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                   <input
                     type="text"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Search..."
-                    className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-secondary border-0 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                    placeholder="Search providers"
+                    className={cn(textInputClass, 'pl-8')}
                   />
                 </div>
               </div>
-              <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-3">
+              <div className="flex-1 space-y-4 overflow-y-auto px-3 py-4">
                 {(['featured', 'open-source', 'specialized'] as ProviderCategory[]).map(cat => {
                   const items = grouped[cat];
                   if (!items?.length) return null;
                   return (
                     <div key={cat}>
-                      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest px-2 mb-1">
+                      <p className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/75">
                         {CATEGORY_LABELS[cat]}
                       </p>
                       {items.map(p => {
@@ -334,29 +361,34 @@ export const SettingsModal: React.FC = () => {
                             key={p}
                             onClick={() => handleSelectProvider(p)}
                             className={cn(
-                              'w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-left transition-all duration-100 group',
+                              'mb-1.5 w-full rounded-2xl border px-3 py-3 text-left transition-all duration-100',
                               isActive
-                                ? 'bg-secondary text-foreground'
-                                : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'
+                                ? 'border-border/70 bg-background/80 text-foreground'
+                                : 'border-transparent text-muted-foreground hover:border-border/50 hover:bg-background/55 hover:text-foreground'
                             )}
                           >
-                            <ProviderIcon provider={p} className="h-4 w-4 shrink-0" />
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-sm font-medium truncate">{info.label}</span>
-                                {info.badge && (
-                                  <span className={cn(
-                                    'text-[9px] font-semibold uppercase px-1.5 py-0.5 rounded-full leading-none',
-                                    info.badge === 'Free'
-                                      ? 'bg-accent text-accent-foreground'
-                                      : 'bg-muted text-muted-foreground'
-                                  )}>
-                                    {info.badge}
-                                  </span>
-                                )}
+                            <div className="flex items-start gap-3">
+                              <ProviderIcon provider={p} className="h-8 w-8 shrink-0" />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="truncate text-sm font-medium">{info.label}</span>
+                                  {info.badge && (
+                                    <span className={cn(
+                                      'rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase leading-none',
+                                      info.badge === 'Free'
+                                        ? 'bg-accent text-accent-foreground'
+                                        : 'bg-muted text-muted-foreground'
+                                    )}>
+                                      {info.badge}
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">
+                                  {info.description}
+                                </p>
                               </div>
+                              {isActive && <Check className="mt-1 h-4 w-4 shrink-0 text-foreground" />}
                             </div>
-                            {isActive && <Check className="h-3.5 w-3.5 shrink-0 text-foreground" />}
                           </button>
                         );
                       })}
@@ -367,112 +399,156 @@ export const SettingsModal: React.FC = () => {
             </div>
 
             {/* Right: Config */}
-            <div className="flex-1 overflow-y-auto p-5 space-y-5">
-              {/* Provider header */}
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 rounded-xl bg-secondary flex items-center justify-center">
-                  <ProviderIcon provider={activeProvider} className="h-5 w-5" />
+            <div className="flex-1 overflow-y-auto bg-background/40 p-6">
+              <div className="space-y-5">
+                <div className={cn(settingsCardClass, 'flex items-start gap-4 px-5 py-5')}>
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-border/60 bg-background/80">
+                    <ProviderIcon provider={activeProvider} className="h-6 w-6" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-base font-semibold tracking-[-0.015em] text-foreground">{providerInfo.label}</h3>
+                      {providerInfo.badge && (
+                        <span className="rounded-full border border-border/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                          {providerInfo.badge}
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{providerInfo.description}</p>
+                    <p className="mt-3 text-[11px] uppercase tracking-[0.16em] text-muted-foreground/70">
+                      Default model
+                    </p>
+                    <p className="mt-1 font-mono text-sm text-foreground">{providerInfo.defaultModel}</p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="text-sm font-semibold">{providerInfo.label}</h3>
-                  <p className="text-xs text-muted-foreground">{providerInfo.description}</p>
-                </div>
-              </div>
 
-              {/* API Key */}
-              {needsApiKey && (
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-medium text-muted-foreground">API Key</label>
-                    {PROVIDER_KEY_URLS[activeProvider] && (
-                      <a
-                        href={PROVIDER_KEY_URLS[activeProvider]}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
-                      >
-                        Get key
-                        <ExternalLink className="h-3 w-3" />
-                      </a>
+                <div className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
+                  <div className="space-y-5">
+                    {needsApiKey && (
+                      <div className={cn(settingsCardClass, 'space-y-3 px-5 py-5')}>
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className={fieldLabelClass}>API Key</p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Stored locally on this device and sent only to the selected provider.
+                            </p>
+                          </div>
+                          {PROVIDER_KEY_URLS[activeProvider] && (
+                            <a
+                              href={PROVIDER_KEY_URLS[activeProvider]}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 rounded-full border border-border/60 px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors duration-100 hover:bg-background/80 hover:text-foreground"
+                            >
+                              Provider site
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                          )}
+                        </div>
+                        <div className="relative">
+                          <input
+                            type={showKey ? 'text' : 'password'}
+                            value={config.apiKey}
+                            onChange={(e) => updateProviderConfig(activeProvider, { apiKey: e.target.value })}
+                            placeholder={`Enter your ${providerInfo.label} key`}
+                            className={cn(textInputClass, 'pr-11 font-mono')}
+                          />
+                          <button
+                            onClick={() => setShowKey(s => !s)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors duration-100"
+                          >
+                            {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                          </button>
+                        </div>
+                      </div>
                     )}
-                  </div>
-                  <div className="relative">
-                    <input
-                      type={showKey ? 'text' : 'password'}
-                      value={config.apiKey}
-                      onChange={(e) => updateProviderConfig(activeProvider, { apiKey: e.target.value })}
-                      placeholder={`Enter your ${providerInfo.label} key...`}
-                      className="w-full px-3 py-2 pr-10 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-1 focus:ring-ring font-mono"
-                    />
-                    <button
-                      onClick={() => setShowKey(s => !s)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors duration-100"
-                    >
-                      {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                </div>
-              )}
-              {!needsApiKey && (
-                <div className="rounded-lg bg-accent border border-border px-3.5 py-2.5">
-                  <p className="text-xs text-accent-foreground font-medium">No API key required — built-in AI provider.</p>
-                </div>
-              )}
+                    {!needsApiKey && (
+                      <div className={cn(settingsCardClass, 'px-5 py-4')}>
+                        <p className="text-sm font-medium text-foreground">No API key required</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          This provider is available without adding a separate key in settings.
+                        </p>
+                      </div>
+                    )}
 
-              {/* Model */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground">Model</label>
-                <div className="relative">
-                  <select
-                    value={config.model}
-                    onChange={(e) => updateProviderConfig(activeProvider, { model: e.target.value })}
-                    className="w-full appearance-none px-3 py-2 pr-8 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-1 focus:ring-ring font-mono cursor-pointer"
-                  >
-                    {providerInfo.models.map((m) => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
-                  </select>
-                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-                </div>
-              </div>
-
-              {/* Temperature & Max Tokens */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <div className="flex justify-between">
-                    <label className="text-xs font-medium text-muted-foreground">Temperature</label>
-                    <span className="text-xs font-mono text-muted-foreground tabular-nums">{config.temperature}</span>
+                    <div className={cn(settingsCardClass, 'space-y-3 px-5 py-5')}>
+                      <div>
+                        <p className={fieldLabelClass}>System Prompt</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Sets the default behavior for new conversations across the app.
+                        </p>
+                      </div>
+                      <textarea
+                        value={defaultSystemPrompt}
+                        onChange={(e) => setDefaultSystemPrompt(e.target.value)}
+                        rows={5}
+                        className={cn(textInputClass, 'resize-none')}
+                      />
+                    </div>
                   </div>
-                  <input
-                    type="range" min="0" max="1" step="0.1"
-                    value={config.temperature}
-                    onChange={(e) => updateProviderConfig(activeProvider, { temperature: parseFloat(e.target.value) })}
-                    className="w-full accent-foreground h-1.5"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <div className="flex justify-between">
-                    <label className="text-xs font-medium text-muted-foreground">Max Tokens</label>
-                    <span className="text-xs font-mono text-muted-foreground tabular-nums">{config.maxTokens}</span>
-                  </div>
-                  <input
-                    type="range" min="256" max="16384" step="256"
-                    value={config.maxTokens}
-                    onChange={(e) => updateProviderConfig(activeProvider, { maxTokens: parseInt(e.target.value) })}
-                    className="w-full accent-foreground h-1.5"
-                  />
-                </div>
-              </div>
 
-              {/* System Prompt */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground">System Prompt</label>
-                <textarea
-                  value={defaultSystemPrompt}
-                  onChange={(e) => setDefaultSystemPrompt(e.target.value)}
-                  rows={3}
-                  className="w-full px-3 py-2 rounded-lg border border-input bg-background text-sm resize-none focus:outline-none focus:ring-1 focus:ring-ring"
-                />
+                  <div className="space-y-5">
+                    <div className={cn(settingsCardClass, 'space-y-3 px-5 py-5')}>
+                      <div>
+                        <p className={fieldLabelClass}>Model</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Choose the default model used when this provider is active.
+                        </p>
+                      </div>
+                      <div className="relative">
+                        <select
+                          value={config.model}
+                          onChange={(e) => updateProviderConfig(activeProvider, { model: e.target.value })}
+                          className={selectInputClass}
+                        >
+                          {providerInfo.models.map((m) => (
+                            <option key={m} value={m}>{m}</option>
+                          ))}
+                        </select>
+                        <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                      </div>
+                    </div>
+
+                    <div className={cn(settingsCardClass, 'space-y-4 px-5 py-5')}>
+                      <div>
+                        <p className={fieldLabelClass}>Response Behavior</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Tune creativity and output headroom for this provider.
+                        </p>
+                      </div>
+
+                      <div className="space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <label className="text-sm font-medium text-foreground">Temperature</label>
+                          <span className="rounded-full border border-border/60 px-2 py-0.5 text-xs font-mono tabular-nums text-muted-foreground">
+                            {config.temperature}
+                          </span>
+                        </div>
+                        <input
+                          type="range" min="0" max="1" step="0.1"
+                          value={config.temperature}
+                          onChange={(e) => updateProviderConfig(activeProvider, { temperature: parseFloat(e.target.value) })}
+                          className="h-1.5 w-full accent-foreground"
+                        />
+                      </div>
+
+                      <div className="space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <label className="text-sm font-medium text-foreground">Max Tokens</label>
+                          <span className="rounded-full border border-border/60 px-2 py-0.5 text-xs font-mono tabular-nums text-muted-foreground">
+                            {config.maxTokens}
+                          </span>
+                        </div>
+                        <input
+                          type="range" min="256" max="16384" step="256"
+                          value={config.maxTokens}
+                          onChange={(e) => updateProviderConfig(activeProvider, { maxTokens: parseInt(e.target.value) })}
+                          className="h-1.5 w-full accent-foreground"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -481,189 +557,208 @@ export const SettingsModal: React.FC = () => {
         {tab === 'roles' && <RolesTab />}
 
         {tab === 'github' && (
-          <div className="flex-1 overflow-y-auto p-5 space-y-5">
-            {/* GitHub header */}
-            <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-xl bg-secondary flex items-center justify-center">
-                <Github className="h-5 w-5" />
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold">GitHub Integration</h3>
-                <p className="text-xs text-muted-foreground">Connect to read repos and create PRs</p>
-              </div>
-            </div>
-
-            {/* PAT Input */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-medium text-muted-foreground">Personal Access Token</label>
-                <a
-                  href="https://github.com/settings/tokens/new?scopes=repo&description=CloudChat%20Integration"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
-                >
-                  Generate token
-                  <ExternalLink className="h-3 w-3" />
-                </a>
-              </div>
-              <div className="relative">
-                <input
-                  type={showGithubKey ? 'text' : 'password'}
-                  value={githubPAT}
-                  onChange={(e) => setGithubPAT(e.target.value)}
-                  placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
-                  className="w-full px-3 py-2 pr-10 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-1 focus:ring-ring font-mono"
-                />
-                <button
-                  onClick={() => setShowGithubKey(s => !s)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors duration-100"
-                >
-                  {showGithubKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
-              <p className="text-[11px] text-muted-foreground">
-                Required scopes: <code className="px-1 py-0.5 rounded bg-secondary">repo</code> for full repository access
-              </p>
-            </div>
-
-            {/* Status indicator */}
-            {githubPAT && (
-              <div className="rounded-lg bg-accent border border-border px-3.5 py-2.5">
-                <div className="flex items-center gap-2">
-                  <div className="h-2 w-2 rounded-full bg-green-500" />
-                  <p className="text-xs text-accent-foreground font-medium">GitHub connected</p>
+          <div className="flex-1 overflow-y-auto bg-background/40 p-6">
+            <div className="space-y-5">
+              <div className={cn(settingsCardClass, 'flex items-start gap-4 px-5 py-5')}>
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-border/60 bg-background/80">
+                  <Github className="h-5 w-5" />
                 </div>
-                <p className="text-[11px] text-muted-foreground mt-1">
-                  You can now browse repositories and create pull requests from chat.
-                </p>
+                <div>
+                  <h3 className="text-base font-semibold tracking-[-0.015em]">GitHub Integration</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Connect a Personal Access Token to browse repositories, stage changes, and open pull requests from chat.
+                  </p>
+                </div>
               </div>
-            )}
 
-            {/* Instructions */}
-            <div className="space-y-2">
-              <h4 className="text-xs font-medium text-muted-foreground">How it works</h4>
-              <ol className="space-y-1.5 text-xs text-muted-foreground">
-                <li className="flex gap-2">
-                  <span className="shrink-0 h-4 w-4 rounded-full bg-secondary flex items-center justify-center text-[10px] font-medium">1</span>
-                  <span>Generate a GitHub Personal Access Token with <code className="px-1 py-0.5 rounded bg-secondary">repo</code> scope</span>
-                </li>
-                <li className="flex gap-2">
-                  <span className="shrink-0 h-4 w-4 rounded-full bg-secondary flex items-center justify-center text-[10px] font-medium">2</span>
-                  <span>Paste the token above — it's stored locally in your browser</span>
-                </li>
-                <li className="flex gap-2">
-                  <span className="shrink-0 h-4 w-4 rounded-full bg-secondary flex items-center justify-center text-[10px] font-medium">3</span>
-                  <span>Ask the AI to analyze or modify your repositories</span>
-                </li>
-                <li className="flex gap-2">
-                  <span className="shrink-0 h-4 w-4 rounded-full bg-secondary flex items-center justify-center text-[10px] font-medium">4</span>
-                  <span>Review and create PRs with AI-generated changes</span>
-                </li>
-              </ol>
+              <div className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
+                <div className="space-y-5">
+                  <div className={cn(settingsCardClass, 'space-y-3 px-5 py-5')}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className={fieldLabelClass}>Personal Access Token</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Stored locally for GitHub file reads, branch work, and PR creation.
+                        </p>
+                      </div>
+                      <a
+                        href="https://github.com/settings/tokens/new?scopes=repo&description=CloudChat%20Integration"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 rounded-full border border-border/60 px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors duration-100 hover:bg-background/80 hover:text-foreground"
+                      >
+                        Generate token
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    </div>
+                    <div className="relative">
+                      <input
+                        type={showGithubKey ? 'text' : 'password'}
+                        value={githubPAT}
+                        onChange={(e) => setGithubPAT(e.target.value)}
+                        placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                        className={cn(textInputClass, 'pr-11 font-mono')}
+                      />
+                      <button
+                        onClick={() => setShowGithubKey(s => !s)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors duration-100"
+                      >
+                        {showGithubKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      Required scopes: <code className="rounded bg-secondary px-1 py-0.5">repo</code>
+                    </p>
+                  </div>
+
+                  {githubPAT && (
+                    <div className={cn(settingsCardClass, 'px-5 py-4')}>
+                      <div className="flex items-center gap-2">
+                        <div className="h-2 w-2 rounded-full bg-green-500" />
+                        <p className="text-sm font-medium text-foreground">GitHub connected</p>
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Repository browsing and pull-request workflows are ready to use.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div className={cn(settingsCardClass, 'space-y-3 px-5 py-5')}>
+                  <p className={fieldLabelClass}>Workflow</p>
+                  <ol className="space-y-3 text-sm text-muted-foreground">
+                    {[
+                      'Generate a GitHub Personal Access Token with repo scope.',
+                      'Paste the token here so the app can authenticate your repo actions.',
+                      'Ask the assistant to inspect, edit, or prepare repository changes.',
+                      'Review staged changes and create a pull request when ready.',
+                    ].map((step, index) => (
+                      <li key={step} className="flex gap-3">
+                        <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border/60 text-[10px] font-semibold text-foreground">
+                          {index + 1}
+                        </span>
+                        <span className="leading-relaxed">{step}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              </div>
             </div>
           </div>
         )}
 
         {tab === 'knowledge' && (
-          <div className="flex-1 overflow-y-auto p-5">
-            <KnowledgePanel />
+          <div className="flex-1 overflow-y-auto bg-background/40 p-6">
+            <div className={cn(settingsCardClass, 'p-5')}>
+              <KnowledgePanel />
+            </div>
           </div>
         )}
 
         {tab === 'general' && (
-          <div className="flex-1 overflow-y-auto p-5 space-y-5">
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Theme</label>
-              <div className="flex gap-1.5">
-                {(['light', 'dark', 'system'] as const).map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => setTheme(t)}
-                    className={cn(
-                      'flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-100 capitalize',
-                      theme === t
-                        ? 'bg-secondary text-foreground'
-                        : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground'
-                    )}
-                  >
-                    {t}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Font Size</label>
-              <div className="flex gap-1.5">
-                {(['small', 'medium', 'large'] as const).map((f) => (
-                  <button
-                    key={f}
-                    onClick={() => setFontSize(f)}
-                    className={cn(
-                      'flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-100 capitalize',
-                      fontSize === f
-                        ? 'bg-secondary text-foreground'
-                        : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground'
-                    )}
-                  >
-                    {f}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Font</label>
-              <div className="flex gap-1.5">
-                {([
-                  { key: 'inter', label: 'Sans', preview: 'Inter' },
-                  { key: 'mono', label: 'Mono', preview: 'JetBrains' },
-                  { key: 'serif', label: 'Serif', preview: 'Source Serif' },
-                ] as const).map((f) => (
-                  <button
-                    key={f.key}
-                    onClick={() => setFontFamily(f.key)}
-                    className={cn(
-                      'flex-1 flex flex-col items-center gap-1 px-3 py-2.5 rounded-lg transition-colors duration-100',
-                      fontFamily === f.key
-                        ? 'bg-secondary text-foreground'
-                        : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground'
-                    )}
-                  >
-                    <span className={cn(
-                      'text-base font-medium',
-                      f.key === 'mono' && "font-['JetBrains_Mono',monospace]",
-                      f.key === 'serif' && "font-['Source_Serif_4',serif]",
-                      f.key === 'inter' && "font-['Inter',sans-serif]",
-                    )}>
-                      Aa
-                    </span>
-                    <span className="text-[10px]">{f.label}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="rounded-xl border border-border bg-background px-4 py-3">
-              <div className="flex items-start justify-between gap-4">
-                <div className="space-y-1">
-                  <h4 className="text-sm font-semibold">Auto-approve repo changes</h4>
-                  <p className="text-xs leading-relaxed text-muted-foreground">
-                    Automatically accept future file change proposals after the AI shows its plan. Disable this to require manual confirmation again.
-                  </p>
+          <div className="flex-1 overflow-y-auto bg-background/40 p-6">
+            <div className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr]">
+              <div className="space-y-5">
+                <div className={cn(settingsCardClass, 'px-5 py-5')}>
+                  <p className={fieldLabelClass}>Theme</p>
+                  <div className="mt-3 flex gap-2">
+                    {(['light', 'dark', 'system'] as const).map((t) => (
+                      <button
+                        key={t}
+                        onClick={() => setTheme(t)}
+                        className={cn(
+                          'flex-1 rounded-xl border px-3 py-2 text-sm font-medium capitalize transition-colors duration-100',
+                          theme === t
+                            ? 'border-border/70 bg-background/85 text-foreground'
+                            : 'border-transparent text-muted-foreground hover:border-border/50 hover:bg-background/55 hover:text-foreground'
+                        )}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <button
-                  onClick={() => setAutoApproveRepoChanges(!autoApproveRepoChanges)}
-                  className={cn(
-                    'relative mt-0.5 inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',
-                    autoApproveRepoChanges ? 'bg-primary' : 'bg-border'
-                  )}
-                >
-                  <span
-                    className={cn(
-                      'inline-block h-4 w-4 rounded-full bg-background shadow-sm transition-transform duration-200',
-                      autoApproveRepoChanges ? 'translate-x-6' : 'translate-x-1'
-                    )}
-                  />
-                </button>
+
+                <div className={cn(settingsCardClass, 'px-5 py-5')}>
+                  <p className={fieldLabelClass}>Font Size</p>
+                  <div className="mt-3 flex gap-2">
+                    {(['small', 'medium', 'large'] as const).map((f) => (
+                      <button
+                        key={f}
+                        onClick={() => setFontSize(f)}
+                        className={cn(
+                          'flex-1 rounded-xl border px-3 py-2 text-sm font-medium capitalize transition-colors duration-100',
+                          fontSize === f
+                            ? 'border-border/70 bg-background/85 text-foreground'
+                            : 'border-transparent text-muted-foreground hover:border-border/50 hover:bg-background/55 hover:text-foreground'
+                        )}
+                      >
+                        {f}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-5">
+                <div className={cn(settingsCardClass, 'px-5 py-5')}>
+                  <p className={fieldLabelClass}>Typography</p>
+                  <div className="mt-3 flex gap-2">
+                    {([
+                      { key: 'inter', label: 'Sans', preview: 'Inter' },
+                      { key: 'mono', label: 'Mono', preview: 'JetBrains' },
+                      { key: 'serif', label: 'Serif', preview: 'Source Serif' },
+                    ] as const).map((f) => (
+                      <button
+                        key={f.key}
+                        onClick={() => setFontFamily(f.key)}
+                        className={cn(
+                          'flex-1 rounded-2xl border px-3 py-3 transition-colors duration-100',
+                          fontFamily === f.key
+                            ? 'border-border/70 bg-background/85 text-foreground'
+                            : 'border-transparent text-muted-foreground hover:border-border/50 hover:bg-background/55 hover:text-foreground'
+                        )}
+                      >
+                        <div className={cn(
+                          'text-lg font-medium',
+                          f.key === 'mono' && "font-['JetBrains_Mono',monospace]",
+                          f.key === 'serif' && "font-['Source_Serif_4',serif]",
+                          f.key === 'inter' && "font-['Inter',sans-serif]",
+                        )}>
+                          Aa
+                        </div>
+                        <div className="mt-1 text-[11px] font-medium">{f.label}</div>
+                        <div className="text-[10px] text-muted-foreground">{f.preview}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className={cn(settingsCardClass, 'px-5 py-5')}>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="space-y-1">
+                      <p className={fieldLabelClass}>Repo Approval</p>
+                      <h4 className="text-sm font-semibold text-foreground">Auto-approve repo changes</h4>
+                      <p className="text-xs leading-relaxed text-muted-foreground">
+                        Automatically accept future repo change proposals after the AI shows its plan.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setAutoApproveRepoChanges(!autoApproveRepoChanges)}
+                      className={cn(
+                        toggleTrackClass,
+                        autoApproveRepoChanges ? 'bg-primary' : 'bg-border'
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          toggleThumbClass,
+                          autoApproveRepoChanges ? 'translate-x-6' : 'translate-x-1'
+                        )}
+                      />
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

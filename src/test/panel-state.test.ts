@@ -31,6 +31,20 @@ describe('panel state isolation', () => {
     expect(previewStore.getPreview('default').activeFileId).not.toBe(previewStore.getPreview('panel-2').activeFileId);
   });
 
+  it('does not auto-open the preview rail when a new artifact file is added', () => {
+    const previewStore = usePreviewStore.getState();
+
+    previewStore.addFile('default', {
+      filename: 'artifact.html',
+      content: '<main>artifact</main>',
+      type: 'html',
+    });
+
+    expect(previewStore.getPreview('default').files.map((file) => file.filename)).toEqual(['artifact.html']);
+    expect(previewStore.getPreview('default').isOpen).toBe(false);
+    expect(previewStore.getPreview('default').activeView).toBe('preview');
+  });
+
   it('moves a conversation to the selected panel instead of duplicating it', () => {
     usePanelStore.setState({
       panels: [

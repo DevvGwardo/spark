@@ -6,6 +6,7 @@ import { useKnowledgeStore } from '@/stores/knowledge-store';
 import { db } from '@/lib/db';
 import { getApiBaseUrl } from '@/lib/api';
 import { createQueuedMessage, moveQueuedMessageToFront, removeQueuedMessage, type QueuedMessage } from '@/lib/chat-queue';
+import { supportsReasoningEffort } from '@/lib/providers';
 
 interface Message {
   id: string;
@@ -66,6 +67,12 @@ export function useOrchestrator(
 
   const planningConfig = providers[planningProvider];
   const codingConfig = providers[codingProvider];
+  const planningReasoningEffort = supportsReasoningEffort(planningProvider, planningModel)
+    ? planningConfig.reasoningEffort
+    : undefined;
+  const codingReasoningEffort = supportsReasoningEffort(codingProvider, codingModel)
+    ? codingConfig.reasoningEffort
+    : undefined;
 
   // Build system prompt with knowledge context
   const fullSystemPrompt = knowledgeContext
@@ -76,7 +83,8 @@ export function useOrchestrator(
 
   // Ref to always have current conversation ID in callbacks
   const convIdRef = useRef(conversationId);
-  convIdRef.current = conversationId;
+  const pendingConversationIdRef = useRef<string | null>(null);
+  convIdRef.current = conversationId ?? pendingConversationIdRef.current;
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [draftInput, setDraftInput] = useState('');
@@ -91,6 +99,10 @@ export function useOrchestrator(
 
   // Load messages from IndexedDB when conversationId changes
   useEffect(() => {
+    if (conversationId && pendingConversationIdRef.current === conversationId) {
+      pendingConversationIdRef.current = null;
+    }
+
     if (conversationId) {
       db.messages.getByConversation(conversationId).then((msgs) => {
         setMessages(
@@ -260,7 +272,8 @@ export function useOrchestrator(
     setError(undefined);
     resetOrchestration();
 
-    let convId = conversationId;
+    let convId = conversationId ?? pendingConversationIdRef.current;
+    let createdConversationId: string | null = null;
 
     // Create conversation if needed
     if (!convId) {
@@ -270,7 +283,9 @@ export function useOrchestrator(
           planningModel,
           defaultSystemPrompt
         );
-        onConversationCreated?.(convId);
+        createdConversationId = convId;
+        pendingConversationIdRef.current = convId;
+        convIdRef.current = convId;
       } catch (e) {
         console.error('Failed to create conversation:', e);
         setError(e instanceof Error ? e : new Error('Failed to create conversation'));
@@ -334,9 +349,11 @@ export function useOrchestrator(
           orchestrator_provider: planningProvider,
           orchestrator_model: planningModel,
           orchestrator_api_key: planningConfig.apiKey,
+          ...(planningReasoningEffort ? { orchestrator_reasoning_effort: planningReasoningEffort } : {}),
           sub_agent_provider: codingProvider,
           sub_agent_model: codingModel,
           sub_agent_api_key: codingConfig.apiKey,
+          ...(codingReasoningEffort ? { sub_agent_reasoning_effort: codingReasoningEffort } : {}),
           messages: allMessages,
           system_prompt: fullSystemPrompt,
           max_sub_agents: maxSubAgents,
@@ -366,6 +383,10 @@ export function useOrchestrator(
       });
       await db.conversations.update(convId!, { updatedAt: new Date().toISOString() });
       await loadConversations();
+
+      if (createdConversationId) {
+        onConversationCreated?.(createdConversationId);
+      }
     } catch (e) {
       if ((e as Error).name === 'AbortError') {
         // User cancelled — keep whatever content was accumulated
@@ -396,9 +417,11 @@ export function useOrchestrator(
     planningProvider,
     planningModel,
     planningConfig,
+    planningReasoningEffort,
     codingProvider,
     codingModel,
     codingConfig,
+    codingReasoningEffort,
     maxSubAgents,
     fullSystemPrompt,
     apiBaseUrl,
@@ -521,5 +544,6 @@ export function useOrchestrator(
     providerUnavailableOpen,
     setProviderUnavailableOpen,
     activeProvider: planningProvider,
+    activeModel: planningModel,
   };
 }

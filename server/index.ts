@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { createOrchestrateHandler } from './orchestrator';
 import {
   createProviderModel,
+  getReasoningProviderOptions,
   getProviderHeaders,
   OPENAI_COMPATIBLE,
   VALIDATION_MODELS,
@@ -83,6 +84,7 @@ app.post('/functions/v1/chat', async (req, res) => {
       api_key,
       system_prompt,
       activeRepo,
+      reasoning_effort,
     } = req.body;
 
     // Resolve API key
@@ -254,6 +256,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
 
     // Use a higher token limit when repo tools are active to avoid truncated tool calls
     const defaultMaxTokens = activeRepo ? 64000 : 16384;
+    const providerOptions = getReasoningProviderOptions(provider, model, reasoning_effort);
 
     const result = await streamText({
       model: aiModel,
@@ -261,6 +264,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
       temperature: temperature ?? 0.7,
       topP: top_p ?? 0.9,
       maxOutputTokens: max_tokens ?? defaultMaxTokens,
+      ...(providerOptions ? { providerOptions } : {}),
       tools: { ...fileTools, ...repoTools },
       toolCallStreaming: true,
     });

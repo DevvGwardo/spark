@@ -13,9 +13,11 @@ import { PreviewSidebar } from '@/components/preview/PreviewSidebar';
 import { usePreviewStore } from '@/stores/preview-store';
 import { useChatStore } from '@/stores/chat-store';
 import { usePanelStore } from '@/stores/panel-store';
+import { useContextUsageStore } from '@/stores/context-usage-store';
 import { useTheme } from '@/hooks/useTheme';
 import { useGlobalStyles } from '@/hooks/useGlobalStyles';
 import { PROVIDERS } from '@/lib/providers';
+import { formatTokenCount } from '@/lib/tokens';
 import { PanelLeft, GitPullRequest, MoreHorizontal, GitBranch, Shield, Circle, Pin, Pencil, Archive, Copy, PanelRight, Plus, FileCode2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -27,6 +29,7 @@ export const AppLayout: React.FC = () => {
   const { getChangeset, getChangeCount, getLineTotals, clearChanges, getStagedCount, getStagedChanges } = useChangesetStore();
   const { conversations, deleteConversation, renameConversation, pinConversation } = useChatStore();
   const { panels, focusedPanelId, openPanel, setConversationForPanel, focusPanel } = usePanelStore();
+  const footerUsage = useContextUsageStore((state) => state.panelUsage[focusedPanelId]);
   const preview = usePreviewStore((s) => s.getPreview(focusedPanelId));
   const setPreviewOpen = usePreviewStore((s) => s.setOpen);
   const setPreviewView = usePreviewStore((s) => s.setView);
@@ -67,9 +70,23 @@ export const AppLayout: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleClick);
   }, [headerMenuOpen]);
 
-  const providerInfo = PROVIDERS[activeProvider];
   const config = providers[activeProvider];
-  const displayModel = config.model.split('/').pop() || config.model;
+  const footerProvider = activeTab === 'chat' ? footerUsage?.provider ?? activeProvider : activeProvider;
+  const footerModel = activeTab === 'chat' ? footerUsage?.model ?? config.model : config.model;
+  const footerProviderInfo = PROVIDERS[footerProvider as keyof typeof PROVIDERS];
+  const footerDisplayModel = footerModel.split('/').pop() || footerModel;
+  const footerContextLabel = activeTab === 'chat' && footerUsage
+    ? `${formatTokenCount(footerUsage.used)} / ${formatTokenCount(footerUsage.total)} context`
+    : null;
+  const headerSecondaryLabel = activeTab === 'chat'
+    ? activeRepo?.name ?? null
+    : activeTab === 'github'
+      ? 'Repository tools'
+      : activeTab === 'analyzer'
+        ? 'Diagnostics'
+        : 'Workspace memory';
+  const chromeIconButtonClass = 'inline-flex h-8 w-8 items-center justify-center rounded-xl border border-border/60 bg-background/60 text-muted-foreground transition-colors duration-100 hover:bg-background/85 hover:text-foreground';
+  const chromeActionButtonClass = 'inline-flex h-8 items-center gap-2 rounded-xl border border-border/60 bg-background/60 px-3 text-[12px] font-medium text-muted-foreground transition-colors duration-100 hover:bg-background/85 hover:text-foreground';
 
   // Header title based on active tab
   const headerTitle = activeTab === 'chat'
@@ -144,13 +161,13 @@ export const AppLayout: React.FC = () => {
         />
       )}
 
-      <div className="h-[100dvh] flex flex-col bg-[hsl(var(--sidebar-bg))] p-2 gap-2">
-        <div className="flex-1 flex min-h-0 gap-2">
+      <div className="h-[100dvh] flex flex-col bg-[hsl(var(--sidebar-bg))] p-3 gap-3">
+        <div className="flex-1 flex min-h-0 gap-3">
           {/* Sidebar + resize handle wrapper */}
           <div className="flex-shrink-0 relative" style={sidebarOpen ? { width: sidebarWidth } : { width: 0 }}>
             <div
               className={cn(
-                'bg-[hsl(var(--sidebar-bg))] rounded-xl overflow-hidden h-full',
+                'h-full overflow-hidden rounded-[22px] border border-border/60 bg-background/88',
                 !sidebarOpen && 'w-0'
               )}
               style={sidebarOpen ? { width: sidebarWidth, transition: isResizing.current ? 'none' : 'width 200ms' } : { transition: 'width 200ms' }}
@@ -165,7 +182,7 @@ export const AppLayout: React.FC = () => {
                 onMouseDown={handleResizeStart}
                 className="absolute top-0 -right-1.5 w-3 h-full cursor-col-resize z-10 group"
               >
-                <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-0.5 group-hover:bg-primary/30 group-active:bg-primary/50 transition-colors rounded-full" />
+                <div className="absolute inset-y-6 bottom-6 left-1/2 -translate-x-1/2 w-px rounded-full bg-border/20 group-hover:bg-primary/30 group-active:bg-primary/50 transition-colors" />
               </div>
             )}
           </div>
@@ -179,26 +196,27 @@ export const AppLayout: React.FC = () => {
           )}
 
           {/* Main */}
-          <div className={cn("flex-1 flex flex-col min-w-0 bg-[hsl(var(--sidebar-bg))] overflow-hidden", sidebarOpen && "border-l border-border")}>
+          <div className="flex-1 flex flex-col min-w-0 overflow-hidden rounded-[22px] border border-border/60 bg-background/92">
             {/* Header */}
-            <header className={cn("flex items-center h-[52px] px-4 flex-shrink-0 bg-background/50")} style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+            <header className="flex items-center h-[58px] px-4 flex-shrink-0 border-b border-border/60 bg-background/88" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
               {/* Collapsed sidebar controls — sits in the traffic light area */}
               {!sidebarOpen && (
-                <div className="flex items-center gap-1 mr-3 pl-[60px]" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+                <div className="flex items-center gap-2 mr-3 pl-[60px]" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
                   <button
                     onClick={toggleSidebar}
-                    className="p-2 rounded-lg hover:bg-muted transition-colors duration-100 text-muted-foreground hover:text-foreground"
+                    className={chromeIconButtonClass}
                     title="Open sidebar"
                   >
-                    <PanelLeft className="h-4 w-4" />
+                    <PanelLeft className="h-3.5 w-3.5" />
                   </button>
                   {activeTab === 'chat' && (
                     <button
                       onClick={() => setConversationForPanel(focusedPanelId, null)}
-                      className="p-2 rounded-lg hover:bg-muted transition-colors duration-100 text-muted-foreground hover:text-foreground"
+                      className={chromeActionButtonClass}
                       title="New thread"
                     >
-                      <Plus className="h-4 w-4" />
+                      <Plus className="h-3.5 w-3.5" />
+                      <span>New thread</span>
                     </button>
                   )}
                 </div>
@@ -208,33 +226,40 @@ export const AppLayout: React.FC = () => {
               {sidebarOpen && (
                 <button
                   onClick={toggleSidebar}
-                  className="p-2 rounded-lg hover:bg-muted transition-colors duration-100 text-muted-foreground hover:text-foreground"
+                  className={chromeIconButtonClass}
                   style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
                   title="Close sidebar"
                 >
-                  <PanelLeft className="h-4 w-4" />
+                  <PanelLeft className="h-3.5 w-3.5" />
                 </button>
               )}
 
               {/* Thread/page title — only show in single-panel or non-chat tabs */}
               {(!isMultiPanel || activeTab !== 'chat') && (
-                <div className="flex items-center gap-2 ml-3 min-w-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-                  <h1 className="text-[13px] font-semibold tracking-[-0.01em] truncate max-w-[400px]">
-                    {headerTitle}
-                  </h1>
+                <div className="flex items-center gap-2.5 ml-3 min-w-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+                  <div className="min-w-0">
+                    <h1 className="truncate text-[13px] font-semibold tracking-[-0.015em] text-foreground">
+                      {headerTitle}
+                    </h1>
+                    {headerSecondaryLabel && (
+                      <p className="truncate text-[11px] text-muted-foreground">
+                        {headerSecondaryLabel}
+                      </p>
+                    )}
+                  </div>
                   {activeTab === 'chat' && (
                     <div className="relative" ref={headerMenuRef}>
                       <button
                         onClick={() => setHeaderMenuOpen((v) => !v)}
                         className={cn(
-                          'p-1 rounded-lg transition-colors duration-100',
+                          chromeIconButtonClass,
                           headerMenuOpen
-                            ? 'bg-muted text-foreground'
-                            : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+                            ? 'bg-background/80 text-foreground'
+                            : ''
                         )}
                         title="Thread options"
                       >
-                        <MoreHorizontal className="h-4 w-4" />
+                        <MoreHorizontal className="h-3.5 w-3.5" />
                       </button>
 
                       {headerMenuOpen && (
@@ -319,10 +344,10 @@ export const AppLayout: React.FC = () => {
 
               {/* Multi-panel indicator in header */}
               {isMultiPanel && activeTab === 'chat' && (
-                <div className="flex items-center gap-2 ml-3 min-w-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-                  <h1 className="text-[13px] font-semibold tracking-[-0.01em] text-muted-foreground">
+                <div className="ml-3" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+                  <div className="inline-flex items-center rounded-full border border-border/50 bg-background/40 px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
                     {panels.length} panels
-                  </h1>
+                  </div>
                 </div>
               )}
 
@@ -334,10 +359,11 @@ export const AppLayout: React.FC = () => {
                   <button
                     onClick={() => handleOpenChangesSidebar(focusedPanelId)}
                     className={cn(
-                      'flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-mono font-medium tabular-nums transition-colors',
+                      chromeActionButtonClass,
+                      'font-mono tabular-nums',
                       preview.isOpen && preview.activeView === 'changes'
                         ? 'border-primary/30 bg-primary/10 text-foreground'
-                        : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
+                        : ''
                     )}
                   >
                     <FileCode2 className="h-3.5 w-3.5" />
@@ -348,7 +374,7 @@ export const AppLayout: React.FC = () => {
                   <button
                     onClick={() => { setPrPanelId(null); setPrModalOpen(true); }}
                     disabled={stagedCount === 0}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-foreground text-background hover:opacity-90 transition-opacity duration-100 shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
+                    className="inline-flex h-8 items-center gap-2 rounded-xl border border-border/60 bg-background/65 px-3 text-[12px] font-semibold text-foreground transition-colors duration-100 hover:bg-background/90 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <GitPullRequest className="h-3.5 w-3.5" />
                     Commit
@@ -393,9 +419,19 @@ export const AppLayout: React.FC = () => {
             </div>
           )}
           <div className="flex-1" />
-          <span className="font-mono">
-            {providerInfo?.label} · {displayModel}
-          </span>
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="font-mono truncate">
+              {footerProviderInfo?.label ?? footerProvider} · {footerDisplayModel}
+            </span>
+            {footerContextLabel && (
+              <>
+                <span className="text-muted-foreground/35">·</span>
+                <span className="font-mono tabular-nums text-foreground/80">
+                  {footerContextLabel}
+                </span>
+              </>
+            )}
+          </div>
         </footer>
       </div>
     </>

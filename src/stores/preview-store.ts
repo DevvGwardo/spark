@@ -126,11 +126,11 @@ export const usePreviewStore = create<PreviewState>((set, get) => ({
           ...state.panelPreviews,
           [panelId]: {
             ...existing,
-            isOpen: true,
+            isOpen: existing.isOpen,
             files: updatedFiles,
             activeFileId: id,
             projectType: newProjectType,
-            activeView: 'preview',
+            activeView: existing.activeView,
           },
         },
       };

@@ -1,6 +1,6 @@
 import { streamText } from 'ai';
 import type { Request, Response } from 'express';
-import { createProviderModel } from './provider-config';
+import { createProviderModel, getReasoningProviderOptions } from './provider-config';
 
 // ─── SSE helper ──────────────────────────────────────────────────────────────
 
@@ -35,9 +35,11 @@ export function createOrchestrateHandler() {
         orchestrator_provider,
         orchestrator_model,
         orchestrator_api_key,
+        orchestrator_reasoning_effort,
         sub_agent_provider,
         sub_agent_model,
         sub_agent_api_key,
+        sub_agent_reasoning_effort,
         messages,
         system_prompt,
         max_sub_agents = 3,
@@ -68,6 +70,11 @@ export function createOrchestrateHandler() {
         orchestrator_model,
         orchestrator_api_key,
         { origin: req.headers.origin as string | undefined }
+      );
+      const orchestratorProviderOptions = getReasoningProviderOptions(
+        orchestrator_provider,
+        orchestrator_model,
+        orchestrator_reasoning_effort,
       );
 
       const planningSystemPrompt = `You are a task orchestrator. Break the user's request into independent sub-tasks for parallel execution.
@@ -100,6 +107,7 @@ Rules:
           model: orchestratorModel,
           messages: planningMessages,
           temperature: temperature ?? 0.7,
+          ...(orchestratorProviderOptions ? { providerOptions: orchestratorProviderOptions } : {}),
           abortSignal: abortController.signal,
         });
 
@@ -150,6 +158,11 @@ Rules:
         sub_agent_api_key,
         { origin: req.headers.origin as string | undefined }
       );
+      const subAgentProviderOptions = getReasoningProviderOptions(
+        sub_agent_provider,
+        sub_agent_model,
+        sub_agent_reasoning_effort,
+      );
 
       sendEvent(res, 'status', { phase: 'executing', message: 'Running sub-agents...' });
 
@@ -194,6 +207,7 @@ Rules:
                   { role: 'user' as const, content: task.description },
                 ],
                 temperature: temperature ?? 0.7,
+                ...(subAgentProviderOptions ? { providerOptions: subAgentProviderOptions } : {}),
                 abortSignal: taskAbort.signal,
               });
 
@@ -247,6 +261,7 @@ Synthesize these results into a single, comprehensive response for the user. Be 
           { role: 'user' as const, content: synthesisPrompt },
         ],
         temperature: temperature ?? 0.7,
+        ...(orchestratorProviderOptions ? { providerOptions: orchestratorProviderOptions } : {}),
         abortSignal: abortController.signal,
       });
 

@@ -253,6 +253,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             apiKeyModalOpen={chat.apiKeyModalOpen}
             setApiKeyModalOpen={chat.setApiKeyModalOpen}
             activeProvider={chat.activeProvider}
+            activeModel={chat.activeModel}
           />
         </div>
       </div>
