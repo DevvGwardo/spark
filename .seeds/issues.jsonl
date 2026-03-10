@@ -1,0 +1,2 @@
+{"id":"cloud-chat-hub-57b6","title":"Align Codex-style chat activity rendering and provider integrations","status":"closed","type":"task","priority":2,"createdAt":"2026-03-10T04:13:50.498Z","updatedAt":"2026-03-10T04:30:10.259Z","closedAt":"2026-03-10T04:30:10.259Z"}
+{"id":"cloud-chat-hub-90b4","title":"Fix conversation file persistence and split-panel isolation","status":"closed","type":"bug","priority":1,"createdAt":"2026-03-10T16:08:54.317Z","updatedAt":"2026-03-10T16:18:42.294Z","closedAt":"2026-03-10T16:18:42.294Z"}
