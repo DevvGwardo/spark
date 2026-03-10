@@ -229,6 +229,7 @@ export const ChatSidebar: React.FC = () => {
           const activity = activities[conv.id];
           const isProcessing = activity?.streaming;
           const hasLineStats = (activity?.linesAdded ?? 0) > 0 || (activity?.linesRemoved ?? 0) > 0;
+          const showPinned = !!conv.pinned;
 
           return (
             <div
@@ -245,29 +246,48 @@ export const ChatSidebar: React.FC = () => {
             >
               {/* Top row: title + time + actions */}
               <div className="flex items-center gap-2">
-                {isProcessing && (
-                  <Loader2 className="h-3 w-3 shrink-0 animate-spin text-primary" />
-                )}
                 {editingId === conv.id ? (
-                  <input
-                    autoFocus
-                    value={editTitle}
-                    onChange={(e) => setEditTitle(e.target.value)}
-                    onBlur={() => handleRename(conv.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleRename(conv.id);
-                      if (e.key === 'Escape') setEditingId(null);
-                    }}
-                    className="flex-1 bg-transparent text-[13px] focus:outline-none"
-                    onClick={(e) => e.stopPropagation()}
-                  />
+                  <>
+                    <span className="h-3 w-3 shrink-0" aria-hidden="true" />
+                    <span className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    <input
+                      autoFocus
+                      value={editTitle}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                      onBlur={() => handleRename(conv.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleRename(conv.id);
+                        if (e.key === 'Escape') setEditingId(null);
+                      }}
+                      className="flex-1 bg-transparent text-[13px] focus:outline-none"
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </>
                 ) : (
                   <>
-                    {conv.pinned && (
-                      <Pin className="h-3 w-3 shrink-0 text-muted-foreground/60" />
-                    )}
+                    <span className="flex h-3 w-3 shrink-0 items-center justify-center" aria-hidden="true">
+                      {isProcessing ? (
+                        <Loader2 className="h-3 w-3 animate-spin text-primary" />
+                      ) : null}
+                    </span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void pinConversation(conv.id, !conv.pinned);
+                      }}
+                      className={cn(
+                        'flex h-4 w-4 shrink-0 items-center justify-center rounded-sm transition-all duration-200 ease-out',
+                        showPinned
+                          ? 'text-foreground/75'
+                          : 'text-muted-foreground/55 opacity-0 scale-90 group-hover:opacity-100 group-hover:scale-100 hover:text-foreground'
+                      )}
+                      title={conv.pinned ? 'Unpin thread' : 'Pin thread'}
+                      aria-label={conv.pinned ? 'Unpin thread' : 'Pin thread'}
+                    >
+                      <Pin className={cn('h-3 w-3 transition-transform duration-200', showPinned ? 'fill-current' : 'group-hover:rotate-6')} />
+                    </button>
                     <span
-                      className="flex-1 truncate"
+                      className="flex-1 truncate transition-transform duration-200 ease-out"
                       onDoubleClick={(e) => {
                         e.stopPropagation();
                         setEditingId(conv.id);

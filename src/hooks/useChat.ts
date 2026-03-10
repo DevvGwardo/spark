@@ -65,6 +65,18 @@ function sanitizePartialToolCalls<T extends { parts?: Array<Record<string, unkno
   return dirty ? cleaned : msgs;
 }
 
+function toStoredAIMessages(msgs: Awaited<ReturnType<typeof db.messages.getByConversation>>): AIMessage[] {
+  const restored = msgs.map((m) => ({
+    id: m.id,
+    role: m.role as AIMessage['role'],
+    content: m.content,
+    ...(m.parts ? { parts: m.parts } : {}),
+    ...(m.toolInvocations ? { toolInvocations: m.toolInvocations } : {}),
+  }));
+
+  return sanitizePartialToolCalls(restored);
+}
+
 function isProposalApprovalMessage(content: string): boolean {
   const normalized = content.trim().toLowerCase();
   if (!normalized) return false;
@@ -478,6 +490,13 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
     });
   }, [panelId, resetPanelFileState]);
 
+  const hydrateConversationMessages = useCallback((convId: string) => {
+    setMessages([]);
+    db.messages.getByConversation(convId).then((msgs) => {
+      setMessages(toStoredAIMessages(msgs));
+    });
+  }, [setMessages]);
+
   // Load messages (and file state) from IndexedDB when switching conversations
   useEffect(() => {
     const prevConvId = prevConversationIdRef.current;
@@ -503,17 +522,7 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
         skipNextLoadRef.current = false;
         return;
       }
-      db.messages.getByConversation(conversationId).then((msgs) => {
-        setMessages(
-          msgs.map((m) => ({
-            id: m.id,
-            role: m.role as AIMessage['role'],
-            content: m.content,
-            ...(m.parts ? { parts: m.parts } : {}),
-            ...(m.toolInvocations ? { toolInvocations: m.toolInvocations } : {}),
-          }))
-        );
-      });
+      hydrateConversationMessages(conversationId);
       return;
     }
 
@@ -527,17 +536,7 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
         skipNextLoadRef.current = false;
         return;
       }
-      db.messages.getByConversation(conversationId).then((msgs) => {
-        setMessages(
-          msgs.map((m) => ({
-            id: m.id,
-            role: m.role as AIMessage['role'],
-            content: m.content,
-            ...(m.parts ? { parts: m.parts } : {}),
-            ...(m.toolInvocations ? { toolInvocations: m.toolInvocations } : {}),
-          }))
-        );
-      });
+      hydrateConversationMessages(conversationId);
 
       // Restore file state for this conversation
       restoreFileState(conversationId);
@@ -546,7 +545,7 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
       setMessages([]);
       resetPanelFileState();
     }
-  }, [conversationId, setMessages, panelId, resetPanelFileState, restoreFileState, saveConversationFiles]);
+  }, [conversationId, setMessages, panelId, resetPanelFileState, restoreFileState, saveConversationFiles, hydrateConversationMessages]);
 
   // Auto-save file state (debounced) whenever the panel's file state changes
   useEffect(() => {

@@ -14,6 +14,7 @@ export const ChatPanelContainer: React.FC<ChatPanelContainerProps> = ({ onOpenPR
   if (panels.length === 1) {
     return (
       <ChatPanel
+        key={`${panels[0].id}:${panels[0].conversationId ?? 'new'}`}
         panelId={panels[0].id}
         conversationId={panels[0].conversationId}
         isFocused={true}
@@ -26,7 +27,7 @@ export const ChatPanelContainer: React.FC<ChatPanelContainerProps> = ({ onOpenPR
   return (
     <ResizablePanelGroup direction="horizontal">
       {panels.map((panel, i) => (
-        <React.Fragment key={panel.id}>
+        <React.Fragment key={`${panel.id}:${panel.conversationId ?? 'new'}`}>
           {i > 0 && <ResizableHandle withHandle />}
           <ResizablePanel minSize={20}>
             <ChatPanel
