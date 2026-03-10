@@ -28,11 +28,11 @@ Convert CloudChat from a browser-based app (React SPA + Express server) into a n
 cloud-chat-hub/
 ├── electron/
 │   ├── main.ts              # Main process (window, lifecycle, native features, updater)
-│   ├── preload.ts            # Preload script (contextBridge for platform info)
+│   ├── preload.ts            # Preload script (contextBridge for platform info + API port)
 │   └── server.ts             # Embeds Express server with dynamic port
 ├── server/
 │   └── index.ts              # Existing Express (refactored to export app + startServer)
-├── src/                      # Existing React app (unchanged)
+├── src/                      # Existing React app (minimal changes)
 ├── build/
 │   └── icon.icns             # macOS app icon
 ├── electron.vite.config.ts   # Unified Vite config (main/preload/renderer)
@@ -45,19 +45,26 @@ cloud-chat-hub/
 Responsibilities:
 - Create BrowserWindow (1400x900, min size, titlebar styling)
 - Start embedded Express server before loading renderer
-- In dev: load `http://localhost:5173` (Vite HMR). In prod: load bundled `index.html`
+- In dev: load electron-vite's renderer dev server URL. In prod: load bundled `index.html`
 - Shut down Express server on app quit
+
+Security settings (`webPreferences`):
+- `nodeIntegration: false` (explicit)
+- `contextIsolation: true` (explicit)
+- `sandbox: true`
+- Content Security Policy allowing `fonts.googleapis.com`, `fonts.gstatic.com`, `cdn.jsdelivr.net` (for Shoelace and Google Fonts)
 
 Native features (initial):
 - System tray icon with quick actions (new chat, show/hide window)
-- macOS dock menu
+- macOS dock menu via `app.dock.setMenu()`
+- About panel via `app.setAboutPanelOptions()`
 - Native notifications for long-running AI responses (when window unfocused)
-- Global shortcut to toggle window (`Cmd+Shift+C`)
+- Global shortcut to toggle window (`Cmd+Shift+Space`) — registered via `globalShortcut.register()`, unregistered on quit. Configurable in settings later.
 - Auto-updater: check GitHub Releases on launch, prompt to install
 
 ### Preload Script (`electron/preload.ts`)
 
-Exposes via `contextBridge`:
+All values exposed via `contextBridge.exposeInMainWorld('electronAPI', ...)`:
 - `versions` — Electron/Node/Chrome for about screen
 - `platform` — OS info for UI tweaks
 - `apiPort` — Dynamic port the embedded server is listening on
@@ -68,11 +75,13 @@ Exposes via `contextBridge`:
 - Imports Express `app` from `server/index.ts`
 - Finds a free port (fallback if 3001 is taken)
 - Starts listening, returns port to main process
-- Main process passes port to renderer via preload
+- Main process passes port to renderer via preload's `contextBridge`
+
+Note: `preview-manager.ts` spawns child processes and uses `os.tmpdir()`. In the Electron context, this requires `git` to be on the user's PATH. The preview manager's `SIGINT` handler will be replaced with Electron lifecycle hooks (`app.on('before-quit')`) to avoid conflicts. If preview functionality proves problematic in sandboxed/notarized builds, it can be disabled with a runtime check.
 
 ## Changes to Existing Code
 
-### `server/index.ts` (~20 lines changed)
+### `server/index.ts` (~30-40 lines changed)
 
 Refactor to support both standalone and embedded modes:
 - Extract Express app setup and route registration
@@ -81,22 +90,31 @@ Refactor to support both standalone and embedded modes:
 
 No logic changes — same routes, same handlers.
 
-### `src/lib/providers.ts` (~3 lines changed)
+### `src/lib/api.ts` (~3 lines changed)
 
-- API base URL falls back to `window.__ELECTRON_API_PORT__` if set
-- Otherwise uses `VITE_API_URL` as today
+- `getApiBaseUrl()` checks for `window.electronAPI?.apiPort` first (via contextBridge)
+- Falls back to `VITE_API_URL` as today
 - Transparent to rest of app
 
-### `index.html` (minor addition)
+### `index.html` (no changes needed)
 
-- Conditional script block to set API URL from Electron preload
-- No-op when running in browser
+API port is injected via contextBridge in preload, not via script tags. No HTML changes required.
 
 ### Everything else
 
 Unchanged. React app, stores, components, hooks, styles — all untouched.
 
 ## Build & Development
+
+### `electron.vite.config.ts`
+
+**Important:** electron-vite uses its own config and does NOT read the existing `vite.config.ts`. The renderer config must replicate:
+- `@vitejs/plugin-react-swc` (SWC compiler)
+- Path alias `@` -> `./src`
+- Tailwind CSS / PostCSS setup
+- `lovable-tagger` plugin (dev mode only)
+
+The main process config outputs CJS (required by Electron), even though `package.json` has `"type": "module"`. electron-vite handles this transformation.
 
 ### Scripts
 
@@ -113,7 +131,7 @@ Unchanged. React app, stores, components, hooks, styles — all untouched.
 `npm run electron:dev` — Single command starts:
 - Main process build (with hot reload)
 - Preload build
-- Renderer (existing Vite config with Tailwind, SWC, HMR)
+- Renderer (replicates existing Vite plugins — SWC, Tailwind, HMR)
 - Embedded Express server
 
 Replaces current two-terminal workflow for Electron development.
@@ -132,6 +150,7 @@ Replaces current two-terminal workflow for Electron development.
 - **Product name:** CloudChat
 - **macOS targets:** DMG + zip (zip required for auto-updates)
 - **Code signing:** Uses Apple Developer identity if available, skips for local builds
+- **Notarization:** Requires Apple Developer account with notarytool credentials. Entitlements file at `build/entitlements.mac.plist` with `com.apple.security.cs.allow-jit` and network access entitlements.
 - **ASAR:** App code archived, native modules unpacked
 - **Excluded:** Dev dependencies, source maps, `.git`, test files
 
@@ -149,6 +168,17 @@ Replaces current two-terminal workflow for Electron development.
 
 Requires `GH_TOKEN` env var for publishing.
 
+### Offline Considerations
+
+Shoelace assets are loaded from `cdn.jsdelivr.net` in `src/main.tsx`. For offline support, Shoelace assets should be bundled locally (copy to `public/` and update `setBasePath()`). This is a follow-up task — the app will work online without changes.
+
+## Data Storage
+
+IndexedDB data (chat history, conversations) is stored in Electron's `app.getPath('userData')` directory:
+- macOS: `~/Library/Application Support/CloudChat/`
+
+This is automatic — no code changes needed. Worth noting for backup/migration purposes.
+
 ## Future Path
 
 Migrate from embedded Express to Electron IPC:
@@ -159,13 +189,21 @@ Migrate from embedded Express to Electron IPC:
 
 This is a follow-up effort, not part of the initial conversion.
 
+## macOS-Specific Notes
+
+The following are macOS-only and would need platform alternatives for future cross-platform support:
+- `.icns` icon format (Windows uses `.ico`, Linux uses `.png`)
+- `app.dock.setMenu()` (dock is macOS-only)
+- DMG packaging target
+- Entitlements/notarization workflow
+
 ## Dependencies to Add
 
 ### Production
-- `electron` — Desktop shell
 - `electron-updater` — Auto-updates
 
 ### Development
+- `electron` — Desktop shell (devDependency — electron-builder downloads the correct binary during packaging)
 - `electron-vite` — Unified Vite build
 - `electron-builder` — Packaging
 - `electron-icon-builder` — Icon generation (optional)
