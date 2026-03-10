@@ -1,22 +1,14 @@
 import express from 'express';
 import cors from 'cors';
-import { streamText, tool } from 'ai';
-import { createOpenAI } from '@ai-sdk/openai';
-import { createAnthropic } from '@ai-sdk/anthropic';
+import { generateText, streamText, tool } from 'ai';
 import { z } from 'zod';
+import { createOrchestrateHandler } from './orchestrator';
 import {
-  startPreview,
-  stopPreview,
-  applyChanges,
-  getPreviewStatus,
-  getAllPreviews,
-} from './preview-manager';
-
-const app = express();
-const PORT = process.env.PORT || 3001;
-
-app.use(cors());
-app.use(express.json({ limit: '10mb' }));
+  createProviderModel,
+  getProviderHeaders,
+  OPENAI_COMPATIBLE,
+  VALIDATION_MODELS,
+} from './provider-config';
 
 // ─── Shared helpers ──────────────────────────────────────────────────────────
 
@@ -30,131 +22,11 @@ function sendJson(res: express.Response, status: number, body: unknown) {
   res.status(status).json(body);
 }
 
+function getUnknownErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 // ─── /functions/v1/chat ──────────────────────────────────────────────────────
-
-const OPENAI_COMPATIBLE: Record<string, string> = {
-  lovable: 'https://ai.gateway.lovable.dev/v1',
-  openai: 'https://api.openai.com/v1',
-  google: 'https://generativelanguage.googleapis.com/v1beta/openai',
-  xai: 'https://api.x.ai/v1',
-  groq: 'https://api.groq.com/openai/v1',
-  deepseek: 'https://api.deepseek.com',
-  mistral: 'https://api.mistral.ai/v1',
-  together: 'https://api.together.xyz/v1',
-  'minimax-payg': 'https://api.minimax.chat/v1',
-  minimax: 'https://api.minimax.io/v1',
-  kimi: 'https://api.moonshot.cn/v1',
-  cerebras: 'https://api.cerebras.ai/v1',
-  openrouter: 'https://openrouter.ai/api/v1',
-  sambanova: 'https://api.sambanova.ai/v1',
-};
-
-const ANTHROPIC_COMPATIBLE: Record<string, string> = {
-  anthropic: 'https://api.anthropic.com',
-};
-
-const webDevTools = {
-  create_html_file: tool({
-    description: 'Create an HTML file with specified content',
-    parameters: z.object({
-      filename: z.string().describe('The name of the HTML file'),
-      content: z.string().describe('The HTML content'),
-    }),
-    execute: async ({ filename, content }) => ({
-      success: true,
-      filename,
-      content,
-      message: `Created HTML file: ${filename}`,
-    }),
-  }),
-
-  create_css_file: tool({
-    description: 'Create a CSS file with specified styles',
-    parameters: z.object({
-      filename: z.string().describe('The name of the CSS file'),
-      content: z.string().describe('The CSS content'),
-    }),
-    execute: async ({ filename, content }) => ({
-      success: true,
-      filename,
-      content,
-      message: `Created CSS file: ${filename}`,
-    }),
-  }),
-
-  create_js_file: tool({
-    description: 'Create a JavaScript file with specified code',
-    parameters: z.object({
-      filename: z.string().describe('The name of the JavaScript file'),
-      content: z.string().describe('The JavaScript content'),
-    }),
-    execute: async ({ filename, content }) => ({
-      success: true,
-      filename,
-      content,
-      message: `Created JavaScript file: ${filename}`,
-    }),
-  }),
-
-  create_react_component: tool({
-    description: 'Create a React component file with JSX/TSX',
-    parameters: z.object({
-      filename: z
-        .string()
-        .describe('The name of the React component file (e.g., Button.jsx, App.tsx)'),
-      content: z.string().describe('The React component code with JSX/TSX'),
-    }),
-    execute: async ({ filename, content }) => ({
-      success: true,
-      filename,
-      content,
-      message: `Created React component: ${filename}`,
-    }),
-  }),
-
-  create_nextjs_page: tool({
-    description: 'Create a Next.js page component',
-    parameters: z.object({
-      filename: z
-        .string()
-        .describe('The name of the Next.js page file (e.g., pages/index.jsx, app/page.tsx)'),
-      content: z.string().describe('The Next.js page component code'),
-    }),
-    execute: async ({ filename, content }) => ({
-      success: true,
-      filename,
-      content,
-      message: `Created Next.js page: ${filename}`,
-    }),
-  }),
-
-  update_file: tool({
-    description: 'Update an existing file with new content',
-    parameters: z.object({
-      filename: z.string().describe('The name of the file to update'),
-      content: z.string().describe('The new content'),
-    }),
-    execute: async ({ filename, content }) => ({
-      success: true,
-      filename,
-      content,
-      message: `Updated file: ${filename}`,
-    }),
-  }),
-
-  web_search: tool({
-    description: 'Search the web for information',
-    parameters: z.object({
-      query: z.string().describe('The search query'),
-    }),
-    execute: async ({ query }) => ({
-      success: true,
-      query,
-      results: `Mock search results for: ${query}`,
-      message: `Searched for: ${query}`,
-    }),
-  }),
-};
 
 // Filter out problematic stream lines (e.g. empty error entries from some providers)
 function createFilteredStream(
@@ -194,6 +66,11 @@ function createFilteredStream(
   });
 }
 
+export function createApp() {
+  const app = express();
+  app.use(cors());
+  app.use(express.json({ limit: '10mb' }));
+
 app.post('/functions/v1/chat', async (req, res) => {
   try {
     const {
@@ -225,7 +102,17 @@ app.post('/functions/v1/chat', async (req, res) => {
     // Build system prompt, appending repo context if activeRepo is present
     let effectiveSystemPrompt = system_prompt || '';
     if (activeRepo) {
-      const repoContext = `You are working on the GitHub repository ${activeRepo.owner}/${activeRepo.name}. You have tools to read, edit, create, and delete files in this repo. When asked to make changes, use read_repo_file to read files first, then use edit_repo_file or create_repo_file to make changes. Do not ask the user which file to edit — explore the repo yourself. All changes are staged for a PR.`;
+      const repoContext = `You are working on the GitHub repository ${activeRepo.owner}/${activeRepo.name}. You have tools to read, edit, create, and delete files in this repo.
+
+WORKFLOW — ALWAYS FOLLOW THIS:
+1. When the user asks you to make changes, FIRST use propose_changes to present a plan of ALL files you intend to modify. Wait for user approval before proceeding.
+2. After the user approves, use read_repo_file to read the files you need to modify.
+3. Then use batch_edit_repo_files to apply ALL changes at once (preferred for multiple files), or edit_repo_file / create_repo_file individually.
+4. Do NOT ask the user which file to edit — explore the repo yourself.
+5. When the user asks you to update multiple things, make sure you update ALL of them, not just one.
+6. IMPORTANT: If you need to edit many large files, split batch_edit_repo_files into multiple calls (max 3-4 files per batch) to avoid output truncation. For very large files, use individual edit_repo_file calls instead.
+
+All changes are staged for a PR — they are not applied directly to the repo.`;
       effectiveSystemPrompt = effectiveSystemPrompt
         ? `${effectiveSystemPrompt}\n\n${repoContext}`
         : repoContext;
@@ -236,9 +123,68 @@ app.post('/functions/v1/chat', async (req, res) => {
       ? [{ role: 'system' as const, content: effectiveSystemPrompt }, ...messages]
       : messages;
 
+    // File creation tools (always available for artifact/preview support)
+    const fileTools = {
+      create_html_file: tool({
+        description:
+          'Create an HTML file. Use this when the user asks you to create an HTML page, website, or web component. The file will be available for live preview.',
+        parameters: z.object({
+          filename: z.string().describe('The filename (e.g. "index.html")'),
+          content: z.string().describe('The full HTML content'),
+        }),
+      }),
+      create_css_file: tool({
+        description:
+          'Create a CSS stylesheet file. Use this when the user asks you to create CSS styles.',
+        parameters: z.object({
+          filename: z.string().describe('The filename (e.g. "styles.css")'),
+          content: z.string().describe('The full CSS content'),
+        }),
+      }),
+      create_js_file: tool({
+        description:
+          'Create a JavaScript file. Use this when the user asks you to create JS code for a web page.',
+        parameters: z.object({
+          filename: z.string().describe('The filename (e.g. "app.js")'),
+          content: z.string().describe('The full JavaScript content'),
+        }),
+      }),
+      create_react_component: tool({
+        description:
+          'Create a React component file (JSX/TSX). Use this when the user asks you to create a React component.',
+        parameters: z.object({
+          filename: z.string().describe('The filename (e.g. "App.jsx" or "Component.tsx")'),
+          content: z.string().describe('The full JSX/TSX content (no import/export needed, just the component function)'),
+        }),
+      }),
+      create_markdown_file: tool({
+        description:
+          'Create a Markdown file. Use this when the user asks you to create documentation, READMEs, notes, or any markdown content.',
+        parameters: z.object({
+          filename: z.string().describe('The filename (e.g. "README.md")'),
+          content: z.string().describe('The full Markdown content'),
+        }),
+      }),
+    };
+
     // Repo tools (only included when activeRepo is present)
     const repoTools = activeRepo
       ? {
+          propose_changes: tool({
+            description:
+              'Present a plan of proposed changes to the user BEFORE making any edits. Always call this first when the user asks for changes. The user will review and approve the plan before you proceed.',
+            parameters: z.object({
+              summary: z.string().describe('A brief summary of the overall change'),
+              plan: z.array(
+                z.object({
+                  path: z.string().describe('The file path'),
+                  action: z.string().describe('The type of change: "create", "edit", or "delete"'),
+                  description: z.string().describe('What will be changed in this file and why'),
+                })
+              ).describe('The list of all files that will be modified'),
+            }),
+          }),
+
           read_repo_file: tool({
             description:
               'Read a file from the active GitHub repository. Returns the file content.',
@@ -249,7 +195,7 @@ app.post('/functions/v1/chat', async (req, res) => {
 
           edit_repo_file: tool({
             description:
-              'Propose an edit to an existing file in the active GitHub repository. The change will be staged for a PR.',
+              'Edit an existing file in the active GitHub repository. The change will be staged for a PR.',
             parameters: z.object({
               path: z.string().describe('The path to the file to edit'),
               content: z.string().describe('The new full content of the file'),
@@ -275,41 +221,58 @@ app.post('/functions/v1/chat', async (req, res) => {
               reason: z.string().describe('The reason for deleting this file'),
             }),
           }),
+
+          batch_edit_repo_files: tool({
+            description:
+              'Apply multiple file changes at once. Use this when you need to create, edit, or delete multiple files. Preferred over calling edit_repo_file multiple times.',
+            parameters: z.object({
+              changes: z.array(
+                z.object({
+                  path: z.string().describe('The file path'),
+                  action: z.string().describe('The type of change: "create", "edit", or "delete"'),
+                  content: z.string().describe('The new file content (empty string for deletions)'),
+                  description: z.string().describe('Description of this change'),
+                })
+              ).describe('Array of file changes to apply'),
+            }),
+          }),
         }
       : {};
 
-    // Create the appropriate provider model
     let aiModel;
-
-    if (ANTHROPIC_COMPATIBLE[provider]) {
-      const baseURL = ANTHROPIC_COMPATIBLE[provider];
-      const anthropic = createAnthropic({ baseURL, apiKey });
-      aiModel = anthropic(model);
-    } else {
-      const baseURL = OPENAI_COMPATIBLE[provider];
-      if (!baseURL) {
-        return sendJson(res, 400, { error: `Unknown provider: ${provider}` });
-      }
-      const headers: Record<string, string> = {};
-      if (provider === 'openrouter') {
-        const origin = req.headers.origin || 'https://lovable.app';
-        headers['HTTP-Referer'] = origin;
-        headers['X-Title'] = 'CloudChat';
-      }
-      const openai = createOpenAI({ baseURL, apiKey, compatibility: 'compatible', headers });
-      aiModel = openai(model);
+    try {
+      aiModel = createProviderModel(provider, model, apiKey, {
+        origin: req.headers.origin as string | undefined,
+      });
+    } catch (error) {
+      return sendJson(
+        res,
+        400,
+        { error: error instanceof Error ? error.message : `Unknown provider: ${provider}` }
+      );
     }
+
+    // Use a higher token limit when repo tools are active to avoid truncated tool calls
+    const defaultMaxTokens = activeRepo ? 64000 : 16384;
 
     const result = await streamText({
       model: aiModel,
       messages: allMessages,
       temperature: temperature ?? 0.7,
       topP: top_p ?? 0.9,
-      maxOutputTokens: max_tokens ?? 4096,
-      tools: { ...webDevTools, ...repoTools },
+      maxOutputTokens: max_tokens ?? defaultMaxTokens,
+      tools: { ...fileTools, ...repoTools },
+      toolCallStreaming: true,
     });
 
-    const response = result.toDataStreamResponse({ headers: corsHeaders });
+    const response = result.toDataStreamResponse({
+      headers: corsHeaders,
+      sendReasoning: true,
+      getErrorMessage: (error: unknown) => {
+        if (error instanceof Error) return error.message;
+        return String(error);
+      },
+    });
 
     // Set response headers
     response.headers.forEach((value, key) => {
@@ -366,14 +329,25 @@ app.post('/functions/v1/chat', async (req, res) => {
     let errorMessage = 'Unknown error';
 
     if (err && typeof err === 'object') {
-      const errors = (err as any).errors;
+      const errRecord = err as {
+        errors?: unknown[];
+        statusCode?: number;
+        status?: number;
+        responseBody?: string;
+      };
+      const errors = errRecord.errors;
       const innerError =
         Array.isArray(errors) && errors.length > 0 ? errors[errors.length - 1] : err;
+      const innerErrorRecord = innerError as {
+        statusCode?: number;
+        status?: number;
+        responseBody?: string;
+      };
 
-      const statusCode = (innerError as any).statusCode || (innerError as any).status;
+      const statusCode = innerErrorRecord.statusCode || innerErrorRecord.status;
       if (statusCode) status = statusCode;
 
-      const responseBody = (innerError as any).responseBody;
+      const responseBody = innerErrorRecord.responseBody;
       if (responseBody) {
         try {
           const parsed = JSON.parse(responseBody);
@@ -406,6 +380,7 @@ app.post('/functions/v1/chat', async (req, res) => {
 interface FileChange {
   path: string;
   content: string;
+  action?: 'create' | 'edit' | 'delete';
 }
 
 async function fetchRepoContents(
@@ -413,7 +388,7 @@ async function fetchRepoContents(
   repo: string,
   path: string,
   headers: Record<string, string>
-): Promise<any[]> {
+): Promise<Array<{ path: string; type: 'dir'; children: [] } | { path: string; type: 'file'; size: number; sha: string }>> {
   const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
   const response = await fetch(url, { headers });
 
@@ -421,21 +396,22 @@ async function fetchRepoContents(
     return [];
   }
 
-  const data = await response.json();
+  const data = await response.json() as unknown;
 
   if (!Array.isArray(data)) {
+    const file = data as { path: string; size: number; sha: string };
     return [
       {
-        path: data.path,
+        path: file.path,
         type: 'file',
-        size: data.size,
-        sha: data.sha,
+        size: file.size,
+        sha: file.sha,
       },
     ];
   }
 
-  const contents: any[] = [];
-  for (const item of data) {
+  const contents: Array<{ path: string; type: 'dir'; children: [] } | { path: string; type: 'file'; size: number; sha: string }> = [];
+  for (const item of data as Array<{ type: string; path: string; size?: number; sha?: string }>) {
     if (item.type === 'dir') {
       contents.push({
         path: item.path,
@@ -446,8 +422,8 @@ async function fetchRepoContents(
       contents.push({
         path: item.path,
         type: 'file',
-        size: item.size,
-        sha: item.sha,
+        size: item.size || 0,
+        sha: item.sha || '',
       });
     }
   }
@@ -511,6 +487,11 @@ app.post('/functions/v1/github-integration', async (req, res) => {
         }
 
         const data = await response.json();
+        if (!data.content) {
+          return sendJson(res, 400, {
+            error: Array.isArray(data) ? 'Path is a directory, not a file' : 'File content unavailable',
+          });
+        }
         const content = Buffer.from(data.content, 'base64').toString('utf-8');
         return sendJson(res, 200, { content, sha: data.sha });
       }
@@ -564,7 +545,7 @@ app.post('/functions/v1/github-integration', async (req, res) => {
           });
         }
 
-        // 3. Create/update files on the new branch
+        // 3. Create/update/delete files on the new branch
         for (const file of files) {
           let fileSha: string | undefined;
           const existingFileRes = await fetch(
@@ -576,24 +557,46 @@ app.post('/functions/v1/github-integration', async (req, res) => {
             fileSha = existingFile.sha;
           }
 
-          const updateRes = await fetch(
-            `https://api.github.com/repos/${owner}/${repo}/contents/${file.path}`,
-            {
-              method: 'PUT',
-              headers: { ...headers, 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                message: `Update ${file.path}`,
-                content: Buffer.from(file.content, 'utf-8').toString('base64'),
-                branch,
-                ...(fileSha && { sha: fileSha }),
-              }),
+          if (file.action === 'delete') {
+            // Only delete if the file actually exists in the repo
+            if (!fileSha) continue;
+            const deleteRes = await fetch(
+              `https://api.github.com/repos/${owner}/${repo}/contents/${file.path}`,
+              {
+                method: 'DELETE',
+                headers: { ...headers, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  message: `Delete ${file.path}`,
+                  branch,
+                  sha: fileSha,
+                }),
+              }
+            );
+            if (!deleteRes.ok) {
+              return sendJson(res, deleteRes.status, {
+                error: `Failed to delete ${file.path}: ${await deleteRes.text()}`,
+              });
             }
-          );
+          } else {
+            const updateRes = await fetch(
+              `https://api.github.com/repos/${owner}/${repo}/contents/${file.path}`,
+              {
+                method: 'PUT',
+                headers: { ...headers, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  message: `${file.action === 'create' ? 'Create' : 'Update'} ${file.path}`,
+                  content: Buffer.from(file.content, 'utf-8').toString('base64'),
+                  branch,
+                  ...(fileSha && { sha: fileSha }),
+                }),
+              }
+            );
 
-          if (!updateRes.ok) {
-            return sendJson(res, updateRes.status, {
-              error: `Failed to update ${file.path}: ${await updateRes.text()}`,
-            });
+            if (!updateRes.ok) {
+              return sendJson(res, updateRes.status, {
+                error: `Failed to update ${file.path}: ${await updateRes.text()}`,
+              });
+            }
           }
         }
 
@@ -625,9 +628,9 @@ app.post('/functions/v1/github-integration', async (req, res) => {
       default:
         return sendJson(res, 400, { error: 'Unknown action' });
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('GitHub integration error:', error);
-    sendJson(res, 500, { error: error.message });
+    sendJson(res, 500, { error: getUnknownErrorMessage(error) });
   }
 });
 
@@ -729,7 +732,7 @@ async function fetchAnalyzerRepoFiles(
   return await fetchContentsRecursive();
 }
 
-async function analyzeCode(files: FileContent[]): Promise<any[]> {
+async function analyzeCode(files: FileContent[]): Promise<unknown[]> {
   const lovableApiKey = process.env.LOVABLE_API_KEY;
 
   if (!lovableApiKey) {
@@ -826,9 +829,9 @@ Be specific about file names and line numbers when possible. Provide actionable 
       }
       throw new Error('Invalid JSON response from AI');
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('AI analysis error:', error);
-    throw new Error(`AI analysis failed: ${error.message}`);
+    throw new Error(`AI analysis failed: ${getUnknownErrorMessage(error)}`);
   }
 }
 
@@ -855,16 +858,13 @@ app.post('/functions/v1/github-analyzer', async (req, res) => {
       filesAnalyzed: files.length,
       repository: `${owner}/${repo}`,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('GitHub analyzer error:', error);
-    sendJson(res, 500, { error: error.message });
+    sendJson(res, 500, { error: getUnknownErrorMessage(error) });
   }
 });
 
 // ─── /functions/v1/validate-key ──────────────────────────────────────────────
-
-const MINIMAX_API_URL = 'https://api.minimax.chat/v1/text/chatcompletion_v2';
-const KIMI_MODELS_URL = 'https://api.moonshot.cn/v1/models';
 
 app.post('/functions/v1/validate-key', async (req, res) => {
   try {
@@ -874,71 +874,59 @@ app.post('/functions/v1/validate-key', async (req, res) => {
       return sendJson(res, 400, { valid: false, error: 'Missing provider or api_key' });
     }
 
-    if (provider === 'minimax') {
-      const response = await fetch(MINIMAX_API_URL, {
-        method: 'POST',
+    const validationModel = VALIDATION_MODELS[provider];
+    if (!validationModel) {
+      return sendJson(res, 400, { valid: false, error: `Unknown provider: ${provider}` });
+    }
+
+    const origin = req.headers.origin as string | undefined;
+    const listModelsUrl = OPENAI_COMPATIBLE[provider]
+      ? `${OPENAI_COMPATIBLE[provider]}/models`
+      : null;
+
+    if (listModelsUrl) {
+      const modelListResponse = await fetch(listModelsUrl, {
         headers: {
-          'Content-Type': 'application/json',
           Authorization: `Bearer ${api_key}`,
+          ...getProviderHeaders(provider, origin),
         },
-        body: JSON.stringify({
-          model: 'MiniMax-M2.5',
-          messages: [{ role: 'user', content: 'Hi' }],
-          max_tokens: 1,
-        }),
       });
 
-      if (response.ok) {
-        return sendJson(res, 200, {
-          valid: true,
-          models: [
-            'MiniMax-M2.5',
-            'MiniMax-M2.5-highspeed',
-            'MiniMax-M2.1',
-            'MiniMax-M2.1-highspeed',
-            'MiniMax-M2',
-          ],
-        });
-      } else {
-        const errorText = await response.text();
-        return sendJson(res, 401, {
-          valid: false,
-          error: `Authentication failed: ${errorText}`,
-        });
-      }
-    } else if (provider === 'kimi') {
-      const response = await fetch(KIMI_MODELS_URL, {
-        headers: { Authorization: `Bearer ${api_key}` },
-      });
+      if (modelListResponse.ok) {
+        const data = await modelListResponse.json();
+        const models = Array.isArray(data?.data)
+          ? (data.data as Array<{ id?: string }>)
+              .map((model) => model?.id)
+              .filter((modelId: string | undefined): modelId is string => !!modelId)
+          : undefined;
 
-      if (response.ok) {
-        const data = await response.json();
-        const models = data.data?.map((m: any) => m.id) || [
-          'kimi-k2-0711-preview',
-          'moonshot-v1-128k',
-          'moonshot-v1-32k',
-          'moonshot-v1-8k',
-        ];
         return sendJson(res, 200, { valid: true, models });
-      } else {
-        const errorText = await response.text();
-        return sendJson(res, 401, {
-          valid: false,
-          error: `Authentication failed: ${errorText}`,
-        });
       }
     }
 
-    return sendJson(res, 400, { valid: false, error: 'Unknown provider' });
-  } catch (err: any) {
-    sendJson(res, 500, { valid: false, error: err.message });
+    const model = createProviderModel(provider, validationModel, api_key, {
+      origin,
+    });
+
+    await generateText({
+      model,
+      prompt: 'ping',
+      maxOutputTokens: 1,
+      temperature: 0,
+    });
+
+    return sendJson(res, 200, { valid: true });
+  } catch (err: unknown) {
+    const message = getUnknownErrorMessage(err) || 'Provider validation failed';
+    const status = /401|403|authentication|unauthorized|invalid api key/i.test(message) ? 401 : 500;
+    sendJson(res, status, { valid: false, error: message });
   }
 });
 
 // ─── /functions/v1/chat-proxy ────────────────────────────────────────────────
 
 interface ChatProxyRequest {
-  provider: 'minimax' | 'kimi';
+  provider: 'minimax' | 'minimax-payg' | 'kimi' | 'kimi-coding';
   model: string;
   messages: { role: string; content: string }[];
   temperature?: number;
@@ -948,8 +936,8 @@ interface ChatProxyRequest {
   system_prompt?: string;
 }
 
-const MINIMAX_CHAT_API_URL = 'https://api.minimax.chat/v1/text/chatcompletion_v2';
 const KIMI_API_URL = 'https://api.moonshot.cn/v1/chat/completions';
+const KIMI_CODING_API_URL = 'https://api.kimi.com/coding/v1/chat/completions';
 
 async function proxyMiniMax(body: ChatProxyRequest): Promise<Response> {
   const messages = body.system_prompt
@@ -965,7 +953,7 @@ async function proxyMiniMax(body: ChatProxyRequest): Promise<Response> {
     stream: true,
   };
 
-  const response = await fetch(MINIMAX_CHAT_API_URL, {
+  const response = await fetch(`${OPENAI_COMPATIBLE[body.provider]}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -1013,6 +1001,37 @@ async function proxyKimi(body: ChatProxyRequest): Promise<Response> {
   return response;
 }
 
+async function proxyKimiCoding(body: ChatProxyRequest): Promise<Response> {
+  const messages = body.system_prompt
+    ? [{ role: 'system', content: body.system_prompt }, ...body.messages]
+    : body.messages;
+
+  const payload = {
+    model: body.model,
+    messages,
+    temperature: body.temperature ?? 0.7,
+    top_p: body.top_p ?? 0.9,
+    max_tokens: body.max_tokens ?? 32768,
+    stream: true,
+  };
+
+  const response = await fetch(KIMI_CODING_API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${body.api_key}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Kimi Coding API error (${response.status}): ${errorText}`);
+  }
+
+  return response;
+}
+
 app.post('/functions/v1/chat-proxy', async (req, res) => {
   try {
     const body: ChatProxyRequest = req.body;
@@ -1021,15 +1040,17 @@ app.post('/functions/v1/chat-proxy', async (req, res) => {
       return sendJson(res, 400, { error: 'API key is required' });
     }
 
-    if (!body.provider || !['minimax', 'kimi'].includes(body.provider)) {
+    if (!body.provider || !['minimax', 'minimax-payg', 'kimi', 'kimi-coding'].includes(body.provider)) {
       return sendJson(res, 400, {
-        error: 'Invalid provider. Use "minimax" or "kimi".',
+        error: 'Invalid provider. Use "minimax", "minimax-payg", "kimi", or "kimi-coding".',
       });
     }
 
     let upstreamResponse: Response;
-    if (body.provider === 'minimax') {
+    if (body.provider === 'minimax' || body.provider === 'minimax-payg') {
       upstreamResponse = await proxyMiniMax(body);
+    } else if (body.provider === 'kimi-coding') {
+      upstreamResponse = await proxyKimiCoding(body);
     } else {
       upstreamResponse = await proxyKimi(body);
     }
@@ -1113,9 +1134,9 @@ app.post('/functions/v1/chat-proxy', async (req, res) => {
               }
 
               let content = '';
-              if (body.provider === 'minimax') {
+              if (body.provider === 'minimax' || body.provider === 'minimax-payg') {
                 content = json.choices?.[0]?.delta?.content || '';
-              } else if (body.provider === 'kimi') {
+              } else if (body.provider === 'kimi' || body.provider === 'kimi-coding') {
                 content = json.choices?.[0]?.delta?.content || '';
               }
 
@@ -1139,8 +1160,8 @@ app.post('/functions/v1/chat-proxy', async (req, res) => {
     });
 
     await pump();
-  } catch (err: any) {
-    const message = err.message || 'Internal server error';
+  } catch (err: unknown) {
+    const message = getUnknownErrorMessage(err) || 'Internal server error';
     const status = message.includes('401') ? 401 : message.includes('429') ? 429 : 500;
 
     if (!res.headersSent) {
@@ -1149,81 +1170,41 @@ app.post('/functions/v1/chat-proxy', async (req, res) => {
   }
 });
 
-// ─── /functions/v1/preview ────────────────────────────────────────────────────
+// ─── /functions/v1/orchestrate ────────────────────────────────────────────────
 
-app.post('/functions/v1/preview/start', async (req, res) => {
-  try {
-    const { owner, repo, pat, branch } = req.body;
-    if (!owner || !repo || !pat) {
-      return sendJson(res, 400, { error: 'owner, repo, and pat are required' });
-    }
+app.post(
+  '/functions/v1/orchestrate',
+  createOrchestrateHandler()
+);
 
-    console.log(`Starting preview for ${owner}/${repo}...`);
-    const result = await startPreview(owner, repo, pat, branch);
-    console.log(`Preview running at ${result.url}`);
-    return sendJson(res, 200, result);
-  } catch (err: any) {
-    console.error('Preview start error:', err);
-    // Return the status with error details
-    const status = getPreviewStatus(req.body.owner, req.body.repo);
-    sendJson(res, 500, {
-      error: err.message,
-      ...(status && { logs: status.logs }),
-    });
-  }
-});
-
-app.post('/functions/v1/preview/stop', async (req, res) => {
-  try {
-    const { owner, repo } = req.body;
-    if (!owner || !repo) {
-      return sendJson(res, 400, { error: 'owner and repo are required' });
-    }
-    await stopPreview(owner, repo);
-    return sendJson(res, 200, { success: true });
-  } catch (err: any) {
-    sendJson(res, 500, { error: err.message });
-  }
-});
-
-app.post('/functions/v1/preview/apply-changes', async (req, res) => {
-  try {
-    const { owner, repo, changes } = req.body;
-    if (!owner || !repo || !changes?.length) {
-      return sendJson(res, 400, { error: 'owner, repo, and changes are required' });
-    }
-    await applyChanges(owner, repo, changes);
-    return sendJson(res, 200, { success: true });
-  } catch (err: any) {
-    sendJson(res, 500, { error: err.message });
-  }
-});
-
-app.get('/functions/v1/preview/status/:owner/:repo', (req, res) => {
-  const status = getPreviewStatus(req.params.owner, req.params.repo);
-  if (!status) {
-    return sendJson(res, 404, { error: 'No active preview' });
-  }
-  return sendJson(res, 200, status);
-});
-
-app.get('/functions/v1/preview/list', (_req, res) => {
-  return sendJson(res, 200, { previews: getAllPreviews() });
-});
+  return app;
+}
 
 // ─── Start server ────────────────────────────────────────────────────────────
 
-app.listen(PORT, () => {
-  console.log(`Local API server running on http://localhost:${PORT}`);
-  console.log('Routes:');
-  console.log('  POST /functions/v1/chat');
-  console.log('  POST /functions/v1/github-integration');
-  console.log('  POST /functions/v1/github-analyzer');
-  console.log('  POST /functions/v1/validate-key');
-  console.log('  POST /functions/v1/chat-proxy');
-  console.log('  POST /functions/v1/preview/start');
-  console.log('  POST /functions/v1/preview/stop');
-  console.log('  POST /functions/v1/preview/apply-changes');
-  console.log('  GET  /functions/v1/preview/status/:owner/:repo');
-  console.log('  GET  /functions/v1/preview/list');
-});
+export function startServer(port?: number) {
+  const resolvedPort = port || process.env.PORT || 3001;
+  const app = createApp();
+  return new Promise<{ app: typeof app; port: number }>((resolve) => {
+    app.listen(resolvedPort, () => {
+      console.log(`Local API server running on http://localhost:${resolvedPort}`);
+      console.log('Routes:');
+      console.log('  POST /functions/v1/chat');
+      console.log('  POST /functions/v1/orchestrate');
+      console.log('  POST /functions/v1/github-integration');
+      console.log('  POST /functions/v1/github-analyzer');
+      console.log('  POST /functions/v1/validate-key');
+      console.log('  POST /functions/v1/chat-proxy');
+      resolve({ app, port: Number(resolvedPort) });
+    });
+  });
+}
+
+// Auto-start when run directly (npm run server), not when imported by Electron
+const isElectron = typeof process !== 'undefined' && !!process.versions?.electron;
+if (!isElectron) {
+  const isEntry = process.argv[1] && import.meta.url.includes(process.argv[1].replace(/\\/g, '/'));
+  if (isEntry) {
+    startServer();
+  }
+}
