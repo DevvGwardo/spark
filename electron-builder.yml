@@ -1,0 +1,41 @@
+appId: com.cloudchat.app
+productName: CloudChat
+directories:
+  buildResources: build
+  output: release
+files:
+  - "out/**"
+  - "server/**"
+  - "node_modules/**"
+  - "package.json"
+  - "!**/.git"
+  - "!**/node_modules/.cache"
+  - "!docs/**"
+  - "!src/**"
+  - "!electron/**"
+  - "!**/*.map"
+  - "!**/*.test.*"
+  - "!**/__tests__/**"
+mac:
+  target:
+    - target: dmg
+      arch: [universal]
+    - target: zip
+      arch: [universal]
+  category: public.app-category.developer-tools
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  hardenedRuntime: true
+  gatekeeperAssess: false
+dmg:
+  artifactName: "CloudChat-${version}-mac.${ext}"
+publish:
+  provider: github
+  owner: devgwardo
+  repo: cloud-chat-hub
+npmRebuild: false
+asar: true
+asarUnpack:
+  - "server/**"
+  - "node_modules/express/**"
+  - "node_modules/cors/**"
