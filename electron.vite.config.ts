@@ -7,13 +7,12 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     build: {
       lib: {
-        entry: resolve(__dirname, 'electron/main.ts')
+        entry: resolve(__dirname, 'electron/index.ts')
       },
       rollupOptions: {
         // Externalize server code so it loads at runtime from the packaged app
         external: [
-          'express', 'cors', '@ai-sdk/openai', '@ai-sdk/anthropic', 'ai', 'zod',
-          /\.\.\/server\/.*/
+          'express', 'cors', '@ai-sdk/openai', '@ai-sdk/anthropic', 'ai', 'zod'
         ]
       }
     }
