@@ -8,6 +8,7 @@ import { ChangeApprovalModal } from './ChangeApprovalModal';
 import { getProviderLabel } from '@/lib/providers';
 import { findPendingProposal, type ProposalToolInvocationLike } from '@/lib/proposed-changes';
 import type { QueuedMessage } from '@/lib/chat-queue';
+import { useSettingsStore } from '@/stores/settings-store';
 import { AlertCircle, X } from 'lucide-react';
 
 interface ChatPartLike {
@@ -79,6 +80,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const isAutoScroll = useRef(true);
   const [dismissedError, setDismissedError] = useState<string | null>(null);
   const [acceptingProposalId, setAcceptingProposalId] = useState<string | null>(null);
+  const autoApproveRepoChanges = useSettingsStore((state) => state.autoApproveRepoChanges);
+  const setAutoApproveRepoChanges = useSettingsStore((state) => state.setAutoApproveRepoChanges);
 
   // Reset dismissed error when a new error comes in
   const errorMessage = error?.message || null;
@@ -126,6 +129,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       setAcceptingProposalId(null);
     }
   }, [pendingProposal, handleQuickSend, isStreaming]);
+
+  const handleAcceptAlways = useCallback(async () => {
+    setAutoApproveRepoChanges(true);
+    await handleAcceptProposal();
+  }, [handleAcceptProposal, setAutoApproveRepoChanges]);
 
 
   const modal = (
@@ -242,10 +250,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         {errorBanner}
       </div>
       {showFooterActivity && <ActivityIndicator isStreaming={isStreaming} messages={messages} />}
-      {pendingProposal && (
+      {pendingProposal && !autoApproveRepoChanges && (
         <ChangeApprovalModal
           proposal={pendingProposal}
           onAccept={handleAcceptProposal}
+          onAcceptAlways={handleAcceptAlways}
           disabled={!handleQuickSend || isStreaming || acceptingProposalId === pendingProposal.messageId}
         />
       )}

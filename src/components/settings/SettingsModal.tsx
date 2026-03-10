@@ -228,6 +228,7 @@ export const SettingsModal: React.FC = () => {
     fontFamily,
     defaultSystemPrompt,
     githubPAT,
+    autoApproveRepoChanges,
     setActiveProvider,
     updateProviderConfig,
     setTheme,
@@ -235,6 +236,7 @@ export const SettingsModal: React.FC = () => {
     setFontFamily,
     setDefaultSystemPrompt,
     setGithubPAT,
+    setAutoApproveRepoChanges,
   } = useSettingsStore();
 
   const [showKey, setShowKey] = useState(false);
@@ -638,6 +640,30 @@ export const SettingsModal: React.FC = () => {
                     <span className="text-[10px]">{f.label}</span>
                   </button>
                 ))}
+              </div>
+            </div>
+            <div className="rounded-xl border border-border bg-background px-4 py-3">
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-1">
+                  <h4 className="text-sm font-semibold">Auto-approve repo changes</h4>
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    Automatically accept future file change proposals after the AI shows its plan. Disable this to require manual confirmation again.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setAutoApproveRepoChanges(!autoApproveRepoChanges)}
+                  className={cn(
+                    'relative mt-0.5 inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',
+                    autoApproveRepoChanges ? 'bg-primary' : 'bg-border'
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'inline-block h-4 w-4 rounded-full bg-background shadow-sm transition-transform duration-200',
+                      autoApproveRepoChanges ? 'translate-x-6' : 'translate-x-1'
+                    )}
+                  />
+                </button>
               </div>
             </div>
           </div>

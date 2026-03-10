@@ -28,6 +28,7 @@ interface SettingsState {
   defaultSystemPrompt: string;
   isSetupComplete: boolean;
   githubPAT: string;
+  autoApproveRepoChanges: boolean;
 
   setActiveProvider: (p: Provider) => void;
   updateProviderConfig: (p: Provider, config: Partial<ProviderConfig>) => void;
@@ -37,6 +38,7 @@ interface SettingsState {
   setDefaultSystemPrompt: (s: string) => void;
   completeSetup: () => void;
   setGithubPAT: (pat: string) => void;
+  setAutoApproveRepoChanges: (enabled: boolean) => void;
 }
 
 function makeDefault(model: string): ProviderConfig {
@@ -72,6 +74,7 @@ export const useSettingsStore = create<SettingsState>()(
       defaultSystemPrompt: 'You are a helpful assistant.',
       isSetupComplete: false,
       githubPAT: '',
+      autoApproveRepoChanges: false,
 
       setActiveProvider: (p) => set({ activeProvider: p }),
       updateProviderConfig: (p, config) =>
@@ -87,10 +90,11 @@ export const useSettingsStore = create<SettingsState>()(
       setDefaultSystemPrompt: (s) => set({ defaultSystemPrompt: s }),
       completeSetup: () => set({ isSetupComplete: true }),
       setGithubPAT: (pat) => set({ githubPAT: pat }),
+      setAutoApproveRepoChanges: (enabled) => set({ autoApproveRepoChanges: enabled }),
     }),
     {
       name: 'cloudchat-settings',
-      version: 8,
+      version: 9,
       migrate: (persisted: unknown, version: number) => {
         const state = (persisted ?? {}) as Partial<SettingsState> & { providers?: Partial<Record<Provider, ProviderConfig>> };
         if (version < 3) {
@@ -142,6 +146,9 @@ export const useSettingsStore = create<SettingsState>()(
           if (state.providers) {
             delete (state.providers as any).lovable;
           }
+        }
+        if (version < 9) {
+          state.autoApproveRepoChanges = false;
         }
         return state;
       },

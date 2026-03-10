@@ -6,12 +6,14 @@ import { cn } from '@/lib/utils';
 interface ChangeApprovalModalProps {
   proposal: PendingProposal;
   onAccept: () => void;
+  onAcceptAlways: () => void;
   disabled?: boolean;
 }
 
 export const ChangeApprovalModal: React.FC<ChangeApprovalModalProps> = ({
   proposal,
   onAccept,
+  onAcceptAlways,
   disabled = false,
 }) => {
   const previewItems = proposal.plan.slice(0, 1);
@@ -64,21 +66,35 @@ export const ChangeApprovalModal: React.FC<ChangeApprovalModalProps> = ({
           </div>
           </div>
 
-          <button
-            onClick={onAccept}
-            disabled={disabled}
-            className={cn(
-              'shrink-0 rounded-full px-4 py-2 text-sm font-semibold transition-all duration-150 sm:self-center',
-              disabled
-                ? 'cursor-not-allowed border border-border bg-muted text-muted-foreground'
-                : 'border border-emerald-500/25 bg-emerald-500 text-white hover:bg-emerald-600'
-            )}
-          >
-            <span className="flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4" />
-              Accept changes
-            </span>
-          </button>
+          <div className="flex shrink-0 flex-col gap-2 sm:self-center">
+            <button
+              onClick={onAccept}
+              disabled={disabled}
+              className={cn(
+                'rounded-full px-4 py-2 text-sm font-semibold transition-all duration-150',
+                disabled
+                  ? 'cursor-not-allowed border border-border bg-muted text-muted-foreground'
+                  : 'border border-emerald-500/25 bg-emerald-500 text-white hover:bg-emerald-600'
+              )}
+            >
+              <span className="flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4" />
+                Accept changes
+              </span>
+            </button>
+            <button
+              onClick={onAcceptAlways}
+              disabled={disabled}
+              className={cn(
+                'rounded-full border px-4 py-2 text-xs font-medium transition-all duration-150',
+                disabled
+                  ? 'cursor-not-allowed border-border bg-muted text-muted-foreground'
+                  : 'border-border/80 bg-background text-muted-foreground hover:border-foreground/15 hover:text-foreground'
+              )}
+            >
+              Always allow file changes
+            </button>
+          </div>
         </div>
       </div>
     </div>

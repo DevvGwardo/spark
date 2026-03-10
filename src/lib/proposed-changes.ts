@@ -109,6 +109,9 @@ function extractContentProposal(message: ProposalMessageLike): PendingProposal |
 }
 
 function extractProposalFromMessage(message: ProposalMessageLike): PendingProposal | null {
+  if (/auto-approved/i.test(message.content || '')) {
+    return null;
+  }
   return extractToolProposal(message) || extractContentProposal(message);
 }
 

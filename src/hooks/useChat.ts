@@ -94,7 +94,7 @@ export function useChat(
     loadConversations,
   } = useChatStore();
 
-  const { activeProvider, providers, defaultSystemPrompt, githubPAT } = useSettingsStore();
+  const { activeProvider, providers, defaultSystemPrompt, githubPAT, autoApproveRepoChanges } = useSettingsStore();
   const knowledgeContext = useKnowledgeStore((s) => s.getActiveContext());
   const changeset = useChangesetStore((s) => s.getChangeset(panelId));
   const addChangeForPanel = useChangesetStore((s) => s.addChange);
@@ -123,6 +123,10 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
 5. When the user asks you to update multiple things, make sure you address ALL of them, not just one.
 6. All changes are staged for a pull request (not applied directly).
 7. IMPORTANT: If you need to edit many large files, split batch_edit_repo_files into multiple calls (max 3-4 files per batch) to avoid output truncation. For very large files, use individual edit_repo_file calls instead.`;
+
+    if (autoApproveRepoChanges) {
+      repoContext += `\n8. The user has enabled auto-approval for repo changes. Still call propose_changes first, then continue immediately without waiting for a follow-up approval message.`;
+    }
 
     if (repoFileTree.length > 0) {
       repoContext += `\n\nRepository file tree:\n${repoFileTree.join('\n')}`;
@@ -302,11 +306,14 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
           summary?: string;
           plan: Array<{ path: string; action: string; description: string }>;
         };
-        pauseForProposalRef.current = true;
-        awaitingProposalApprovalRef.current = true;
-        proposalApprovedRef.current = false;
+        const proposalIsAutoApproved = autoApproveRepoChanges;
+        pauseForProposalRef.current = !proposalIsAutoApproved;
+        awaitingProposalApprovalRef.current = !proposalIsAutoApproved;
+        proposalApprovedRef.current = proposalIsAutoApproved;
         const summary = plan.map((p, i) => `${i + 1}. **${p.action}** \`${p.path}\` — ${p.description}`).join('\n');
-        return `## Proposed Changes\n\n${overallSummary ? `${overallSummary}\n\n` : ''}${summary}\n\nUse the accept button below to apply these changes, or tell me what to adjust.`;
+        return proposalIsAutoApproved
+          ? `## Proposed Changes\n\n${overallSummary ? `${overallSummary}\n\n` : ''}${summary}\n\nAuto-approved. Proceeding with the requested changes now.`
+          : `## Proposed Changes\n\n${overallSummary ? `${overallSummary}\n\n` : ''}${summary}\n\nUse the accept button below to apply these changes, or tell me what to adjust.`;
       }
 
       if (toolCall.toolName === 'edit_repo_file') {

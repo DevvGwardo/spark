@@ -61,4 +61,35 @@ describe('findPendingProposal', () => {
     expect(proposal?.messageId).toBe('assistant-1');
     expect(proposal?.excerpt).toContain('Refresh the navigation shell');
   });
+
+  it('ignores proposals that were auto-approved in the assistant response', () => {
+    const proposal = findPendingProposal([
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: '## Proposed Changes\n\nRefresh the navigation shell.\n\nAuto-approved. Proceeding with the requested changes now.',
+        parts: [
+          {
+            type: 'tool-invocation',
+            toolInvocation: {
+              toolName: 'propose_changes',
+              state: 'result',
+              args: {
+                summary: 'Refresh the UI shell',
+                plan: [
+                  {
+                    path: 'src/App.tsx',
+                    action: 'edit',
+                    description: 'Update the layout and spacing',
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      },
+    ]);
+
+    expect(proposal).toBeNull();
+  });
 });
