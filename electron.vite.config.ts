@@ -6,6 +6,9 @@ export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
     build: {
+      lib: {
+        entry: resolve(__dirname, 'electron/main.ts')
+      },
       rollupOptions: {
         // Externalize server code so it loads at runtime from the packaged app
         external: [
@@ -16,7 +19,12 @@ export default defineConfig({
     }
   },
   preload: {
-    plugins: [externalizeDepsPlugin()]
+    plugins: [externalizeDepsPlugin()],
+    build: {
+      lib: {
+        entry: resolve(__dirname, 'electron/preload.ts')
+      }
+    }
   },
   renderer: {
     root: '.',
