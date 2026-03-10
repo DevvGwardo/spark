@@ -25,11 +25,11 @@ export const AppLayout: React.FC = () => {
   const { sidebarOpen, setSidebarOpen, toggleSidebar, sidebarWidth, setSidebarWidth, activeTab } = useUIStore();
   const { isSetupComplete, activeProvider, providers } = useSettingsStore();
   const { getChangeset, getChangeCount, getLineTotals, clearChanges, getStagedCount, getStagedChanges } = useChangesetStore();
+  const { conversations, deleteConversation, renameConversation, pinConversation } = useChatStore();
+  const { panels, focusedPanelId, openPanel, setConversationForPanel, focusPanel } = usePanelStore();
   const preview = usePreviewStore((s) => s.getPreview(focusedPanelId));
   const setPreviewOpen = usePreviewStore((s) => s.setOpen);
   const setPreviewView = usePreviewStore((s) => s.setView);
-  const { conversations, deleteConversation, renameConversation, pinConversation } = useChatStore();
-  const { panels, focusedPanelId, openPanel, setConversationForPanel, focusPanel } = usePanelStore();
   const isMultiPanel = panels.length > 1;
   const [prModalOpen, setPrModalOpen] = useState(false);
   const [prPanelId, setPrPanelId] = useState<string | null>(null); // which panel triggered the PR modal
