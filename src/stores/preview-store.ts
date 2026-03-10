@@ -2,6 +2,7 @@ import { create } from 'zustand';
 
 export type ProjectType = 'html' | 'react' | 'nextjs';
 export type FileType = 'html' | 'css' | 'js' | 'jsx' | 'tsx' | 'ts' | 'md';
+export type PreviewSidebarView = 'preview' | 'changes';
 
 export interface PreviewFile {
   id: string;
@@ -16,6 +17,7 @@ export interface PanelPreviewState {
   files: PreviewFile[];
   activeFileId: string | null;
   projectType: ProjectType;
+  activeView: PreviewSidebarView;
 }
 
 const EMPTY_PREVIEW: PanelPreviewState = {
@@ -23,6 +25,7 @@ const EMPTY_PREVIEW: PanelPreviewState = {
   files: [],
   activeFileId: null,
   projectType: 'html',
+  activeView: 'preview',
 };
 
 interface PreviewState {
@@ -30,6 +33,7 @@ interface PreviewState {
 
   setOpen: (panelId: string, open: boolean) => void;
   togglePreview: (panelId: string) => void;
+  setView: (panelId: string, view: PreviewSidebarView) => void;
   addFile: (panelId: string, file: Omit<PreviewFile, 'id' | 'timestamp'>) => void;
   updateFile: (panelId: string, id: string, content: string) => void;
   removeFile: (panelId: string, id: string) => void;
@@ -93,6 +97,17 @@ export const usePreviewStore = create<PreviewState>((set, get) => ({
       };
     }),
 
+  setView: (panelId, view) =>
+    set((state) => {
+      const existing = getOrDefault(state, panelId);
+      return {
+        panelPreviews: {
+          ...state.panelPreviews,
+          [panelId]: { ...existing, activeView: view, isOpen: true },
+        },
+      };
+    }),
+
   addFile: (panelId, file) => {
     const id = crypto.randomUUID();
     const newFile: PreviewFile = {
@@ -115,6 +130,7 @@ export const usePreviewStore = create<PreviewState>((set, get) => ({
             files: updatedFiles,
             activeFileId: id,
             projectType: newProjectType,
+            activeView: 'preview',
           },
         },
       };
@@ -178,6 +194,7 @@ export const usePreviewStore = create<PreviewState>((set, get) => ({
             activeFileId: null,
             projectType: 'html',
             isOpen: false,
+            activeView: 'preview',
           },
         },
       };

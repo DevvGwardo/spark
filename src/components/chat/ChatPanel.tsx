@@ -7,6 +7,7 @@ import { useOrchestratorStore } from '@/stores/orchestrator-store';
 import { usePanelStore } from '@/stores/panel-store';
 import { useChatStore } from '@/stores/chat-store';
 import { useChangesetStore } from '@/stores/changeset-store';
+import { usePreviewStore } from '@/stores/preview-store';
 import { PanelProvider } from '@/contexts/PanelContext';
 import { cn } from '@/lib/utils';
 
@@ -29,14 +30,18 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 }) => {
   const { setConversationForPanel, panels, openPanel } = usePanelStore();
   const { conversations, deleteConversation, renameConversation, pinConversation } = useChatStore();
-  const { getChangeCount, getLineTotals, getChangeset } = useChangesetStore();
+  const { getChangeCount, getLineTotals, getChangeset, getStagedCount } = useChangesetStore();
+  const preview = usePreviewStore((s) => s.getPreview(panelId));
+  const setPreviewOpen = usePreviewStore((s) => s.setOpen);
+  const setPreviewView = usePreviewStore((s) => s.setView);
   const orchestratorEnabled = useOrchestratorStore((s) => s.enabled);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const isMultiPanel = onClose !== undefined;
   const changeCount = getChangeCount(panelId);
-  const lineTotals = getLineTotals(panelId);
+  const lineTotals = getLineTotals(panelId, 'all');
+  const stagedCount = getStagedCount(panelId);
   const { activeRepo } = getChangeset(panelId);
 
   // Close menu on outside click
@@ -98,18 +103,32 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
+                    setPreviewView(panelId, 'changes');
+                    setPreviewOpen(panelId, true);
+                  }}
+                  className={cn(
+                    'flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-mono font-medium tabular-nums transition-colors',
+                    preview.isOpen && preview.activeView === 'changes'
+                      ? 'border-primary/30 bg-primary/10 text-foreground'
+                      : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
+                  )}
+                >
+                  <PanelRight className="h-3 w-3" />
+                  <span className="text-emerald-500">+{lineTotals.added}</span>
+                  <span className="text-muted-foreground/40">/</span>
+                  <span className="text-red-400">-{lineTotals.removed}</span>
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
                     onOpenPR?.(panelId);
                   }}
-                  className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold bg-foreground text-background hover:opacity-90 transition-opacity duration-100"
+                  disabled={stagedCount === 0}
+                  className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold bg-foreground text-background hover:opacity-90 transition-opacity duration-100 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <GitPullRequest className="h-3 w-3" />
                   Commit
                 </button>
-                <span className="text-[10px] font-mono font-medium tabular-nums flex items-center gap-0.5">
-                  <span className="text-emerald-500">+{lineTotals.added}</span>
-                  <span className="text-muted-foreground/40">/</span>
-                  <span className="text-red-400">-{lineTotals.removed}</span>
-                </span>
               </div>
             )}
 

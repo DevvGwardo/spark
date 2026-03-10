@@ -10,10 +10,70 @@ import { db } from '@/lib/db';
 import { getApiBaseUrl } from '@/lib/api';
 import { createQueuedMessage, moveQueuedMessageToFront, removeQueuedMessage, type QueuedMessage } from '@/lib/chat-queue';
 import { PROVIDERS } from '@/lib/providers';
+import { findPendingProposal, type ProposalMessageLike } from '@/lib/proposed-changes';
 
 function countLines(content: string): number {
   if (!content) return 0;
   return content.split('\n').length;
+}
+
+/**
+ * Sanitize messages so that any tool invocations stuck in 'partial-call' or 'call'
+ * state (from an interrupted stream) get a synthetic error result.
+ * Without this, the AI SDK throws "ToolInvocation must have a result".
+ */
+function sanitizePartialToolCalls<T extends { parts?: Array<Record<string, unknown>>; toolInvocations?: Array<Record<string, unknown>> }>(msgs: T[]): T[] {
+  let dirty = false;
+  const cleaned = msgs.map((msg) => {
+    let msgDirty = false;
+
+    const fixedParts = msg.parts?.map((part) => {
+      if (
+        part.type === 'tool-invocation' &&
+        (part as { toolInvocation?: { state?: string } }).toolInvocation &&
+        ((part as { toolInvocation: { state: string } }).toolInvocation.state === 'partial-call' ||
+         (part as { toolInvocation: { state: string } }).toolInvocation.state === 'call')
+      ) {
+        msgDirty = true;
+        return {
+          ...part,
+          toolInvocation: {
+            ...(part as { toolInvocation: Record<string, unknown> }).toolInvocation,
+            state: 'result',
+            result: { error: 'Tool call was interrupted' },
+          },
+        };
+      }
+      return part;
+    });
+
+    const fixedInvocations = msg.toolInvocations?.map((inv) => {
+      if (inv.state === 'partial-call' || inv.state === 'call') {
+        msgDirty = true;
+        return { ...inv, state: 'result', result: { error: 'Tool call was interrupted' } };
+      }
+      return inv;
+    });
+
+    if (msgDirty) {
+      dirty = true;
+      return { ...msg, parts: fixedParts ?? msg.parts, toolInvocations: fixedInvocations ?? msg.toolInvocations };
+    }
+    return msg;
+  });
+
+  return dirty ? cleaned : msgs;
+}
+
+function isProposalApprovalMessage(content: string): boolean {
+  const normalized = content.trim().toLowerCase();
+  if (!normalized) return false;
+
+  return [
+    /^(go ahead|proceed|apply|accept|approved|looks good|ship it)[.!]?$/,
+    /^(yes|yep|yeah|sure|ok|okay)(,?\s+(go ahead|proceed|apply))?[.!]?$/,
+    /^(please\s+)?(apply|continue)\b/,
+  ].some((pattern) => pattern.test(normalized));
 }
 
 
@@ -122,6 +182,10 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
   const chatSessionId = conversationId ? `${conversationId}:${panelId}` : undefined;
   const autoSendingQueuedRef = useRef<string | null>(null);
+  const pauseForProposalRef = useRef(false);
+  const awaitingProposalApprovalRef = useRef(false);
+  const proposalApprovedRef = useRef(false);
+  const repoFileCacheRef = useRef<Record<string, string>>({});
 
   const {
     messages,
@@ -148,16 +212,21 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
     throttle: 32,
     maxSteps: 50,
     onFinish: async (message) => {
+      awaitingProposalApprovalRef.current = false;
+      proposalApprovedRef.current = false;
+
       const convId = convIdRef.current;
       if (!convId) return;
 
-      // Persist assistant message
+      // Persist assistant message (including parts and tool invocations)
       await db.messages.add({
         id: message.id || crypto.randomUUID(),
         conversationId: convId,
         role: 'assistant',
         content: message.content,
         timestamp: new Date().toISOString(),
+        parts: (message as Record<string, unknown>).parts as unknown[] | undefined,
+        toolInvocations: (message as Record<string, unknown>).toolInvocations as unknown[] | undefined,
       });
       await db.conversations.update(convId, { updatedAt: new Date().toISOString() });
       await loadConversations();
@@ -220,6 +289,7 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
           );
           const data = await response.json();
           if (data.error) return `Error reading file: ${data.error}`;
+          repoFileCacheRef.current[path] = data.content || '';
           return data.content || '';
         } catch {
           return 'Error: Failed to read file from GitHub.';
@@ -232,16 +302,23 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
           summary?: string;
           plan: Array<{ path: string; action: string; description: string }>;
         };
+        pauseForProposalRef.current = true;
+        awaitingProposalApprovalRef.current = true;
+        proposalApprovedRef.current = false;
         const summary = plan.map((p, i) => `${i + 1}. **${p.action}** \`${p.path}\` — ${p.description}`).join('\n');
         return `## Proposed Changes\n\n${overallSummary ? `${overallSummary}\n\n` : ''}${summary}\n\nUse the accept button below to apply these changes, or tell me what to adjust.`;
       }
 
       if (toolCall.toolName === 'edit_repo_file') {
+        if (awaitingProposalApprovalRef.current || !proposalApprovedRef.current) {
+          return 'Error: Changes are locked until the user explicitly accepts the proposed changes.';
+        }
         const { path, content } = toolCall.args as { path: string; content: string; description: string };
         const existing = useChangesetStore.getState().getChangeset(panelId).changes[path];
-        const oldLines = existing?.originalContent ? countLines(existing.originalContent) : 0;
+        const originalContent = existing?.originalContent ?? repoFileCacheRef.current[path] ?? '';
+        const oldLines = originalContent ? countLines(originalContent) : 0;
         const newLines = countLines(content);
-        addChange({ path, action: 'edit', content });
+        addChange({ path, action: 'edit', content, originalContent, staged: false });
         const convId = convIdRef.current;
         if (convId) {
           useActivityStore.getState().addLineStats(convId, Math.max(0, newLines - oldLines), Math.max(0, oldLines - newLines));
@@ -250,8 +327,11 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
       }
 
       if (toolCall.toolName === 'create_repo_file') {
+        if (awaitingProposalApprovalRef.current || !proposalApprovedRef.current) {
+          return 'Error: Changes are locked until the user explicitly accepts the proposed changes.';
+        }
         const { path, content } = toolCall.args as { path: string; content: string; description: string };
-        addChange({ path, action: 'create', content });
+        addChange({ path, action: 'create', content, staged: false });
         const convId = convIdRef.current;
         if (convId) {
           useActivityStore.getState().addLineStats(convId, countLines(content), 0);
@@ -260,10 +340,14 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
       }
 
       if (toolCall.toolName === 'delete_repo_file') {
+        if (awaitingProposalApprovalRef.current || !proposalApprovedRef.current) {
+          return 'Error: Changes are locked until the user explicitly accepts the proposed changes.';
+        }
         const { path } = toolCall.args as { path: string; reason: string };
         const existing = useChangesetStore.getState().getChangeset(panelId).changes[path];
-        const oldLines = existing?.originalContent ? countLines(existing.originalContent) : 0;
-        addChange({ path, action: 'delete', content: '' });
+        const originalContent = existing?.originalContent ?? repoFileCacheRef.current[path] ?? '';
+        const oldLines = originalContent ? countLines(originalContent) : 0;
+        addChange({ path, action: 'delete', content: '', originalContent, staged: false });
         const convId = convIdRef.current;
         if (convId) {
           useActivityStore.getState().addLineStats(convId, 0, oldLines);
@@ -272,6 +356,9 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
       }
 
       if (toolCall.toolName === 'batch_edit_repo_files') {
+        if (awaitingProposalApprovalRef.current || !proposalApprovedRef.current) {
+          return 'Error: Changes are locked until the user explicitly accepts the proposed changes.';
+        }
         const { changes: fileChanges } = toolCall.args as {
           changes: Array<{ path: string; action: 'create' | 'edit' | 'delete'; content: string; description: string }>;
         };
@@ -280,7 +367,8 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
         let totalRemoved = 0;
         for (const change of fileChanges) {
           const existing = useChangesetStore.getState().getChangeset(panelId).changes[change.path];
-          const oldLines = existing?.originalContent ? countLines(existing.originalContent) : 0;
+          const originalContent = existing?.originalContent ?? repoFileCacheRef.current[change.path] ?? '';
+          const oldLines = originalContent ? countLines(originalContent) : 0;
           const newLines = countLines(change.content || '');
           if (change.action === 'create') {
             totalAdded += newLines;
@@ -290,7 +378,13 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
             totalAdded += Math.max(0, newLines - oldLines);
             totalRemoved += Math.max(0, oldLines - newLines);
           }
-          addChange({ path: change.path, action: change.action, content: change.content || '' });
+          addChange({
+            path: change.path,
+            action: change.action,
+            content: change.content || '',
+            originalContent,
+            staged: false,
+          });
           results.push(`Staged ${change.action} on ${change.path}`);
         }
         const convId = convIdRef.current;
@@ -301,6 +395,7 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
       }
     },
     onError: (err) => {
+      proposalApprovedRef.current = false;
       console.error('Chat error:', err);
       if (err?.message?.includes('not configured')) {
         setProviderUnavailableOpen(true);
@@ -314,6 +409,17 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
 
   // Track streaming state in global activity store
   const isStreaming = status === 'streaming' || status === 'submitted';
+  const pendingProposal = findPendingProposal(messages as ProposalMessageLike[]);
+
+  useEffect(() => {
+    if (!isStreaming) return;
+    if (!pauseForProposalRef.current) return;
+    if (!pendingProposal) return;
+
+    pauseForProposalRef.current = false;
+    stop();
+  }, [isStreaming, pendingProposal, stop]);
+
   useEffect(() => {
     const convId = convIdRef.current;
     if (convId) {
@@ -337,6 +443,11 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
       const psStore = usePreviewStore.getState();
       if (saved) {
         const { changeset: cs, preview } = saved;
+        repoFileCacheRef.current = Object.fromEntries(
+          Object.values(cs.changes)
+            .filter((change) => typeof change.originalContent === 'string')
+            .map((change) => [change.path, change.originalContent as string])
+        );
         if (cs.activeRepo) {
           csStore.setActiveRepo(panelId, cs.activeRepo);
         } else {
@@ -354,6 +465,7 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
           projectType: preview.projectType as ProjectType,
         });
       } else {
+        repoFileCacheRef.current = {};
         resetPanelFileState();
       }
     });
@@ -390,6 +502,8 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
             id: m.id,
             role: m.role as AIMessage['role'],
             content: m.content,
+            ...(m.parts ? { parts: m.parts } : {}),
+            ...(m.toolInvocations ? { toolInvocations: m.toolInvocations } : {}),
           }))
         );
       });
@@ -412,6 +526,8 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
             id: m.id,
             role: m.role as AIMessage['role'],
             content: m.content,
+            ...(m.parts ? { parts: m.parts } : {}),
+            ...(m.toolInvocations ? { toolInvocations: m.toolInvocations } : {}),
           }))
         );
       });
@@ -419,6 +535,7 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
       // Restore file state for this conversation
       restoreFileState(conversationId);
     } else {
+      repoFileCacheRef.current = {};
       setMessages([]);
       resetPanelFileState();
     }
@@ -487,6 +604,13 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
     }
 
     // Persist user message to IndexedDB
+    if (awaitingProposalApprovalRef.current && isProposalApprovalMessage(content)) {
+      proposalApprovedRef.current = true;
+      awaitingProposalApprovalRef.current = false;
+    } else {
+      proposalApprovedRef.current = false;
+    }
+
     const userMsgId = crypto.randomUUID();
     await db.messages.add({
       id: userMsgId,
@@ -508,9 +632,16 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
     if (clearDraft) {
       setDraftInput('');
     }
+
+    // Sanitize any partial tool invocations from interrupted streams
+    const sanitized = sanitizePartialToolCalls(messages);
+    if (sanitized !== messages) {
+      setMessages(sanitized);
+    }
+
     await append({ role: 'user', content });
     return true;
-  }, [conversationId, effectiveProvider, effectiveModel, config, defaultSystemPrompt, createConversation, renameConversation, append, onConversationCreated]);
+  }, [conversationId, effectiveProvider, effectiveModel, config, defaultSystemPrompt, createConversation, renameConversation, append, onConversationCreated, messages, setMessages]);
 
   const handleSend = useCallback(() => {
     if (isStreaming) {

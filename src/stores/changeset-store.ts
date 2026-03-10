@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { countContentLines } from '@/lib/change-diff';
 
 export interface ActiveRepo {
   owner: string;
@@ -12,6 +13,7 @@ export interface FileChange {
   action: 'create' | 'edit' | 'delete';
   content: string;
   originalContent?: string;
+  staged?: boolean;
 }
 
 export interface PanelChangeset {
@@ -38,9 +40,13 @@ interface ChangesetState {
   addChange: (panelId: string, change: FileChange) => void;
   removeChange: (panelId: string, path: string) => void;
   clearChanges: (panelId: string) => void;
+  setChangeStaged: (panelId: string, path: string, staged: boolean) => void;
+  stageAllChanges: (panelId: string, staged: boolean) => void;
   getChangeset: (panelId: string) => PanelChangeset;
   getChangeCount: (panelId: string) => number;
-  getLineTotals: (panelId: string) => { added: number; removed: number };
+  getStagedCount: (panelId: string) => number;
+  getLineTotals: (panelId: string, filter?: 'all' | 'staged' | 'unstaged') => { added: number; removed: number };
+  getStagedChanges: (panelId: string) => FileChange[];
   setRepoFileTree: (panelId: string, tree: string[]) => void;
   cleanupPanel: (panelId: string) => void;
 
@@ -106,7 +112,15 @@ export const useChangesetStore = create<ChangesetState>()((set, get) => ({
           ...state.panelChangesets,
           [panelId]: {
             ...existing,
-            changes: { ...existing.changes, [change.path]: change },
+            changes: {
+              ...existing.changes,
+              [change.path]: {
+                ...prevChange,
+                ...change,
+                staged: change.staged ?? prevChange?.staged ?? false,
+                originalContent: change.originalContent ?? prevChange?.originalContent,
+              },
+            },
           },
         },
       };
@@ -135,17 +149,57 @@ export const useChangesetStore = create<ChangesetState>()((set, get) => ({
       };
     }),
 
+  setChangeStaged: (panelId, path, staged) =>
+    set((state) => {
+      const existing = getOrDefault(state, panelId);
+      const change = existing.changes[path];
+      if (!change) return state;
+      return {
+        panelChangesets: {
+          ...state.panelChangesets,
+          [panelId]: {
+            ...existing,
+            changes: {
+              ...existing.changes,
+              [path]: { ...change, staged },
+            },
+          },
+        },
+      };
+    }),
+
+  stageAllChanges: (panelId, staged) =>
+    set((state) => {
+      const existing = getOrDefault(state, panelId);
+      const changes = Object.fromEntries(
+        Object.entries(existing.changes).map(([path, change]) => [path, { ...change, staged }])
+      );
+      return {
+        panelChangesets: {
+          ...state.panelChangesets,
+          [panelId]: { ...existing, changes },
+        },
+      };
+    }),
+
   getChangeset: (panelId) => getOrDefault(get(), panelId),
 
   getChangeCount: (panelId) => Object.keys(getOrDefault(get(), panelId).changes).length,
 
-  getLineTotals: (panelId) => {
-    const changes = Object.values(getOrDefault(get(), panelId).changes);
+  getStagedCount: (panelId) =>
+    Object.values(getOrDefault(get(), panelId).changes).filter((change) => change.staged).length,
+
+  getLineTotals: (panelId, filter = 'all') => {
+    const changes = Object.values(getOrDefault(get(), panelId).changes).filter((change) => {
+      if (filter === 'staged') return !!change.staged;
+      if (filter === 'unstaged') return !change.staged;
+      return true;
+    });
     let added = 0;
     let removed = 0;
     for (const change of changes) {
-      const newLines = (change.content || '').split('\n').length;
-      const oldLines = (change.originalContent || '').split('\n').length;
+      const newLines = countContentLines(change.content);
+      const oldLines = countContentLines(change.originalContent);
       if (change.action === 'create') {
         added += newLines;
       } else if (change.action === 'delete') {
@@ -157,6 +211,9 @@ export const useChangesetStore = create<ChangesetState>()((set, get) => ({
     }
     return { added, removed };
   },
+
+  getStagedChanges: (panelId) =>
+    Object.values(getOrDefault(get(), panelId).changes).filter((change) => change.staged),
 
   setRepoFileTree: (panelId, tree) =>
     set((state) => {

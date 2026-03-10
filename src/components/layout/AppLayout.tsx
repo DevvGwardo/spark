@@ -10,12 +10,13 @@ import { useUIStore } from '@/stores/ui-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useChangesetStore } from '@/stores/changeset-store';
 import { PreviewSidebar } from '@/components/preview/PreviewSidebar';
+import { usePreviewStore } from '@/stores/preview-store';
 import { useChatStore } from '@/stores/chat-store';
 import { usePanelStore } from '@/stores/panel-store';
 import { useTheme } from '@/hooks/useTheme';
 import { useGlobalStyles } from '@/hooks/useGlobalStyles';
 import { PROVIDERS } from '@/lib/providers';
-import { PanelLeft, GitPullRequest, MoreHorizontal, GitBranch, Shield, Circle, Pin, Pencil, Archive, Copy, PanelRight, Plus } from 'lucide-react';
+import { PanelLeft, GitPullRequest, MoreHorizontal, GitBranch, Shield, Circle, Pin, Pencil, Archive, Copy, PanelRight, Plus, FileCode2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export const AppLayout: React.FC = () => {
@@ -23,7 +24,10 @@ export const AppLayout: React.FC = () => {
   useGlobalStyles();
   const { sidebarOpen, setSidebarOpen, toggleSidebar, sidebarWidth, setSidebarWidth, activeTab } = useUIStore();
   const { isSetupComplete, activeProvider, providers } = useSettingsStore();
-  const { getChangeset, getChangeCount, getLineTotals, clearChanges } = useChangesetStore();
+  const { getChangeset, getChangeCount, getLineTotals, clearChanges, getStagedCount, getStagedChanges } = useChangesetStore();
+  const preview = usePreviewStore((s) => s.getPreview(focusedPanelId));
+  const setPreviewOpen = usePreviewStore((s) => s.setOpen);
+  const setPreviewView = usePreviewStore((s) => s.setView);
   const { conversations, deleteConversation, renameConversation, pinConversation } = useChatStore();
   const { panels, focusedPanelId, openPanel, setConversationForPanel, focusPanel } = usePanelStore();
   const isMultiPanel = panels.length > 1;
@@ -36,13 +40,14 @@ export const AppLayout: React.FC = () => {
   const focusedChangeset = getChangeset(focusedPanelId);
   const activeRepo = focusedChangeset.activeRepo;
   const changeCount = getChangeCount(focusedPanelId);
-  const lineTotals = getLineTotals(focusedPanelId);
+  const lineTotals = getLineTotals(focusedPanelId, 'all');
+  const stagedCount = getStagedCount(focusedPanelId);
 
   // For the PR modal, use the panel that triggered it (or focused panel in single-panel mode)
   const prTargetPanelId = prPanelId || focusedPanelId;
   const prChangeset = getChangeset(prTargetPanelId);
   const prActiveRepo = prChangeset.activeRepo;
-  const pendingFiles = Object.values(prChangeset.changes).map(c => ({ path: c.path, content: c.content, action: c.action }));
+  const pendingFiles = getStagedChanges(prTargetPanelId).map(c => ({ path: c.path, content: c.content, action: c.action }));
 
   // Get active conversation title
   const focusedPanel = panels.find((p) => p.id === focusedPanelId);
@@ -86,6 +91,11 @@ export const AppLayout: React.FC = () => {
     focusPanel(targetPanelId);
     setPrModalOpen(true);
   }, [focusPanel]);
+
+  const handleOpenChangesSidebar = useCallback((panelId: string) => {
+    setPreviewView(panelId, 'changes');
+    setPreviewOpen(panelId, true);
+  }, [setPreviewOpen, setPreviewView]);
 
   // Sidebar resize handling
   const isResizing = useRef(false);
@@ -322,17 +332,27 @@ export const AppLayout: React.FC = () => {
               {!isMultiPanel && activeRepo && changeCount > 0 && (
                 <div className="flex items-center gap-2.5" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
                   <button
+                    onClick={() => handleOpenChangesSidebar(focusedPanelId)}
+                    className={cn(
+                      'flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-mono font-medium tabular-nums transition-colors',
+                      preview.isOpen && preview.activeView === 'changes'
+                        ? 'border-primary/30 bg-primary/10 text-foreground'
+                        : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
+                    )}
+                  >
+                    <FileCode2 className="h-3.5 w-3.5" />
+                    <span className="text-emerald-500">+{lineTotals.added}</span>
+                    <span className="text-muted-foreground/40">/</span>
+                    <span className="text-red-400">-{lineTotals.removed}</span>
+                  </button>
+                  <button
                     onClick={() => { setPrPanelId(null); setPrModalOpen(true); }}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-foreground text-background hover:opacity-90 transition-opacity duration-100 shadow-sm"
+                    disabled={stagedCount === 0}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-foreground text-background hover:opacity-90 transition-opacity duration-100 shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <GitPullRequest className="h-3.5 w-3.5" />
                     Commit
                   </button>
-                  <span className="text-[11px] font-mono font-medium tabular-nums flex items-center gap-1">
-                    <span className="text-emerald-500">+{lineTotals.added}</span>
-                    <span className="text-muted-foreground/40">/</span>
-                    <span className="text-red-400">-{lineTotals.removed}</span>
-                  </span>
                 </div>
               )}
             </header>
@@ -359,7 +379,7 @@ export const AppLayout: React.FC = () => {
         </div>
 
         {/* Bottom status bar — Codex style */}
-        <footer className="flex items-center h-7 px-4 text-[11px] text-muted-foreground gap-4 flex-shrink-0 border-t border-border">
+        <footer className="flex items-center h-7 px-4 text-[11px] leading-7 text-muted-foreground gap-4 flex-shrink-0 border-t border-border">
           <div className="flex items-center gap-1.5">
             <Shield className="h-3 w-3" />
             <span>Default permissions</span>

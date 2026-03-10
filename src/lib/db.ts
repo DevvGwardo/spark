@@ -17,6 +17,10 @@ export interface Message {
   timestamp: string;
   tokenCount?: number;
   error?: string;
+  /** Structured message parts (text, reasoning, tool-invocation) from AI SDK */
+  parts?: unknown[];
+  /** Tool invocations associated with this message */
+  toolInvocations?: unknown[];
 }
 
 /** Persisted file state for a conversation (changesets + preview files). */
@@ -25,13 +29,14 @@ export interface ConversationFiles {
   changeset: {
     activeRepo: { owner: string; name: string; defaultBranch: string; fullName: string } | null;
     isRepoMode: boolean;
-    changes: Record<string, { path: string; action: 'create' | 'edit' | 'delete'; content: string; originalContent?: string }>;
+    changes: Record<string, { path: string; action: 'create' | 'edit' | 'delete'; content: string; originalContent?: string; staged?: boolean }>;
     repoFileTree: string[];
   };
   preview: {
     files: Array<{ id: string; filename: string; content: string; type: string; timestamp: string }>;
     activeFileId: string | null;
     projectType: string;
+    activeView?: string;
   };
 }
 
