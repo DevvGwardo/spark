@@ -167,9 +167,10 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
       }),
     };
 
-    // Repo tools (only included when activeRepo is present)
-    const repoTools = activeRepo
-      ? {
+    // Repo tools — always included so the model doesn't error on conversations
+    // that previously used repo tools. Client-side onToolCall handles the case
+    // where activeRepo is missing by returning a graceful error.
+    const repoTools = {
           propose_changes: tool({
             description:
               'Present a plan of proposed changes to the user BEFORE making any edits. Always call this first when the user asks for changes. The user will review and approve the plan before you proceed.',
@@ -236,8 +237,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
               ).describe('Array of file changes to apply'),
             }),
           }),
-        }
-      : {};
+        };
 
     let aiModel;
     try {

@@ -6,6 +6,7 @@ import { useChangesetStore } from '@/stores/changeset-store';
 import { usePanelId } from '@/contexts/PanelContext';
 import { usePreviewStore } from '@/stores/preview-store';
 import type { Message } from '@/lib/db';
+import { computeDiffLines, countContentLines, getChangeLineDelta } from '@/lib/change-diff';
 import { cn } from '@/lib/utils';
 import '@shoelace-style/shoelace/dist/components/details/details.js';
 
@@ -183,7 +184,7 @@ function LineDiffBadge({ filePath, toolName }: { filePath?: string; toolName: st
   }
 
   const newLines = (change.content || '').split('\n').length;
-  const oldLines = (change.originalContent || '').split('\n').length;
+  const oldLines = countContentLines(change.originalContent);
 
   if (change.action === 'create') {
     return (
@@ -205,9 +206,7 @@ function LineDiffBadge({ filePath, toolName }: { filePath?: string; toolName: st
     );
   }
 
-  // Edit — compute added/removed lines
-  const added = Math.max(0, newLines - oldLines);
-  const removed = Math.max(0, oldLines - newLines);
+  const { added, removed } = getChangeLineDelta(change);
 
   return (
     <span className="ml-1 flex items-center gap-1.5 text-[10px] font-medium">
@@ -218,103 +217,6 @@ function LineDiffBadge({ filePath, toolName }: { filePath?: string; toolName: st
       {added === 0 && removed === 0 && <span className="text-muted-foreground">~{newLines}L</span>}
     </span>
   );
-}
-
-/** Compute a minimal unified-style diff showing only changed lines with context. */
-interface DiffLine {
-  type: 'context' | 'added' | 'removed';
-  lineNum: number | null; // line number in original (removed/context) or new (added)
-  content: string;
-}
-
-function computeDiffLines(oldText: string, newText: string, contextLines = 2): DiffLine[] {
-  const oldLines = oldText.split('\n');
-  const newLines = newText.split('\n');
-
-  // Simple LCS-based diff
-  const m = oldLines.length;
-  const n = newLines.length;
-
-  // For large files, limit diff computation
-  if (m + n > 2000) {
-    // Fallback: show first few new lines
-    return newLines.slice(0, 20).map((line, i) => ({
-      type: 'added' as const,
-      lineNum: i + 1,
-      content: line,
-    }));
-  }
-
-  // Build edit script using Myers-like approach (simplified)
-  // We'll use a DP approach for shorter files, or line-hash comparison for longer ones
-  const oldSet = new Map<string, number[]>();
-  oldLines.forEach((line, i) => {
-    const existing = oldSet.get(line) || [];
-    existing.push(i);
-    oldSet.set(line, existing);
-  });
-
-  // Find matching lines using longest common subsequence
-  const dp = new Array(m + 1).fill(null).map(() => new Array(n + 1).fill(0));
-  for (let i = m - 1; i >= 0; i--) {
-    for (let j = n - 1; j >= 0; j--) {
-      if (oldLines[i] === newLines[j]) {
-        dp[i][j] = dp[i + 1][j + 1] + 1;
-      } else {
-        dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
-      }
-    }
-  }
-
-  // Trace back to get diff
-  const rawDiff: Array<{ type: 'equal' | 'added' | 'removed'; line: string; oldIdx: number; newIdx: number }> = [];
-  let i = 0, j = 0;
-  while (i < m || j < n) {
-    if (i < m && j < n && oldLines[i] === newLines[j]) {
-      rawDiff.push({ type: 'equal', line: oldLines[i], oldIdx: i, newIdx: j });
-      i++; j++;
-    } else if (j < n && (i >= m || dp[i][j + 1] >= dp[i + 1][j])) {
-      rawDiff.push({ type: 'added', line: newLines[j], oldIdx: i, newIdx: j });
-      j++;
-    } else if (i < m) {
-      rawDiff.push({ type: 'removed', line: oldLines[i], oldIdx: i, newIdx: j });
-      i++;
-    }
-  }
-
-  // Filter to show only changed lines + context, with separator markers
-  const changedIndices = new Set<number>();
-  rawDiff.forEach((d, idx) => {
-    if (d.type !== 'equal') {
-      for (let k = Math.max(0, idx - contextLines); k <= Math.min(rawDiff.length - 1, idx + contextLines); k++) {
-        changedIndices.add(k);
-      }
-    }
-  });
-
-  const result: DiffLine[] = [];
-  let lastIncluded = -1;
-
-  rawDiff.forEach((d, idx) => {
-    if (!changedIndices.has(idx)) return;
-
-    // Add separator if there's a gap
-    if (lastIncluded !== -1 && idx - lastIncluded > 1) {
-      result.push({ type: 'context', lineNum: null, content: '···' });
-    }
-
-    if (d.type === 'equal') {
-      result.push({ type: 'context', lineNum: d.newIdx + 1, content: d.line });
-    } else if (d.type === 'added') {
-      result.push({ type: 'added', lineNum: d.newIdx + 1, content: d.line });
-    } else {
-      result.push({ type: 'removed', lineNum: d.oldIdx + 1, content: d.line });
-    }
-
-    lastIncluded = idx;
-  });
-
-  return result;
 }
 
 /** Collapsible code preview of edited lines for a file change. */
@@ -469,6 +371,7 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
       const file = preview.files.find((f) => f.filename === artifactFilename);
       if (file) previewStore.setActiveFile(panelId, file.id);
     }
+    previewStore.setView(panelId, 'preview');
     previewStore.setOpen(panelId, true);
   };
 
