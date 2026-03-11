@@ -386,7 +386,12 @@ export const AppLayout: React.FC = () => {
             {/* Content — switches based on active tab */}
             <main className="flex-1 overflow-hidden flex">
               <div className="flex-1 overflow-hidden">
-                {activeTab === 'chat' && <ChatPanelContainer onOpenPR={handleOpenPRForPanel} />}
+                <div
+                  className={cn('h-full overflow-hidden', activeTab !== 'chat' && 'hidden')}
+                  aria-hidden={activeTab !== 'chat'}
+                >
+                  <ChatPanelContainer onOpenPR={handleOpenPRForPanel} />
+                </div>
                 {activeTab === 'github' && <GitHubPanel />}
                 {activeTab === 'analyzer' && (
                   <div className="h-full overflow-y-auto p-6">
@@ -399,7 +404,9 @@ export const AppLayout: React.FC = () => {
                   </div>
                 )}
               </div>
-              {activeTab === 'chat' && <PreviewSidebar />}
+              <div className={cn(activeTab !== 'chat' && 'hidden')} aria-hidden={activeTab !== 'chat'}>
+                <PreviewSidebar />
+              </div>
             </main>
           </div>
         </div>

@@ -11,6 +11,7 @@ export interface ProviderInfo {
   defaultModel: string;
   category: ProviderCategory;
   badge?: string;
+  supportsOrchestrator?: boolean;
 }
 
 export const REASONING_EFFORTS: readonly ReasoningEffort[] = ['low', 'medium', 'high'];
@@ -191,6 +192,18 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     ],
     defaultModel: 'kimi-for-coding',
   },
+  openclaw: {
+    id: 'openclaw',
+    label: 'OpenClaw',
+    description: 'Local OpenClaw agent runtime using your configured default model',
+    needsApiKey: false,
+    category: 'specialized',
+    models: [
+      'default',
+    ],
+    defaultModel: 'default',
+    supportsOrchestrator: false,
+  },
   cerebras: {
     id: 'cerebras',
     label: 'Cerebras',
@@ -241,7 +254,7 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
 export const PROVIDER_ORDER: Provider[] = [
   'openai', 'anthropic', 'google', 'xai',
   'groq', 'cerebras', 'openrouter', 'sambanova',
-  'deepseek', 'mistral', 'together', 'minimax', 'minimax-payg', 'kimi', 'kimi-coding',
+  'deepseek', 'mistral', 'together', 'minimax', 'minimax-payg', 'kimi', 'kimi-coding', 'openclaw',
 ];
 
 export function getProviderLabel(provider: Provider): string {

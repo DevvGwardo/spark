@@ -28,6 +28,9 @@ export const OrchestratorConfig: React.FC = () => {
   const { providers: providerConfigs } = useSettingsStore();
 
   const availableProviders = PROVIDER_ORDER.filter((p) => {
+    if (PROVIDERS[p].supportsOrchestrator === false) {
+      return false;
+    }
     const config = providerConfigs[p];
     return !!config?.apiKey;
   });

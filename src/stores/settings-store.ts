@@ -4,7 +4,7 @@ import { persist } from 'zustand/middleware';
 export type Provider =
   | 'openai' | 'anthropic' | 'google' | 'xai'
   | 'groq' | 'deepseek' | 'mistral' | 'together'
-  | 'minimax' | 'minimax-payg' | 'kimi' | 'kimi-coding'
+  | 'minimax' | 'minimax-payg' | 'kimi' | 'kimi-coding' | 'openclaw'
   | 'cerebras' | 'openrouter' | 'sambanova';
 
 export type ReasoningEffort = 'low' | 'medium' | 'high';
@@ -74,6 +74,7 @@ const defaultProviders: Record<Provider, ProviderConfig> = {
   'minimax-payg': makeDefault('MiniMax-M2.5'),
   kimi: makeDefault('moonshot-v1-32k'),
   'kimi-coding': makeDefault('kimi-for-coding'),
+  openclaw: makeDefault('default'),
   cerebras: makeDefault('llama-3.3-70b'),
   openrouter: makeDefault('openai/gpt-oss-120b:free'),
   sambanova: makeDefault('Meta-Llama-3.3-70B-Instruct'),

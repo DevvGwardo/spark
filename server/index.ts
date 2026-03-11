@@ -1,6 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import { generateText, streamText, tool } from 'ai';
+import { formatDataStreamPart, generateText, streamText, tool } from 'ai';
 import { z } from 'zod';
 import { createOrchestrateHandler } from './orchestrator';
 import {
@@ -10,6 +10,7 @@ import {
   OPENAI_COMPATIBLE,
   VALIDATION_MODELS,
 } from './provider-config';
+import { getOpenClawModels, runOpenClawTurn } from './openclaw';
 
 // ─── Shared helpers ──────────────────────────────────────────────────────────
 
@@ -25,6 +26,29 @@ function sendJson(res: express.Response, status: number, body: unknown) {
 
 function getUnknownErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function createSingleMessageDataStream(text: string, usage?: { input?: number; output?: number; total?: number }) {
+  const encoder = new TextEncoder();
+
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(formatDataStreamPart('text', text)));
+      controller.enqueue(
+        encoder.encode(
+          formatDataStreamPart('finish_message', {
+            finishReason: 'stop',
+            usage: {
+              promptTokens: usage?.input ?? 0,
+              completionTokens: usage?.output ?? 0,
+              totalTokens: usage?.total ?? (usage?.input ?? 0) + (usage?.output ?? 0),
+            },
+          }),
+        ),
+      );
+      controller.close();
+    },
+  });
 }
 
 // ─── /functions/v1/chat ──────────────────────────────────────────────────────
@@ -85,11 +109,14 @@ app.post('/functions/v1/chat', async (req, res) => {
       system_prompt,
       activeRepo,
       reasoning_effort,
+      conversation_id,
     } = req.body;
 
     // Resolve API key
-    let apiKey: string;
-    if (provider === 'lovable') {
+    let apiKey = '';
+    if (provider === 'openclaw') {
+      apiKey = '';
+    } else if (provider === 'lovable') {
       apiKey = process.env.LOVABLE_API_KEY || '';
       if (!apiKey) {
         return sendJson(res, 500, { error: 'Lovable AI is not configured' });
@@ -124,6 +151,64 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
     const allMessages = effectiveSystemPrompt
       ? [{ role: 'system' as const, content: effectiveSystemPrompt }, ...messages]
       : messages;
+
+    if (provider === 'openclaw') {
+      const latestUserMessage = [...(Array.isArray(messages) ? messages : [])]
+        .reverse()
+        .find((message: { role?: string; content?: string }) => message.role === 'user' && typeof message.content === 'string')
+        ?.content
+        ?.trim();
+
+      if (!latestUserMessage) {
+        return sendJson(res, 400, { error: 'OpenClaw requires a user message' });
+      }
+
+      const result = await runOpenClawTurn({
+        message: latestUserMessage,
+        sessionId: typeof conversation_id === 'string' && conversation_id
+          ? conversation_id
+          : `cloudchat-${crypto.randomUUID()}`,
+        systemPrompt: effectiveSystemPrompt,
+      });
+
+      const response = new Response(createSingleMessageDataStream(result.text, result.usage), {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'text/plain; charset=utf-8',
+          'x-vercel-ai-data-stream': 'v1',
+        },
+      });
+
+      response.headers.forEach((value, key) => {
+        res.setHeader(key, value);
+      });
+      res.status(response.status);
+
+      if (!response.body) {
+        res.end();
+        return;
+      }
+
+      const reader = response.body.getReader();
+
+      req.on('close', () => {
+        reader.cancel().catch(() => {});
+      });
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          res.end();
+          break;
+        }
+        const ok = res.write(Buffer.from(value));
+        if (!ok) {
+          await new Promise<void>((resolve) => res.once('drain', resolve));
+        }
+      }
+      return;
+    }
 
     // File creation tools (always available for artifact/preview support)
     const fileTools = {
@@ -873,6 +958,11 @@ app.post('/functions/v1/github-analyzer', async (req, res) => {
 app.post('/functions/v1/validate-key', async (req, res) => {
   try {
     const { provider, api_key } = req.body;
+
+    if (provider === 'openclaw') {
+      const { defaultModel, models } = await getOpenClawModels();
+      return sendJson(res, 200, { valid: true, defaultModel, models });
+    }
 
     if (!api_key || !provider) {
       return sendJson(res, 400, { valid: false, error: 'Missing provider or api_key' });

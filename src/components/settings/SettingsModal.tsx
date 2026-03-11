@@ -46,6 +46,10 @@ function RolesTab() {
     setMaxSubAgents,
   } = useOrchestratorStore();
 
+  const orchestratorProviders = PROVIDER_ORDER.filter(
+    (provider) => PROVIDERS[provider].supportsOrchestrator !== false,
+  );
+
   const handlePlanProviderChange = (p: Provider) => {
     setPlanningProvider(p);
     setPlanningModel(PROVIDERS[p].defaultModel);
@@ -124,7 +128,7 @@ function RolesTab() {
                   onChange={(e) => handlePlanProviderChange(e.target.value as Provider)}
                   className={selectClasses}
                 >
-                  {PROVIDER_ORDER.map((p) => (
+                  {orchestratorProviders.map((p) => (
                     <option key={p} value={p}>
                       {PROVIDERS[p].label}
                     </option>
@@ -169,7 +173,7 @@ function RolesTab() {
                   onChange={(e) => handleCodeProviderChange(e.target.value as Provider)}
                   className={selectClasses}
                 >
-                  {PROVIDER_ORDER.map((p) => (
+                  {orchestratorProviders.map((p) => (
                     <option key={p} value={p}>
                       {PROVIDERS[p].label}
                     </option>

@@ -8,15 +8,30 @@ let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let apiPort: number = 3001
 
-function resolvePreloadPath() {
-  const candidates = [
-    join(__dirname, '../preload/index.js'),
-    join(__dirname, '../preload/index.mjs'),
-    join(__dirname, '../preload/preload.js'),
-    join(__dirname, '../preload/preload.mjs')
-  ]
+const preloadPathCandidates = [
+  join(__dirname, '../preload/preload.mjs'),
+  join(__dirname, '../preload/preload.js'),
+  join(__dirname, '../preload/index.mjs'),
+  join(__dirname, '../preload/index.js')
+]
 
-  return candidates.find((file) => existsSync(file)) ?? candidates[0]
+async function resolvePreloadPath() {
+  const timeoutMs = is.dev ? 5000 : 500
+  const deadline = Date.now() + timeoutMs
+
+  while (Date.now() <= deadline) {
+    const resolved = preloadPathCandidates.find((file) => existsSync(file))
+    if (resolved) {
+      return resolved
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+
+  console.warn(
+    'Preload bundle was not ready before BrowserWindow creation. Falling back to the expected output path.',
+    preloadPathCandidates
+  )
+  return preloadPathCandidates[0]
 }
 
 async function createWindow() {
@@ -26,6 +41,8 @@ async function createWindow() {
 
   // Set port in env so preload can read it synchronously
   process.env.ELECTRON_API_PORT = String(apiPort)
+  const preloadPath = await resolvePreloadPath()
+  console.log(`Using preload script: ${preloadPath}`)
 
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -36,7 +53,7 @@ async function createWindow() {
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 15, y: 15 },
     webPreferences: {
-      preload: resolvePreloadPath(),
+      preload: preloadPath,
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: false // Required: preload needs process.env for API port
@@ -54,7 +71,7 @@ async function createWindow() {
           " style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net;" +
           " font-src 'self' https://fonts.gstatic.com data:;" +
           " img-src 'self' data: https: http:;" +
-          " connect-src 'self' http://localhost:* https://* https://cdn.jsdelivr.net;" +
+          " connect-src 'self' data: http://localhost:* https://* https://cdn.jsdelivr.net;" +
           " worker-src 'self' blob:;"
         ]
       }
@@ -157,5 +174,5 @@ app.on('will-quit', () => {
 
 // Cleanup preview-manager child processes on quit
 app.on('before-quit', () => {
-  process.emit('SIGINT' as any)
+  process.emit('SIGINT', 'SIGINT')
 })

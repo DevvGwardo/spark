@@ -687,7 +687,10 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
     }
 
     try {
-      await append({ role: 'user', content });
+      await append(
+        { role: 'user', content },
+        convId ? { body: { conversation_id: convId } } : undefined,
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message.toLowerCase() : '';
       const expectedAbort =
