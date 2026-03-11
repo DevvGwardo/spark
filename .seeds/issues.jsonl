@@ -24,3 +24,4 @@
 {"id":"cloud-chat-hub-e107","title":"Polish chat transcript UI for tool-heavy runs","status":"open","type":"task","priority":2,"createdAt":"2026-03-11T04:56:41.868Z","updatedAt":"2026-03-11T04:56:41.868Z"}
 {"id":"cloud-chat-hub-6519","title":"Fix repeated repo planning after approval","status":"closed","type":"task","priority":1,"createdAt":"2026-03-11T04:59:04.674Z","updatedAt":"2026-03-11T05:11:49.204Z","closedAt":"2026-03-11T05:11:49.204Z"}
 {"id":"cloud-chat-hub-fc85","title":"Fix Hermes pseudo-tool repo output rendering","status":"closed","type":"task","priority":1,"createdAt":"2026-03-11T05:14:48.501Z","updatedAt":"2026-03-11T05:26:11.846Z","closedAt":"2026-03-11T05:26:11.846Z"}
+{"id":"cloud-chat-hub-09ad","title":"Add PR checks and merge workflow UI","status":"closed","type":"task","priority":2,"createdAt":"2026-03-11T05:27:25.463Z","updatedAt":"2026-03-11T05:36:18.668Z","closedAt":"2026-03-11T05:36:18.668Z"}
