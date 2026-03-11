@@ -656,6 +656,10 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
       setMessages([]);
       resetPanelFileState();
     }
+
+    // Clear hermes tool activity on conversation switch
+    setToolActivityMap({});
+    toolActivityRef.current = {};
   }, [conversationId, setMessages, panelId, resetPanelFileState, restoreFileState, saveConversationFiles, hydrateConversationMessages]);
 
   // Auto-save file state (debounced) whenever the panel's file state changes

@@ -12,9 +12,7 @@ export interface HermesToolsets {
 
 interface HermesState {
   toolsets: HermesToolsets;
-  bridgeUrl: string;
   setToolset: (key: keyof HermesToolsets, enabled: boolean) => void;
-  setBridgeUrl: (url: string) => void;
   getEnabledToolsets: () => string[];
 }
 
@@ -31,14 +29,11 @@ export const useHermesStore = create<HermesState>()(
   persist(
     (set, get) => ({
       toolsets: { ...defaultToolsets },
-      bridgeUrl: 'http://localhost:3002/v1',
 
       setToolset: (key, enabled) =>
         set((state) => ({
           toolsets: { ...state.toolsets, [key]: enabled },
         })),
-
-      setBridgeUrl: (url) => set({ bridgeUrl: url }),
 
       getEnabledToolsets: () => {
         const ts = get().toolsets;

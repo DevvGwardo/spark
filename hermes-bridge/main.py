@@ -1,9 +1,10 @@
 import os
 import json
 import asyncio
+import queue
 from typing import Optional
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 
 app = FastAPI(title="Hermes Bridge")
@@ -70,14 +71,16 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
         api_key = auth_header[7:]
 
     if not api_key:
-        return {"error": "No API key provided. Set HERMES_OPENROUTER_KEY or pass Authorization header."}
+        return JSONResponse(status_code=401, content={"error": {"message": "No API key provided. Set HERMES_OPENROUTER_KEY or pass Authorization header."}})
 
     from run_agent import AIAgent
 
     chunk_id = f"chatcmpl-hermes-{os.urandom(8).hex()}"
-    tool_activity_queue: asyncio.Queue = asyncio.Queue()
-    text_queue: asyncio.Queue = asyncio.Queue()
+    # Use thread-safe queues since AIAgent callbacks run in a background thread
+    tool_activity_queue: queue.Queue = queue.Queue()
+    text_queue: queue.Queue = queue.Queue()
     done_event = asyncio.Event()
+    loop = asyncio.get_event_loop()
 
     def on_tool_start(tool_name: str, tool_input: str):
         tool_activity_queue.put_nowait({
@@ -98,7 +101,7 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
     def on_text(text: str):
         text_queue.put_nowait(text)
 
-    async def run_agent():
+    def _run_agent_sync():
         try:
             agent = AIAgent(
                 base_url="https://openrouter.ai/api/v1",
@@ -125,13 +128,13 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
         except Exception as e:
             text_queue.put_nowait(f"\n\n[Error: {str(e)}]")
         finally:
-            done_event.set()
+            loop.call_soon_threadsafe(done_event.set)
 
     async def event_stream():
         # Role chunk
         yield sse_chunk(make_delta_chunk(chunk_id, body.model, {"role": "assistant"}))
 
-        agent_task = asyncio.create_task(run_agent())
+        agent_task = asyncio.ensure_future(asyncio.to_thread(_run_agent_sync))
 
         while not done_event.is_set() or not tool_activity_queue.empty() or not text_queue.empty():
             # Drain tool activity

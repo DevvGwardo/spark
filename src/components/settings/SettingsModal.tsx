@@ -542,16 +542,16 @@ export const SettingsModal: React.FC = () => {
                               </div>
                               <button
                                 onClick={() => setHermesToolset(key, !hermesToolsets[key])}
-                                className={`relative w-10 h-5 rounded-full transition-colors ${
-                                  hermesToolsets[key]
-                                    ? 'bg-blue-500'
-                                    : 'bg-zinc-300 dark:bg-zinc-600'
-                                }`}
+                                className={cn(
+                                  toggleTrackClass,
+                                  hermesToolsets[key] ? 'bg-primary' : 'bg-border'
+                                )}
                               >
-                                <div
-                                  className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
-                                    hermesToolsets[key] ? 'translate-x-5' : 'translate-x-0.5'
-                                  }`}
+                                <span
+                                  className={cn(
+                                    toggleThumbClass,
+                                    hermesToolsets[key] ? 'translate-x-6' : 'translate-x-1'
+                                  )}
                                 />
                               </button>
                             </div>
