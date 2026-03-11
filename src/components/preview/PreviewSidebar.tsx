@@ -17,7 +17,9 @@ import {
   RotateCcw,
   Check,
   PanelsTopLeft,
+  Diff,
 } from 'lucide-react';
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { computeDiffLines, countContentLines, getChangeLineDelta } from '@/lib/change-diff';
 import { cn } from '@/lib/utils';
 
@@ -221,39 +223,37 @@ function ChangeDiff({ change }: { change: FileChange }) {
   if (diffLines.length === 0) return null;
 
   return (
-    <div className="rounded-xl border border-border/60 bg-[hsl(var(--code-bg))]">
-      <pre className="max-h-[240px] overflow-auto px-0 py-2 text-[11px] leading-5 font-mono">
-        {diffLines.map((line, index) => {
-          const isSeparator = line.lineNum === null && line.content === '···';
-          if (isSeparator) {
-            return (
-              <div key={index} className="px-3 text-muted-foreground/40">
-                <span className="inline-block w-8" />
-                <span>···</span>
-              </div>
-            );
-          }
-
-          const tone =
-            line.type === 'added'
-              ? 'bg-emerald-500/10 text-emerald-300'
-              : line.type === 'removed'
-                ? 'bg-red-500/10 text-red-300'
-                : 'text-muted-foreground/70';
-          const prefix = line.type === 'added' ? '+' : line.type === 'removed' ? '-' : ' ';
-
+    <pre className="overflow-x-auto overflow-y-auto max-w-full py-1 text-[11px] leading-[18px] font-mono">
+      {diffLines.map((line, index) => {
+        const isSeparator = line.lineNum === null && line.content === '···';
+        if (isSeparator) {
           return (
-            <div key={index} className={cn('px-3', tone)}>
-              <span className="inline-block w-8 pr-2 text-right text-muted-foreground/30 select-none">
-                {line.lineNum}
-              </span>
-              <span className="select-none">{prefix}</span>
-              <span>{' '}{line.content}</span>
+            <div key={index} className="px-2 text-muted-foreground/30">
+              <span className="inline-block w-7" />
+              <span>···</span>
             </div>
           );
-        })}
-      </pre>
-    </div>
+        }
+
+        const tone =
+          line.type === 'added'
+            ? 'text-emerald-400'
+            : line.type === 'removed'
+              ? 'text-red-400'
+              : 'text-muted-foreground/50';
+        const prefix = line.type === 'added' ? '+' : line.type === 'removed' ? '-' : ' ';
+
+        return (
+          <div key={index} className={cn('px-2', tone)}>
+            <span className="inline-block w-7 pr-2 text-right text-muted-foreground/20 select-none">
+              {line.lineNum}
+            </span>
+            <span className="select-none">{prefix}</span>
+            <span>{' '}{line.content}</span>
+          </div>
+        );
+      })}
+    </pre>
   );
 }
 
@@ -273,61 +273,76 @@ function ChangeRow({
   const { added, removed } = getChangeLineDelta(change);
 
   return (
-    <div className="rounded-2xl border border-border/70 bg-background/70">
-      <div className="flex items-start gap-3 p-3">
-        <div className="mt-0.5 rounded-xl border border-border/70 bg-muted/40 p-2 text-muted-foreground">
-          <FileCode2 className="h-4 w-4" />
-        </div>
-
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <code className="max-w-full truncate rounded-md bg-muted/50 px-2 py-1 text-[11px] font-medium text-foreground">
+    <div className="rounded-xl border border-border/50 bg-background/60 overflow-hidden">
+      <div className="px-2.5 py-2 space-y-1.5 min-w-0 overflow-hidden">
+        <div className="flex items-center justify-between gap-1.5 min-w-0 overflow-hidden">
+          <div className="flex items-center gap-1.5 min-w-0 overflow-hidden">
+            <code className="truncate min-w-0 text-[11px] font-medium text-foreground/90">
               {change.path}
             </code>
-            <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide', changeActionStyles[change.action])}>
+          </div>
+          <div className="flex items-center shrink-0 gap-1.5">
+            <span className={cn('rounded-full border px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide', changeActionStyles[change.action])}>
               {change.action}
             </span>
-            <span className="text-[11px] font-mono tabular-nums">
+            <span className="text-[10px] font-mono tabular-nums">
               {added > 0 && <span className="text-emerald-500">+{added}</span>}
-              {added > 0 && removed > 0 && <span className="text-muted-foreground/40"> / </span>}
+              {added > 0 && removed > 0 && <span className="text-muted-foreground/40">/</span>}
               {removed > 0 && <span className="text-red-400">-{removed}</span>}
               {added === 0 && removed === 0 && <span className="text-muted-foreground">~{countContentLines(change.content)}L</span>}
             </span>
           </div>
+        </div>
 
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <button
-              onClick={onRevert}
-              className="inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-            >
-              <RotateCcw className="h-3 w-3" />
-              Revert
-            </button>
-            <button
-              onClick={onStageToggle}
-              className={cn(
-                'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors',
-                change.staged
-                  ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/15'
-                  : 'border-border text-muted-foreground hover:bg-muted/50 hover:text-foreground'
-              )}
-            >
-              <Check className="h-3 w-3" />
-              {change.staged ? 'Unstage file' : 'Stage file'}
-            </button>
-            <button
-              onClick={onToggle}
-              className="inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-            >
-              <ChevronDown className={cn('h-3 w-3 transition-transform', expanded && 'rotate-180')} />
-              {expanded ? 'Hide diff' : 'Show diff'}
-            </button>
-          </div>
+        <div className="flex items-center justify-end gap-0.5">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={onRevert}
+                className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-xs">Revert</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={onStageToggle}
+                className={cn(
+                  'rounded-md p-1 transition-colors',
+                  change.staged
+                    ? 'text-emerald-400 hover:bg-emerald-500/10'
+                    : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
+                )}
+              >
+                <Check className="h-3.5 w-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-xs">{change.staged ? 'Unstage file' : 'Stage file'}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={onToggle}
+                className={cn(
+                  'rounded-md p-1 transition-colors',
+                  expanded
+                    ? 'text-sky-400 hover:bg-sky-500/10'
+                    : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
+                )}
+              >
+                <Diff className="h-3.5 w-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-xs">{expanded ? 'Hide diff' : 'Show diff'}</TooltipContent>
+          </Tooltip>
         </div>
       </div>
 
       {expanded && (
-        <div className="border-t border-border/60 px-3 pb-3 pt-0">
+        <div className="border-t border-border/40 overflow-hidden">
           <ChangeDiff change={change} />
         </div>
       )}
@@ -382,7 +397,7 @@ export const PreviewSidebar: React.FC = () => {
     : activeView || (showChangesTab ? 'changes' : 'preview');
 
   return (
-    <div className="flex-shrink-0 w-[430px] border-l border-border bg-background/95 backdrop-blur flex flex-col">
+    <div className="shrink-0 w-[430px] max-w-[430px] h-full border-l border-border bg-background/95 backdrop-blur flex flex-col overflow-hidden">
       <div className="border-b border-border px-3 py-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -433,7 +448,7 @@ export const PreviewSidebar: React.FC = () => {
       </div>
 
       {currentView === 'changes' && showChangesTab ? (
-        <>
+        <div className="flex flex-1 min-h-0 flex-col">
           <div className="border-b border-border px-3 py-3">
             <div className="flex items-center justify-between rounded-2xl border border-border/70 bg-muted/20 px-3 py-2.5">
               <div>
@@ -470,8 +485,8 @@ export const PreviewSidebar: React.FC = () => {
             </div>
           </div>
 
-          <ScrollArea className="flex-1">
-            <div className="space-y-3 p-3">
+          <ScrollArea className="flex-1 min-h-0">
+            <div className="space-y-2 p-2">
               {changeEntries.map((change) => (
                 <ChangeRow
                   key={change.path}
@@ -501,7 +516,7 @@ export const PreviewSidebar: React.FC = () => {
               </button>
             </div>
           </div>
-        </>
+        </div>
       ) : showPreviewTab ? (
         <>
           <div className="border-b border-border px-3 py-3">
