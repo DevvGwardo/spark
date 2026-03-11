@@ -110,6 +110,7 @@ app.post('/functions/v1/chat', async (req, res) => {
       activeRepo,
       reasoning_effort,
       conversation_id,
+      hermes_toolsets,
     } = req.body;
 
     // Resolve API key
@@ -330,6 +331,9 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
     try {
       aiModel = createProviderModel(provider, model, apiKey, {
         origin: req.headers.origin as string | undefined,
+        extraHeaders: provider === 'hermes' && hermes_toolsets
+          ? { 'X-Hermes-Toolsets': hermes_toolsets }
+          : undefined,
       });
     } catch (error) {
       return sendJson(
