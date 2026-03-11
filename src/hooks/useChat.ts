@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useChat as useAIChat, type Message as AIMessage } from '@ai-sdk/react';
 import { useChatStore } from '@/stores/chat-store';
 import { useSettingsStore } from '@/stores/settings-store';
@@ -122,7 +122,14 @@ export function useChat(
   const addChangeForPanel = useChangesetStore((s) => s.addChange);
   const preview = usePreviewStore((s) => s.getPreview(panelId));
   const { activeRepo, isRepoMode, repoFileTree } = changeset;
-  const hermesToolsets = useHermesStore((s) => s.getEnabledToolsets());
+  const hermesToolsetConfig = useHermesStore((s) => s.toolsets);
+  const hermesToolsets = useMemo(
+    () =>
+      Object.entries(hermesToolsetConfig)
+        .filter(([, enabled]) => enabled)
+        .map(([toolset]) => toolset),
+    [hermesToolsetConfig],
+  );
   const addChange = useCallback((change: Parameters<typeof addChangeForPanel>[1]) => addChangeForPanel(panelId, change), [addChangeForPanel, panelId]);
 
   // When orchestrator is enabled, use its provider/model instead

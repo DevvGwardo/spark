@@ -20,6 +20,63 @@ interface ChatPanelProps {
   onOpenPR?: (panelId: string) => void;
 }
 
+type ChatRuntime = ReturnType<typeof useChat> | ReturnType<typeof useOrchestrator>;
+
+function ChatRuntimeArea({
+  conversationId,
+  chat,
+}: {
+  conversationId: string | null;
+  chat: ChatRuntime;
+}) {
+  return (
+    <ChatArea
+      conversationId={conversationId}
+      messages={chat.messages}
+      input={chat.input}
+      setInput={chat.setInput}
+      handleSend={chat.handleSend}
+      handleQuickSend={chat.handleQuickSend}
+      queuedMessages={chat.queuedMessages}
+      handleRemoveQueuedMessage={chat.handleRemoveQueuedMessage}
+      handleSteerQueuedMessage={chat.handleSteerQueuedMessage}
+      handleStop={chat.handleStop}
+      handleRegenerate={chat.handleRegenerate}
+      isStreaming={chat.isStreaming}
+      error={chat.error}
+      apiKeyModalOpen={chat.apiKeyModalOpen}
+      setApiKeyModalOpen={chat.setApiKeyModalOpen}
+      activeProvider={chat.activeProvider}
+      activeModel={chat.activeModel}
+      toolActivityMap={'toolActivityMap' in chat ? chat.toolActivityMap : undefined}
+    />
+  );
+}
+
+function StandardChatRuntime({
+  panelId,
+  conversationId,
+  onConversationCreated,
+}: {
+  panelId: string;
+  conversationId: string | null;
+  onConversationCreated: (id: string) => void;
+}) {
+  const chat = useChat(conversationId, onConversationCreated, undefined, panelId);
+  return <ChatRuntimeArea conversationId={conversationId} chat={chat} />;
+}
+
+function OrchestratorChatRuntime({
+  conversationId,
+  onConversationCreated,
+}: {
+  conversationId: string | null;
+  onConversationCreated: (id: string) => void;
+}) {
+  const chat = useOrchestrator(conversationId, onConversationCreated);
+  return <ChatRuntimeArea conversationId={conversationId} chat={chat} />;
+}
+
 export const ChatPanel: React.FC<ChatPanelProps> = ({
   panelId,
   conversationId,
@@ -59,21 +116,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const handleConversationCreated = useCallback((newId: string) => {
     setConversationForPanel(panelId, newId);
   }, [panelId, setConversationForPanel]);
-
-  // Use the orchestrator hook when enabled, otherwise the regular chat hook
-  const regularChat = useChat(
-    orchestratorEnabled ? null : conversationId,
-    orchestratorEnabled ? undefined : handleConversationCreated,
-    undefined,
-    panelId,
-  );
-
-  const orchestratorChat = useOrchestrator(
-    orchestratorEnabled ? conversationId : null,
-    orchestratorEnabled ? handleConversationCreated : undefined,
-  );
-
-  const chat = orchestratorEnabled ? orchestratorChat : regularChat;
 
   // Get conversation for the panel header
   const activeConv = conversationId
@@ -236,26 +278,18 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           </div>
         )}
         <div className="flex-1 overflow-hidden">
-          <ChatArea
-            conversationId={conversationId}
-            messages={chat.messages}
-            input={chat.input}
-            setInput={chat.setInput}
-            handleSend={chat.handleSend}
-            handleQuickSend={chat.handleQuickSend}
-            queuedMessages={chat.queuedMessages}
-            handleRemoveQueuedMessage={chat.handleRemoveQueuedMessage}
-            handleSteerQueuedMessage={chat.handleSteerQueuedMessage}
-            handleStop={chat.handleStop}
-            handleRegenerate={chat.handleRegenerate}
-            isStreaming={chat.isStreaming}
-            error={chat.error}
-            apiKeyModalOpen={chat.apiKeyModalOpen}
-            setApiKeyModalOpen={chat.setApiKeyModalOpen}
-            activeProvider={chat.activeProvider}
-            activeModel={chat.activeModel}
-            toolActivityMap={chat.toolActivityMap}
-          />
+          {orchestratorEnabled ? (
+            <OrchestratorChatRuntime
+              conversationId={conversationId}
+              onConversationCreated={handleConversationCreated}
+            />
+          ) : (
+            <StandardChatRuntime
+              panelId={panelId}
+              conversationId={conversationId}
+              onConversationCreated={handleConversationCreated}
+            />
+          )}
         </div>
       </div>
     </PanelProvider>
