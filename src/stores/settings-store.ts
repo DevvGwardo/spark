@@ -23,6 +23,7 @@ export interface ProviderConfig {
 
 type PersistedSettingsState = Partial<SettingsState> & {
   activeProvider?: Provider | 'lovable';
+  availableModels?: Partial<Record<Provider, string[]>>;
   providers?: Partial<Record<Provider, ProviderConfig>> & {
     lovable?: ProviderConfig;
   };
@@ -31,6 +32,7 @@ type PersistedSettingsState = Partial<SettingsState> & {
 interface SettingsState {
   activeProvider: Provider;
   providers: Record<Provider, ProviderConfig>;
+  availableModels: Partial<Record<Provider, string[]>>;
   theme: ThemeMode;
   fontSize: FontSize;
   fontFamily: FontFamily;
@@ -41,6 +43,7 @@ interface SettingsState {
 
   setActiveProvider: (p: Provider) => void;
   updateProviderConfig: (p: Provider, config: Partial<ProviderConfig>) => void;
+  setAvailableModels: (p: Provider, models: string[]) => void;
   setTheme: (t: ThemeMode) => void;
   setFontSize: (f: FontSize) => void;
   setFontFamily: (f: FontFamily) => void;
@@ -86,6 +89,7 @@ export const useSettingsStore = create<SettingsState>()(
     (set) => ({
       activeProvider: 'openai',
       providers: defaultProviders,
+      availableModels: {},
       theme: 'system',
       fontSize: 'medium',
       fontFamily: 'inter',
@@ -102,6 +106,13 @@ export const useSettingsStore = create<SettingsState>()(
             [p]: { ...state.providers[p], ...config },
           },
         })),
+      setAvailableModels: (p, models) =>
+        set((state) => ({
+          availableModels: {
+            ...state.availableModels,
+            [p]: [...new Set(models.filter((model) => typeof model === 'string' && model.length > 0))],
+          },
+        })),
       setTheme: (t) => set({ theme: t }),
       setFontSize: (f) => set({ fontSize: f }),
       setFontFamily: (f) => set({ fontFamily: f }),
@@ -112,7 +123,7 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'cloudchat-settings',
-      version: 11,
+      version: 12,
       migrate: (persisted: unknown, version: number) => {
         const state = (persisted ?? {}) as PersistedSettingsState;
         if (version < 3) {
@@ -189,6 +200,9 @@ export const useSettingsStore = create<SettingsState>()(
           if (!state?.providers?.hermes) {
             state.providers = { ...state.providers, hermes: makeDefault('nousresearch/hermes-3-llama-3.1-70b') };
           }
+        }
+        if (version < 12) {
+          state.availableModels = state.availableModels || {};
         }
         return state;
       },

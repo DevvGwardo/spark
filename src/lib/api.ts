@@ -13,7 +13,7 @@ export function getApiBaseUrl(): string {
 export async function validateApiKey(
   provider: Provider,
   apiKey: string
-): Promise<{ valid: boolean; models?: string[]; error?: string }> {
+): Promise<{ valid: boolean; models?: string[]; defaultModel?: string; error?: string }> {
   const baseUrl = getApiBaseUrl();
 
   const response = await fetch(`${baseUrl}/functions/v1/validate-key`, {

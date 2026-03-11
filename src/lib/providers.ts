@@ -195,7 +195,7 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
   openclaw: {
     id: 'openclaw',
     label: 'OpenClaw',
-    description: 'Local OpenClaw agent runtime using your configured default model',
+    description: 'OpenClaw agent runtime using your configured default model',
     needsApiKey: false,
     category: 'specialized',
     models: [

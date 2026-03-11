@@ -11,11 +11,16 @@ import {
 } from '@/components/ui/dropdown-menu';
 
 export const ModelSelector: React.FC = () => {
-  const { activeProvider, providers, updateProviderConfig } = useSettingsStore();
+  const { activeProvider, providers, availableModels, updateProviderConfig } = useSettingsStore();
   const { setSettingsOpen } = useUIStore();
   const config = providers[activeProvider];
   const providerInfo = PROVIDERS[activeProvider];
-  const models = providerInfo?.models || [];
+  const baseModels = availableModels[activeProvider]?.length
+    ? availableModels[activeProvider]!
+    : (providerInfo?.models || []);
+  const models = config.model && !baseModels.includes(config.model)
+    ? [config.model, ...baseModels]
+    : baseModels;
 
   const displayModel = config.model.split('/').pop() || config.model;
 

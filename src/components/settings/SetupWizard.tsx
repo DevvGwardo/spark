@@ -25,6 +25,7 @@ const CATEGORY_ORDER: ProviderCategory[] = ['featured', 'open-source', 'speciali
 
 export const SetupWizard: React.FC = () => {
   const { isSetupComplete, completeSetup, setActiveProvider, updateProviderConfig } = useSettingsStore();
+  const setAvailableModels = useSettingsStore((state) => state.setAvailableModels);
   const [step, setStep] = useState(0);
   const [direction, setDirection] = useState<'forward' | 'backward'>('forward');
   const [isAnimating, setIsAnimating] = useState(false);
@@ -86,6 +87,28 @@ export const SetupWizard: React.FC = () => {
   };
 
   const handleContinueFromProvider = () => {
+    if (selectedProvider === 'openclaw') {
+      void (async () => {
+        try {
+          const result = await validateApiKey('openclaw', '');
+          if (result.valid) {
+            const nextModels = result.models?.filter(Boolean) || [];
+            setValidatedModels(nextModels);
+            setAvailableModels('openclaw', nextModels);
+            const nextDefaultModel = result.defaultModel || nextModels[0];
+            if (nextDefaultModel) {
+              setSelectedModel(nextDefaultModel);
+            }
+          }
+        } catch (error) {
+          console.error('Failed to load OpenClaw models', error);
+        } finally {
+          goToStep(2);
+        }
+      })();
+      return;
+    }
+
     goToStep(needsApiKey ? 1 : 2);
   };
 
@@ -99,8 +122,9 @@ export const SetupWizard: React.FC = () => {
       if (result.valid) {
         const nextModels = result.models?.filter(Boolean) || [];
         setValidatedModels(nextModels);
+        setAvailableModels(selectedProvider, nextModels);
         if (nextModels.length > 0) {
-          setSelectedModel((current) => nextModels.includes(current) ? current : nextModels[0]);
+          setSelectedModel((current) => nextModels.includes(current) ? current : (result.defaultModel || nextModels[0]));
         }
         goToStep(2);
       } else {

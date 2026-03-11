@@ -29,6 +29,13 @@ interface OpenClawModelsStatusResponse {
   resolvedDefault?: string
 }
 
+async function getOpenClawModelStatus(): Promise<OpenClawModelsStatusResponse> {
+  ensureOpenClawInstalled()
+
+  const { stdout } = await execFileAsync(OPENCLAW_BIN, ['models', 'status', '--json'])
+  return JSON.parse(stdout) as OpenClawModelsStatusResponse
+}
+
 function ensureOpenClawInstalled() {
   if (!existsSync(OPENCLAW_BIN)) {
     throw new Error(`OpenClaw CLI not found at ${OPENCLAW_BIN}`)
@@ -56,13 +63,12 @@ function parseOpenClawText(payload: unknown): string {
 export async function getOpenClawModels(): Promise<{ defaultModel: string; models: string[] }> {
   ensureOpenClawInstalled()
 
-  const [{ stdout: modelsStdout }, { stdout: statusStdout }] = await Promise.all([
+  const [{ stdout: modelsStdout }, statusData] = await Promise.all([
     execFileAsync(OPENCLAW_BIN, ['models', 'list', '--json']),
-    execFileAsync(OPENCLAW_BIN, ['models', 'status', '--json']),
+    getOpenClawModelStatus(),
   ])
 
   const modelsData = JSON.parse(modelsStdout) as OpenClawModelsListResponse
-  const statusData = JSON.parse(statusStdout) as OpenClawModelsStatusResponse
 
   const defaultModel = statusData.resolvedDefault || statusData.defaultModel || 'default'
   const models = Array.isArray(modelsData.models)
@@ -77,13 +83,35 @@ export async function getOpenClawModels(): Promise<{ defaultModel: string; model
   }
 }
 
+export async function setOpenClawModel(model: string): Promise<void> {
+  ensureOpenClawInstalled()
+
+  const trimmedModel = model.trim()
+  if (!trimmedModel || trimmedModel === 'default') {
+    return
+  }
+
+  const status = await getOpenClawModelStatus()
+  const currentModel = status.resolvedDefault || status.defaultModel || 'default'
+  if (currentModel === trimmedModel) {
+    return
+  }
+
+  await execFileAsync(OPENCLAW_BIN, ['models', 'set', trimmedModel], {
+    maxBuffer: 10 * 1024 * 1024,
+  })
+}
+
 export async function runOpenClawTurn(params: {
   message: string
   sessionId: string
+  model?: string
   systemPrompt?: string
   timeoutSeconds?: number
 }): Promise<OpenClawRunResult> {
   ensureOpenClawInstalled()
+
+  await setOpenClawModel(params.model || '')
 
   const effectiveMessage = params.systemPrompt?.trim()
     ? `System instructions:\n${params.systemPrompt.trim()}\n\nUser request:\n${params.message}`
@@ -92,7 +120,6 @@ export async function runOpenClawTurn(params: {
   const args = [
     'agent',
     '--agent', 'main',
-    '--local',
     '--session-id', params.sessionId,
     '--message', effectiveMessage,
     '--json',

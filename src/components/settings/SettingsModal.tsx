@@ -1,10 +1,11 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { X, Eye, EyeOff, Search, Check, Zap, ChevronDown, ExternalLink, Github, Code2, Network, Info } from 'lucide-react';
 import { useSettingsStore, type Provider } from '@/stores/settings-store';
 import { useHermesStore, type HermesToolsets } from '@/stores/hermes-store';
 import { useOrchestratorStore } from '@/stores/orchestrator-store';
 import { useUIStore } from '@/stores/ui-store';
 import { PROVIDERS, PROVIDER_ORDER, CATEGORY_LABELS, type ProviderCategory } from '@/lib/providers';
+import { validateApiKey } from '@/lib/api';
 import { KnowledgePanel } from './KnowledgePanel';
 import { PROVIDER_KEY_URLS } from '@/components/chat/ApiKeyModal';
 import { cn } from '@/lib/utils';
@@ -234,6 +235,7 @@ export const SettingsModal: React.FC = () => {
   const {
     activeProvider,
     providers,
+    availableModels,
     theme,
     fontSize,
     fontFamily,
@@ -242,6 +244,7 @@ export const SettingsModal: React.FC = () => {
     autoApproveRepoChanges,
     setActiveProvider,
     updateProviderConfig,
+    setAvailableModels,
     setTheme,
     setFontSize,
     setFontFamily,
@@ -260,6 +263,52 @@ export const SettingsModal: React.FC = () => {
   const config = providers[activeProvider];
   const providerInfo = PROVIDERS[activeProvider];
   const needsApiKey = providerInfo?.needsApiKey ?? true;
+  const modelOptions = useMemo(() => {
+    const baseModels = availableModels[activeProvider]?.length
+      ? availableModels[activeProvider]!
+      : providerInfo.models;
+
+    if (config.model && !baseModels.includes(config.model)) {
+      return [config.model, ...baseModels];
+    }
+
+    return baseModels;
+  }, [activeProvider, availableModels, config.model, providerInfo.models]);
+
+  useEffect(() => {
+    if (!settingsOpen || activeProvider !== 'openclaw') return;
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const result = await validateApiKey('openclaw', '');
+        if (!result.valid || cancelled) {
+          return;
+        }
+
+        const nextModels = (result.models ?? []).filter(Boolean);
+        if (nextModels.length > 0) {
+          setAvailableModels('openclaw', nextModels);
+        }
+
+        const nextDefaultModel = result.defaultModel || nextModels[0];
+        const currentModel = providers.openclaw.model;
+        if (
+          nextDefaultModel &&
+          (currentModel === 'default' || (nextModels.length > 0 && !nextModels.includes(currentModel)))
+        ) {
+          updateProviderConfig('openclaw', { model: nextDefaultModel });
+        }
+      } catch (error) {
+        console.error('Failed to load OpenClaw models', error);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProvider, providers.openclaw.model, setAvailableModels, settingsOpen, updateProviderConfig]);
 
   const filteredProviders = useMemo(() => {
     const q = search.toLowerCase();
@@ -425,7 +474,9 @@ export const SettingsModal: React.FC = () => {
                     <p className="mt-3 text-[11px] uppercase tracking-[0.16em] text-muted-foreground/70">
                       Default model
                     </p>
-                    <p className="mt-1 font-mono text-sm text-foreground">{providerInfo.defaultModel}</p>
+                    <p className="mt-1 font-mono text-sm text-foreground">
+                      {activeProvider === 'openclaw' ? config.model : providerInfo.defaultModel}
+                    </p>
                   </div>
                 </div>
 
@@ -508,7 +559,7 @@ export const SettingsModal: React.FC = () => {
                           onChange={(e) => updateProviderConfig(activeProvider, { model: e.target.value })}
                           className={selectInputClass}
                         >
-                          {providerInfo.models.map((m) => (
+                          {modelOptions.map((m) => (
                             <option key={m} value={m}>{m}</option>
                           ))}
                         </select>

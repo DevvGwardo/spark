@@ -89,6 +89,7 @@ describe('OpenClaw provider chat route', () => {
       expect(body).toContain('finishReason')
       expect(openclawMocks.runOpenClawTurn).toHaveBeenCalledWith({
         message: 'Reply with exactly: ok',
+        model: 'default',
         sessionId: 'conv-123',
         systemPrompt: 'Be concise.',
       })

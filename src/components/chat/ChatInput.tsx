@@ -51,10 +51,15 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   onSteerQueuedMessage,
 }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { activeProvider: selectedProvider, providers, updateProviderConfig } = useSettingsStore();
+  const { activeProvider: selectedProvider, providers, availableModels, updateProviderConfig } = useSettingsStore();
   const config = providers[selectedProvider];
   const providerInfo = PROVIDERS[selectedProvider];
-  const models = providerInfo?.models || [];
+  const baseModels = availableModels[selectedProvider]?.length
+    ? availableModels[selectedProvider]!
+    : (providerInfo?.models || []);
+  const models = config.model && !baseModels.includes(config.model)
+    ? [config.model, ...baseModels]
+    : baseModels;
   const displayModel = config.model.split('/').pop() || config.model;
   const meterModel = activeModel ?? config.model;
   const reasoningSupported = supportsReasoningEffort(selectedProvider, config.model);

@@ -169,6 +169,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
         sessionId: typeof conversation_id === 'string' && conversation_id
           ? conversation_id
           : `cloudchat-${crypto.randomUUID()}`,
+        model: typeof model === 'string' ? model : undefined,
         systemPrompt: effectiveSystemPrompt,
       });
 
