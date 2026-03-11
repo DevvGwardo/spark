@@ -248,6 +248,19 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     ],
     defaultModel: 'Meta-Llama-3.3-70B-Instruct',
   },
+  hermes: {
+    id: 'hermes',
+    label: 'Hermes Agent',
+    description: 'Autonomous agent with web search, browser, vision & more',
+    needsApiKey: true,
+    category: 'specialized',
+    badge: 'Agent',
+    models: [
+      'nousresearch/hermes-3-llama-3.1-405b',
+      'nousresearch/hermes-3-llama-3.1-70b',
+    ],
+    defaultModel: 'nousresearch/hermes-3-llama-3.1-70b',
+  },
 };
 
 // Ordered list for UI display
@@ -255,6 +268,7 @@ export const PROVIDER_ORDER: Provider[] = [
   'openai', 'anthropic', 'google', 'xai',
   'groq', 'cerebras', 'openrouter', 'sambanova',
   'deepseek', 'mistral', 'together', 'minimax', 'minimax-payg', 'kimi', 'kimi-coding', 'openclaw',
+  'hermes',
 ];
 
 export function getProviderLabel(provider: Provider): string {

@@ -19,6 +19,7 @@ export const OPENAI_COMPATIBLE: Record<string, string> = {
   cerebras: 'https://api.cerebras.ai/v1',
   openrouter: 'https://openrouter.ai/api/v1',
   sambanova: 'https://api.sambanova.ai/v1',
+  hermes: process.env.HERMES_BRIDGE_URL || 'http://localhost:3002/v1',
 };
 
 export const ANTHROPIC_COMPATIBLE: Record<string, string> = {
@@ -41,6 +42,7 @@ export const VALIDATION_MODELS: Record<string, string> = {
   cerebras: 'llama-3.3-70b',
   openrouter: 'openai/gpt-oss-120b:free',
   sambanova: 'Meta-Llama-3.3-70B-Instruct',
+  hermes: 'nousresearch/hermes-3-llama-3.1-70b',
 };
 
 export function getProviderHeaders(provider: string, origin?: string): Record<string, string> {

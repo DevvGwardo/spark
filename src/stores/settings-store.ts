@@ -5,7 +5,7 @@ export type Provider =
   | 'openai' | 'anthropic' | 'google' | 'xai'
   | 'groq' | 'deepseek' | 'mistral' | 'together'
   | 'minimax' | 'minimax-payg' | 'kimi' | 'kimi-coding' | 'openclaw'
-  | 'cerebras' | 'openrouter' | 'sambanova';
+  | 'cerebras' | 'openrouter' | 'sambanova' | 'hermes';
 
 export type ReasoningEffort = 'low' | 'medium' | 'high';
 export type ThemeMode = 'light' | 'dark' | 'system';
@@ -78,6 +78,7 @@ const defaultProviders: Record<Provider, ProviderConfig> = {
   cerebras: makeDefault('llama-3.3-70b'),
   openrouter: makeDefault('openai/gpt-oss-120b:free'),
   sambanova: makeDefault('Meta-Llama-3.3-70B-Instruct'),
+  hermes: makeDefault('nousresearch/hermes-3-llama-3.1-70b'),
 };
 
 export const useSettingsStore = create<SettingsState>()(
@@ -111,7 +112,7 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'cloudchat-settings',
-      version: 10,
+      version: 11,
       migrate: (persisted: unknown, version: number) => {
         const state = (persisted ?? {}) as PersistedSettingsState;
         if (version < 3) {
@@ -182,6 +183,11 @@ export const useSettingsStore = create<SettingsState>()(
                   ? current.reasoningEffort
                   : 'high',
             };
+          }
+        }
+        if (version < 11) {
+          if (!state?.providers?.hermes) {
+            state.providers = { ...state.providers, hermes: makeDefault('nousresearch/hermes-3-llama-3.1-70b') };
           }
         }
         return state;
