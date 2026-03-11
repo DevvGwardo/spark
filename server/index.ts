@@ -8,6 +8,7 @@ import {
   getReasoningProviderOptions,
   getProviderHeaders,
   OPENAI_COMPATIBLE,
+  resolveRuntimeProvider,
   VALIDATION_MODELS,
 } from './provider-config';
 import { getOpenClawModels, runOpenClawTurn } from './openclaw';
@@ -108,6 +109,7 @@ app.post('/functions/v1/chat', async (req, res) => {
       api_key,
       system_prompt,
       activeRepo,
+      continuing_approved_proposal,
       reasoning_effort,
       conversation_id,
       hermes_toolsets,
@@ -135,17 +137,23 @@ app.post('/functions/v1/chat', async (req, res) => {
       const repoContext = `You are working on the GitHub repository ${activeRepo.owner}/${activeRepo.name}. You have tools to read, edit, create, and delete files in this repo.
 
 WORKFLOW — ALWAYS FOLLOW THIS:
-1. When the user asks you to make changes, FIRST use propose_changes to present a plan of ALL files you intend to modify. Wait for user approval before proceeding.
-2. After the user approves, use read_repo_file to read the files you need to modify.
-3. Then use batch_edit_repo_files to apply ALL changes at once (preferred for multiple files), or edit_repo_file / create_repo_file individually.
-4. Do NOT ask the user which file to edit — explore the repo yourself.
-5. When the user asks you to update multiple things, make sure you update ALL of them, not just one.
-6. IMPORTANT: If you need to edit many large files, split batch_edit_repo_files into multiple calls (max 3-4 files per batch) to avoid output truncation. For very large files, use individual edit_repo_file calls instead.
+1. For a NEW change request that does not already have an approved plan, FIRST use propose_changes to present a plan of ALL files you intend to modify. Wait for user approval before proceeding.
+2. If the latest user message is approving your most recent proposal, do NOT call propose_changes again. Continue executing the already approved plan.
+3. After the user approves, use read_repo_file to read the files you need to modify.
+4. Then use batch_edit_repo_files to apply ALL changes at once (preferred for multiple files), or edit_repo_file / create_repo_file individually.
+5. Do NOT ask the user which file to edit — explore the repo yourself.
+6. Do NOT ask clarifying questions. Use your judgment, explore the repo to understand the codebase, and propose changes directly. If the request is ambiguous, make reasonable assumptions and explain them in your proposal.
+7. When the user asks you to update multiple things, make sure you update ALL of them, not just one.
+8. Never print pseudo-tool syntax like propose_changes(...) or batch_edit_repo_files(...) in visible text. Use the actual tool calls instead.
+9. IMPORTANT: If you need to edit many large files, split batch_edit_repo_files into multiple calls (max 3-4 files per batch) to avoid output truncation. For very large files, use individual edit_repo_file calls instead.
 
 All changes are staged for a PR — they are not applied directly to the repo.`;
       effectiveSystemPrompt = effectiveSystemPrompt
         ? `${effectiveSystemPrompt}\n\n${repoContext}`
         : repoContext;
+      if (continuing_approved_proposal) {
+        effectiveSystemPrompt = `${effectiveSystemPrompt}\n\nThe latest user message is an approval of the most recent proposal. Do not call propose_changes again for that accepted scope. Continue directly with read_repo_file and repo edit tools, and do not restate the plan unless the user changes scope.`;
+      }
     }
 
     // Prepend system prompt
@@ -260,21 +268,24 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
     // that previously used repo tools. Client-side onToolCall handles the case
     // where activeRepo is missing by returning a graceful error.
     const repoTools = {
-          propose_changes: tool({
-            description:
-              'Present a plan of proposed changes to the user BEFORE making any edits. Always call this first when the user asks for changes. The user will review and approve the plan before you proceed.',
-            parameters: z.object({
-              summary: z.string().describe('A brief summary of the overall change'),
-              plan: z.array(
-                z.object({
-                  path: z.string().describe('The file path'),
-                  action: z.string().describe('The type of change: "create", "edit", or "delete"'),
-                  description: z.string().describe('What will be changed in this file and why'),
-                })
-              ).describe('The list of all files that will be modified'),
-            }),
-          }),
-
+          ...(continuing_approved_proposal
+            ? {}
+            : {
+                propose_changes: tool({
+                  description:
+                    'Present a plan of proposed changes to the user BEFORE making any edits. Always call this first when the user asks for changes. The user will review and approve the plan before you proceed.',
+                  parameters: z.object({
+                    summary: z.string().describe('A brief summary of the overall change'),
+                    plan: z.array(
+                      z.object({
+                        path: z.string().describe('The file path'),
+                        action: z.string().describe('The type of change: "create", "edit", or "delete"'),
+                        description: z.string().describe('What will be changed in this file and why'),
+                      })
+                    ).describe('The list of all files that will be modified'),
+                  }),
+                }),
+              }),
           read_repo_file: tool({
             description:
               'Read a file from the active GitHub repository. Returns the file content.',
@@ -328,15 +339,26 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
           }),
         };
 
+    const runtimeProvider = resolveRuntimeProvider(provider, { activeRepo });
+    console.log(`[chat] provider=${provider} runtime=${runtimeProvider} model=${model} activeRepo=${activeRepo?.owner}/${activeRepo?.name || '-'} continuing_approved=${!!continuing_approved_proposal} msgs=${messages?.length}`);
     let aiModel;
     try {
-      aiModel = createProviderModel(provider, model, apiKey, {
+      aiModel = createProviderModel(runtimeProvider, model, apiKey, {
         origin: req.headers.origin as string | undefined,
-        extraHeaders: provider === 'hermes' && hermes_toolsets
-          ? { 'X-Hermes-Toolsets': hermes_toolsets }
+        extraHeaders: provider === 'hermes' && runtimeProvider === 'hermes'
+          ? {
+              ...(hermes_toolsets ? { 'X-Hermes-Toolsets': hermes_toolsets } : {}),
+              ...(continuing_approved_proposal ? { 'X-Hermes-Continuing-Approved': '1' } : {}),
+              ...(activeRepo && req.body.github_pat ? {
+                'X-Hermes-Repo-Owner': activeRepo.owner,
+                'X-Hermes-Repo-Name': activeRepo.name,
+                'X-Hermes-Github-PAT': req.body.github_pat,
+              } : {}),
+            }
           : undefined,
       });
     } catch (error) {
+      console.error(`[chat] Failed to create provider model: ${error instanceof Error ? error.message : error}`);
       return sendJson(
         res,
         400,
@@ -348,6 +370,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
     const defaultMaxTokens = activeRepo ? 64000 : 16384;
     const providerOptions = getReasoningProviderOptions(provider, model, reasoning_effort);
 
+    console.log(`[chat] Starting streamText. maxTokens=${max_tokens ?? defaultMaxTokens} tools=${Object.keys({ ...fileTools, ...repoTools }).join(',')}`);
     const result = await streamText({
       model: aiModel,
       messages: allMessages,
@@ -363,8 +386,9 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
       headers: corsHeaders,
       sendReasoning: true,
       getErrorMessage: (error: unknown) => {
-        if (error instanceof Error) return error.message;
-        return String(error);
+        const msg = error instanceof Error ? error.message : String(error);
+        console.error(`[chat] Stream error: ${msg}`);
+        return msg;
       },
     });
 
@@ -456,7 +480,16 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
       }
     }
 
+    console.error(`[chat] Request failed: status=${status} error=${errorMessage} provider=${req.body?.provider} model=${req.body?.model}`);
+
     const lower = errorMessage.toLowerCase();
+    if (req.body?.provider === 'hermes' && lower.includes('cannot connect to api')) {
+      status = 503;
+      errorMessage =
+        `Hermes bridge is not reachable at ${OPENAI_COMPATIBLE.hermes}. ` +
+        'Start hermes-bridge/main.py and try again.';
+    }
+
     if (lower.includes('data policy') || lower.includes('settings/privacy')) {
       status = 400;
       errorMessage =
@@ -475,6 +508,195 @@ interface FileChange {
   path: string;
   content: string;
   action?: 'create' | 'edit' | 'delete';
+}
+
+type GitHubCheckState = 'success' | 'failure' | 'pending';
+
+interface PullRequestCheck {
+  name: string;
+  provider: string;
+  status: GitHubCheckState;
+  detailsUrl: string | null;
+  summary: string | null;
+}
+
+function getCheckState(status?: string | null, conclusion?: string | null): GitHubCheckState {
+  if (status === 'queued' || status === 'in_progress' || status === 'waiting' || status === 'requested' || status === 'pending') {
+    return 'pending';
+  }
+
+  if (status === 'completed') {
+    if (!conclusion || conclusion === 'success' || conclusion === 'neutral' || conclusion === 'skipped') {
+      return 'success';
+    }
+    return 'failure';
+  }
+
+  if (status === 'success') return 'success';
+  if (status === 'failure' || status === 'error') return 'failure';
+  return 'pending';
+}
+
+function getLegacyStatusProvider(context: string): { provider: string; name: string } {
+  const separators = [' / ', ': ', ' - '];
+  for (const separator of separators) {
+    const index = context.indexOf(separator);
+    if (index > 0) {
+      return {
+        provider: context.slice(0, index),
+        name: context.slice(index + separator.length),
+      };
+    }
+  }
+
+  return {
+    provider: 'Commit statuses',
+    name: context,
+  };
+}
+
+function summarizeChecks(checks: PullRequestCheck[]) {
+  const summary = {
+    total: checks.length,
+    passed: 0,
+    failed: 0,
+    pending: 0,
+  };
+
+  const providers = new Map<string, {
+    name: string;
+    total: number;
+    passed: number;
+    failed: number;
+    pending: number;
+    checks: PullRequestCheck[];
+  }>();
+
+  for (const check of checks) {
+    if (check.status === 'success') summary.passed += 1;
+    if (check.status === 'failure') summary.failed += 1;
+    if (check.status === 'pending') summary.pending += 1;
+
+    const existing = providers.get(check.provider) || {
+      name: check.provider,
+      total: 0,
+      passed: 0,
+      failed: 0,
+      pending: 0,
+      checks: [],
+    };
+
+    existing.total += 1;
+    if (check.status === 'success') existing.passed += 1;
+    if (check.status === 'failure') existing.failed += 1;
+    if (check.status === 'pending') existing.pending += 1;
+    existing.checks.push(check);
+    providers.set(check.provider, existing);
+  }
+
+  const overall =
+    summary.failed > 0
+      ? 'failing'
+      : summary.pending > 0
+        ? 'pending'
+        : summary.total > 0
+          ? 'passing'
+          : 'none';
+
+  return {
+    summary,
+    overall,
+    providers: [...providers.values()].sort((left, right) => {
+      if (left.failed !== right.failed) return right.failed - left.failed;
+      if (left.pending !== right.pending) return right.pending - left.pending;
+      return left.name.localeCompare(right.name);
+    }),
+  };
+}
+
+async function fetchPullRequestStatus(
+  owner: string,
+  repo: string,
+  number: number,
+  headers: Record<string, string>,
+) {
+  const prRes = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/pulls/${number}`,
+    { headers },
+  );
+
+  if (!prRes.ok) {
+    throw new Error(`Failed to fetch PR: ${await prRes.text()}`);
+  }
+
+  const pr = await prRes.json();
+  const headSha = pr?.head?.sha as string | undefined;
+  const checks: PullRequestCheck[] = [];
+
+  if (headSha) {
+    const [checkRunsRes, statusesRes] = await Promise.all([
+      fetch(
+        `https://api.github.com/repos/${owner}/${repo}/commits/${headSha}/check-runs?per_page=100`,
+        { headers },
+      ),
+      fetch(
+        `https://api.github.com/repos/${owner}/${repo}/commits/${headSha}/status`,
+        { headers },
+      ),
+    ]);
+
+    if (checkRunsRes.ok) {
+      const data = await checkRunsRes.json();
+      const runs = Array.isArray(data?.check_runs) ? data.check_runs : [];
+      for (const run of runs) {
+        checks.push({
+          name: typeof run?.name === 'string' ? run.name : 'Unnamed check',
+          provider: typeof run?.app?.name === 'string' ? run.app.name : 'Checks',
+          status: getCheckState(run?.status, run?.conclusion),
+          detailsUrl: typeof run?.html_url === 'string' ? run.html_url : null,
+          summary: typeof run?.output?.title === 'string'
+            ? run.output.title
+            : typeof run?.conclusion === 'string'
+              ? run.conclusion
+              : null,
+        });
+      }
+    }
+
+    if (statusesRes.ok) {
+      const data = await statusesRes.json();
+      const statuses = Array.isArray(data?.statuses) ? data.statuses : [];
+      for (const status of statuses) {
+        const { provider, name } = getLegacyStatusProvider(
+          typeof status?.context === 'string' ? status.context : 'Status',
+        );
+        checks.push({
+          name,
+          provider,
+          status: getCheckState(status?.state, null),
+          detailsUrl: typeof status?.target_url === 'string' ? status.target_url : null,
+          summary: typeof status?.description === 'string' ? status.description : null,
+        });
+      }
+    }
+  }
+
+  return {
+    pr: {
+      number: pr.number,
+      title: pr.title,
+      body: pr.body || '',
+      url: pr.html_url,
+      state: pr.state,
+      draft: !!pr.draft,
+      merged: !!pr.merged,
+      mergeable: typeof pr.mergeable === 'boolean' ? pr.mergeable : null,
+      mergeableState: typeof pr.mergeable_state === 'string' ? pr.mergeable_state : null,
+      headBranch: pr?.head?.ref || '',
+      baseBranch: pr?.base?.ref || '',
+    },
+    checks: summarizeChecks(checks),
+  };
 }
 
 async function fetchRepoContents(
@@ -561,6 +783,31 @@ app.post('/functions/v1/github-integration', async (req, res) => {
         }
         const contents = await fetchRepoContents(owner, repo, path, headers);
         return sendJson(res, 200, { contents });
+      }
+
+      case 'read-tree': {
+        const { owner, repo, branch } = params;
+        if (!owner || !repo || !branch) {
+          return sendJson(res, 400, { error: 'owner, repo, and branch are required' });
+        }
+        const treeResponse = await fetch(
+          `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`,
+          { headers }
+        );
+        if (!treeResponse.ok) {
+          const error = await treeResponse.text();
+          return sendJson(res, treeResponse.status, { error: `GitHub API error: ${error}` });
+        }
+        const treeData = await treeResponse.json() as { tree: Array<{ path: string; type: string; size?: number; sha: string }>; truncated: boolean };
+        const items = treeData.tree
+          .filter((item: { type: string }) => item.type === 'blob' || item.type === 'tree')
+          .map((item: { path: string; type: string; size?: number; sha: string }) => ({
+            path: item.path,
+            type: item.type === 'tree' ? 'dir' : 'file',
+            size: item.size || 0,
+            sha: item.sha,
+          }));
+        return sendJson(res, 200, { items, truncated: treeData.truncated });
       }
 
       case 'read-file': {
@@ -716,7 +963,83 @@ app.post('/functions/v1/github-integration', async (req, res) => {
         }
 
         const pr = await prRes.json();
-        return sendJson(res, 200, { pr: { number: pr.number, url: pr.html_url } });
+        return sendJson(res, 200, {
+          pr: {
+            number: pr.number,
+            url: pr.html_url,
+            title: pr.title,
+            body: pr.body || '',
+            state: pr.state,
+            draft: !!pr.draft,
+            headBranch: pr?.head?.ref || branch,
+            baseBranch: pr?.base?.ref || baseBranch,
+          },
+        });
+      }
+
+      case 'get-pr-status': {
+        const { owner, repo, number } = params as {
+          owner: string;
+          repo: string;
+          number: number;
+        };
+
+        if (!owner || !repo || !number) {
+          return sendJson(res, 400, { error: 'owner, repo, and number are required' });
+        }
+
+        const status = await fetchPullRequestStatus(owner, repo, Number(number), headers);
+        return sendJson(res, 200, status);
+      }
+
+      case 'merge-pr': {
+        const {
+          owner,
+          repo,
+          number,
+          method,
+          commitTitle,
+          commitMessage,
+        } = params as {
+          owner: string;
+          repo: string;
+          number: number;
+          method?: 'merge' | 'squash' | 'rebase';
+          commitTitle?: string;
+          commitMessage?: string;
+        };
+
+        if (!owner || !repo || !number) {
+          return sendJson(res, 400, { error: 'owner, repo, and number are required' });
+        }
+
+        const mergeRes = await fetch(
+          `https://api.github.com/repos/${owner}/${repo}/pulls/${number}/merge`,
+          {
+            method: 'PUT',
+            headers: { ...headers, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              merge_method: method || 'squash',
+              ...(commitTitle ? { commit_title: commitTitle } : {}),
+              ...(commitMessage ? { commit_message: commitMessage } : {}),
+            }),
+          }
+        );
+
+        if (!mergeRes.ok) {
+          return sendJson(res, mergeRes.status, {
+            error: `Failed to merge PR: ${await mergeRes.text()}`,
+          });
+        }
+
+        const merged = await mergeRes.json();
+        return sendJson(res, 200, {
+          merged: {
+            sha: merged.sha,
+            merged: !!merged.merged,
+            message: merged.message,
+          },
+        });
       }
 
       default:
@@ -984,12 +1307,25 @@ app.post('/functions/v1/validate-key', async (req, res) => {
       : null;
 
     if (listModelsUrl) {
-      const modelListResponse = await fetch(listModelsUrl, {
-        headers: {
-          Authorization: `Bearer ${api_key}`,
-          ...getProviderHeaders(provider, origin),
-        },
-      });
+      let modelListResponse: Response;
+      try {
+        modelListResponse = await fetch(listModelsUrl, {
+          headers: {
+            Authorization: `Bearer ${api_key}`,
+            ...getProviderHeaders(provider, origin),
+          },
+        });
+      } catch (error) {
+        if (provider === 'hermes') {
+          return sendJson(res, 503, {
+            valid: false,
+            error:
+              `Hermes bridge is not reachable at ${OPENAI_COMPATIBLE.hermes}. ` +
+              'Start hermes-bridge/main.py and try again.',
+          });
+        }
+        throw error;
+      }
 
       if (modelListResponse.ok) {
         const data = await modelListResponse.json();
@@ -1275,6 +1611,19 @@ app.post(
   '/functions/v1/orchestrate',
   createOrchestrateHandler()
 );
+
+// ─── Health check ──────────────────────────────────────────────────────────
+
+app.get('/functions/v1/health', (_req, res) => {
+  sendJson(res, 200, { ok: true, routes: ['/functions/v1/chat', '/functions/v1/github-integration', '/functions/v1/github-analyzer', '/functions/v1/validate-key', '/functions/v1/chat-proxy', '/functions/v1/orchestrate'] });
+});
+
+// ─── 404 catch-all (debug unmatched routes) ─────────────────────────────────
+
+app.use((req, res) => {
+  console.warn(`[server] 404 Not Found: ${req.method} ${req.originalUrl}`);
+  sendJson(res, 404, { error: `Route not found: ${req.method} ${req.originalUrl}` });
+});
 
   return app;
 }

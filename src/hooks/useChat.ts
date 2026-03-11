@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useChat as useAIChat, type Message as AIMessage } from '@ai-sdk/react';
+import { useShallow } from 'zustand/shallow';
 import { useChatStore } from '@/stores/chat-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useKnowledgeStore } from '@/stores/knowledge-store';
@@ -11,7 +12,8 @@ import { getApiBaseUrl } from '@/lib/api';
 import { createQueuedMessage, moveQueuedMessageToFront, removeQueuedMessage, type QueuedMessage } from '@/lib/chat-queue';
 import { PROVIDERS, supportsReasoningEffort } from '@/lib/providers';
 import { useHermesStore } from '@/stores/hermes-store';
-import { findPendingProposal, type ProposalMessageLike } from '@/lib/proposed-changes';
+import { findPendingProposal, getProposalDigest, type ProposalMessageLike } from '@/lib/proposed-changes';
+import { extractPseudoToolInvocations } from '@/lib/pseudo-tool-calls';
 import type { ToolActivityEvent } from '@/components/chat/AgentActivity';
 
 function countLines(content: string): number {
@@ -98,6 +100,27 @@ function isProposalApprovalMessage(content: string): boolean {
   ].some((pattern) => pattern.test(normalized));
 }
 
+const STRUCTURED_REPO_TOOL_NAMES = new Set([
+  'propose_changes',
+  'read_repo_file',
+  'edit_repo_file',
+  'create_repo_file',
+  'delete_repo_file',
+  'batch_edit_repo_files',
+]);
+
+function hasStructuredRepoToolData(message: {
+  parts?: Array<{ type?: string; toolInvocation?: { toolName?: string } }>;
+  toolInvocations?: Array<{ toolName?: string }>;
+}): boolean {
+  const partInvocations = message.parts
+    ?.filter((part) => part.type === 'tool-invocation' && part.toolInvocation?.toolName)
+    .map((part) => part.toolInvocation?.toolName);
+  const toolInvocationNames = message.toolInvocations?.map((invocation) => invocation.toolName);
+  return [...(partInvocations || []), ...(toolInvocationNames || [])]
+    .some((toolName) => !!toolName && STRUCTURED_REPO_TOOL_NAMES.has(toolName));
+}
+
 
 interface ProviderOverride {
   provider: string;
@@ -109,18 +132,25 @@ export function useChat(
   onConversationCreated?: (id: string) => void,
   providerOverride?: ProviderOverride,
   panelId: string = 'default',
+  onReadyForPR?: (panelId: string) => void,
 ) {
-  const {
-    createConversation,
-    renameConversation,
-    loadConversations,
-  } = useChatStore();
+  const createConversation = useChatStore((s) => s.createConversation);
+  const renameConversation = useChatStore((s) => s.renameConversation);
+  const loadConversations = useChatStore((s) => s.loadConversations);
 
-  const { activeProvider, providers, defaultSystemPrompt, githubPAT, autoApproveRepoChanges } = useSettingsStore();
+  const { activeProvider, providers, defaultSystemPrompt, githubPAT, autoApproveRepoChanges } = useSettingsStore(
+    useShallow((s) => ({
+      activeProvider: s.activeProvider,
+      providers: s.providers,
+      defaultSystemPrompt: s.defaultSystemPrompt,
+      githubPAT: s.githubPAT,
+      autoApproveRepoChanges: s.autoApproveRepoChanges,
+    })),
+  );
   const knowledgeContext = useKnowledgeStore((s) => s.getActiveContext());
-  const changeset = useChangesetStore((s) => s.getChangeset(panelId));
+  const changeset = useChangesetStore(useShallow((s) => s.getChangeset(panelId)));
   const addChangeForPanel = useChangesetStore((s) => s.addChange);
-  const preview = usePreviewStore((s) => s.getPreview(panelId));
+  const preview = usePreviewStore(useShallow((s) => s.getPreview(panelId)));
   const { activeRepo, isRepoMode, repoFileTree } = changeset;
   const hermesToolsetConfig = useHermesStore((s) => s.toolsets);
   const hermesToolsets = useMemo(
@@ -149,16 +179,19 @@ export function useChat(
     let repoContext = `\n\n--- GitHub Repository ---\nYou are working on the GitHub repository ${activeRepo.fullName} (default branch: ${activeRepo.defaultBranch}).
 
 IMPORTANT: You have tools to work with this repo. When the user asks you to make changes:
-1. FIRST use propose_changes to present a plan of ALL files you intend to modify. Wait for user approval before proceeding.
-2. After approval, use read_repo_file to read the files you need to modify.
-3. Then use batch_edit_repo_files to apply ALL changes at once (preferred), or edit_repo_file / create_repo_file individually.
-4. Do NOT ask the user to specify file paths — explore the repo yourself using the file tree below.
-5. When the user asks you to update multiple things, make sure you address ALL of them, not just one.
-6. All changes are staged for a pull request (not applied directly).
-7. IMPORTANT: If you need to edit many large files, split batch_edit_repo_files into multiple calls (max 3-4 files per batch) to avoid output truncation. For very large files, use individual edit_repo_file calls instead.`;
+1. For a NEW change request that does not already have an approved plan, FIRST use propose_changes to present a plan of ALL files you intend to modify. Wait for user approval before proceeding.
+2. If the latest user message is approving your most recent proposal (for example "go ahead", "approved", or "apply it"), do NOT call propose_changes again. Continue executing the already approved plan.
+3. After approval, use read_repo_file to read the files you need to modify.
+4. Then use batch_edit_repo_files to apply ALL changes at once (preferred), or edit_repo_file / create_repo_file individually.
+5. Do NOT ask the user to specify file paths — explore the repo yourself using the file tree below.
+6. Do NOT ask clarifying questions. Use your judgment, explore the repo to understand the codebase, and propose changes directly. If the request is ambiguous, make reasonable assumptions and explain them in your proposal.
+7. When the user asks you to update multiple things, make sure you address ALL of them, not just one.
+8. All changes are staged for a pull request (not applied directly).
+9. Never print pseudo-tool syntax like propose_changes(...) or batch_edit_repo_files(...) in visible text. Use the actual tool calls instead.
+10. IMPORTANT: If you need to edit many large files, split batch_edit_repo_files into multiple calls (max 3-4 files per batch) to avoid output truncation. For very large files, use individual edit_repo_file calls instead.`;
 
     if (autoApproveRepoChanges) {
-      repoContext += `\n8. The user has enabled auto-approval for repo changes. Still call propose_changes first, then continue immediately without waiting for a follow-up approval message.`;
+      repoContext += `\n11. The user has enabled auto-approval for repo changes. Still call propose_changes first, then continue immediately without waiting for a follow-up approval message.`;
     }
 
     if (repoFileTree.length > 0) {
@@ -223,6 +256,10 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
   const [providerUnavailableOpen, setProviderUnavailableOpen] = useState(false);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
   const [toolActivityMap, setToolActivityMap] = useState<Record<string, ToolActivityEvent[]>>({});
+  const requestConversationIdRef = useRef<string | null>(conversationId);
+  // Keep the ref in sync with the prop (when conversation switches externally)
+  requestConversationIdRef.current = conversationId ?? requestConversationIdRef.current;
+  const continuingApprovedProposalRunRef = useRef(false);
   const toolActivityRef = useRef<Record<string, ToolActivityEvent[]>>({});
   const activeConversationId = conversationId ?? pendingConversationIdRef.current;
   const chatSessionId = `${activeConversationId ?? 'draft'}:${panelId}`;
@@ -230,8 +267,28 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
   const pauseForProposalRef = useRef(false);
   const awaitingProposalApprovalRef = useRef(false);
   const proposalApprovedRef = useRef(false);
+  const stoppedForProposalRef = useRef(false);
+  // Per-conversation auto-approve: when user clicks "Allow all" in the approval
+  // banner, all subsequent proposals in this conversation are auto-approved without
+  // requiring individual approval each turn.
+  const conversationAutoApproveRef = useRef(false);
+  // Track consecutive 'unknown' finish reasons during active repo work to auto-continue
+  // when the model is interrupted (e.g. token limit, dropped stream). Cap retries to
+  // prevent infinite loops.
+  const unknownFinishRetryRef = useRef(0);
+  const MAX_UNKNOWN_FINISH_RETRIES = 3;
+  // Signal for the auto-continue effect: set to a convId when onFinish detects an
+  // interrupted repo editing session that should be resumed.
+  const [autoContinueConvId, setAutoContinueConvId] = useState<string | null>(null);
   const pausedProposalIdRef = useRef<string | null>(null);
+  const pendingProposalCacheRef = useRef<{ digest: string; proposal: ReturnType<typeof findPendingProposal> }>({
+    digest: '',
+    proposal: null,
+  });
   const repoFileCacheRef = useRef<Record<string, string>>({});
+  const messagesRef = useRef<AIMessage[]>([]);
+  const pendingProposalRef = useRef<ReturnType<typeof findPendingProposal>>(null);
+  const appliedPseudoRepoMessageIdsRef = useRef<Set<string>>(new Set());
 
   const persistAssistantSnapshot = useCallback(async (message: Record<string, unknown>, convId: string) => {
     const messageId = typeof message.id === 'string' && message.id ? message.id : crypto.randomUUID();
@@ -249,7 +306,13 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
   }, [loadConversations]);
 
   const hermesStreamFetch = useCallback(async (url: string, init?: RequestInit) => {
+    console.log(`[useChat:fetch] Sending request to ${url} provider=${effectiveProvider}`);
     const response = await fetch(url, init);
+    console.log(`[useChat:fetch] Response status=${response.status} ok=${response.ok} hasBody=${!!response.body}`);
+    if (!response.ok) {
+      const text = await response.clone().text().catch(() => '');
+      console.error(`[useChat:fetch] Error response body:`, text.slice(0, 500));
+    }
     if (effectiveProvider !== 'hermes' || !response.body) return response;
 
     const reader = response.body.getReader();
@@ -333,20 +396,66 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
       system_prompt: fullSystemPrompt,
       ...(isRepoMode && activeRepo ? { activeRepo } : {}),
       ...(effectiveProvider === 'hermes' ? { hermes_toolsets: hermesToolsets.join(',') } : {}),
+      ...(effectiveProvider === 'hermes' && isRepoMode && activeRepo && githubPAT ? { github_pat: githubPAT } : {}),
+      ...(requestConversationIdRef.current ? { conversation_id: requestConversationIdRef.current } : {}),
+      ...(continuingApprovedProposalRunRef.current ? { continuing_approved_proposal: true } : {}),
     },
     id: chatSessionId,
     streamProtocol: 'data',
     throttle: 32,
     maxSteps: 50,
-    onFinish: async (message) => {
-      awaitingProposalApprovalRef.current = false;
-      proposalApprovedRef.current = false;
-
+    onFinish: async (message, options) => {
       const convId = convIdRef.current;
       if (!convId) return;
 
       // Persist assistant message (including parts and tool invocations)
+      if (!message) return;
       await persistAssistantSnapshot(message as Record<string, unknown>, convId);
+
+      const finishReason = options?.finishReason;
+      if (finishReason !== 'tool-calls') {
+        // Don't reset proposal state if we manually stopped the stream for approval.
+        // The proposal detection effect sets stoppedForProposalRef before calling stop().
+        if (stoppedForProposalRef.current) {
+          console.log('[useChat:onFinish] Stream stopped for proposal — preserving approval state');
+          stoppedForProposalRef.current = false;
+        } else if (
+          // Auto-continue when the model is interrupted mid-work with an unknown
+          // finish reason (common with OpenRouter/Gemini hitting token limits or
+          // returning non-standard finish reasons). Only retry if we're in an
+          // active repo editing session and haven't exceeded the retry cap.
+          (finishReason === 'unknown' || finishReason === 'length') &&
+          continuingApprovedProposalRunRef.current &&
+          proposalApprovedRef.current &&
+          unknownFinishRetryRef.current < MAX_UNKNOWN_FINISH_RETRIES
+        ) {
+          unknownFinishRetryRef.current += 1;
+          console.log(
+            `[useChat:onFinish] Unknown finish during active repo work — auto-continuing (attempt ${unknownFinishRetryRef.current}/${MAX_UNKNOWN_FINISH_RETRIES})`,
+          );
+          // Signal the auto-continue effect to send a continuation message.
+          // We can't call append() here because it comes from the same useAIChat
+          // call that this onFinish belongs to.
+          setAutoContinueConvId(convId);
+        } else {
+          console.log('[useChat:onFinish] Natural finish, resetting proposal state. finishReason:', finishReason);
+          unknownFinishRetryRef.current = 0;
+          // If this was a continuation run that made repo edits, signal ready for PR
+          if (continuingApprovedProposalRunRef.current) {
+            const stagedCount = useChangesetStore.getState().getStagedCount(panelId);
+            if (stagedCount > 0 && onReadyForPR) {
+              console.log('[useChat:onFinish] Continuation run finished with', stagedCount, 'staged changes — signaling ready for PR');
+              // Delay slightly to let pseudo-tool extraction finish processing
+              setTimeout(() => onReadyForPR(panelId), 500);
+            }
+          }
+          awaitingProposalApprovalRef.current = false;
+          proposalApprovedRef.current = false;
+          continuingApprovedProposalRunRef.current = false;
+        }
+      } else {
+        console.log('[useChat:onFinish] Tool-calls finish, keeping proposal state');
+      }
     },
     onToolCall: async ({ toolCall }) => {
       // Handle file creation tools (artifacts/preview)
@@ -395,6 +504,10 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
               }),
             }
           );
+          if (!response.ok) {
+            const errText = await response.text().catch(() => '');
+            return `Error reading file: server returned ${response.status}${errText ? ` — ${errText.slice(0, 200)}` : ''}`;
+          }
           const data = await response.json();
           if (data.error) return `Error reading file: ${data.error}`;
           repoFileCacheRef.current[path] = data.content || '';
@@ -410,10 +523,18 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
           summary?: string;
           plan: Array<{ path: string; action: string; description: string }>;
         };
-        const proposalIsAutoApproved = autoApproveRepoChanges;
+        console.log('[useChat:onToolCall] propose_changes called. approvedRef:', proposalApprovedRef.current, 'awaitingRef:', awaitingProposalApprovalRef.current, 'autoApprove:', autoApproveRepoChanges, 'plan items:', plan?.length);
+        if (proposalApprovedRef.current && !awaitingProposalApprovalRef.current) {
+          pauseForProposalRef.current = false;
+          continuingApprovedProposalRunRef.current = true;
+          const summary = plan.map((p, i) => `${i + 1}. **${p.action}** \`${p.path}\` — ${p.description}`).join('\n');
+          return `The user already approved the current proposal. Do not ask for approval again. Continue directly with read_repo_file and repo edit tools for this accepted scope.\n\n${overallSummary ? `${overallSummary}\n\n` : ''}${summary}`;
+        }
+        const proposalIsAutoApproved = autoApproveRepoChanges || conversationAutoApproveRef.current;
         pauseForProposalRef.current = !proposalIsAutoApproved;
         awaitingProposalApprovalRef.current = !proposalIsAutoApproved;
         proposalApprovedRef.current = proposalIsAutoApproved;
+        continuingApprovedProposalRunRef.current = proposalIsAutoApproved;
         const summary = plan.map((p, i) => `${i + 1}. **${p.action}** \`${p.path}\` — ${p.description}`).join('\n');
         return proposalIsAutoApproved
           ? `## Proposed Changes\n\n${overallSummary ? `${overallSummary}\n\n` : ''}${summary}\n\nAuto-approved. Proceeding with the requested changes now.`
@@ -429,7 +550,7 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
         const originalContent = existing?.originalContent ?? repoFileCacheRef.current[path] ?? '';
         const oldLines = originalContent ? countLines(originalContent) : 0;
         const newLines = countLines(content);
-        addChange({ path, action: 'edit', content, originalContent, staged: false });
+        addChange({ path, action: 'edit', content, originalContent, staged: true });
         const convId = convIdRef.current;
         if (convId) {
           useActivityStore.getState().addLineStats(convId, Math.max(0, newLines - oldLines), Math.max(0, oldLines - newLines));
@@ -442,7 +563,7 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
           return 'Error: Changes are locked until the user explicitly accepts the proposed changes.';
         }
         const { path, content } = toolCall.args as { path: string; content: string; description: string };
-        addChange({ path, action: 'create', content, staged: false });
+        addChange({ path, action: 'create', content, staged: true });
         const convId = convIdRef.current;
         if (convId) {
           useActivityStore.getState().addLineStats(convId, countLines(content), 0);
@@ -458,7 +579,7 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
         const existing = useChangesetStore.getState().getChangeset(panelId).changes[path];
         const originalContent = existing?.originalContent ?? repoFileCacheRef.current[path] ?? '';
         const oldLines = originalContent ? countLines(originalContent) : 0;
-        addChange({ path, action: 'delete', content: '', originalContent, staged: false });
+        addChange({ path, action: 'delete', content: '', originalContent, staged: true });
         const convId = convIdRef.current;
         if (convId) {
           useActivityStore.getState().addLineStats(convId, 0, oldLines);
@@ -494,7 +615,7 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
             action: change.action,
             content: change.content || '',
             originalContent,
-            staged: false,
+            staged: true,
           });
           results.push(`Staged ${change.action} on ${change.path}`);
         }
@@ -506,8 +627,10 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
       }
     },
     onError: (err) => {
+      continuingApprovedProposalRunRef.current = false;
       proposalApprovedRef.current = false;
-      console.error('Chat error:', err);
+      awaitingProposalApprovalRef.current = false;
+      console.error('[useChat:onError] Chat error:', err?.message || err, 'provider:', effectiveProvider, 'model:', effectiveModel);
       if (err?.message?.includes('not configured')) {
         setProviderUnavailableOpen(true);
       }
@@ -518,9 +641,59 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
     },
   });
 
+  // Keep messagesRef in sync for use in callbacks without adding messages to deps
+  messagesRef.current = messages;
+
   // Track streaming state in global activity store
   const isStreaming = status === 'streaming' || status === 'submitted';
-  const pendingProposal = findPendingProposal(messages as ProposalMessageLike[]);
+  const proposalDigest = getProposalDigest(messages as ProposalMessageLike[]);
+  if (pendingProposalCacheRef.current.digest !== proposalDigest) {
+    pendingProposalCacheRef.current = {
+      digest: proposalDigest,
+      proposal: findPendingProposal(messages as ProposalMessageLike[]),
+    };
+  }
+  const pendingProposal = pendingProposalCacheRef.current.proposal;
+  pendingProposalRef.current = pendingProposal;
+
+  // Auto-continue effect: when onFinish signals an interrupted repo editing session,
+  // sanitize any partial tool calls and send a continuation message.
+  useEffect(() => {
+    if (!autoContinueConvId) return;
+    const targetConvId = autoContinueConvId;
+    setAutoContinueConvId(null);
+
+    const currentMessages = messagesRef.current;
+    const sanitized = sanitizePartialToolCalls(currentMessages);
+    if (sanitized !== currentMessages) {
+      setMessages(sanitized);
+    }
+
+    // Small delay to let the sanitized messages settle
+    const timer = setTimeout(() => {
+      append(
+        {
+          role: 'user',
+          content:
+            'You were interrupted mid-work. Continue where you left off — complete the remaining file changes from the approved plan.',
+        },
+        {
+          body: {
+            conversation_id: targetConvId,
+            continuing_approved_proposal: true,
+          },
+        },
+      ).catch((err) => {
+        console.error('[useChat:autoContinue] Failed to auto-continue:', err);
+        awaitingProposalApprovalRef.current = false;
+        proposalApprovedRef.current = false;
+        continuingApprovedProposalRunRef.current = false;
+      });
+    }, 300);
+
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoContinueConvId]);
 
   useEffect(() => {
     if (!pendingProposal) {
@@ -528,11 +701,27 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
       return;
     }
     if (!isStreaming) return;
-    if (!pauseForProposalRef.current) return;
+    // Pause when:
+    // 1. Explicit flag from onToolCall for propose_changes
+    // 2. Already in approval-awaiting state
+    // 3. Auto-approve is off and a content-matched proposal is detected
+    //    (Hermes/local models may output proposals as text, not structured tool calls)
+    const shouldPause =
+      pauseForProposalRef.current ||
+      awaitingProposalApprovalRef.current ||
+      (!autoApproveRepoChanges && !conversationAutoApproveRef.current);
+    if (!shouldPause) return;
     if (pausedProposalIdRef.current === pendingProposal.messageId) return;
 
     pausedProposalIdRef.current = pendingProposal.messageId;
     pauseForProposalRef.current = false;
+    // Ensure the approval-awaiting state is set even for content-matched proposals
+    // (where onToolCall was never invoked for propose_changes).
+    awaitingProposalApprovalRef.current = true;
+    // Mark that we're stopping for a proposal so onFinish doesn't reset proposal state
+    stoppedForProposalRef.current = true;
+
+    console.log('[useChat:proposalEffect] Pausing stream for proposal approval. messageId:', pendingProposal.messageId);
 
     const convId = convIdRef.current;
     const latestAssistant = [...messages].reverse().find((message) => message.role === 'assistant');
@@ -546,11 +735,103 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
 
       if (!conversationId && pendingConversationIdRef.current) {
         const createdConversationId = pendingConversationIdRef.current;
-        pendingConversationIdRef.current = null;
+        // Don't clear pendingConversationIdRef here — clearing it before
+        // onConversationCreated sets conversationId causes chatSessionId to
+        // change to 'draft:...', which makes the AI SDK reset messages to [].
+        // The conversation-switch effect (line 757) clears it once conversationId is set.
+        skipNextLoadRef.current = true;
         onConversationCreated?.(createdConversationId);
       }
     })();
-  }, [conversationId, isStreaming, messages, onConversationCreated, pendingProposal, persistAssistantSnapshot, stop]);
+  }, [autoApproveRepoChanges, conversationId, isStreaming, messages, onConversationCreated, pendingProposal, persistAssistantSnapshot, stop]);
+
+  useEffect(() => {
+    if (isStreaming || !activeRepo) return;
+
+    for (const message of messages) {
+      if (message.role !== 'assistant') continue;
+      if (appliedPseudoRepoMessageIdsRef.current.has(message.id)) continue;
+      if (hasStructuredRepoToolData(message as {
+        parts?: Array<{ type?: string; toolInvocation?: { toolName?: string } }>;
+        toolInvocations?: Array<{ toolName?: string }>;
+      })) continue;
+
+      const pseudoInvocations = extractPseudoToolInvocations(message.content || '');
+      const repoEditInvocation = pseudoInvocations.find((invocation) =>
+        ['batch_edit_repo_files', 'edit_repo_file', 'create_repo_file', 'delete_repo_file'].includes(invocation.toolName),
+      );
+
+      if (!repoEditInvocation) continue;
+
+      if (repoEditInvocation.toolName === 'batch_edit_repo_files') {
+        const fileChanges = Array.isArray(repoEditInvocation.args.changes)
+          ? repoEditInvocation.args.changes as Array<{ path?: string; action?: 'create' | 'edit' | 'delete'; content?: string }>
+          : [];
+
+        for (const change of fileChanges) {
+          if (
+            typeof change?.path !== 'string' ||
+            (change.action !== 'create' && change.action !== 'edit' && change.action !== 'delete')
+          ) {
+            continue;
+          }
+
+          const existing = useChangesetStore.getState().getChangeset(panelId).changes[change.path];
+          const originalContent = existing?.originalContent ?? repoFileCacheRef.current[change.path] ?? '';
+          addChange({
+            path: change.path,
+            action: change.action,
+            content: typeof change.content === 'string' ? change.content : '',
+            originalContent,
+            staged: true,
+          });
+        }
+      } else {
+        const path = typeof repoEditInvocation.args.path === 'string' ? repoEditInvocation.args.path : null;
+        const action = repoEditInvocation.toolName === 'create_repo_file'
+          ? 'create'
+          : repoEditInvocation.toolName === 'delete_repo_file'
+            ? 'delete'
+            : 'edit';
+        if (!path) continue;
+        const existing = useChangesetStore.getState().getChangeset(panelId).changes[path];
+        const originalContent = existing?.originalContent ?? repoFileCacheRef.current[path] ?? '';
+        addChange({
+          path,
+          action,
+          content: typeof repoEditInvocation.args.content === 'string' ? repoEditInvocation.args.content : '',
+          originalContent,
+          staged: true,
+        });
+      }
+
+      appliedPseudoRepoMessageIdsRef.current.add(message.id);
+    }
+  }, [activeRepo, addChange, isStreaming, messages, panelId]);
+
+  // Auto-open PR modal when hermes finishes editing files (pseudo-tool path).
+  // The pseudo-tool extraction effect above runs when !isStreaming and adds
+  // staged changes. We watch for that transition and signal readyForPR.
+  const prevStreamingRef = useRef(false);
+  useEffect(() => {
+    const wasStreaming = prevStreamingRef.current;
+    prevStreamingRef.current = isStreaming;
+
+    // Only trigger on streaming → not streaming transition
+    if (wasStreaming && !isStreaming && activeRepo && effectiveProvider === 'hermes' && onReadyForPR) {
+      // Use a timeout to let the pseudo-tool extraction effect run first
+      const timer = setTimeout(() => {
+        const stagedCount = useChangesetStore.getState().getStagedCount(panelId);
+        if (stagedCount > 0) {
+          console.log('[useChat:autoPR] Hermes finished streaming with', stagedCount, 'staged changes — opening PR modal');
+          onReadyForPR(panelId);
+        }
+      }, 800);
+      return () => clearTimeout(timer);
+    }
+  }, [activeRepo, effectiveProvider, isStreaming, onReadyForPR, panelId]);
+
+  // requestConversationIdRef is synced with conversationId during render (line 264)
 
   useEffect(() => {
     const convId = convIdRef.current;
@@ -573,6 +854,7 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
     db.conversationFiles.get(convId).then((saved) => {
       const csStore = useChangesetStore.getState();
       const psStore = usePreviewStore.getState();
+      appliedPseudoRepoMessageIdsRef.current = new Set();
       if (saved) {
         const { changeset: cs, preview } = saved;
         repoFileCacheRef.current = Object.fromEntries(
@@ -605,7 +887,6 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
   }, [panelId, resetPanelFileState]);
 
   const hydrateConversationMessages = useCallback((convId: string) => {
-    setMessages([]);
     db.messages.getByConversation(convId).then((msgs) => {
       setMessages(toStoredAIMessages(msgs));
     });
@@ -633,14 +914,15 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
     // The user may have already set up a repo/changeset on the blank thread.
     // Preserve current state and associate it with the new conversation instead of clearing.
     if (prevConvId === null && conversationId !== null) {
-      // Save whatever the user configured while on the blank thread to the new conversation
-      void saveConversationFiles(conversationId);
-
       if (skipNextLoadRef.current) {
+        // Just created this conversation — preserve current state
         skipNextLoadRef.current = false;
+        void saveConversationFiles(conversationId);
         return;
       }
+      // Navigating to an existing conversation on startup — restore its file state
       hydrateConversationMessages(conversationId);
+      restoreFileState(conversationId);
       return;
     }
 
@@ -667,6 +949,9 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
     // Clear hermes tool activity on conversation switch
     setToolActivityMap({});
     toolActivityRef.current = {};
+    appliedPseudoRepoMessageIdsRef.current = new Set();
+    // Reset per-conversation auto-approve when switching conversations
+    conversationAutoApproveRef.current = false;
   }, [conversationId, setMessages, panelId, resetPanelFileState, restoreFileState, saveConversationFiles, hydrateConversationMessages]);
 
   // Auto-save file state (debounced) whenever the panel's file state changes
@@ -715,6 +1000,9 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
       return;
     }
 
+    // Reset auto-continue counter on explicit user messages
+    unknownFinishRetryRef.current = 0;
+
     let convId = conversationId ?? pendingConversationIdRef.current;
     let createdConversationId: string | null = null;
 
@@ -725,6 +1013,7 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
         createdConversationId = convId;
         pendingConversationIdRef.current = convId;
         convIdRef.current = convId;
+        requestConversationIdRef.current = convId;
       } catch (e) {
         console.error('Failed to create conversation:', e);
         return;
@@ -732,11 +1021,19 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
     }
 
     // Persist user message to IndexedDB
-    if (awaitingProposalApprovalRef.current && isProposalApprovalMessage(content)) {
+    const continuingApprovedProposal =
+      isProposalApprovalMessage(content) &&
+      (awaitingProposalApprovalRef.current || pendingProposalRef.current !== null);
+
+    console.log('[useChat:sendMessage] content:', JSON.stringify(content), 'isApproval:', isProposalApprovalMessage(content), 'awaitingRef:', awaitingProposalApprovalRef.current, 'pendingProposal:', !!pendingProposalRef.current, '→ continuingApproved:', continuingApprovedProposal, 'provider:', effectiveProvider, 'model:', effectiveModel);
+
+    if (continuingApprovedProposal) {
       proposalApprovedRef.current = true;
       awaitingProposalApprovalRef.current = false;
+      continuingApprovedProposalRunRef.current = true;
     } else {
       proposalApprovedRef.current = false;
+      continuingApprovedProposalRunRef.current = false;
     }
 
     const userMsgId = crypto.randomUUID();
@@ -762,15 +1059,25 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
     }
 
     // Sanitize any partial tool invocations from interrupted streams
-    const sanitized = sanitizePartialToolCalls(messages);
-    if (sanitized !== messages) {
+    const currentMessages = messagesRef.current;
+    const sanitized = sanitizePartialToolCalls(currentMessages);
+    if (sanitized !== currentMessages) {
       setMessages(sanitized);
     }
 
     try {
       await append(
         { role: 'user', content },
-        convId ? { body: { conversation_id: convId } } : undefined,
+        convId
+          ? {
+              body: {
+                conversation_id: convId,
+                ...(continuingApprovedProposal
+                  ? { continuing_approved_proposal: true }
+                  : {}),
+              },
+            }
+          : undefined,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message.toLowerCase() : '';
@@ -785,11 +1092,13 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
 
     if (createdConversationId && pendingConversationIdRef.current === createdConversationId) {
       skipNextLoadRef.current = true;
-      pendingConversationIdRef.current = null;
+      // Don't clear pendingConversationIdRef before onConversationCreated —
+      // it keeps chatSessionId stable until conversationId is set by the parent.
+      // The conversation-switch effect clears it once conversationId matches.
       onConversationCreated?.(createdConversationId);
     }
     return true;
-  }, [conversationId, effectiveProvider, effectiveModel, config, defaultSystemPrompt, createConversation, renameConversation, append, onConversationCreated, messages, setMessages]);
+  }, [conversationId, effectiveProvider, effectiveModel, config, defaultSystemPrompt, createConversation, renameConversation, append, onConversationCreated, setMessages]);
 
   const handleSend = useCallback(() => {
     if (isStreaming) {
@@ -851,6 +1160,10 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
     reload();
   }, [reload]);
 
+  const setConversationAutoApprove = useCallback((value: boolean) => {
+    conversationAutoApproveRef.current = value;
+  }, []);
+
   return {
     messages,
     input: draftInput,
@@ -871,5 +1184,6 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
     activeProvider: effectiveProvider,
     activeModel: effectiveModel,
     toolActivityMap,
+    setConversationAutoApprove,
   };
 }
