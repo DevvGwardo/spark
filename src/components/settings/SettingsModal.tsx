@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { X, Eye, EyeOff, Search, Check, Zap, ChevronDown, ExternalLink, Github, Code2, Network, Info } from 'lucide-react';
 import { useSettingsStore, type Provider } from '@/stores/settings-store';
+import { useHermesStore, type HermesToolsets } from '@/stores/hermes-store';
 import { useOrchestratorStore } from '@/stores/orchestrator-store';
 import { useUIStore } from '@/stores/ui-store';
 import { PROVIDERS, PROVIDER_ORDER, CATEGORY_LABELS, type ProviderCategory } from '@/lib/providers';
@@ -248,6 +249,8 @@ export const SettingsModal: React.FC = () => {
     setGithubPAT,
     setAutoApproveRepoChanges,
   } = useSettingsStore();
+
+  const { toolsets: hermesToolsets, setToolset: setHermesToolset } = useHermesStore();
 
   const [showKey, setShowKey] = useState(false);
   const [showGithubKey, setShowGithubKey] = useState(false);
@@ -512,6 +515,50 @@ export const SettingsModal: React.FC = () => {
                         <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                       </div>
                     </div>
+
+                    {activeProvider === 'hermes' && (
+                      <div className={cn(settingsCardClass, 'space-y-3 px-5 py-5')}>
+                        <div>
+                          <p className={fieldLabelClass}>Agent Tools</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Choose which tools the Hermes agent can use during conversations.
+                          </p>
+                        </div>
+                        <div className="space-y-3">
+                          {([
+                            { key: 'web' as const, label: 'Web Search', desc: 'Search the web for information' },
+                            { key: 'browser' as const, label: 'Browser Automation', desc: 'Browse and interact with web pages' },
+                            { key: 'vision' as const, label: 'Vision Analysis', desc: 'Analyze images and screenshots' },
+                            { key: 'terminal' as const, label: 'Terminal Access', desc: 'Allows shell command execution on your machine', warn: true },
+                            { key: 'files' as const, label: 'File Operations', desc: 'Allows reading and writing files on your machine', warn: true },
+                            { key: 'code_execution' as const, label: 'Code Execution', desc: 'Allows running arbitrary code on your machine', warn: true },
+                          ] as const).map(({ key, label, desc, warn }) => (
+                            <div key={key} className="flex items-center justify-between">
+                              <div>
+                                <div className="text-sm text-foreground">{label}</div>
+                                <div className={`text-xs ${warn ? 'text-amber-500' : 'text-muted-foreground'}`}>
+                                  {desc}
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => setHermesToolset(key, !hermesToolsets[key])}
+                                className={`relative w-10 h-5 rounded-full transition-colors ${
+                                  hermesToolsets[key]
+                                    ? 'bg-blue-500'
+                                    : 'bg-zinc-300 dark:bg-zinc-600'
+                                }`}
+                              >
+                                <div
+                                  className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+                                    hermesToolsets[key] ? 'translate-x-5' : 'translate-x-0.5'
+                                  }`}
+                                />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     <div className={cn(settingsCardClass, 'space-y-4 px-5 py-5')}>
                       <div>
