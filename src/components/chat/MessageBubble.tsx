@@ -8,6 +8,7 @@ import { usePreviewStore } from '@/stores/preview-store';
 import type { Message } from '@/lib/db';
 import { computeDiffLines, countContentLines, getChangeLineDelta } from '@/lib/change-diff';
 import { cn } from '@/lib/utils';
+import { AgentActivity, type ToolActivityEvent } from './AgentActivity';
 import '@shoelace-style/shoelace/dist/components/details/details.js';
 
 /**
@@ -83,6 +84,7 @@ interface MessageBubbleProps {
   reasoning?: string;
   isReasoningStreaming?: boolean;
   toolInvocations?: ToolInvocation[];
+  toolActivity?: ToolActivityEvent[];
   onRegenerate?: () => void;
   onEdit?: (content: string) => void;
 }
@@ -497,6 +499,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   reasoning,
   isReasoningStreaming,
   toolInvocations,
+  toolActivity,
   onRegenerate,
   onEdit,
 }) => {
@@ -661,6 +664,9 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                 return null;
               });
               })()
+            )}
+            {toolActivity && toolActivity.length > 0 && (
+              <AgentActivity events={toolActivity} />
             )}
           </>
         )}
