@@ -21,3 +21,5 @@
 {"id":"cloud-chat-hub-9ee6","title":"Fix Hermes streaming auto-scroll","status":"closed","type":"bug","priority":2,"createdAt":"2026-03-11T04:32:12.884Z","updatedAt":"2026-03-11T04:35:53.984Z","closedAt":"2026-03-11T04:35:53.984Z"}
 {"id":"cloud-chat-hub-3d03","title":"Modernize Hermes compatibility error UI","status":"closed","type":"task","priority":2,"createdAt":"2026-03-11T04:38:13.247Z","updatedAt":"2026-03-11T04:41:28.576Z","closedAt":"2026-03-11T04:41:28.576Z"}
 {"id":"cloud-chat-hub-bb6f","title":"Fix Hermes repo-mode stall","status":"closed","type":"task","priority":2,"createdAt":"2026-03-11T04:48:45.945Z","updatedAt":"2026-03-11T04:50:39.290Z","closedAt":"2026-03-11T04:50:39.290Z"}
+{"id":"cloud-chat-hub-e107","title":"Polish chat transcript UI for tool-heavy runs","status":"open","type":"task","priority":2,"createdAt":"2026-03-11T04:56:41.868Z","updatedAt":"2026-03-11T04:56:41.868Z"}
+{"id":"cloud-chat-hub-6519","title":"Fix repeated repo planning after approval","status":"closed","type":"task","priority":1,"createdAt":"2026-03-11T04:59:04.674Z","updatedAt":"2026-03-11T05:11:49.204Z","closedAt":"2026-03-11T05:11:49.204Z"}
