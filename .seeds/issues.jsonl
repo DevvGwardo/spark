@@ -19,3 +19,4 @@
 {"id":"cloud-chat-hub-5d2f","title":"Fix Electron preload path and settings console errors","status":"closed","type":"bug","priority":1,"createdAt":"2026-03-11T02:46:41.124Z","updatedAt":"2026-03-11T02:53:45.748Z","closedAt":"2026-03-11T02:53:45.748Z"}
 {"id":"cloud-chat-hub-76b5","title":"Fix Hermes provider defaults and bridge routing","status":"closed","type":"bug","priority":2,"createdAt":"2026-03-11T04:11:21.153Z","updatedAt":"2026-03-11T04:17:52.231Z","closedAt":"2026-03-11T04:17:52.231Z"}
 {"id":"cloud-chat-hub-9ee6","title":"Fix Hermes streaming auto-scroll","status":"closed","type":"bug","priority":2,"createdAt":"2026-03-11T04:32:12.884Z","updatedAt":"2026-03-11T04:35:53.984Z","closedAt":"2026-03-11T04:35:53.984Z"}
+{"id":"cloud-chat-hub-3d03","title":"Modernize Hermes compatibility error UI","status":"closed","type":"task","priority":2,"createdAt":"2026-03-11T04:38:13.247Z","updatedAt":"2026-03-11T04:41:28.576Z","closedAt":"2026-03-11T04:41:28.576Z"}
