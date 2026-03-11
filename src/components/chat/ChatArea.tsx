@@ -9,6 +9,7 @@ import { getProviderLabel } from '@/lib/providers';
 import { findPendingProposal, type ProposalToolInvocationLike } from '@/lib/proposed-changes';
 import { getContextUsage } from '@/lib/tokens';
 import type { QueuedMessage } from '@/lib/chat-queue';
+import type { ToolActivityEvent } from './AgentActivity';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useContextUsageStore } from '@/stores/context-usage-store';
 import { usePanelId } from '@/contexts/PanelContext';
@@ -60,6 +61,7 @@ interface ChatAreaProps {
   setApiKeyModalOpen: (v: boolean) => void;
   activeProvider: string;
   activeModel: string;
+  toolActivityMap?: Record<string, ToolActivityEvent[]>;
 }
 
 export const ChatArea: React.FC<ChatAreaProps> = ({
@@ -80,6 +82,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   setApiKeyModalOpen,
   activeProvider,
   activeModel,
+  toolActivityMap,
 }) => {
   const panelId = usePanelId();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -262,6 +265,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 reasoning={reasoning}
                 isReasoningStreaming={isReasoningStreaming}
                 toolInvocations={toolInvocations}
+                toolActivity={toolActivityMap?.[msg.id] || toolActivityMap?.['current']}
                 onRegenerate={
                   msg.role === 'assistant' && i === messages.length - 1 && !isStreaming
                     ? handleRegenerate

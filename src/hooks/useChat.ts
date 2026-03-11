@@ -10,7 +10,9 @@ import { db, type Message as StoredMessage } from '@/lib/db';
 import { getApiBaseUrl } from '@/lib/api';
 import { createQueuedMessage, moveQueuedMessageToFront, removeQueuedMessage, type QueuedMessage } from '@/lib/chat-queue';
 import { PROVIDERS, supportsReasoningEffort } from '@/lib/providers';
+import { useHermesStore } from '@/stores/hermes-store';
 import { findPendingProposal, type ProposalMessageLike } from '@/lib/proposed-changes';
+import type { ToolActivityEvent } from '@/components/chat/AgentActivity';
 
 function countLines(content: string): number {
   if (!content) return 0;
@@ -120,6 +122,7 @@ export function useChat(
   const addChangeForPanel = useChangesetStore((s) => s.addChange);
   const preview = usePreviewStore((s) => s.getPreview(panelId));
   const { activeRepo, isRepoMode, repoFileTree } = changeset;
+  const hermesToolsets = useHermesStore((s) => s.getEnabledToolsets());
   const addChange = useCallback((change: Parameters<typeof addChangeForPanel>[1]) => addChangeForPanel(panelId, change), [addChangeForPanel, panelId]);
 
   // When orchestrator is enabled, use its provider/model instead
@@ -212,6 +215,8 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
   const [apiKeyModalOpen, setApiKeyModalOpen] = useState(false);
   const [providerUnavailableOpen, setProviderUnavailableOpen] = useState(false);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
+  const [toolActivityMap, setToolActivityMap] = useState<Record<string, ToolActivityEvent[]>>({});
+  const toolActivityRef = useRef<Record<string, ToolActivityEvent[]>>({});
   const activeConversationId = conversationId ?? pendingConversationIdRef.current;
   const chatSessionId = `${activeConversationId ?? 'draft'}:${panelId}`;
   const autoSendingQueuedRef = useRef<string | null>(null);
@@ -236,6 +241,69 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
     await loadConversations();
   }, [loadConversations]);
 
+  const hermesStreamFetch = useCallback(async (url: string, init?: RequestInit) => {
+    const response = await fetch(url, init);
+    if (effectiveProvider !== 'hermes' || !response.body) return response;
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    const stream = new ReadableStream({
+      async pull(controller) {
+        const { done, value } = await reader.read();
+        if (done) {
+          controller.close();
+          return;
+        }
+
+        const text = decoder.decode(value, { stream: true });
+        buffer += text;
+
+        // Extract tool_activity from SSE data lines before SDK processes them
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+            try {
+              const parsed = JSON.parse(line.slice(6));
+              const delta = parsed?.choices?.[0]?.delta;
+              if (delta?.tool_activity) {
+                const msgId = parsed.id || 'current';
+                const prev = [...(toolActivityRef.current[msgId] || [])];
+                const activity = delta.tool_activity as ToolActivityEvent;
+
+                const existingIdx = prev.findIndex(
+                  (e) => e.tool === activity.tool && e.input === activity.input && e.status === 'running'
+                );
+                if (existingIdx >= 0 && activity.status === 'completed') {
+                  prev[existingIdx] = activity;
+                } else if (existingIdx < 0) {
+                  prev.push(activity);
+                }
+
+                toolActivityRef.current = { ...toolActivityRef.current, [msgId]: prev };
+                setToolActivityMap({ ...toolActivityRef.current });
+              }
+            } catch {
+              // Not valid JSON, skip
+            }
+          }
+        }
+
+        // Pass raw bytes through unmodified for the SDK to process
+        controller.enqueue(value);
+      },
+    });
+
+    return new Response(stream, {
+      headers: response.headers,
+      status: response.status,
+      statusText: response.statusText,
+    });
+  }, [effectiveProvider]);
+
   const {
     messages,
     append,
@@ -246,6 +314,7 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
     error,
   } = useAIChat({
     api: `${apiBaseUrl}/functions/v1/chat`,
+    fetch: hermesStreamFetch,
     body: {
       provider: effectiveProvider,
       model: effectiveModel,
@@ -256,6 +325,7 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
       api_key: config.apiKey,
       system_prompt: fullSystemPrompt,
       ...(isRepoMode && activeRepo ? { activeRepo } : {}),
+      ...(effectiveProvider === 'hermes' ? { hermes_toolsets: hermesToolsets.join(',') } : {}),
     },
     id: chatSessionId,
     streamProtocol: 'data',
@@ -586,6 +656,10 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
       setMessages([]);
       resetPanelFileState();
     }
+
+    // Clear hermes tool activity on conversation switch
+    setToolActivityMap({});
+    toolActivityRef.current = {};
   }, [conversationId, setMessages, panelId, resetPanelFileState, restoreFileState, saveConversationFiles, hydrateConversationMessages]);
 
   // Auto-save file state (debounced) whenever the panel's file state changes
@@ -789,5 +863,6 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
     setProviderUnavailableOpen,
     activeProvider: effectiveProvider,
     activeModel: effectiveModel,
+    toolActivityMap,
   };
 }

@@ -19,6 +19,7 @@ export const OPENAI_COMPATIBLE: Record<string, string> = {
   cerebras: 'https://api.cerebras.ai/v1',
   openrouter: 'https://openrouter.ai/api/v1',
   sambanova: 'https://api.sambanova.ai/v1',
+  hermes: process.env.HERMES_BRIDGE_URL || 'http://localhost:3002/v1',
 };
 
 export const ANTHROPIC_COMPATIBLE: Record<string, string> = {
@@ -41,22 +42,29 @@ export const VALIDATION_MODELS: Record<string, string> = {
   cerebras: 'llama-3.3-70b',
   openrouter: 'openai/gpt-oss-120b:free',
   sambanova: 'Meta-Llama-3.3-70B-Instruct',
+  hermes: 'nousresearch/hermes-3-llama-3.1-70b',
 };
 
-export function getProviderHeaders(provider: string, origin?: string): Record<string, string> {
-  if (provider !== 'openrouter') return {};
+export function getProviderHeaders(provider: string, origin?: string, extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = {};
 
-  return {
-    'HTTP-Referer': origin || 'https://lovable.app',
-    'X-Title': 'CloudChat',
-  };
+  if (provider === 'openrouter') {
+    headers['HTTP-Referer'] = origin || 'https://lovable.app';
+    headers['X-Title'] = 'CloudChat';
+  }
+
+  if (extra) {
+    Object.assign(headers, extra);
+  }
+
+  return headers;
 }
 
 export function createProviderModel(
   provider: string,
   model: string,
   apiKey: string,
-  options?: { origin?: string }
+  options?: { origin?: string; extraHeaders?: Record<string, string> }
 ) {
   if (ANTHROPIC_COMPATIBLE[provider]) {
     const anthropic = createAnthropic({
@@ -75,7 +83,7 @@ export function createProviderModel(
     baseURL,
     apiKey,
     compatibility: 'compatible',
-    headers: getProviderHeaders(provider, options?.origin),
+    headers: getProviderHeaders(provider, options?.origin, options?.extraHeaders),
   });
 
   return openai(model);
