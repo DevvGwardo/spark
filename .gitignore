@@ -31,3 +31,6 @@ dist-ssr
 out/
 release/
 dist-electron/
+
+# Worktrees
+.worktrees/
