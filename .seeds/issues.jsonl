@@ -55,3 +55,4 @@
 {"id":"cloud-chat-hub-3ce0","title":"Expand provider config for missing first-party Vercel AI SDK providers","status":"open","type":"feature","priority":2,"createdAt":"2026-03-12T12:33:42.645Z","updatedAt":"2026-03-12T12:33:42.645Z"}
 {"id":"cloud-chat-hub-970a","title":"Normalize Hermes chat action rendering to match other providers","status":"closed","type":"task","priority":2,"createdAt":"2026-03-12T12:37:59.212Z","updatedAt":"2026-03-12T12:41:35.895Z","closedAt":"2026-03-12T12:41:35.895Z"}
 {"id":"cloud-chat-hub-a02e","title":"Support hour-scale long-running coding tasks","status":"closed","type":"task","priority":2,"createdAt":"2026-03-12T12:47:52.697Z","updatedAt":"2026-03-12T12:57:17.593Z","closedAt":"2026-03-12T12:57:17.593Z"}
+{"id":"cloud-chat-hub-fd4e","title":"Unify app icon with in-app logo","status":"closed","type":"task","priority":2,"createdAt":"2026-03-12T13:09:16.737Z","updatedAt":"2026-03-12T13:14:05.715Z","closedAt":"2026-03-12T13:14:05.715Z"}
