@@ -81,3 +81,4 @@
 {"id":"cloud-chat-hub-0414","title":"Refine sidebar thread row hover actions","status":"closed","type":"task","priority":2,"createdAt":"2026-03-12T18:14:14.164Z","updatedAt":"2026-03-12T18:16:35.198Z","closedAt":"2026-03-12T18:16:35.198Z"}
 {"id":"cloud-chat-hub-a45e","title":"Animate new thread button icon on hover","status":"closed","type":"task","priority":2,"createdAt":"2026-03-12T18:21:01.722Z","updatedAt":"2026-03-12T18:21:39.901Z","closedAt":"2026-03-12T18:21:39.901Z"}
 {"id":"cloud-chat-hub-3fc8","title":"Animate sidebar settings cog on hover","status":"closed","type":"task","priority":2,"createdAt":"2026-03-12T18:30:00.430Z","updatedAt":"2026-03-12T18:30:34.930Z","closedAt":"2026-03-12T18:30:34.930Z"}
+{"id":"cloud-chat-hub-4784","title":"Add repo issue browser and clone workflow","status":"closed","type":"feature","priority":2,"createdAt":"2026-03-12T18:37:20.548Z","updatedAt":"2026-03-12T18:58:28.367Z","closedAt":"2026-03-12T18:58:28.367Z"}
