@@ -2,7 +2,7 @@ import { create } from 'zustand';
 
 export type ProjectType = 'html' | 'react' | 'nextjs';
 export type FileType = 'html' | 'css' | 'js' | 'jsx' | 'tsx' | 'ts' | 'md';
-export type PreviewSidebarView = 'preview' | 'changes';
+export type PreviewSidebarView = 'preview' | 'changes' | 'repo';
 
 export interface PreviewFile {
   id: string;
@@ -18,6 +18,7 @@ export interface PanelPreviewState {
   activeFileId: string | null;
   projectType: ProjectType;
   activeView: PreviewSidebarView;
+  railWidth: number;
 }
 
 const EMPTY_PREVIEW: PanelPreviewState = {
@@ -26,6 +27,7 @@ const EMPTY_PREVIEW: PanelPreviewState = {
   activeFileId: null,
   projectType: 'html',
   activeView: 'preview',
+  railWidth: 460,
 };
 
 interface PreviewState {
@@ -34,6 +36,8 @@ interface PreviewState {
   setOpen: (panelId: string, open: boolean) => void;
   togglePreview: (panelId: string) => void;
   setView: (panelId: string, view: PreviewSidebarView) => void;
+  setPreferredView: (panelId: string, view: PreviewSidebarView) => void;
+  setRailWidth: (panelId: string, width: number) => void;
   addFile: (panelId: string, file: Omit<PreviewFile, 'id' | 'timestamp'>) => void;
   updateFile: (panelId: string, id: string, content: string) => void;
   removeFile: (panelId: string, id: string) => void;
@@ -104,6 +108,31 @@ export const usePreviewStore = create<PreviewState>((set, get) => ({
         panelPreviews: {
           ...state.panelPreviews,
           [panelId]: { ...existing, activeView: view, isOpen: true },
+        },
+      };
+    }),
+
+  setPreferredView: (panelId, view) =>
+    set((state) => {
+      const existing = getOrDefault(state, panelId);
+      return {
+        panelPreviews: {
+          ...state.panelPreviews,
+          [panelId]: { ...existing, activeView: view },
+        },
+      };
+    }),
+
+  setRailWidth: (panelId, width) =>
+    set((state) => {
+      const existing = getOrDefault(state, panelId);
+      return {
+        panelPreviews: {
+          ...state.panelPreviews,
+          [panelId]: {
+            ...existing,
+            railWidth: Math.max(360, Math.min(760, width)),
+          },
         },
       };
     }),
@@ -212,7 +241,7 @@ export const usePreviewStore = create<PreviewState>((set, get) => ({
     set((state) => ({
       panelPreviews: {
         ...state.panelPreviews,
-        [panelId]: { ...preview },
+        [panelId]: { ...EMPTY_PREVIEW, ...preview },
       },
     })),
 

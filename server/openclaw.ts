@@ -6,6 +6,17 @@ import { promisify } from 'util'
 
 const execFileAsync = promisify(execFile)
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN || join(os.homedir(), '.openclaw', 'bin', 'openclaw')
+const DEFAULT_OPENCLAW_TIMEOUT_SECONDS = 90 * 60
+
+function readPositiveIntEnv(name: string, fallback: number): number {
+  const rawValue = process.env[name]
+  if (!rawValue) {
+    return fallback
+  }
+
+  const parsedValue = Number.parseInt(rawValue, 10)
+  return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : fallback
+}
 
 export interface OpenClawUsage {
   input?: number
@@ -123,7 +134,7 @@ export async function runOpenClawTurn(params: {
     '--session-id', params.sessionId,
     '--message', effectiveMessage,
     '--json',
-    '--timeout', String(params.timeoutSeconds ?? 600),
+    '--timeout', String(params.timeoutSeconds ?? readPositiveIntEnv('OPENCLAW_TURN_TIMEOUT_SECONDS', DEFAULT_OPENCLAW_TIMEOUT_SECONDS)),
   ]
 
   const { stdout } = await execFileAsync(OPENCLAW_BIN, args, {

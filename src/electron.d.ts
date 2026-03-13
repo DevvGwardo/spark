@@ -6,6 +6,8 @@ export interface ElectronAPI {
   }
   platform: string
   apiPort: number
+  notifyAttentionRequest?: (payload?: { title?: string; body?: string }) => Promise<void>
+  clearAttentionRequest?: () => Promise<void>
 }
 
 declare global {

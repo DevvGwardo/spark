@@ -45,6 +45,35 @@ describe('panel state isolation', () => {
     expect(previewStore.getPreview('default').activeView).toBe('preview');
   });
 
+  it('keeps workspace rail views isolated per panel', () => {
+    const previewStore = usePreviewStore.getState();
+
+    previewStore.setView('default', 'repo');
+    previewStore.setView('panel-2', 'changes');
+
+    expect(previewStore.getPreview('default').activeView).toBe('repo');
+    expect(previewStore.getPreview('panel-2').activeView).toBe('changes');
+  });
+
+  it('can prefer a workspace rail view without opening the rail', () => {
+    const previewStore = usePreviewStore.getState();
+
+    previewStore.setPreferredView('default', 'repo');
+
+    expect(previewStore.getPreview('default').activeView).toBe('repo');
+    expect(previewStore.getPreview('default').isOpen).toBe(false);
+  });
+
+  it('clamps workspace rail width per panel', () => {
+    const previewStore = usePreviewStore.getState();
+
+    previewStore.setRailWidth('default', 900);
+    previewStore.setRailWidth('panel-2', 320);
+
+    expect(previewStore.getPreview('default').railWidth).toBe(760);
+    expect(previewStore.getPreview('panel-2').railWidth).toBe(360);
+  });
+
   it('moves a conversation to the selected panel instead of duplicating it', () => {
     usePanelStore.setState({
       panels: [

@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { FolderGit2, X, ChevronDown, Loader2 } from 'lucide-react';
+import { FolderGit2, X, ChevronDown, Loader2, Lightbulb, Code2, Globe, FileCode, Server, Search, Bug, TestTube2, Zap } from 'lucide-react';
 import { useChangesetStore } from '@/stores/changeset-store';
 import { usePanelId } from '@/contexts/PanelContext';
 import { useSettingsStore } from '@/stores/settings-store';
-import { getApiBaseUrl } from '@/lib/api';
+import { usePreviewStore } from '@/stores/preview-store';
+import { getApiBaseUrl, fetchRepoFileTreeResult } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { WelcomeHeroMark } from './WelcomeHeroMark';
 
 interface GitHubRepo {
   id: number;
@@ -15,12 +17,46 @@ interface GitHubRepo {
   default_branch: string;
 }
 
-export const WelcomeScreen = React.forwardRef<HTMLDivElement>((_, ref) => {
+interface SuggestionChip {
+  icon: React.ReactNode;
+  label: string;
+  prompt: string;
+}
+
+const generalSuggestions: SuggestionChip[] = [
+  { icon: <Globe className="h-3.5 w-3.5" />, label: 'Build a landing page', prompt: 'Build a modern landing page with a hero section, features grid, and a call-to-action footer' },
+  { icon: <Code2 className="h-3.5 w-3.5" />, label: 'Create a React component', prompt: 'Create a reusable React component with TypeScript, props interface, and clean styling' },
+  { icon: <FileCode className="h-3.5 w-3.5" />, label: 'Write a Python script', prompt: 'Write a Python script that automates a common task with proper error handling and logging' },
+  { icon: <Server className="h-3.5 w-3.5" />, label: 'Design a REST API', prompt: 'Design a RESTful API with proper endpoints, request/response schemas, and error handling' },
+];
+
+const repoSuggestions: SuggestionChip[] = [
+  { icon: <Search className="h-3.5 w-3.5" />, label: 'Explain the codebase structure', prompt: 'Explain the overall structure and architecture of this codebase. What are the main modules, and how do they interact?' },
+  { icon: <Bug className="h-3.5 w-3.5" />, label: 'Find and fix bugs', prompt: 'Analyze the codebase for potential bugs, edge cases, or error-handling issues and suggest fixes' },
+  { icon: <TestTube2 className="h-3.5 w-3.5" />, label: 'Add unit tests', prompt: 'Identify areas lacking test coverage and write comprehensive unit tests for the most critical modules' },
+  { icon: <Zap className="h-3.5 w-3.5" />, label: 'Refactor for performance', prompt: 'Review the codebase for performance bottlenecks and refactor the most impactful areas for better efficiency' },
+];
+
+interface WelcomeScreenProps {
+  onSendMessage?: (message: string) => void;
+  disableRepoActions?: boolean;
+}
+
+export const WelcomeScreen = React.forwardRef<HTMLDivElement, WelcomeScreenProps>(({
+  onSendMessage,
+  disableRepoActions = false,
+}, ref) => {
   const panelId = usePanelId();
-  const { getChangeset, clearActiveRepo: clearActiveRepoForPanel, setActiveRepo: setActiveRepoForPanel } = useChangesetStore();
+  const setPreviewView = usePreviewStore((s) => s.setPreferredView);
+  const {
+    getChangeset,
+    clearActiveRepo: clearActiveRepoForPanel,
+    switchActiveRepo,
+    setRepoFileTree,
+    getChangeCount,
+  } = useChangesetStore();
   const { activeRepo, isRepoMode } = getChangeset(panelId);
   const clearActiveRepo = () => clearActiveRepoForPanel(panelId);
-  const setActiveRepo = (repo: Parameters<typeof setActiveRepoForPanel>[1]) => setActiveRepoForPanel(panelId, repo);
   const { githubPAT } = useSettingsStore();
   const [repos, setRepos] = useState<GitHubRepo[]>([]);
   const [loading, setLoading] = useState(false);
@@ -36,7 +72,7 @@ export const WelcomeScreen = React.forwardRef<HTMLDivElement>((_, ref) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'list-repos', pat: githubPAT }),
       })
-        .then(r => r.json())
+        .then(r => { if (!r.ok) throw new Error(`Server returned ${r.status}`); return r.json(); })
         .then(data => setRepos(data.repos || []))
         .catch(() => {})
         .finally(() => setLoading(false));
@@ -53,16 +89,38 @@ export const WelcomeScreen = React.forwardRef<HTMLDivElement>((_, ref) => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleSelectRepo = (repo: GitHubRepo) => {
+  const handleSelectRepo = async (repo: GitHubRepo) => {
     const [owner, repoName] = repo.full_name.split('/');
-    setActiveRepo({
+    const nextRepo = {
       owner,
       name: repoName,
       defaultBranch: repo.default_branch,
       fullName: repo.full_name,
-    });
+    };
+    const changeCount = getChangeCount(panelId);
+    const switchingRepos = activeRepo?.fullName && activeRepo.fullName !== nextRepo.fullName;
+
+    if (switchingRepos && changeCount > 0) {
+      if (!window.confirm(`You have ${changeCount} pending change${changeCount > 1 ? 's' : ''} for ${activeRepo.fullName}. Switch repos and discard them?`)) {
+        return;
+      }
+    }
+
+    switchActiveRepo(panelId, nextRepo);
     setOpen(false);
     setSearch('');
+    useChangesetStore.getState().setRepoFileTreeStatus(panelId, 'loading');
+    setPreviewView(panelId, 'repo');
+
+    // Fetch full file tree so the agent knows what files exist
+    if (githubPAT) {
+      const result = await fetchRepoFileTreeResult(githubPAT, owner, repoName, repo.default_branch);
+      if (result.error) {
+        useChangesetStore.getState().setRepoFileTreeStatus(panelId, 'error', result.error);
+      } else {
+        setRepoFileTree(panelId, result.paths);
+      }
+    }
   };
 
   const filteredRepos = repos.filter(r =>
@@ -71,91 +129,139 @@ export const WelcomeScreen = React.forwardRef<HTMLDivElement>((_, ref) => {
 
   return (
     <div ref={ref} className="flex flex-col items-center justify-center h-full px-6">
-      <div className="text-center max-w-md space-y-3">
-        <h1 className="text-2xl font-semibold tracking-tight">CloudChat</h1>
-        <p className="text-muted-foreground text-sm leading-relaxed">
-          What do you want to build?
-        </p>
-        {isRepoMode && activeRepo ? (
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 border border-primary/20 text-xs text-primary font-medium mt-2">
-            <FolderGit2 className="h-3.5 w-3.5" />
-            <span>Editing: {activeRepo.fullName}</span>
-            <button
-              onClick={clearActiveRepo}
-              className="p-0.5 rounded-full hover:bg-primary/20 transition-colors"
-              title="Stop editing"
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </div>
-        ) : githubPAT ? (
-          <div ref={dropdownRef} className="relative inline-block mt-2">
-            <button
-              onClick={() => setOpen(!open)}
-              className={cn(
-                'inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors',
-                'border-border hover:border-primary/40 hover:bg-secondary/50 text-muted-foreground'
-              )}
-            >
-              <FolderGit2 className="h-3.5 w-3.5" />
-              <span>Select a repo</span>
-              {loading ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : (
-                <ChevronDown className={cn('h-3 w-3 transition-transform', open && 'rotate-180')} />
-              )}
-            </button>
+      <div className="text-center max-w-lg">
+        {/* Hero mark — refined sizing */}
+        <div className="flex justify-center mb-6">
+          <WelcomeHeroMark className="h-20 w-20 rounded-[24px]" />
+        </div>
 
-            {open && (
-              <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 w-72 bg-popover border border-border rounded-lg shadow-lg z-50 overflow-hidden">
-                <div className="p-2 border-b border-border">
-                  <input
-                    type="text"
-                    placeholder="Search repos..."
-                    value={search}
-                    onChange={e => setSearch(e.target.value)}
-                    className="w-full px-2 py-1 text-xs bg-transparent border border-border rounded focus:outline-none focus:border-primary/50"
-                    autoFocus
-                  />
-                </div>
-                <div className="max-h-60 overflow-y-auto">
-                  {loading ? (
-                    <div className="flex items-center justify-center py-6">
-                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                    </div>
-                  ) : filteredRepos.length === 0 ? (
-                    <div className="px-3 py-4 text-xs text-muted-foreground text-center">
-                      {search ? 'No repos match your search' : 'No repositories found'}
-                    </div>
-                  ) : (
-                    filteredRepos.map(repo => (
-                      <button
-                        key={repo.id}
-                        onClick={() => handleSelectRepo(repo)}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-secondary/50 transition-colors"
-                      >
-                        <FolderGit2 className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-xs font-medium truncate">{repo.full_name}</span>
-                            {repo.private && (
-                              <span className="text-[9px] px-1 py-0.5 rounded bg-muted text-muted-foreground">
-                                Private
-                              </span>
+        {/* Title block */}
+        <h1 className="text-[22px] font-semibold tracking-[-0.02em] text-foreground">
+          What do you want to build?
+        </h1>
+        <p className="mt-1.5 text-[13px] text-muted-foreground/70">
+          Start a conversation or select a repository to get going.
+        </p>
+
+        {/* Repo selector / active badge */}
+        <div className="mt-5">
+          {isRepoMode && activeRepo ? (
+            <div className="inline-flex items-center gap-2 pl-3 pr-2 py-1.5 rounded-full bg-primary/8 border border-primary/15 text-[12px] text-primary/90 font-medium">
+              <FolderGit2 className="h-3.5 w-3.5 opacity-70" />
+              <span className="font-mono">{activeRepo.fullName}</span>
+              {getChangeset(panelId).repoFileTreeStatus === 'loading' && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary/80">
+                  <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                  Loading
+                </span>
+              )}
+              <button
+                onClick={clearActiveRepo}
+                className="ml-0.5 p-1 rounded-full hover:bg-primary/15 transition-colors"
+                title="Stop editing"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ) : githubPAT ? (
+            <div ref={dropdownRef} className="relative inline-block">
+              <button
+                onClick={() => setOpen(!open)}
+                className={cn(
+                  'inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border text-[12px] font-medium transition-all duration-150',
+                  open
+                    ? 'border-primary/30 bg-primary/5 text-foreground shadow-sm'
+                    : 'border-border/60 hover:border-border hover:bg-secondary/40 text-muted-foreground'
+                )}
+              >
+                <FolderGit2 className="h-3.5 w-3.5" />
+                <span>Select a repo</span>
+                {loading ? (
+                  <Loader2 className="h-3 w-3 animate-spin ml-0.5" />
+                ) : (
+                  <ChevronDown className={cn('h-3 w-3 ml-0.5 transition-transform duration-200', open && 'rotate-180')} />
+                )}
+              </button>
+
+              {open && (
+                <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-80 bg-popover/95 backdrop-blur-xl border border-border/60 rounded-xl shadow-2xl shadow-black/20 z-50 overflow-hidden">
+                  <div className="p-2">
+                    <input
+                      type="text"
+                      placeholder="Search repositories..."
+                      value={search}
+                      onChange={e => setSearch(e.target.value)}
+                      className="w-full px-3 py-2 text-[12px] bg-secondary/40 border border-border/40 rounded-lg focus:outline-none focus:ring-1 focus:ring-primary/40 focus:border-primary/40 placeholder:text-muted-foreground/50 transition-all"
+                      autoFocus
+                    />
+                  </div>
+                  <div className="max-h-56 overflow-y-auto px-1.5 pb-1.5">
+                    {loading ? (
+                      <div className="flex items-center justify-center py-6">
+                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                      </div>
+                    ) : filteredRepos.length === 0 ? (
+                      <div className="px-3 py-4 text-[12px] text-muted-foreground/60 text-center">
+                        {search ? 'No repos match your search' : 'No repositories found'}
+                      </div>
+                    ) : (
+                      filteredRepos.map(repo => (
+                        <button
+                          key={repo.id}
+                          onClick={() => handleSelectRepo(repo)}
+                          className="w-full flex items-center gap-2.5 px-2.5 py-2 text-left rounded-lg hover:bg-secondary/60 active:bg-secondary transition-colors"
+                        >
+                          <FolderGit2 className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[12px] font-medium truncate">{repo.full_name}</span>
+                              {repo.private && (
+                                <span className="text-[10px] leading-none px-1.5 py-0.5 rounded-full bg-muted/60 text-muted-foreground/70 font-medium shrink-0">
+                                  Private
+                                </span>
+                              )}
+                            </div>
+                            {repo.description && (
+                              <p className="text-[11px] text-muted-foreground/50 truncate mt-0.5">{repo.description}</p>
                             )}
                           </div>
-                          {repo.description && (
-                            <p className="text-[10px] text-muted-foreground truncate">{repo.description}</p>
-                          )}
-                        </div>
-                      </button>
-                    ))
-                  )}
+                        </button>
+                      ))
+                    )}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
+          ) : null}
+        </div>
+
+        {/* Suggestion chips */}
+        <div className="mt-6">
+          <div className="flex items-center justify-center gap-1.5 mb-3">
+            <Lightbulb className="h-3.5 w-3.5 text-muted-foreground/50" />
+            <span className="text-[11px] text-muted-foreground/50 font-medium">Try asking</span>
           </div>
-        ) : null}
+          <div className="grid grid-cols-2 gap-2">
+            {(isRepoMode && activeRepo ? repoSuggestions : generalSuggestions).map((chip, i) => (
+              <button
+                key={chip.label}
+                onClick={() => onSendMessage?.(chip.prompt)}
+                disabled={disableRepoActions}
+                className={cn(
+                  'flex items-center gap-2.5 px-3 py-2.5 rounded-xl border border-border/50 text-left',
+                  'hover:border-primary/30 hover:bg-primary/5 transition-all duration-150',
+                  'text-[12px] text-muted-foreground hover:text-foreground',
+                  'animate-fadeInUp',
+                  disableRepoActions && 'cursor-not-allowed opacity-50 hover:border-border/50 hover:bg-transparent hover:text-muted-foreground',
+                )}
+                style={{ animationDelay: `${i * 75}ms` }}
+              >
+                <span className="shrink-0 opacity-60">{chip.icon}</span>
+                <span className="font-medium">{chip.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );

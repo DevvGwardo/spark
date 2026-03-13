@@ -4,6 +4,7 @@ import { useSettingsStore, type Provider } from '@/stores/settings-store';
 import { PROVIDERS, PROVIDER_ORDER, CATEGORY_LABELS, type ProviderCategory } from '@/lib/providers';
 import { validateApiKey } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { getLocalProviderRuntimeDetails, parseLocalProviderRuntimeError } from '@/lib/local-provider-runtime';
 
 // Group providers by category
 function groupProvidersByCategory() {
@@ -69,6 +70,7 @@ export const SetupWizard: React.FC = () => {
 
   const providerInfo = PROVIDERS[selectedProvider];
   const needsApiKey = providerInfo.needsApiKey;
+  const localRuntimeDetails = getLocalProviderRuntimeDetails(selectedProvider);
 
   const goToStep = (next: number) => {
     if (isAnimating) return;
@@ -87,23 +89,28 @@ export const SetupWizard: React.FC = () => {
   };
 
   const handleContinueFromProvider = () => {
+    setValidationError('');
+
     if (selectedProvider === 'openclaw') {
       void (async () => {
         try {
           const result = await validateApiKey('openclaw', '');
-          if (result.valid) {
-            const nextModels = result.models?.filter(Boolean) || [];
-            setValidatedModels(nextModels);
-            setAvailableModels('openclaw', nextModels);
-            const nextDefaultModel = result.defaultModel || nextModels[0];
-            if (nextDefaultModel) {
-              setSelectedModel(nextDefaultModel);
-            }
+          if (!result.valid) {
+            setValidationError(result.error || 'Start the OpenClaw runtime before continuing.');
+            return;
           }
+
+          const nextModels = result.models?.filter(Boolean) || [];
+          setValidatedModels(nextModels);
+          setAvailableModels('openclaw', nextModels);
+          const nextDefaultModel = result.defaultModel || nextModels[0];
+          if (nextDefaultModel) {
+            setSelectedModel(nextDefaultModel);
+          }
+          goToStep(2);
         } catch (error) {
           console.error('Failed to load OpenClaw models', error);
-        } finally {
-          goToStep(2);
+          setValidationError(error instanceof Error ? error.message : 'Start the OpenClaw runtime before continuing.');
         }
       })();
       return;
@@ -159,6 +166,13 @@ export const SetupWizard: React.FC = () => {
     <div key="provider" data-step-content>
       <h2 className="text-xl font-semibold mb-1">Choose your provider</h2>
       <p className="text-sm text-muted-foreground mb-5">Select which LLM you'd like to use.</p>
+      {localRuntimeDetails && (
+        <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/8 px-4 py-3">
+          <p className="text-sm font-medium text-foreground">{localRuntimeDetails.summary}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{localRuntimeDetails.detail}</p>
+          <div className="mt-2 text-xs font-mono text-foreground">{localRuntimeDetails.command}</div>
+        </div>
+      )}
       <div className="space-y-5 max-h-[400px] overflow-y-auto px-1">
         {CATEGORY_ORDER.map((cat) => {
           const providers = providerGroups[cat];
@@ -215,6 +229,11 @@ export const SetupWizard: React.FC = () => {
           );
         })}
       </div>
+      {validationError && (
+        <p className="mt-3 text-sm text-destructive animate-in fade-in slide-in-from-top-1 duration-200">
+          {parseLocalProviderRuntimeError(selectedProvider, validationError)?.summary || validationError}
+        </p>
+      )}
       <button
         onClick={handleContinueFromProvider}
         className="mt-5 w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-foreground text-background text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all duration-200"

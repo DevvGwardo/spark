@@ -4,12 +4,40 @@ import { createProviderModel, getReasoningProviderOptions } from './provider-con
 
 // ─── SSE helper ──────────────────────────────────────────────────────────────
 
+const DEFAULT_SUBTASK_TIMEOUT_MS = 90 * 60 * 1000;
+const DEFAULT_HEARTBEAT_MS = 5_000;
+
+function readPositiveIntEnv(name: string, fallback: number): number {
+  const rawValue = process.env[name];
+  if (!rawValue) {
+    return fallback;
+  }
+
+  const parsedValue = Number.parseInt(rawValue, 10);
+  return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : fallback;
+}
+
 function sendEvent(res: Response, event: string, data: unknown) {
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
 function getUnknownErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function startHeartbeat(
+  res: Response,
+  phase: string,
+  isClientDisconnected: () => boolean,
+  intervalMs: number,
+) {
+  const timer = setInterval(() => {
+    if (!isClientDisconnected()) {
+      sendEvent(res, 'heartbeat', { phase });
+    }
+  }, intervalMs);
+
+  return () => clearInterval(timer);
 }
 
 // ─── Orchestrate handler factory ─────────────────────────────────────────────
@@ -99,6 +127,13 @@ Rules:
       ];
 
       let plan: { plan: string; tasks: Array<{ id: string; description: string }> };
+      const heartbeatIntervalMs = readPositiveIntEnv('ORCHESTRATOR_HEARTBEAT_MS', DEFAULT_HEARTBEAT_MS);
+      const stopPlanningHeartbeat = startHeartbeat(
+        res,
+        'planning',
+        () => clientDisconnected,
+        heartbeatIntervalMs,
+      );
 
       try {
         // Use streamText instead of generateText for provider compatibility
@@ -144,6 +179,8 @@ Rules:
           plan: 'Direct response to user request',
           tasks: [{ id: '1', description: originalUserMessage }],
         };
+      } finally {
+        stopPlanningHeartbeat();
       }
 
       sendEvent(res, 'plan', { plan: plan.plan, tasks: plan.tasks });
@@ -166,10 +203,7 @@ Rules:
 
       sendEvent(res, 'status', { phase: 'executing', message: 'Running sub-agents...' });
 
-      // Per-task timeout (60 seconds) to prevent hanging
-      const SUBTASK_TIMEOUT_MS = 60_000;
-      // Heartbeat interval so the client knows we're alive
-      const HEARTBEAT_MS = 5_000;
+      const subtaskTimeoutMs = readPositiveIntEnv('ORCHESTRATOR_SUBTASK_TIMEOUT_MS', DEFAULT_SUBTASK_TIMEOUT_MS);
 
       const taskResults = await Promise.all(
         plan.tasks.map(async (task) => {
@@ -182,7 +216,7 @@ Rules:
           try {
             // Create a per-task abort that respects both client disconnect and timeout
             const taskAbort = new AbortController();
-            const timeout = setTimeout(() => taskAbort.abort(), SUBTASK_TIMEOUT_MS);
+            const timeout = setTimeout(() => taskAbort.abort(), subtaskTimeoutMs);
             // If the parent aborts (client disconnect), also abort this task
             const onParentAbort = () => taskAbort.abort();
             abortController.signal.addEventListener('abort', onParentAbort);
@@ -192,7 +226,7 @@ Rules:
               if (!clientDisconnected) {
                 sendEvent(res, 'subtask_heartbeat', { taskId: task.id });
               }
-            }, HEARTBEAT_MS);
+            }, heartbeatIntervalMs);
 
             try {
               // Use streamText instead of generateText for better provider compatibility
@@ -227,7 +261,7 @@ Rules:
             const message = getUnknownErrorMessage(err);
             const isTimeout = err instanceof Error && err.name === 'AbortError' && !clientDisconnected;
             const errorMsg = isTimeout
-              ? 'Error: Sub-task timed out after 60s'
+              ? `Error: Sub-task timed out after ${Math.round(subtaskTimeoutMs / 1000)}s`
               : `Error: ${message || 'Sub-agent failed'}`;
             console.error(`Sub-task ${task.id} failed:`, message || err);
             sendEvent(res, 'subtask_complete', { taskId: task.id, result: errorMsg });
@@ -241,6 +275,12 @@ Rules:
       // ── Phase 3: Synthesize results (streaming) ──────────────────────────
 
       sendEvent(res, 'status', { phase: 'synthesizing', message: 'Combining results...' });
+      const stopSynthesisHeartbeat = startHeartbeat(
+        res,
+        'synthesizing',
+        () => clientDisconnected,
+        heartbeatIntervalMs,
+      );
 
       const taskResultsText = taskResults
         .map((t) => `Task ${t.id}: ${t.description}\nResult: ${t.result}\n`)
@@ -254,20 +294,24 @@ ${taskResultsText}
 
 Synthesize these results into a single, comprehensive response for the user. Be thorough and well-organized.`;
 
-      const synthesisStream = streamText({
-        model: orchestratorModel,
-        messages: [
-          { role: 'system' as const, content: 'You are a helpful assistant synthesizing results from multiple sub-tasks into a coherent response.' },
-          { role: 'user' as const, content: synthesisPrompt },
-        ],
-        temperature: temperature ?? 0.7,
-        ...(orchestratorProviderOptions ? { providerOptions: orchestratorProviderOptions } : {}),
-        abortSignal: abortController.signal,
-      });
+      try {
+        const synthesisStream = streamText({
+          model: orchestratorModel,
+          messages: [
+            { role: 'system' as const, content: 'You are a helpful assistant synthesizing results from multiple sub-tasks into a coherent response.' },
+            { role: 'user' as const, content: synthesisPrompt },
+          ],
+          temperature: temperature ?? 0.7,
+          ...(orchestratorProviderOptions ? { providerOptions: orchestratorProviderOptions } : {}),
+          abortSignal: abortController.signal,
+        });
 
-      for await (const chunk of (await synthesisStream).textStream) {
-        if (clientDisconnected) break;
-        sendEvent(res, 'token', { content: chunk });
+        for await (const chunk of (await synthesisStream).textStream) {
+          if (clientDisconnected) break;
+          sendEvent(res, 'token', { content: chunk });
+        }
+      } finally {
+        stopSynthesisHeartbeat();
       }
 
       sendEvent(res, 'done', {});

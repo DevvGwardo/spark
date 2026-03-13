@@ -28,6 +28,7 @@ export const PROVIDER_KEY_URLS: Partial<Record<Provider, string>> = {
   cerebras: 'https://cloud.cerebras.ai/platform',
   openrouter: 'https://openrouter.ai/keys',
   sambanova: 'https://cloud.sambanova.ai/apis',
+  hermes: 'https://openrouter.ai/keys',
 };
 
 interface ApiKeyModalProps {

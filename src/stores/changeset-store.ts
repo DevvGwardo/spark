@@ -1,12 +1,26 @@
 import { create } from 'zustand';
-import { countContentLines } from '@/lib/change-diff';
+import { getChangeLineDelta } from '@/lib/change-diff';
 
 export interface ActiveRepo {
   owner: string;
   name: string;
   defaultBranch: string;
   fullName: string;
+  baseOwner?: string;
+  baseName?: string;
+  baseFullName?: string;
+  localPath?: string | null;
+  issue?: {
+    number: number;
+    title: string;
+    url: string;
+    state: string;
+    labels: string[];
+    updatedAt: string;
+  } | null;
 }
+
+export type RepoFileTreeStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 export interface FileChange {
   path: string;
@@ -21,6 +35,10 @@ export interface PanelChangeset {
   isRepoMode: boolean;
   changes: Record<string, FileChange>;
   repoFileTree: string[];
+  repoFileCache: Record<string, string>;
+  selectedRepoFilePath: string | null;
+  repoFileTreeStatus: RepoFileTreeStatus;
+  repoFileTreeError: string | null;
 }
 
 const EMPTY_CHANGESET: PanelChangeset = {
@@ -28,6 +46,10 @@ const EMPTY_CHANGESET: PanelChangeset = {
   isRepoMode: false,
   changes: {},
   repoFileTree: [],
+  repoFileCache: {},
+  selectedRepoFilePath: null,
+  repoFileTreeStatus: 'idle',
+  repoFileTreeError: null,
 };
 
 interface ChangesetState {
@@ -36,6 +58,7 @@ interface ChangesetState {
 
   // Per-panel scoped actions
   setActiveRepo: (panelId: string, repo: ActiveRepo) => void;
+  switchActiveRepo: (panelId: string, repo: ActiveRepo) => void;
   clearActiveRepo: (panelId: string) => void;
   addChange: (panelId: string, change: FileChange) => void;
   removeChange: (panelId: string, path: string) => void;
@@ -48,6 +71,9 @@ interface ChangesetState {
   getLineTotals: (panelId: string, filter?: 'all' | 'staged' | 'unstaged') => { added: number; removed: number };
   getStagedChanges: (panelId: string) => FileChange[];
   setRepoFileTree: (panelId: string, tree: string[]) => void;
+  setRepoFileTreeStatus: (panelId: string, status: RepoFileTreeStatus, error?: string | null) => void;
+  cacheRepoFile: (panelId: string, path: string, content: string) => void;
+  setSelectedRepoFilePath: (panelId: string, path: string | null) => void;
   cleanupPanel: (panelId: string) => void;
 
   // Legacy global accessors (for components that operate on the focused panel)
@@ -56,10 +82,28 @@ interface ChangesetState {
   isRepoMode: boolean;
   changes: Record<string, FileChange>;
   repoFileTree: string[];
+  repoFileCache: Record<string, string>;
+  selectedRepoFilePath: string | null;
+  repoFileTreeStatus: RepoFileTreeStatus;
+  repoFileTreeError: string | null;
 }
 
 function getOrDefault(state: ChangesetState, panelId: string): PanelChangeset {
-  return state.panelChangesets[panelId] || EMPTY_CHANGESET;
+  const existing = state.panelChangesets[panelId];
+  if (!existing) {
+    return EMPTY_CHANGESET;
+  }
+
+  if (
+    existing.repoFileCache !== undefined &&
+    existing.selectedRepoFilePath !== undefined &&
+    existing.repoFileTreeStatus !== undefined &&
+    existing.repoFileTreeError !== undefined
+  ) {
+    return existing;
+  }
+
+  return { ...EMPTY_CHANGESET, ...existing };
 }
 
 export const useChangesetStore = create<ChangesetState>()((set, get) => ({
@@ -70,14 +114,54 @@ export const useChangesetStore = create<ChangesetState>()((set, get) => ({
   get isRepoMode() { return get().panelChangesets['default']?.isRepoMode ?? false; },
   get changes() { return get().panelChangesets['default']?.changes ?? {}; },
   get repoFileTree() { return get().panelChangesets['default']?.repoFileTree ?? []; },
+  get repoFileCache() { return get().panelChangesets['default']?.repoFileCache ?? {}; },
+  get selectedRepoFilePath() { return get().panelChangesets['default']?.selectedRepoFilePath ?? null; },
+  get repoFileTreeStatus() { return get().panelChangesets['default']?.repoFileTreeStatus ?? 'idle'; },
+  get repoFileTreeError() { return get().panelChangesets['default']?.repoFileTreeError ?? null; },
 
   setActiveRepo: (panelId, repo) =>
+    set((state) => {
+      const existing = getOrDefault(state, panelId);
+      const switchingRepos = !!existing.activeRepo && existing.activeRepo.fullName !== repo.fullName;
+      return {
+        panelChangesets: {
+          ...state.panelChangesets,
+          [panelId]: {
+            ...existing,
+            activeRepo: repo,
+            isRepoMode: true,
+            ...(switchingRepos
+              ? {
+                  changes: {},
+                  repoFileTree: [],
+                  repoFileCache: {},
+                  selectedRepoFilePath: null,
+                  repoFileTreeStatus: 'idle',
+                  repoFileTreeError: null,
+                }
+              : {}),
+          },
+        },
+      };
+    }),
+
+  switchActiveRepo: (panelId, repo) =>
     set((state) => {
       const existing = getOrDefault(state, panelId);
       return {
         panelChangesets: {
           ...state.panelChangesets,
-          [panelId]: { ...existing, activeRepo: repo, isRepoMode: true },
+          [panelId]: {
+            ...existing,
+            activeRepo: repo,
+            isRepoMode: true,
+            changes: {},
+            repoFileTree: [],
+            repoFileCache: {},
+            selectedRepoFilePath: null,
+            repoFileTreeStatus: 'idle',
+            repoFileTreeError: null,
+          },
         },
       };
     }),
@@ -88,7 +172,17 @@ export const useChangesetStore = create<ChangesetState>()((set, get) => ({
       return {
         panelChangesets: {
           ...state.panelChangesets,
-          [panelId]: { ...existing, activeRepo: null, isRepoMode: false, repoFileTree: [] },
+          [panelId]: {
+            ...existing,
+            activeRepo: null,
+            isRepoMode: false,
+            changes: {},
+            repoFileTree: [],
+            repoFileCache: {},
+            selectedRepoFilePath: null,
+            repoFileTreeStatus: 'idle',
+            repoFileTreeError: null,
+          },
         },
       };
     }),
@@ -198,16 +292,9 @@ export const useChangesetStore = create<ChangesetState>()((set, get) => ({
     let added = 0;
     let removed = 0;
     for (const change of changes) {
-      const newLines = countContentLines(change.content);
-      const oldLines = countContentLines(change.originalContent);
-      if (change.action === 'create') {
-        added += newLines;
-      } else if (change.action === 'delete') {
-        removed += oldLines;
-      } else {
-        added += Math.max(0, newLines - oldLines);
-        removed += Math.max(0, oldLines - newLines);
-      }
+      const lineDelta = getChangeLineDelta(change);
+      added += lineDelta.added;
+      removed += lineDelta.removed;
     }
     return { added, removed };
   },
@@ -221,7 +308,55 @@ export const useChangesetStore = create<ChangesetState>()((set, get) => ({
       return {
         panelChangesets: {
           ...state.panelChangesets,
-          [panelId]: { ...existing, repoFileTree: tree },
+          [panelId]: {
+            ...existing,
+            repoFileTree: tree,
+            repoFileTreeStatus: 'ready',
+            repoFileTreeError: null,
+          },
+        },
+      };
+    }),
+
+  setRepoFileTreeStatus: (panelId, status, error = null) =>
+    set((state) => {
+      const existing = getOrDefault(state, panelId);
+      return {
+        panelChangesets: {
+          ...state.panelChangesets,
+          [panelId]: {
+            ...existing,
+            repoFileTreeStatus: status,
+            repoFileTreeError: status === 'error' ? (error ?? 'Failed to index repository tree.') : null,
+          },
+        },
+      };
+    }),
+
+  cacheRepoFile: (panelId, path, content) =>
+    set((state) => {
+      const existing = getOrDefault(state, panelId);
+      return {
+        panelChangesets: {
+          ...state.panelChangesets,
+          [panelId]: {
+            ...existing,
+            repoFileCache: {
+              ...existing.repoFileCache,
+              [path]: content,
+            },
+          },
+        },
+      };
+    }),
+
+  setSelectedRepoFilePath: (panelId, path) =>
+    set((state) => {
+      const existing = getOrDefault(state, panelId);
+      return {
+        panelChangesets: {
+          ...state.panelChangesets,
+          [panelId]: { ...existing, selectedRepoFilePath: path },
         },
       };
     }),

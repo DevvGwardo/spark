@@ -1,5 +1,6 @@
 import React, { useCallback, useRef, useState, useEffect } from 'react';
 import { X, MoreHorizontal, Pin, Pencil, Archive, Copy, PanelRight, GitPullRequest } from 'lucide-react';
+import { useShallow } from 'zustand/shallow';
 import { ChatArea } from './ChatArea';
 import { useChat } from '@/hooks/useChat';
 import { useOrchestrator } from '@/hooks/useOrchestrator';
@@ -49,6 +50,8 @@ function ChatRuntimeArea({
       activeProvider={chat.activeProvider}
       activeModel={chat.activeModel}
       toolActivityMap={'toolActivityMap' in chat ? chat.toolActivityMap : undefined}
+      conversationAutoApproveEnabled={'conversationAutoApproveEnabled' in chat ? chat.conversationAutoApproveEnabled : false}
+      setConversationAutoApprove={'setConversationAutoApprove' in chat ? chat.setConversationAutoApprove : undefined}
     />
   );
 }
@@ -57,12 +60,14 @@ function StandardChatRuntime({
   panelId,
   conversationId,
   onConversationCreated,
+  onOpenPR,
 }: {
   panelId: string;
   conversationId: string | null;
   onConversationCreated: (id: string) => void;
+  onOpenPR?: (panelId: string) => void;
 }) {
-  const chat = useChat(conversationId, onConversationCreated, undefined, panelId);
+  const chat = useChat(conversationId, onConversationCreated, undefined, panelId, onOpenPR);
   return <ChatRuntimeArea conversationId={conversationId} chat={chat} />;
 }
 
@@ -86,9 +91,15 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   onOpenPR,
 }) => {
   const { setConversationForPanel, panels, openPanel } = usePanelStore();
-  const { conversations, deleteConversation, renameConversation, pinConversation } = useChatStore();
-  const { getChangeCount, getLineTotals, getChangeset, getStagedCount } = useChangesetStore();
-  const preview = usePreviewStore((s) => s.getPreview(panelId));
+  const conversations = useChatStore((s) => s.conversations);
+  const deleteConversation = useChatStore((s) => s.deleteConversation);
+  const renameConversation = useChatStore((s) => s.renameConversation);
+  const pinConversation = useChatStore((s) => s.pinConversation);
+  const getChangeCount = useChangesetStore((s) => s.getChangeCount);
+  const getLineTotals = useChangesetStore((s) => s.getLineTotals);
+  const getChangeset = useChangesetStore((s) => s.getChangeset);
+  const getStagedCount = useChangesetStore((s) => s.getStagedCount);
+  const preview = usePreviewStore(useShallow((s) => s.getPreview(panelId)));
   const setPreviewOpen = usePreviewStore((s) => s.setOpen);
   const setPreviewView = usePreviewStore((s) => s.setView);
   const orchestratorEnabled = useOrchestratorStore((s) => s.enabled);
@@ -288,6 +299,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               panelId={panelId}
               conversationId={conversationId}
               onConversationCreated={handleConversationCreated}
+              onOpenPR={onOpenPR}
             />
           )}
         </div>

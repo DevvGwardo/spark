@@ -17,6 +17,7 @@ files:
   - "!**/*.test.*"
   - "!**/__tests__/**"
 mac:
+  icon: build/icon.icns
   target:
     - target: dmg
       arch: [universal]

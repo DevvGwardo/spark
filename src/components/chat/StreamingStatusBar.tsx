@@ -41,8 +41,12 @@ export const StreamingStatusBar: React.FC<StreamingStatusBarProps> = ({
 
   if (embedded) {
     return (
-      <div className="flex items-center justify-between border-b border-border/70 bg-muted/[0.18] px-4 py-2 text-xs text-muted-foreground">
+      <div className="flex items-center justify-between border-b border-primary/10 bg-primary/[0.04] px-4 py-2 text-xs text-muted-foreground">
         <div className="flex items-center gap-1.5">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary/40" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-primary/70" />
+          </span>
           <Clock className="h-3 w-3" />
           <span className="tabular-nums">{formatElapsed(elapsed)}</span>
         </div>

@@ -1,14 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
-import { Copy, Check, RotateCcw, Pencil, ChevronDown, Loader2, Wrench, FileCode, FilePlus, FileX, FileSearch, GitPullRequestDraft, CheckCircle2, ArrowRight } from 'lucide-react';
+import { Copy, Check, RotateCcw, Pencil, ChevronDown, Loader2, Wrench, FileCode, FileCode2, FilePlus, FileX, FileSearch, GitPullRequestDraft, CheckCircle2, ArrowRight } from 'lucide-react';
 import { GhostIcon } from './GhostIcon';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { useChangesetStore } from '@/stores/changeset-store';
 import { usePanelId } from '@/contexts/PanelContext';
 import { usePreviewStore } from '@/stores/preview-store';
 import type { Message } from '@/lib/db';
-import { computeDiffLines, countContentLines, getChangeLineDelta } from '@/lib/change-diff';
+import { computeDiffLines, getChangeLineDelta, summarizeChangeLines } from '@/lib/change-diff';
 import { cn } from '@/lib/utils';
 import { AgentActivity, type ToolActivityEvent } from './AgentActivity';
+import { extractPseudoToolInvocations, extractTextFileEdits, getPseudoToolSourceText, stripPseudoToolInvocations } from '@/lib/pseudo-tool-calls';
 import '@shoelace-style/shoelace/dist/components/details/details.js';
 
 /**
@@ -69,6 +70,25 @@ interface ToolInvocation {
   result?: unknown;
 }
 
+function getToolErrorMessage(result: unknown): string | null {
+  if (typeof result === 'string') {
+    const trimmed = result.trim();
+    if (/^(error|failed)[:\s]/i.test(trimmed)) {
+      return trimmed;
+    }
+    return null;
+  }
+
+  if (result && typeof result === 'object') {
+    const error = (result as { error?: unknown }).error;
+    if (typeof error === 'string' && error.trim()) {
+      return error.trim();
+    }
+  }
+
+  return null;
+}
+
 interface MessagePart {
   type: 'text' | 'reasoning' | 'tool-invocation' | 'step-start' | 'source' | 'file';
   text?: string;
@@ -87,6 +107,143 @@ interface MessageBubbleProps {
   toolActivity?: ToolActivityEvent[];
   onRegenerate?: () => void;
   onEdit?: (content: string) => void;
+}
+
+function parseToolActivityArgs(input: string): Record<string, unknown> {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : { input: trimmed };
+  } catch {
+    return { input: trimmed };
+  }
+}
+
+function stripHermesActivityText(content: string): string {
+  if (!content) {
+    return '';
+  }
+
+  const filteredLines = content
+    .split('\n')
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('>')) {
+        return true;
+      }
+
+      const normalized = trimmed
+        .replace(/^>\s*/, '')
+        .replace(/[*_`]/g, '')
+        .replace(/[“”]/g, '"')
+        .replace(/[‘’]/g, '\'')
+        .trim();
+
+      if (!normalized) {
+        return false;
+      }
+
+      return !(
+        /^"?proposing changes"?$/i.test(normalized) ||
+        /^"?reading file"?(?:\s+—\s+.+)?$/i.test(normalized) ||
+        /^"?editing file"?(?:\s+—\s+.+)?$/i.test(normalized) ||
+        /^"?creating file"?(?:\s+—\s+.+)?$/i.test(normalized) ||
+        /^"?deleting file"?(?:\s+—\s+.+)?$/i.test(normalized) ||
+        /^"?thinking\.\.\."?$/i.test(normalized) ||
+        /^"?done\s+[—-]\s+read\s+\d+\s+chars"?$/i.test(normalized) ||
+        /^"?done\s*[—-]:?\s*.+$/i.test(normalized) ||
+        /^"?failed:?\s*.+$/i.test(normalized) ||
+        /^"?found\s+\d+\s+results?"?$/i.test(normalized) ||
+        /^"?fetched\s+\d+\s+chars"?$/i.test(normalized)
+      );
+    })
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n');
+
+  return filteredLines.trim();
+}
+
+function sanitizeAssistantTextContent(content: string, isStreaming: boolean): string {
+  if (!content) {
+    return '';
+  }
+
+  return stripHermesActivityText(stripPseudoToolInvocations(content, isStreaming));
+}
+
+const TOOL_STATE_PRIORITY: Record<ToolInvocation['state'], number> = {
+  'partial-call': 0,
+  call: 1,
+  result: 2,
+};
+
+function getToolInvocationKey(invocation: ToolInvocation, fallbackIndex: number): string {
+  if (invocation.toolCallId) {
+    return invocation.toolCallId;
+  }
+
+  const path = typeof invocation.args?.path === 'string' ? invocation.args.path : '';
+  const filename = typeof invocation.args?.filename === 'string' ? invocation.args.filename : '';
+  const batchPaths = Array.isArray(invocation.args?.changes)
+    ? invocation.args.changes
+        .map((change) =>
+          change && typeof change === 'object'
+            ? `${typeof change.action === 'string' ? change.action : ''}:${typeof change.path === 'string' ? change.path : ''}`
+            : '',
+        )
+        .join('|')
+    : '';
+
+  return `${invocation.toolName}:${path}:${filename}:${batchPaths || fallbackIndex}`;
+}
+
+function mergeToolInvocations(current: ToolInvocation, incoming: ToolInvocation): ToolInvocation {
+  const currentPriority = TOOL_STATE_PRIORITY[current.state] ?? 0;
+  const incomingPriority = TOOL_STATE_PRIORITY[incoming.state] ?? 0;
+  const preferred = incomingPriority >= currentPriority ? incoming : current;
+  const fallback = preferred === incoming ? current : incoming;
+
+  return {
+    ...fallback,
+    ...preferred,
+    args: preferred.args ?? fallback.args,
+    result: preferred.result ?? fallback.result,
+  };
+}
+
+function dedupeAssistantParts(parts: MessagePart[]): MessagePart[] {
+  const deduped: MessagePart[] = [];
+  const toolIndexByKey = new Map<string, number>();
+
+  for (const part of parts) {
+    if (part.type !== 'tool-invocation' || !part.toolInvocation) {
+      deduped.push(part);
+      continue;
+    }
+
+    const key = getToolInvocationKey(part.toolInvocation, deduped.length);
+    const existingIndex = toolIndexByKey.get(key);
+
+    if (existingIndex === undefined) {
+      toolIndexByKey.set(key, deduped.length);
+      deduped.push(part);
+      continue;
+    }
+
+    const existingPart = deduped[existingIndex];
+    if (existingPart?.toolInvocation) {
+      deduped[existingIndex] = {
+        ...existingPart,
+        toolInvocation: mergeToolInvocations(existingPart.toolInvocation, part.toolInvocation),
+      };
+    }
+  }
+
+  return deduped;
 }
 
 /**
@@ -127,6 +284,13 @@ const TOOL_LABELS: Record<string, { label: string; icon: React.ElementType }> = 
   create_repo_file: { label: 'Creating file', icon: FilePlus },
   delete_repo_file: { label: 'Deleting file', icon: FileX },
   batch_edit_repo_files: { label: 'Editing files', icon: FileCode },
+  web_search: { label: 'Searching web', icon: FileSearch },
+  search: { label: 'Searching', icon: FileSearch },
+  browse_url: { label: 'Reading webpage', icon: FileSearch },
+  browser: { label: 'Browsing', icon: FileSearch },
+  run_command: { label: 'Running command', icon: Wrench },
+  terminal: { label: 'Running command', icon: Wrench },
+  execute_python: { label: 'Running Python', icon: Wrench },
   create_html_file: { label: 'Created HTML file', icon: FilePlus },
   create_css_file: { label: 'Created CSS file', icon: FilePlus },
   create_js_file: { label: 'Created JS file', icon: FilePlus },
@@ -137,12 +301,139 @@ const TOOL_LABELS: Record<string, { label: string; icon: React.ElementType }> = 
 const FILE_CREATION_TOOLS = new Set([
   'create_html_file', 'create_css_file', 'create_js_file', 'create_react_component', 'create_markdown_file',
 ]);
+const REPO_TOOL_NAMES = new Set([
+  'propose_changes',
+  'read_repo_file',
+  'edit_repo_file',
+  'create_repo_file',
+  'delete_repo_file',
+  'batch_edit_repo_files',
+]);
 
 const ACTION_BADGE: Record<string, { label: string; className: string; icon: React.ElementType }> = {
   create: { label: 'Created', className: 'bg-green-500/15 text-green-400 border-green-500/30', icon: FilePlus },
   edit:   { label: 'Modified', className: 'bg-blue-500/15 text-blue-400 border-blue-500/30', icon: FileCode },
   delete: { label: 'Deleted', className: 'bg-red-500/15 text-red-400 border-red-500/30', icon: FileX },
 };
+
+function getFileAction(toolName: string, fallback?: string): 'create' | 'edit' | 'delete' | null {
+  if (fallback === 'create' || fallback === 'edit' || fallback === 'delete') {
+    return fallback;
+  }
+
+  if (toolName === 'create_repo_file') return 'create';
+  if (toolName === 'delete_repo_file') return 'delete';
+  if (toolName === 'edit_repo_file' || toolName === 'batch_edit_repo_files') return 'edit';
+  return null;
+}
+
+function getToolTarget(invocation: ToolInvocation): string | null {
+  const path = typeof invocation.args?.path === 'string' ? invocation.args.path : null;
+  if (path) {
+    return path;
+  }
+
+  if (typeof invocation.args?.filename === 'string') {
+    return invocation.args.filename;
+  }
+
+  if (typeof invocation.args?.query === 'string') {
+    return invocation.args.query;
+  }
+
+  if (typeof invocation.args?.url === 'string') {
+    return invocation.args.url;
+  }
+
+  if (typeof invocation.args?.command === 'string') {
+    return invocation.args.command;
+  }
+
+  if (typeof invocation.args?.input === 'string') {
+    return invocation.args.input;
+  }
+
+  return null;
+}
+
+function getToolDisplayLabel(toolName: string, affectedCount: number): string {
+  if (toolName === 'batch_edit_repo_files' && affectedCount > 0) {
+    return `Editing ${affectedCount} files`;
+  }
+
+  if (toolName === 'edit_repo_file' && affectedCount > 1) {
+    return `Editing ${affectedCount} files`;
+  }
+
+  return (TOOL_LABELS[toolName] || { label: toolName }).label;
+}
+
+function FileChangeMetaBadge({
+  filePath,
+  toolName,
+  content,
+  action,
+  showStaged,
+}: {
+  filePath?: string;
+  toolName: string;
+  content?: string;
+  action?: string;
+  showStaged: boolean;
+}) {
+  const panelId = usePanelId();
+  const changeset = useChangesetStore((s) => s.getChangeset(panelId));
+  const stagedChange = filePath ? changeset.changes[filePath] : undefined;
+  const resolvedAction = getFileAction(toolName, action);
+
+  const change = React.useMemo(() => {
+    if (stagedChange) return stagedChange;
+    if (!filePath || !resolvedAction) return null;
+
+    return {
+      path: filePath,
+      action: resolvedAction,
+      content: content ?? '',
+      originalContent: changeset.repoFileCache[filePath],
+    };
+  }, [changeset.repoFileCache, content, filePath, resolvedAction, stagedChange]);
+
+  if (!change) {
+    if (!showStaged) return null;
+    return (
+      <span className="ml-1 flex items-center gap-1 text-[10px] font-medium text-green-400">
+        <ArrowRight className="h-2.5 w-2.5" />
+        staged
+      </span>
+    );
+  }
+
+  const { affectedLines, rangeLabel } = summarizeChangeLines(change);
+  const { added, removed } = getChangeLineDelta(change);
+
+  if (!showStaged && affectedLines === 0 && !rangeLabel && added === 0 && removed === 0) {
+    return null;
+  }
+
+  return (
+    <span className="ml-1 flex items-center gap-1.5 text-[10px] font-medium">
+      {showStaged && (
+        <>
+          <ArrowRight className="h-2.5 w-2.5 text-green-400" />
+          <span className="text-green-400">staged</span>
+        </>
+      )}
+      {affectedLines > 0 && (
+        <span className="text-foreground/70">
+          {affectedLines} line{affectedLines === 1 ? '' : 's'}
+        </span>
+      )}
+      {rangeLabel && <span className="text-muted-foreground">{rangeLabel}</span>}
+      {showStaged && added > 0 && <span className="text-green-400">+{added}</span>}
+      {showStaged && removed > 0 && <span className="text-red-400">-{removed}</span>}
+    </span>
+  );
+}
 
 function StagedFileSummary({ paths }: { paths: string[] }) {
   const panelId = usePanelId();
@@ -169,55 +460,6 @@ function StagedFileSummary({ paths }: { paths: string[] }) {
         );
       })}
     </div>
-  );
-}
-
-function LineDiffBadge({ filePath, toolName }: { filePath?: string; toolName: string }) {
-  const panelId = usePanelId();
-  const change = useChangesetStore((s) => filePath ? s.getChangeset(panelId).changes[filePath] : undefined);
-
-  if (!change) {
-    return (
-      <span className="ml-1 flex items-center gap-1 text-[10px] font-medium text-green-400">
-        <ArrowRight className="h-2.5 w-2.5" />
-        staged
-      </span>
-    );
-  }
-
-  const newLines = (change.content || '').split('\n').length;
-  const oldLines = countContentLines(change.originalContent);
-
-  if (change.action === 'create') {
-    return (
-      <span className="ml-1 flex items-center gap-1.5 text-[10px] font-medium">
-        <ArrowRight className="h-2.5 w-2.5 text-green-400" />
-        <span className="text-green-400">staged</span>
-        <span className="text-green-400">+{newLines}</span>
-      </span>
-    );
-  }
-
-  if (change.action === 'delete') {
-    return (
-      <span className="ml-1 flex items-center gap-1.5 text-[10px] font-medium">
-        <ArrowRight className="h-2.5 w-2.5 text-green-400" />
-        <span className="text-green-400">staged</span>
-        <span className="text-red-400">-{oldLines}</span>
-      </span>
-    );
-  }
-
-  const { added, removed } = getChangeLineDelta(change);
-
-  return (
-    <span className="ml-1 flex items-center gap-1.5 text-[10px] font-medium">
-      <ArrowRight className="h-2.5 w-2.5 text-green-400" />
-      <span className="text-green-400">staged</span>
-      {added > 0 && <span className="text-green-400">+{added}</span>}
-      {removed > 0 && <span className="text-red-400">-{removed}</span>}
-      {added === 0 && removed === 0 && <span className="text-muted-foreground">~{newLines}L</span>}
-    </span>
   );
 }
 
@@ -253,6 +495,13 @@ function FileEditPreview({ filePath }: { filePath: string }) {
     return computeDiffLines(change.originalContent, change.content);
   }, [change]);
 
+  const lineCount = change?.action === 'delete'
+    ? (change.originalContent || '').split('\n').length
+    : (change?.content || '').split('\n').length;
+  const lineNumbers = diffLines
+    .map((line) => (line.lineNum === null ? '' : String(line.lineNum)))
+    .join('\n');
+
   useLayoutEffect(() => {
     if (contentRef.current) {
       setIsOverflowing(contentRef.current.scrollHeight > COLLAPSED_HEIGHT);
@@ -262,60 +511,95 @@ function FileEditPreview({ filePath }: { filePath: string }) {
   if (!change || diffLines.length === 0) return null;
 
   return (
-    <div className="mt-2 rounded-lg border border-border/50 overflow-hidden bg-[hsl(var(--code-bg))]">
-      {/* Diff content */}
-      <div className="relative">
+    <div className="chat-code-block mt-2">
+      <div className="chat-code-block__titlebar">
+        <div className="chat-code-block__window-controls" aria-hidden="true">
+          <span className="chat-code-block__window-dot chat-code-block__window-dot--red" />
+          <span className="chat-code-block__window-dot chat-code-block__window-dot--amber" />
+          <span className="chat-code-block__window-dot chat-code-block__window-dot--green" />
+        </div>
+        <div className="chat-code-block__tab">
+          <FileCode2 className="h-3.5 w-3.5 shrink-0 text-[#519aba]" />
+          <span className="chat-code-block__filename">{filePath}</span>
+        </div>
+      </div>
+
+      <div className="chat-code-block__meta">
+        <div className="flex items-center gap-2">
+          <span
+            className="h-2 w-2 rounded-full shrink-0"
+            style={{
+              backgroundColor:
+                change.action === 'create' ? '#4ec9b0' :
+                change.action === 'delete' ? '#f14c4c' :
+                '#569cd6',
+            }}
+          />
+          <span className="chat-code-block__language">
+            {change.action === 'create' ? 'Created' : change.action === 'delete' ? 'Deleted' : 'Modified'}
+          </span>
+        </div>
+        <span className="chat-code-block__line-count">
+          {lineCount} {lineCount === 1 ? 'line' : 'lines'}
+        </span>
+      </div>
+
+      <div className="chat-code-block__body">
         <div
           ref={contentRef}
           className="overflow-hidden transition-[max-height] duration-300 ease-in-out"
           style={{ maxHeight: expanded ? `${contentRef.current?.scrollHeight || 2000}px` : `${COLLAPSED_HEIGHT}px` }}
         >
-          <pre className="text-[12px] leading-[1.65] font-mono m-0 p-0">
-            {diffLines.map((line, i) => {
-              const bgClass =
-                line.type === 'added' ? 'bg-green-500/10' :
-                line.type === 'removed' ? 'bg-red-500/10' :
-                '';
-              const textClass =
-                line.type === 'added' ? 'text-green-400' :
-                line.type === 'removed' ? 'text-red-400' :
-                'text-muted-foreground/70';
-              const prefix =
-                line.type === 'added' ? '+' :
-                line.type === 'removed' ? '-' :
-                ' ';
-              const isSeparator = line.content === '···' && line.lineNum === null;
+          <div className="chat-code-block__editor">
+            <pre aria-hidden="true" className="chat-code-block__gutter">
+              {lineNumbers}
+            </pre>
+            <div className="chat-code-block__viewport">
+              <pre className="chat-code-block__pre text-[12px] leading-[1.65]">
+                {diffLines.map((line, i) => {
+                  const bgClass =
+                    line.type === 'added' ? 'bg-[#2ea04322]' :
+                    line.type === 'removed' ? 'bg-[#f8514922]' :
+                    '';
+                  const textClass =
+                    line.type === 'added' ? 'text-[#7ee787]' :
+                    line.type === 'removed' ? 'text-[#ff7b72]' :
+                    'text-[#d4d4d4]';
+                  const prefix =
+                    line.type === 'added' ? '+' :
+                    line.type === 'removed' ? '-' :
+                    ' ';
+                  const isSeparator = line.content === '···' && line.lineNum === null;
 
-              if (isSeparator) {
-                return (
-                  <div key={i} className="px-3 py-0.5 text-muted-foreground/40 select-none">
-                    <span className="inline-block w-8" />
-                    <span className="text-[11px]">···</span>
-                  </div>
-                );
-              }
+                  if (isSeparator) {
+                    return (
+                      <div key={i} className="grid grid-cols-[1.25rem_minmax(0,1fr)] items-start px-4 py-0.5 text-[#5d6570]">
+                        <span className="select-none text-center">·</span>
+                        <span>···</span>
+                      </div>
+                    );
+                  }
 
-              return (
-                <div key={i} className={cn('px-3 hover:brightness-125', bgClass)}>
-                  <span className="inline-block w-8 text-right pr-3 text-muted-foreground/30 select-none text-[11px]">
-                    {line.lineNum}
-                  </span>
-                  <span className={cn('select-none', textClass)}>{prefix}</span>
-                  <span className={textClass}> {line.content}</span>
-                </div>
-              );
-            })}
-          </pre>
+                  return (
+                    <div key={i} className={cn('grid grid-cols-[1.25rem_minmax(0,1fr)] items-start px-4 py-0.5', bgClass)}>
+                      <span className={cn('select-none text-center', textClass)}>{prefix}</span>
+                      <span className={cn(textClass, 'whitespace-pre')}>{line.content || ' '}</span>
+                    </div>
+                  );
+                })}
+              </pre>
+            </div>
+          </div>
         </div>
 
         {/* Fade overlay + show more button when collapsed and overflowing */}
         {isOverflowing && !expanded && (
           <div className="absolute bottom-0 left-0 right-0">
-            <div className="h-10 bg-gradient-to-t from-[hsl(var(--code-bg))] to-transparent" />
-            <div className="flex justify-end px-3 pb-1.5 bg-[hsl(var(--code-bg))]">
+            <div className="chat-code-block__fade" />
+            <div className="chat-code-block__footer">
               <button
                 onClick={() => setExpanded(true)}
-                className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors duration-150 font-medium"
+                className="chat-code-block__toggle"
               >
                 Show more
                 <ChevronDown className="h-3 w-3" />
@@ -326,10 +610,10 @@ function FileEditPreview({ filePath }: { filePath: string }) {
 
         {/* Collapse button when expanded */}
         {isOverflowing && expanded && (
-          <div className="flex justify-end px-3 py-1.5 border-t border-border/30">
+          <div className="chat-code-block__footer chat-code-block__footer--expanded">
             <button
               onClick={() => setExpanded(false)}
-              className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors duration-150 font-medium"
+              className="chat-code-block__toggle"
             >
               Show less
               <ChevronDown className="h-3 w-3 rotate-180" />
@@ -348,13 +632,28 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
   const Icon = toolInfo.icon;
   const isComplete = invocation.state === 'result';
   const isInProgress = invocation.state === 'call' || invocation.state === 'partial-call';
+  const errorMessage = getToolErrorMessage(invocation.result);
+  const hasError = !!errorMessage;
+  const progressLabel = invocation.toolName === 'read_repo_file' ? 'Reading...' : 'In progress';
+  const panelChanges = useChangesetStore((s) => s.getChangeset(panelId).changes);
 
   // Extract file info from args
   const filePath = invocation.args?.path;
+  const toolTarget = getToolTarget(invocation);
   const artifactFilename = invocation.args?.filename as string | undefined;
-  const batchChanges = invocation.args?.changes as Array<{ path: string; action: string }> | undefined;
+  const batchChangesRaw = invocation.args?.changes;
+  const batchChanges = Array.isArray(batchChangesRaw)
+    ? batchChangesRaw as Array<{ path: string; action: string; content?: string }>
+    : undefined;
   const isBatch = invocation.toolName === 'batch_edit_repo_files' && batchChanges && batchChanges.length > 0;
   const isFileCreationTool = FILE_CREATION_TOOLS.has(invocation.toolName);
+  const stagedPaths = React.useMemo(
+    () =>
+      Object.values(panelChanges)
+        .filter((change) => change.staged)
+        .map((change) => change.path),
+    [panelChanges],
+  );
 
   // Determine which file paths this tool call affected (for staging display)
   const isFileModifyingTool = ['edit_repo_file', 'create_repo_file', 'delete_repo_file', 'batch_edit_repo_files'].includes(invocation.toolName);
@@ -362,18 +661,28 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
     ? batchChanges!.map((c) => c.path)
     : filePath && isFileModifyingTool
       ? [filePath]
-      : [];
+      : isFileModifyingTool
+        ? stagedPaths
+        : [];
+  const toolTargetLabel = toolTarget || (affectedPaths.length === 1 ? affectedPaths[0] : null);
+  const displayLabel = getToolDisplayLabel(invocation.toolName, affectedPaths.length);
+  const showMultiFileList = affectedPaths.length > 1 && (isBatch || (!filePath && isFileModifyingTool));
 
   const handlePreviewClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     const previewStore = usePreviewStore.getState();
     const preview = previewStore.getPreview(panelId);
+    const changeset = useChangesetStore.getState().getChangeset(panelId);
     // Focus the file in the preview if it exists
     if (artifactFilename) {
       const file = preview.files.find((f) => f.filename === artifactFilename);
       if (file) previewStore.setActiveFile(panelId, file.id);
     }
-    previewStore.setView(panelId, 'preview');
+    if (changeset.activeRepo) {
+      previewStore.setView(panelId, 'repo');
+    } else if (Object.keys(changeset.changes).length > 0) {
+      previewStore.setView(panelId, 'changes');
+    }
     previewStore.setOpen(panelId, true);
   };
 
@@ -420,7 +729,7 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
               {artifactFilename || 'Untitled'}
             </div>
             <div className="text-[11px] text-muted-foreground">
-              {isComplete ? 'Click to open preview' : 'Creating...'}
+              {isComplete ? 'Open in workspace' : 'Creating...'}
             </div>
           </div>
           <span className={cn(
@@ -439,31 +748,61 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
   }
 
   return (
-    <div className="my-1.5">
+    <div
+      className={cn(
+        'my-1.5',
+        (isInProgress || isLatest) && 'chat-tool-glimmer rounded-xl px-3 py-2.5',
+      )}
+    >
       {/* Tool header row */}
       <div className="flex items-center gap-2 text-[13px] py-0.5">
         {isInProgress ? (
           <GhostIcon />
         ) : isComplete ? (
-          <CheckCircle2 className="h-3.5 w-3.5 text-green-500 shrink-0" />
+          <CheckCircle2 className={cn('h-3.5 w-3.5 shrink-0', hasError ? 'text-amber-500' : 'text-green-500')} />
         ) : (
           <Icon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
         )}
         <span className={cn("text-muted-foreground", (isInProgress || isLatest) && "glimmer-text")}>
-          {toolInfo.label}
+          {displayLabel}
         </span>
-        {filePath && (
-          <code className={cn("text-[12px] text-foreground/80 bg-muted/50 px-1.5 py-0.5 rounded font-mono truncate max-w-[350px]", (isInProgress || isLatest) && "glimmer-text")} title={filePath}>
-            {filePath}
+        {toolTargetLabel && (
+          <code className={cn("text-[12px] text-foreground/80 bg-muted/50 px-1.5 py-0.5 rounded font-mono truncate max-w-[350px]", (isInProgress || isLatest) && "glimmer-text")} title={toolTargetLabel}>
+            {toolTargetLabel}
           </code>
         )}
-        {isBatch && (
-          <span className="text-foreground/70 text-[12px]">({batchChanges.length} files)</span>
+        {affectedPaths.length > 1 && (
+          <span className="text-foreground/70 text-[12px]">({affectedPaths.length} files)</span>
         )}
-        {isComplete && isFileModifyingTool && (
-          <LineDiffBadge filePath={filePath} toolName={invocation.toolName} />
+        {isInProgress && (
+          <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-primary/80">
+            {progressLabel}
+          </span>
+        )}
+        {(isFileModifyingTool && filePath) && (
+          <FileChangeMetaBadge
+            filePath={filePath}
+            toolName={invocation.toolName}
+            content={typeof invocation.args?.content === 'string' ? invocation.args.content : undefined}
+            showStaged={isComplete}
+          />
         )}
       </div>
+
+      {(isInProgress || isLatest) && (
+        <div className="mt-2 pl-5">
+          <div className="chat-tool-glimmer__track">
+            <div className="chat-tool-glimmer__bar chat-tool-glimmer__bar--long" />
+            <div className="chat-tool-glimmer__bar chat-tool-glimmer__bar--short" />
+          </div>
+        </div>
+      )}
+
+      {hasError && (
+        <div className="pl-5 text-[12px] text-amber-400/90 whitespace-pre-wrap">
+          {errorMessage}
+        </div>
+      )}
 
       {/* Code diff preview — shown by default for completed file-modifying tools */}
       {isComplete && isFileModifyingTool && !isBatch && filePath && (
@@ -471,16 +810,23 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
       )}
 
       {/* Batch file list */}
-      {isBatch && (
+      {showMultiFileList && (
         <div className="mt-1 space-y-0.5 pl-6">
-          {(isComplete ? affectedPaths : batchChanges!.map((c) => c.path)).map((p, idx) => (
+          {affectedPaths.map((p, idx) => (
             <div key={idx}>
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <FileCode className="h-3 w-3 shrink-0" />
                 <code className="font-mono text-foreground/70 text-[11px] bg-muted/40 px-1 py-0.5 rounded truncate">{p}</code>
-                {!isComplete && batchChanges?.[idx]?.action && (
+                {batchChanges?.[idx]?.action && (
                   <span className="text-muted-foreground/50 text-[10px]">{batchChanges[idx].action}</span>
                 )}
+                <FileChangeMetaBadge
+                  filePath={p}
+                  toolName={invocation.toolName}
+                  action={batchChanges?.[idx]?.action}
+                  content={batchChanges?.[idx]?.content}
+                  showStaged={isComplete}
+                />
               </div>
               {isComplete && <FileEditPreview filePath={p} />}
             </div>
@@ -511,10 +857,46 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   const isUser = message.role === 'user';
 
   const rawContent = isStreaming ? (streamingContent || '') : message.content;
+  const hasStructuredRepoToolInvocations = Boolean(
+    toolInvocations?.some((invocation) => REPO_TOOL_NAMES.has(invocation.toolName)) ||
+    parts?.some((part) => part.type === 'tool-invocation' && part.toolInvocation && REPO_TOOL_NAMES.has(part.toolInvocation.toolName)),
+  );
+  const pseudoToolInvocations = React.useMemo(() => {
+    if (isUser || hasStructuredRepoToolInvocations) return [];
+    const sourceText = getPseudoToolSourceText({ content: rawContent, parts });
+    const pseudoInvocations = extractPseudoToolInvocations(sourceText).map((invocation, index) => ({
+      toolCallId: `pseudo-${message.id}-${index}`,
+      toolName: invocation.toolName,
+      args: invocation.args,
+      state: 'result' as const,
+      result: { synthesized: true },
+    }));
+    if (pseudoInvocations.length > 0) {
+      return pseudoInvocations;
+    }
+    return extractTextFileEdits(sourceText).map((edit, index) => ({
+      toolCallId: `text-edit-${message.id}-${index}`,
+      toolName: 'edit_repo_file',
+      args: {
+        path: edit.path,
+        content: edit.content,
+      },
+      state: 'result' as const,
+      result: { synthesized: true, source: 'text-file-edit' },
+    }));
+  }, [hasStructuredRepoToolInvocations, isUser, message.id, parts, rawContent]);
+  const normalizedRawContent = React.useMemo(() => {
+    if (isUser) return rawContent;
+    // Always strip raw pseudo tool call text from content, even when structured
+    // tool invocations exist — the model may embed the raw call in content AND
+    // return a structured tool invocation, causing duplicate display.
+    // Pass isStreaming so partial (unclosed) calls are also truncated.
+    return sanitizeAssistantTextContent(rawContent, !!isStreaming);
+  }, [isUser, rawContent, isStreaming]);
 
   // Parse out inline <think> blocks from content (some models embed these directly)
-  const parsed = !isUser ? parseThinkingBlocks(rawContent, !!isStreaming) : null;
-  const displayContent = parsed ? parsed.cleanContent : rawContent;
+  const parsed = !isUser ? parseThinkingBlocks(normalizedRawContent, !!isStreaming) : null;
+  const displayContent = parsed ? parsed.cleanContent : normalizedRawContent;
 
   // Also extract <think> blocks from text parts (models may embed them in streamed text parts)
   const partsThinking = React.useMemo(() => {
@@ -529,6 +911,27 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   // Merge inline thinking with reasoning from AI SDK parts
   const effectiveReasoning = [reasoning, parsed?.thinking, partsThinking].filter(Boolean).join('\n') || undefined;
   const effectiveReasoningStreaming = isReasoningStreaming || (!!isStreaming && !!(parsed?.thinking || partsThinking) && !parsed?.cleanContent);
+  const synthesizedToolInvocations = React.useMemo(() => {
+    if (isUser || !Array.isArray(toolActivity) || toolActivity.length === 0) {
+      return [];
+    }
+
+    return toolActivity.map((event, index) => ({
+      toolCallId: `activity-${message.id}-${index}`,
+      toolName: event.tool,
+      args: parseToolActivityArgs(event.input),
+      state: event.status === 'completed' ? 'result' as const : 'call' as const,
+      ...(event.status === 'completed'
+        ? {
+            result: event.output
+              ? (/^(error|failed)[:\s]/i.test(event.output.trim())
+                  ? { error: event.output.trim() }
+                  : { output: event.output })
+              : { ok: true },
+          }
+        : {}),
+    }));
+  }, [isUser, message.id, toolActivity]);
   const orderedParts = React.useMemo(() => {
     if (isUser) return [];
 
@@ -544,6 +947,15 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
       normalizedParts.push({ type: 'text', text: displayContent });
     }
 
+    if (!normalizedParts.some((part) => part.type === 'tool-invocation') && pseudoToolInvocations.length) {
+      normalizedParts.push(
+        ...pseudoToolInvocations.map((toolInvocation) => ({
+          type: 'tool-invocation' as const,
+          toolInvocation,
+        })),
+      );
+    }
+
     if (normalizedParts.length === 0 && toolInvocations?.length) {
       normalizedParts.push(
         ...toolInvocations.map((toolInvocation) => ({
@@ -553,8 +965,19 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
       );
     }
 
-    return normalizedParts;
-  }, [displayContent, effectiveReasoning, isUser, parts, toolInvocations]);
+    if (!normalizedParts.some((part) => part.type === 'tool-invocation') && synthesizedToolInvocations.length) {
+      normalizedParts.push(
+        ...synthesizedToolInvocations.map((toolInvocation) => ({
+          type: 'tool-invocation' as const,
+          toolInvocation,
+        })),
+      );
+    }
+
+    return dedupeAssistantParts(normalizedParts);
+  }, [displayContent, effectiveReasoning, isUser, parts, pseudoToolInvocations, synthesizedToolInvocations, toolInvocations]);
+
+  const showAgentActivity = Boolean(toolActivity?.length) && synthesizedToolInvocations.length === 0;
 
   // Auto-open thinking when reasoning starts streaming, auto-close when done
   useEffect(() => {
@@ -577,11 +1000,23 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
     setEditing(false);
   };
 
+  const formattedTime = React.useMemo(() => {
+    if (!message.timestamp) return null;
+    const date = new Date(message.timestamp);
+    if (isNaN(date.getTime())) return null;
+    return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  }, [message.timestamp]);
+
   if (message.role === 'system') return null;
 
   return (
     <div className={cn('group mb-6', isUser ? '' : '')}>
-      <div className={cn('relative', isUser ? 'w-full' : 'w-full')}>
+      <div className={cn('relative min-w-0 overflow-hidden', isUser ? 'w-full' : 'w-full')}>
+        {formattedTime && !editing && (
+          <span className="text-[10px] text-muted-foreground/50 mb-1 block opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+            {formattedTime}
+          </span>
+        )}
         {editing ? (
           <div className="space-y-2">
             <textarea
@@ -652,7 +1087,10 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
 
                 if (part.type === 'text' && part.text?.trim()) {
                   // Strip any inline <think> blocks that the model embedded in text content
-                  const cleanedText = parseThinkingBlocks(part.text, !!isStreaming).cleanContent;
+                  // Also strip malformed repo payload dumps and Hermes status lines when
+                  // they leak through text parts instead of message.content.
+                  const stripped = sanitizeAssistantTextContent(part.text, !!isStreaming);
+                  const cleanedText = parseThinkingBlocks(stripped, !!isStreaming).cleanContent;
                   if (!cleanedText) return null;
                   return (
                     <div key={`text-${index}`} className={index > 0 ? 'mt-3' : undefined}>
@@ -665,7 +1103,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
               });
               })()
             )}
-            {toolActivity && toolActivity.length > 0 && (
+            {showAgentActivity && toolActivity && toolActivity.length > 0 && (
               <AgentActivity events={toolActivity} />
             )}
           </>

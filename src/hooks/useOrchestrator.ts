@@ -7,6 +7,7 @@ import { db } from '@/lib/db';
 import { getApiBaseUrl } from '@/lib/api';
 import { createQueuedMessage, moveQueuedMessageToFront, removeQueuedMessage, type QueuedMessage } from '@/lib/chat-queue';
 import { supportsReasoningEffort } from '@/lib/providers';
+import { getErrorMessage } from '@/lib/errors';
 
 interface Message {
   id: string;
@@ -392,7 +393,7 @@ export function useOrchestrator(
         // User cancelled — keep whatever content was accumulated
         updateOrchestration({ phase: 'idle' });
       } else {
-        const err = e instanceof Error ? e : new Error('Orchestration failed');
+        const err = new Error(getErrorMessage(e));
         console.error('Orchestration error:', err);
         setError(err);
         updateOrchestration({ phase: 'error', error: err.message });

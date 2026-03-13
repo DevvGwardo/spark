@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Github, FolderGit2, FileCode, ChevronRight, ChevronDown, Loader2, ExternalLink, AlertCircle, RefreshCw, Edit3, X } from 'lucide-react';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useChangesetStore } from '@/stores/changeset-store';
+import { usePreviewStore } from '@/stores/preview-store';
 import { usePanelStore } from '@/stores/panel-store';
 import { cn } from '@/lib/utils';
-import { getApiBaseUrl } from '@/lib/api';
+import { getApiBaseUrl, fetchRepoFileTreeResult } from '@/lib/api';
 
 interface GitHubRepo {
   id: number;
@@ -37,9 +38,17 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
 }) => {
   const { githubPAT } = useSettingsStore();
   const focusedPanelId = usePanelStore((s) => s.focusedPanelId);
-  const { getChangeset, setActiveRepo: setActiveRepoForPanel, clearActiveRepo: clearActiveRepoForPanel, getChangeCount } = useChangesetStore();
+  const setPreviewOpen = usePreviewStore((s) => s.setOpen);
+  const setPreviewView = usePreviewStore((s) => s.setView);
+  const {
+    getChangeset,
+    switchActiveRepo,
+    clearActiveRepo: clearActiveRepoForPanel,
+    getChangeCount,
+    setRepoFileTree,
+    setRepoFileTreeStatus,
+  } = useChangesetStore();
   const { activeRepo, isRepoMode } = getChangeset(focusedPanelId);
-  const setActiveRepo = (repo: Parameters<typeof setActiveRepoForPanel>[1]) => setActiveRepoForPanel(focusedPanelId, repo);
   const clearActiveRepo = () => clearActiveRepoForPanel(focusedPanelId);
   const [repos, setRepos] = useState<GitHubRepo[]>([]);
   const [loading, setLoading] = useState(false);
@@ -47,8 +56,13 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
   const [contents, setContents] = useState<RepoContent[]>([]);
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
   const [loadingFile, setLoadingFile] = useState<string | null>(null);
+  const [repoLoadProgress, setRepoLoadProgress] = useState<{ loading: boolean; percent: number; label: string }>({
+    loading: false,
+    percent: 0,
+    label: '',
+  });
 
-  const fetchRepos = async () => {
+  const fetchRepos = useCallback(async () => {
     if (!githubPAT) return;
     
     setLoading(true);
@@ -64,6 +78,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
         }
       );
       
+      if (!response.ok) throw new Error(`Server returned ${response.status}`);
       const data = await response.json();
       if (data.error) {
         setError(data.error);
@@ -75,7 +90,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
     } finally {
       setLoading(false);
     }
-  };
+  }, [githubPAT]);
 
   const fetchContents = async (owner: string, repo: string, path = '') => {
     try {
@@ -88,6 +103,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
         }
       );
       
+      if (!response.ok) throw new Error(`Server returned ${response.status}`);
       const data = await response.json();
       return data.contents || [];
     } catch {
@@ -95,13 +111,96 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
     }
   };
 
+  const buildTreeFromFlat = (items: Array<{ path: string; type: 'file' | 'dir'; size?: number; sha?: string }>): RepoContent[] => {
+    const root: RepoContent[] = [];
+    const dirMap = new Map<string, RepoContent>();
+
+    // Sort so directories come before their children
+    const sorted = [...items].sort((a, b) => a.path.localeCompare(b.path));
+
+    for (const item of sorted) {
+      const node: RepoContent = {
+        path: item.path,
+        type: item.type,
+        size: item.size,
+        sha: item.sha,
+        ...(item.type === 'dir' ? { children: [] } : {}),
+      };
+
+      const parentPath = item.path.includes('/') ? item.path.substring(0, item.path.lastIndexOf('/')) : '';
+
+      if (parentPath && dirMap.has(parentPath)) {
+        dirMap.get(parentPath)!.children!.push(node);
+      } else {
+        root.push(node);
+      }
+
+      if (item.type === 'dir') {
+        dirMap.set(item.path, node);
+      }
+    }
+
+    return root;
+  };
+
   const handleSelectRepo = async (repo: GitHubRepo) => {
     const [owner, repoName] = repo.full_name.split('/');
     onSelectRepo?.(owner, repoName, repo.default_branch);
-    
-    const rootContents = await fetchContents(owner, repoName);
-    setContents(rootContents);
+    setContents([]);
     setExpandedDirs(new Set());
+    setRepoLoadProgress({ loading: true, percent: 5, label: 'Connecting to repository...' });
+
+    try {
+      // Fetch the full tree in one call
+      setRepoLoadProgress({ loading: true, percent: 20, label: 'Fetching repository tree...' });
+      const response = await fetch(
+        `${getApiBaseUrl()}/functions/v1/github-integration`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'read-tree',
+            pat: githubPAT,
+            owner,
+            repo: repoName,
+            branch: repo.default_branch,
+          }),
+        }
+      );
+
+      setRepoLoadProgress({ loading: true, percent: 60, label: 'Processing file tree...' });
+
+      if (!response.ok) {
+        // Fallback to old method if tree API fails
+        setRepoLoadProgress({ loading: true, percent: 70, label: 'Falling back to directory listing...' });
+        const rootContents = await fetchContents(owner, repoName);
+        setContents(rootContents);
+        setRepoLoadProgress({ loading: true, percent: 100, label: 'Done' });
+        setTimeout(() => setRepoLoadProgress({ loading: false, percent: 0, label: '' }), 400);
+        return;
+      }
+
+      const data = await response.json();
+
+      setRepoLoadProgress({ loading: true, percent: 80, label: `Building tree (${data.items?.length || 0} items)...` });
+
+      const tree = buildTreeFromFlat(data.items || []);
+
+      setRepoLoadProgress({ loading: true, percent: 95, label: 'Rendering...' });
+
+      // Pre-expand root directories
+      const rootDirs = new Set(tree.filter(i => i.type === 'dir').map(i => i.path));
+      setContents(tree);
+      setExpandedDirs(rootDirs);
+
+      setRepoLoadProgress({ loading: true, percent: 100, label: 'Done' });
+      setTimeout(() => setRepoLoadProgress({ loading: false, percent: 0, label: '' }), 400);
+    } catch {
+      // Fallback to old method
+      const rootContents = await fetchContents(owner, repoName);
+      setContents(rootContents);
+      setRepoLoadProgress({ loading: false, percent: 0, label: '' });
+    }
   };
 
   const handleToggleDir = async (path: string) => {
@@ -156,6 +255,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
         }
       );
       
+      if (!response.ok) throw new Error(`Server returned ${response.status}`);
       const data = await response.json();
       if (data.content) {
         onSelectFile(selectedRepo.owner, selectedRepo.repo, path, data.content);
@@ -167,14 +267,37 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
     }
   };
 
-  const handleEnableEditMode = (repo: GitHubRepo) => {
+  const handleEnableEditMode = async (repo: GitHubRepo) => {
     const [owner, repoName] = repo.full_name.split('/');
-    setActiveRepo({
+    const nextRepo = {
       owner,
       name: repoName,
       defaultBranch: repo.default_branch,
       fullName: repo.full_name,
-    });
+    };
+    const changeCount = getChangeCount(focusedPanelId);
+    const switchingRepos = activeRepo?.fullName && activeRepo.fullName !== nextRepo.fullName;
+
+    if (switchingRepos && changeCount > 0) {
+      if (!window.confirm(`You have ${changeCount} pending change${changeCount > 1 ? 's' : ''} for ${activeRepo.fullName}. Switch repos and discard them?`)) {
+        return;
+      }
+    }
+
+    switchActiveRepo(focusedPanelId, nextRepo);
+    setRepoFileTreeStatus(focusedPanelId, 'loading');
+    setPreviewView(focusedPanelId, 'repo');
+    setPreviewOpen(focusedPanelId, true);
+
+    // Fetch full file tree so the agent knows what files exist
+    if (githubPAT) {
+      const result = await fetchRepoFileTreeResult(githubPAT, owner, repoName, repo.default_branch);
+      if (result.error) {
+        setRepoFileTreeStatus(focusedPanelId, 'error', result.error);
+      } else {
+        setRepoFileTree(focusedPanelId, result.paths);
+      }
+    }
   };
 
   const handleDisableEditMode = () => {
@@ -189,9 +312,9 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
 
   useEffect(() => {
     if (githubPAT) {
-      fetchRepos();
+      void fetchRepos();
     }
-  }, [githubPAT]);
+  }, [fetchRepos, githubPAT]);
 
   if (!githubPAT) {
     return (
@@ -303,15 +426,30 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
                 {selectedRepo.owner}/{selectedRepo.repo}
               </span>
             </div>
+            {/* Loading progress */}
+            {repoLoadProgress.loading && (
+              <div className="px-3 py-3 border-b border-border">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-xs text-muted-foreground">{repoLoadProgress.label}</span>
+                  <span className="text-xs font-medium tabular-nums">{repoLoadProgress.percent}%</span>
+                </div>
+                <div className="h-1.5 bg-secondary rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-primary rounded-full transition-all duration-300 ease-out"
+                    style={{ width: `${repoLoadProgress.percent}%` }}
+                  />
+                </div>
+              </div>
+            )}
             {/* File tree */}
             <div className="py-1">
               {contents.length > 0 ? (
                 renderContents(contents)
-              ) : (
+              ) : !repoLoadProgress.loading ? (
                 <div className="flex items-center justify-center py-8">
                   <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                 </div>
-              )}
+              ) : null}
             </div>
           </div>
         ) : (

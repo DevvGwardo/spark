@@ -18,12 +18,25 @@ export const useContextUsageStore = create<ContextUsageState>()((set) => ({
   panelUsage: {},
 
   setPanelUsage: (panelId, usage) =>
-    set((state) => ({
-      panelUsage: {
-        ...state.panelUsage,
-        [panelId]: usage,
-      },
-    })),
+    set((state) => {
+      const prev = state.panelUsage[panelId];
+      if (
+        prev &&
+        prev.provider === usage.provider &&
+        prev.model === usage.model &&
+        prev.used === usage.used &&
+        prev.total === usage.total &&
+        prev.percentage === usage.percentage
+      ) {
+        return state;
+      }
+      return {
+        panelUsage: {
+          ...state.panelUsage,
+          [panelId]: usage,
+        },
+      };
+    }),
 
   clearPanelUsage: (panelId) =>
     set((state) => {

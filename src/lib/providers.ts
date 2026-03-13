@@ -14,6 +14,12 @@ export interface ProviderInfo {
   supportsOrchestrator?: boolean;
 }
 
+export const HERMES_RECOMMENDED_MODELS = [
+  'meta-llama/llama-4-maverick',
+  'openai/gpt-4.1-mini',
+  'google/gemini-2.5-flash',
+] as const;
+
 export const REASONING_EFFORTS: readonly ReasoningEffort[] = ['low', 'medium', 'high'];
 
 export const CATEGORY_LABELS: Record<ProviderCategory, string> = {
@@ -251,15 +257,12 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
   hermes: {
     id: 'hermes',
     label: 'Hermes Agent',
-    description: 'Autonomous agent with web search, browser, vision & more',
+    description: 'Autonomous agent over tool-capable OpenRouter models',
     needsApiKey: true,
     category: 'specialized',
     badge: 'Agent',
-    models: [
-      'nousresearch/hermes-3-llama-3.1-405b',
-      'nousresearch/hermes-3-llama-3.1-70b',
-    ],
-    defaultModel: 'nousresearch/hermes-3-llama-3.1-70b',
+    models: [...HERMES_RECOMMENDED_MODELS],
+    defaultModel: 'meta-llama/llama-4-maverick',
   },
 };
 
@@ -273,6 +276,22 @@ export const PROVIDER_ORDER: Provider[] = [
 
 export function getProviderLabel(provider: Provider): string {
   return PROVIDERS[provider]?.label || provider;
+}
+
+export function getVisibleModelOptions(
+  provider: Provider,
+  baseModels: string[],
+  currentModel?: string,
+): string[] {
+  if (provider === 'hermes') {
+    return baseModels;
+  }
+
+  if (currentModel && !baseModels.includes(currentModel)) {
+    return [currentModel, ...baseModels];
+  }
+
+  return baseModels;
 }
 
 export function supportsReasoningEffort(provider: string, model?: string): boolean {

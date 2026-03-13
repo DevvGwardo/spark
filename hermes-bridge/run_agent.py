@@ -6,10 +6,33 @@ browse URL, etc.), and streams results back via callbacks.
 """
 
 import json
+import os
 import httpx
 import re
 from typing import Optional, Callable
 from urllib.parse import quote_plus
+
+
+def _read_positive_int_env(name: str, fallback: int) -> int:
+    raw_value = os.environ.get(name)
+    if not raw_value:
+        return fallback
+    try:
+        parsed_value = int(raw_value)
+    except ValueError:
+        return fallback
+    return parsed_value if parsed_value > 0 else fallback
+
+
+PROVIDER_TIMEOUT_SECONDS = _read_positive_int_env(
+    "HERMES_PROVIDER_TIMEOUT_SECONDS", 5400
+)
+RUN_COMMAND_TIMEOUT_SECONDS = _read_positive_int_env(
+    "HERMES_RUN_COMMAND_TIMEOUT_SECONDS", 5400
+)
+EXECUTE_PYTHON_TIMEOUT_SECONDS = _read_positive_int_env(
+    "HERMES_EXECUTE_PYTHON_TIMEOUT_SECONDS", RUN_COMMAND_TIMEOUT_SECONDS
+)
 
 KNOWN_UNSUPPORTED_TOOL_MODELS = {
     "nousresearch/hermes-3-llama-3.1-405b:free",
@@ -20,6 +43,12 @@ SUGGESTED_TOOL_MODELS = (
     "openai/gpt-4.1-mini",
     "google/gemini-2.5-flash",
 )
+
+REPO_MODE_BLOCKED_TOOLSETS = {
+    "terminal",
+    "files",
+    "code_execution",
+}
 
 REPO_TOOL_DEFINITIONS = [
     {
@@ -170,6 +199,33 @@ REPO_TOOL_DEFINITIONS = [
 ]
 
 REPO_TOOL_NAMES = {t["function"]["name"] for t in REPO_TOOL_DEFINITIONS}
+REPO_EDIT_TOOL_NAMES = {
+    "batch_edit_repo_files",
+    "edit_repo_file",
+    "create_repo_file",
+    "delete_repo_file",
+}
+REPO_CONTINUATION_RETRY_LIMIT = 2
+REPO_TOOL_ENFORCEMENT_RETRY_LIMIT = 2
+REPO_EDIT_INTENT_MARKERS = (
+    "apply the change",
+    "apply the changes",
+    "apply changes",
+    "make the change",
+    "make the changes",
+    "implement the change",
+    "implement the changes",
+    "update the file",
+    "update the files",
+    "edit the file",
+    "edit the files",
+    "modify the file",
+    "modify the files",
+    "batch_edit_repo_files",
+    "edit_repo_file",
+    "create_repo_file",
+    "delete_repo_file",
+)
 
 TOOL_DEFINITIONS = {
     "web": [
@@ -332,6 +388,80 @@ def _normalize_tool_name(name: str) -> str:
     return _TOOL_NAME_ALIASES.get(name, _TOOL_NAME_ALIASES.get(name.lower(), name))
 
 
+def _get_tool_call_names(message: dict) -> list[str]:
+    names: list[str] = []
+    for tool_call in message.get("tool_calls") or []:
+        function = tool_call.get("function") or {}
+        raw_name = function.get("name")
+        if not isinstance(raw_name, str) or not raw_name:
+            continue
+        names.append(_normalize_tool_name(raw_name))
+    return names
+
+
+def _messages_include_tool_call(messages: list[dict], tool_names: set[str]) -> bool:
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        if any(name in tool_names for name in _get_tool_call_names(message)):
+            return True
+    return False
+
+
+def _get_recent_tool_call_names(messages: list[dict]) -> list[str]:
+    """Return tool names from the most recent assistant tool-call turn.
+
+    When the provider stops after a read-only acknowledgement, the trailing
+    messages are the tool results from the latest turn. Restrict continuation
+    checks to that final tool phase instead of the full conversation so an
+    earlier edit does not suppress recovery for a later read-only stall.
+    """
+    trailing_tool_messages: list[dict] = []
+
+    for message in reversed(messages):
+        if not isinstance(message, dict):
+            break
+
+        role = message.get("role")
+        if role == "tool":
+            trailing_tool_messages.append(message)
+            continue
+
+        if role == "assistant" or _get_tool_call_names(message):
+            if trailing_tool_messages:
+                return _get_tool_call_names(message)
+            break
+
+        break
+
+    return []
+
+
+def _recent_repo_turn_stalled_on_read(messages: list[dict]) -> bool:
+    recent_tool_names = _get_recent_tool_call_names(messages)
+    return (
+        "read_repo_file" in recent_tool_names and
+        recent_tool_names[-1:] == ["read_repo_file"]
+    )
+
+
+def _looks_like_repo_edit_ack(content: Optional[str]) -> bool:
+    if not content:
+        return False
+
+    normalized = content.strip().lower()
+    if not normalized or len(normalized) > 1600:
+        return False
+
+    mentions_future_work = bool(
+        re.search(r"\b(i['’]ll|i will|let me|next[, ]+i['’]ll|now[, ]+i['’]ll)\b", normalized)
+    )
+    if not mentions_future_work:
+        return False
+
+    return any(marker in normalized for marker in REPO_EDIT_INTENT_MARKERS)
+
+
 def _strip_html(html: str) -> str:
     text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL)
     text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL)
@@ -433,7 +563,11 @@ def _tool_browse_url(url: str) -> str:
 def _tool_run_command(command: str) -> str:
     import subprocess
     result = subprocess.run(
-        command, shell=True, capture_output=True, text=True, timeout=30
+        command,
+        shell=True,
+        capture_output=True,
+        text=True,
+        timeout=RUN_COMMAND_TIMEOUT_SECONDS,
     )
     output = ""
     if result.stdout:
@@ -464,7 +598,10 @@ def _tool_write_file(path: str, content: str) -> str:
 def _tool_execute_python(code: str) -> str:
     import subprocess
     result = subprocess.run(
-        ["python3", "-c", code], capture_output=True, text=True, timeout=30
+        ["python3", "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=EXECUTE_PYTHON_TIMEOUT_SECONDS,
     )
     output = ""
     if result.stdout:
@@ -484,12 +621,23 @@ def _clean_model_text(text: str) -> str:
     if not text:
         return text
 
+    # Strip raw tool-call-style function invocations that the model dumps as
+    # plain text instead of structured tool_calls.  These look like:
+    #   batch_edit_repo_files(changes=[...])
+    #   propose_changes(summary="...", plan=[...])
+    repo_tool_names_pattern = '|'.join(re.escape(n) for n in REPO_TOOL_NAMES)
+    cleaned = re.sub(
+        rf'(?:{repo_tool_names_pattern})\s*\([\s\S]{{50,}}',
+        '',
+        text,
+    )
+
     # Strip JSON-like blobs that look like tool call arguments
     # e.g. {"path": "...", "content": "...", "action": "edit"}
     cleaned = re.sub(
         r'\{["\s]*(?:path|content|action|changes|description|summary)["\s]*:[\s\S]{200,}?\}',
         '',
-        text,
+        cleaned,
     )
 
     # Strip raw file content dumps: strings with many literal \n sequences
@@ -500,6 +648,13 @@ def _clean_model_text(text: str) -> str:
         '',
         cleaned,
     )
+
+    # Strip orphaned tail fragments that end with tool-call closing patterns
+    # like `])` or `])]` and contain repo-payload JSON keys
+    if re.search(r'\]\s*\)\s*\]?\s*$', cleaned) and re.search(
+        r'"(?:description|path|content|changes|summary|action)"\s*:', cleaned
+    ):
+        cleaned = ''
 
     # If after cleaning there's nothing meaningful left, return empty
     stripped = cleaned.strip()
@@ -541,6 +696,7 @@ class AIAgent:
         enabled_toolsets: Optional[list[str]] = None,
         repo_mode: bool = False,
         skip_propose_changes: bool = False,
+        repo_edit_intent: bool = False,
         github_pat: Optional[str] = None,
         github_repo_owner: Optional[str] = None,
         github_repo_name: Optional[str] = None,
@@ -552,9 +708,16 @@ class AIAgent:
         self.api_key = api_key
         self.model = model
         self.max_iterations = max_iterations
-        self.enabled_toolsets = enabled_toolsets or ["web", "browser", "vision"]
+        requested_toolsets = enabled_toolsets or ["web", "browser", "vision"]
+        if repo_mode:
+            requested_toolsets = [
+                toolset for toolset in requested_toolsets
+                if toolset not in REPO_MODE_BLOCKED_TOOLSETS
+            ]
+        self.enabled_toolsets = requested_toolsets
         self.repo_mode = repo_mode
         self.skip_propose_changes = skip_propose_changes
+        self.repo_edit_intent = repo_edit_intent or skip_propose_changes
         self.github_pat = github_pat
         self.github_repo_owner = github_repo_owner
         self.github_repo_name = github_repo_name
@@ -578,11 +741,17 @@ class AIAgent:
     def _read_github_file(self, path: str) -> str:
         """Read a file from GitHub using the API. Falls back to a hint if no credentials."""
         if not self.github_pat or not self.github_repo_owner or not self.github_repo_name:
+            missing = []
+            if not self.github_pat:
+                missing.append("GitHub PAT")
+            if not self.github_repo_owner:
+                missing.append("repo owner")
+            if not self.github_repo_name:
+                missing.append("repo name")
+            print(f"[hermes-agent] Cannot read '{path}': missing {', '.join(missing)}", flush=True)
             return (
-                f"Note: As a Hermes agent, you cannot directly read '{path}' from GitHub. "
-                f"Use the repository file tree in the system prompt to understand the structure. "
-                f"When editing files, write the complete new content based on common patterns "
-                f"for this file type. The user will review your changes before they are applied."
+                f"Error: Cannot read '{path}' — missing GitHub credentials ({', '.join(missing)}). "
+                f"The user needs to configure a GitHub Personal Access Token in Settings."
             )
         try:
             url = f"https://api.github.com/repos/{self.github_repo_owner}/{self.github_repo_name}/contents/{path}"
@@ -613,7 +782,11 @@ class AIAgent:
             print(f"[hermes-agent] Failed to read {path} from GitHub: {e}", flush=True)
             return f"Error reading file '{path}' from GitHub: {str(e)}"
 
-    def _call_api(self, messages: list[dict]) -> dict:
+    def _call_api(
+        self,
+        messages: list[dict],
+        forced_repo_tool_choice: Optional[str] = None,
+    ) -> dict:
         """Make a non-streaming chat completion request to the configured provider."""
         if self.tools and self.model in KNOWN_UNSUPPORTED_TOOL_MODELS:
             suggested_models = ", ".join(SUGGESTED_TOOL_MODELS)
@@ -635,10 +808,29 @@ class AIAgent:
             "max_tokens": 16384 if self.repo_mode else 4096,
         }
         if self.tools:
-            payload["tools"] = self.tools
-            payload["tool_choice"] = "auto"
+            tools = self.tools
+            tool_choice: object = "auto"
 
-        with httpx.Client(timeout=120) as client:
+            if self.repo_mode and forced_repo_tool_choice == "propose_changes":
+                tools = [
+                    tool for tool in self.tools
+                    if tool["function"]["name"] == "propose_changes"
+                ]
+                tool_choice = {
+                    "type": "function",
+                    "function": {"name": "propose_changes"},
+                }
+            elif self.repo_mode and forced_repo_tool_choice == "required":
+                tools = [
+                    tool for tool in self.tools
+                    if tool["function"]["name"] != "propose_changes"
+                ]
+                tool_choice = "required"
+
+            payload["tools"] = tools
+            payload["tool_choice"] = tool_choice
+
+        with httpx.Client(timeout=PROVIDER_TIMEOUT_SECONDS) as client:
             try:
                 resp = client.post(
                     f"{self.base_url}/chat/completions",
@@ -662,16 +854,120 @@ class AIAgent:
         if not self.repo_mode or not self.github_repo_owner or not self.github_repo_name:
             return ""
         repo_full = f"{self.github_repo_owner}/{self.github_repo_name}"
+        current_turn_instruction = (
+            "Current repo turn intent: the user is asking for repository changes. "
+            "Follow the proposal-and-approval workflow before editing."
+            if self.repo_edit_intent
+            else "Current repo turn intent: the user is asking for read-only repository help. "
+            "You may inspect files with read_repo_file, but do not propose changes or edit files "
+            "unless the user explicitly asks for modifications."
+        )
         return (
             f"You are working on the GitHub repository {repo_full}.\n"
             "You have tools to read, edit, create, and delete files in this repo.\n\n"
-            "WORKFLOW — ALWAYS FOLLOW THIS:\n"
+            "First determine whether the current user turn is asking for read-only repository help or for actual code changes.\n"
+            "- If the user is asking what the repo is, how it works, where something lives, or for analysis/review, stay read-only: inspect files as needed and answer directly.\n"
+            "- Only enter the proposal-and-edit workflow when the user explicitly asks you to modify the repository.\n"
+            "- Never treat repo selection by itself as permission to edit.\n\n"
+            "Operate like a code agent: inspect the repo with tools, make concrete changes with tools when requested, "
+            "and keep narration brief.\n\n"
+            "WORKFLOW — FOR CHANGE REQUESTS ONLY:\n"
             "1. For a NEW change request, FIRST use propose_changes to present a plan. Wait for user approval.\n"
             "2. If the user is approving a previous proposal, do NOT call propose_changes again.\n"
             "3. After approval, use read_repo_file to read files, then batch_edit_repo_files to apply changes.\n"
             "4. Do NOT ask the user which file to edit — explore the repo yourself using read_repo_file.\n"
             "5. Do NOT ask clarifying questions. Use your judgment, explore the repo to understand the codebase, and propose changes directly. If the request is ambiguous, make reasonable assumptions and explain them in your proposal.\n"
             "6. When making changes, address ALL requested changes, not just one.\n"
+            "7. When you need more repository context, use the actual repo tools instead of prose about what you will do next.\n"
+            "8. Do NOT paste code blocks, pseudo-code, or raw file content when repo tools are available. Use the tools.\n"
+            f"\n{current_turn_instruction}\n"
+        )
+
+    def _should_continue_repo_turn(
+        self,
+        messages: list[dict],
+        content: Optional[str],
+        continuation_attempts: int,
+    ) -> bool:
+        if not self.repo_mode:
+            return False
+        if continuation_attempts >= REPO_CONTINUATION_RETRY_LIMIT:
+            return False
+        if not _recent_repo_turn_stalled_on_read(messages):
+            return False
+
+        if not self.repo_edit_intent:
+            return True
+
+        if not self.skip_propose_changes:
+            return False
+
+        # Approved repo turns should keep moving until they either stage edits
+        # or exhaust the bounded retry budget. Llama 4 Maverick often stops
+        # after a single read with planning prose that does not match the
+        # acknowledgement heuristic below, which leaves the frontend waiting on
+        # a second request before edits can begin.
+        if self.skip_propose_changes:
+            return True
+
+        stripped_content = (content or "").strip()
+        return not stripped_content or _looks_like_repo_edit_ack(stripped_content)
+
+    def _build_repo_continuation_message(self) -> str:
+        if not self.repo_edit_intent:
+            return (
+                "[System: Continue the read-only repository analysis now. Use read_repo_file if you still need "
+                "context, then answer the user's question directly. Do not call propose_changes or any repo edit "
+                "tool unless the user explicitly asks for modifications.]"
+            )
+
+        return (
+            "[System: Continue the already approved repository change now. Do not describe the next step in prose. "
+            "Use the actual repo tools immediately. If you still need more context, call read_repo_file. "
+            "If you are ready to change files, call batch_edit_repo_files or the appropriate repo edit tool now. "
+            "Only send normal prose after the repo tool calls are complete.]"
+        )
+
+    def _get_forced_repo_tool_choice(self, messages: list[dict]) -> Optional[str]:
+        if not self.repo_mode:
+            return None
+
+        if not self.repo_edit_intent:
+            return None
+
+        if not self.skip_propose_changes:
+            if not _messages_include_tool_call(messages, {"propose_changes"}):
+                return "propose_changes"
+            return None
+
+        if _recent_repo_turn_stalled_on_read(messages):
+            return "required"
+
+        recent_tool_names = set(_get_recent_tool_call_names(messages))
+        if any(name in REPO_EDIT_TOOL_NAMES for name in recent_tool_names):
+            return None
+
+        if _messages_include_tool_call(messages, REPO_EDIT_TOOL_NAMES):
+            return None
+
+        if recent_tool_names:
+            return None
+
+        return "required"
+
+    def _build_repo_tool_enforcement_message(self, forced_repo_tool_choice: str) -> str:
+        if forced_repo_tool_choice == "propose_changes":
+            return (
+                "[System: Repo mode requires tool-driven planning. Your next response must be a single "
+                "propose_changes tool call that covers the files you intend to inspect or modify. "
+                "Do not explain the plan in prose. Do not include markdown or code fences.]"
+            )
+
+        return (
+            "[System: Repo mode requires actual tool use, not narration. Your next response must contain "
+            "one or more repo tool calls only. If you still need context, call read_repo_file now. "
+            "If you are ready to edit, call batch_edit_repo_files or edit_repo_file now. "
+            "Do not output prose, markdown, or code fences.]"
         )
 
     def run_conversation(
@@ -703,12 +999,16 @@ class AIAgent:
                 messages.insert(0, {"role": "system", "content": repo_prompt})
 
         messages.append({"role": "user", "content": user_message})
+        repo_continuation_attempts = 0
+        repo_tool_enforcement_attempts = 0
+        forced_repo_tool_choice: Optional[str] = None
 
         for iteration in range(self.max_iterations):
             print(f"[hermes-agent] Iteration {iteration + 1}/{self.max_iterations}, msgs={len(messages)}", flush=True)
             if self.on_thinking:
                 self.on_thinking(iteration + 1)
-            response = self._call_api(messages)
+            response = self._call_api(messages, forced_repo_tool_choice=forced_repo_tool_choice)
+            forced_repo_tool_choice = None
 
             choice = response["choices"][0]
             message = choice["message"]
@@ -725,9 +1025,50 @@ class AIAgent:
                         self.on_text(cleaned)
 
             # Check for tool calls
-            tool_calls = message.get("tool_calls")
-            if not tool_calls or finish_reason == "stop":
+            tool_calls = message.get("tool_calls") or []
+            if not tool_calls:
+                next_forced_repo_tool_choice = self._get_forced_repo_tool_choice(messages)
+                if (
+                    next_forced_repo_tool_choice and
+                    repo_tool_enforcement_attempts < REPO_TOOL_ENFORCEMENT_RETRY_LIMIT
+                ):
+                    repo_tool_enforcement_attempts += 1
+                    content = message.get("content")
+                    if content:
+                        messages.append({"role": "assistant", "content": content})
+                    enforcement_message = self._build_repo_tool_enforcement_message(
+                        next_forced_repo_tool_choice
+                    )
+                    messages.append({"role": "user", "content": enforcement_message})
+                    forced_repo_tool_choice = next_forced_repo_tool_choice
+                    print(
+                        f"[hermes-agent] Repo tool enforcement retry "
+                        f"({repo_tool_enforcement_attempts}/{REPO_TOOL_ENFORCEMENT_RETRY_LIMIT}) "
+                        f"forcing {next_forced_repo_tool_choice}.",
+                        flush=True,
+                    )
+                    continue
+
+                if self._should_continue_repo_turn(
+                    messages,
+                    message.get("content"),
+                    repo_continuation_attempts,
+                ):
+                    repo_continuation_attempts += 1
+                    content = message.get("content")
+                    if content:
+                        messages.append({"role": "assistant", "content": content})
+                    continuation_message = self._build_repo_continuation_message()
+                    messages.append({"role": "user", "content": continuation_message})
+                    print(
+                        f"[hermes-agent] Continuing approved repo turn after read-only stop "
+                        f"({repo_continuation_attempts}/{REPO_CONTINUATION_RETRY_LIMIT}).",
+                        flush=True,
+                    )
+                    continue
                 break
+            repo_continuation_attempts = 0
+            repo_tool_enforcement_attempts = 0
 
             # Add assistant message with tool calls to history
             messages.append(message)

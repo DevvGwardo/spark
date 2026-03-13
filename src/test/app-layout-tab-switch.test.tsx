@@ -80,7 +80,9 @@ describe('AppLayout tab switching', () => {
       sidebarWidth: 256,
       settingsOpen: false,
       setupWizardOpen: false,
+      repoBrowserOpen: false,
       activeTab: 'chat',
+      pendingPanelPrompts: {},
     });
 
     useSettingsStore.setState((state) => ({
@@ -113,20 +115,51 @@ describe('AppLayout tab switching', () => {
     });
   });
 
-  it('keeps the chat panel mounted while switching away from chat', () => {
-    render(<AppLayout />);
+it('keeps the chat panel mounted and snaps unsupported tabs back to chat', () => {
+  render(<AppLayout />);
 
-    expect(screen.getByTestId('chat-panel-container')).toBeInTheDocument();
-    expect(chatLifecycle.mounts).toBe(1);
-    expect(chatLifecycle.unmounts).toBe(0);
+  expect(screen.getByTestId('chat-panel-container')).toBeInTheDocument();
+  expect(chatLifecycle.mounts).toBe(1);
+  expect(chatLifecycle.unmounts).toBe(0);
 
-    act(() => {
-      useUIStore.getState().setActiveTab('github');
+  act(() => {
+    useUIStore.getState().setActiveTab('github');
+  });
+
+  expect(screen.getByTestId('chat-panel-container')).toBeInTheDocument();
+  expect(useUIStore.getState().activeTab).toBe('chat');
+  expect(screen.queryByTestId('github-panel')).not.toBeInTheDocument();
+  expect(chatLifecycle.mounts).toBe(1);
+  expect(chatLifecycle.unmounts).toBe(0);
+});
+
+  it('shows repo attachment status without implying edits are already approved', () => {
+    useChangesetStore.setState({
+      panelChangesets: {
+        default: {
+          activeRepo: {
+            owner: 'octo',
+            name: 'cloudchat',
+            defaultBranch: 'main',
+            fullName: 'octo/cloudchat',
+          },
+          isRepoMode: true,
+          changes: {},
+          repoFileCache: { 'src/App.tsx': 'export default function App() {}' },
+          repoFileTree: ['src/App.tsx', 'src/components/chat/ChatArea.tsx'],
+          selectedRepoFilePath: null,
+          repoFileTreeStatus: 'ready',
+          repoFileTreeError: null,
+        },
+      },
     });
 
-    expect(screen.getByTestId('chat-panel-container')).toBeInTheDocument();
-    expect(screen.getByTestId('github-panel')).toBeInTheDocument();
-    expect(chatLifecycle.mounts).toBe(1);
-    expect(chatLifecycle.unmounts).toBe(0);
+    render(<AppLayout />);
+
+    expect(screen.getByText('Default permissions')).toBeInTheDocument();
+    expect(screen.getByText('Repo attached')).toBeInTheDocument();
+    expect(screen.queryByText('Editing')).not.toBeInTheDocument();
+    expect(screen.getByText('octo/cloudchat')).toBeInTheDocument();
+    expect(screen.getByText('2 indexed · 1 cached')).toBeInTheDocument();
   });
 });

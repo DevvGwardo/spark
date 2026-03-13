@@ -4,9 +4,35 @@ export interface DiffLine {
   content: string;
 }
 
+export interface ChangeLineSummary {
+  affectedLines: number;
+  rangeLabel: string | null;
+}
+
 export function countContentLines(content?: string): number {
   if (!content) return 0;
   return content.split('\n').length;
+}
+
+function getLcsLength(oldLines: string[], newLines: string[]): number {
+  if (oldLines.length === 0 || newLines.length === 0) return 0;
+
+  let previous = new Array(newLines.length + 1).fill(0);
+  let current = new Array(newLines.length + 1).fill(0);
+
+  for (let oldIndex = 1; oldIndex <= oldLines.length; oldIndex += 1) {
+    for (let newIndex = 1; newIndex <= newLines.length; newIndex += 1) {
+      current[newIndex] =
+        oldLines[oldIndex - 1] === newLines[newIndex - 1]
+          ? previous[newIndex - 1] + 1
+          : Math.max(previous[newIndex], current[newIndex - 1]);
+    }
+
+    [previous, current] = [current, previous];
+    current.fill(0);
+  }
+
+  return previous[newLines.length];
 }
 
 export function getChangeLineDelta(change: {
@@ -25,9 +51,104 @@ export function getChangeLineDelta(change: {
     return { added: 0, removed: oldLines };
   }
 
+  if (!change.originalContent) {
+    return { added: newLines, removed: 0 };
+  }
+
+  const oldContentLines = change.originalContent.split('\n');
+  const newContentLines = change.content.split('\n');
+  const sharedLines = getLcsLength(oldContentLines, newContentLines);
+
   return {
-    added: Math.max(0, newLines - oldLines),
-    removed: Math.max(0, oldLines - newLines),
+    added: newContentLines.length - sharedLines,
+    removed: oldContentLines.length - sharedLines,
+  };
+}
+
+function formatLineRangeLabel(lineNumbers: number[]): string | null {
+  if (lineNumbers.length === 0) return null;
+
+  const segments: Array<{ start: number; end: number }> = [];
+  let start = lineNumbers[0];
+  let end = lineNumbers[0];
+
+  for (let i = 1; i < lineNumbers.length; i += 1) {
+    const line = lineNumbers[i];
+    if (line === end + 1) {
+      end = line;
+      continue;
+    }
+    segments.push({ start, end });
+    start = line;
+    end = line;
+  }
+
+  segments.push({ start, end });
+
+  const visibleSegments = segments.slice(0, 2).map(({ start: segStart, end: segEnd }) =>
+    segStart === segEnd ? `L${segStart}` : `L${segStart}-L${segEnd}`,
+  );
+
+  if (segments.length > 2) {
+    visibleSegments.push(`+${segments.length - 2} more`);
+  }
+
+  return visibleSegments.join(', ');
+}
+
+export function summarizeChangeLines(change: {
+  action: 'create' | 'edit' | 'delete';
+  content: string;
+  originalContent?: string;
+}): ChangeLineSummary {
+  const newLines = countContentLines(change.content);
+  const oldLines = countContentLines(change.originalContent);
+
+  if (change.action === 'create') {
+    return {
+      affectedLines: newLines,
+      rangeLabel: newLines > 0 ? `L1-L${newLines}` : null,
+    };
+  }
+
+  if (change.action === 'delete') {
+    return {
+      affectedLines: oldLines,
+      rangeLabel: oldLines > 0 ? `L1-L${oldLines}` : null,
+    };
+  }
+
+  if (!change.originalContent) {
+    const fallback = Math.max(newLines, oldLines);
+    return {
+      affectedLines: fallback,
+      rangeLabel: fallback > 0 ? `L1-L${fallback}` : null,
+    };
+  }
+
+  if (newLines + oldLines > 2000) {
+    const { added, removed } = getChangeLineDelta(change);
+    return {
+      affectedLines: added + removed,
+      rangeLabel: null,
+    };
+  }
+
+  const lineNumbers = Array.from(
+    new Set(
+      computeDiffLines(change.originalContent, change.content, 0)
+        .filter((line) => line.type !== 'context' && line.lineNum !== null)
+        .map((line) => line.lineNum as number),
+    ),
+  ).sort((a, b) => a - b);
+
+  if (lineNumbers.length === 0) {
+    return { affectedLines: 0, rangeLabel: null };
+  }
+
+  return {
+    affectedLines: lineNumbers.length,
+    rangeLabel: formatLineRangeLabel(lineNumbers),
   };
 }
 

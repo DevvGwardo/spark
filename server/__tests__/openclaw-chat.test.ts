@@ -75,6 +75,12 @@ describe('OpenClaw provider chat route', () => {
           model: 'default',
           conversation_id: 'conv-123',
           system_prompt: 'Be concise.',
+          activeRepo: {
+            owner: 'octo',
+            name: 'cloudchat',
+          },
+          repo_edit_intent: false,
+          repo_file_tree: ['src/App.tsx', 'src/hooks/useChat.ts'],
           messages: [
             { role: 'user', content: 'Reply with exactly: ok' },
           ],
@@ -87,12 +93,28 @@ describe('OpenClaw provider chat route', () => {
       expect(response.headers.get('x-vercel-ai-data-stream')).toBe('v1')
       expect(body).toContain('0:"ok"')
       expect(body).toContain('finishReason')
-      expect(openclawMocks.runOpenClawTurn).toHaveBeenCalledWith({
-        message: 'Reply with exactly: ok',
-        model: 'default',
-        sessionId: 'conv-123',
-        systemPrompt: 'Be concise.',
-      })
+      expect(openclawMocks.runOpenClawTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Reply with exactly: ok',
+          model: 'default',
+          sessionId: 'conv-123',
+        }),
+      )
+      expect(openclawMocks.runOpenClawTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          systemPrompt: expect.stringContaining('You are working on the GitHub repository octo/cloudchat.'),
+        }),
+      )
+      expect(openclawMocks.runOpenClawTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          systemPrompt: expect.stringContaining('read-only repository help'),
+        }),
+      )
+      expect(openclawMocks.runOpenClawTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          systemPrompt: expect.stringContaining('src/App.tsx'),
+        }),
+      )
     } finally {
       await server.close()
     }

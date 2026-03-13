@@ -1,4 +1,4 @@
-import { app, BrowserWindow, globalShortcut, Menu, Tray, nativeImage } from 'electron'
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu, Notification, Tray, nativeImage, shell } from 'electron'
 import { existsSync } from 'fs'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
@@ -7,6 +7,13 @@ import { startEmbeddedServer } from './server'
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let apiPort: number = 3001
+let dockBounceId: number | null = null
+const dockIconPath = join(__dirname, '../../build/icon.png')
+
+interface AttentionRequestPayload {
+  title?: string
+  body?: string
+}
 
 const preloadPathCandidates = [
   join(__dirname, '../preload/preload.mjs'),
@@ -35,6 +42,8 @@ async function resolvePreloadPath() {
 }
 
 async function createWindow() {
+  process.env.CLOUDCHAT_USER_DATA_DIR = app.getPath('userData')
+
   // Start embedded Express server
   apiPort = await startEmbeddedServer()
   console.log(`Embedded server started on port ${apiPort}`)
@@ -49,6 +58,7 @@ async function createWindow() {
     height: 900,
     minWidth: 800,
     minHeight: 600,
+    ...(existsSync(dockIconPath) ? { icon: dockIconPath } : {}),
     title: 'CloudChat',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 15, y: 15 },
@@ -78,23 +88,147 @@ async function createWindow() {
     })
   })
 
+  // Open external links (e.g. "View on GitHub") in the system browser
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('https://') || url.startsWith('http://')) {
+      shell.openExternal(url)
+      return { action: 'deny' }
+    }
+    return { action: 'allow' }
+  })
+
+  // Catch <a target="_blank"> and any navigation away from the app
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const appOrigins = ['http://localhost', 'file://']
+    if (!appOrigins.some((origin) => url.startsWith(origin))) {
+      event.preventDefault()
+      shell.openExternal(url)
+    }
+  })
+
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+    const rendererUrl = new URL(process.env['ELECTRON_RENDERER_URL'])
+    rendererUrl.searchParams.set('apiPort', String(apiPort))
+    mainWindow.loadURL(rendererUrl.toString())
   } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    mainWindow.loadFile(join(__dirname, '../renderer/index.html'), {
+      query: {
+        apiPort: String(apiPort),
+      },
+    })
   }
 
   mainWindow.on('closed', () => {
     mainWindow = null
   })
+
+  mainWindow.on('focus', () => {
+    clearAttentionRequest()
+  })
+
+  mainWindow.on('show', () => {
+    clearAttentionRequest()
+  })
 }
+
+function applyAppIcon() {
+  if (!existsSync(dockIconPath)) {
+    return
+  }
+
+  try {
+    const icon = nativeImage.createFromPath(dockIconPath)
+    if (icon.isEmpty()) {
+      return
+    }
+
+    if (process.platform === 'darwin') {
+      app.dock.setIcon(icon)
+    }
+  } catch (error) {
+    console.warn('Failed to apply app icon:', error)
+  }
+}
+
+function clearAttentionRequest() {
+  if (process.platform !== 'darwin' || dockBounceId === null) {
+    return
+  }
+
+  app.dock.cancelBounce(dockBounceId)
+  dockBounceId = null
+}
+
+function focusMainWindow() {
+  if (!mainWindow) {
+    return
+  }
+
+  if (!mainWindow.isVisible()) {
+    mainWindow.show()
+  }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore()
+  }
+
+  mainWindow.focus()
+  clearAttentionRequest()
+}
+
+function notifyAttentionRequest(payload: AttentionRequestPayload = {}) {
+  if (!mainWindow) {
+    return
+  }
+
+  const isWindowVisible = mainWindow.isVisible() && !mainWindow.isMinimized()
+  if (isWindowVisible && mainWindow.isFocused()) {
+    return
+  }
+
+  const title = payload.title?.trim() || 'CloudChat needs your attention'
+  const body = payload.body?.trim() || 'A conversation is waiting for your confirmation.'
+
+  if (process.platform === 'darwin' && dockBounceId === null) {
+    dockBounceId = app.dock.bounce('informational')
+  }
+
+  if (!Notification.isSupported()) {
+    return
+  }
+
+  const notification = new Notification({
+    title,
+    body,
+  })
+
+  notification.on('click', () => {
+    focusMainWindow()
+  })
+
+  notification.show()
+}
+
+ipcMain.handle('app:notify-attention', (_event, payload?: AttentionRequestPayload) => {
+  notifyAttentionRequest(payload)
+})
+
+ipcMain.handle('app:clear-attention', () => {
+  clearAttentionRequest()
+})
 
 function createTray() {
   // Use a 16x16 template image for macOS menu bar (or empty placeholder until icon exists)
-  const trayIconPath = join(__dirname, '../../build/tray-icon.png')
+  const trayTemplatePath = join(__dirname, '../../build/tray-iconTemplate.png')
+  const trayFallbackPath = join(__dirname, '../../build/tray-icon.png')
+  const trayIconPath = existsSync(trayTemplatePath) ? trayTemplatePath : trayFallbackPath
   let icon: Electron.NativeImage
   try {
     icon = nativeImage.createFromPath(trayIconPath)
+    if (process.platform === 'darwin' && trayIconPath === trayTemplatePath) {
+      icon.setTemplateImage(true)
+      icon = icon.resize({ height: 18 })
+    }
   } catch {
     icon = nativeImage.createEmpty()
   }
@@ -102,7 +236,7 @@ function createTray() {
   tray.setToolTip('CloudChat')
 
   const contextMenu = Menu.buildFromTemplate([
-    { label: 'Show CloudChat', click: () => mainWindow?.show() },
+    { label: 'Show CloudChat', click: () => focusMainWindow() },
     { label: 'New Chat', click: () => mainWindow?.webContents.send('new-chat') },
     { type: 'separator' },
     { label: 'Quit', click: () => app.quit() }
@@ -141,6 +275,7 @@ app.setAboutPanelOptions({
 })
 
 app.whenReady().then(async () => {
+  applyAppIcon()
   await createWindow()
   createTray()
   setupDockMenu()
@@ -156,7 +291,7 @@ app.whenReady().then(async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow()
     } else {
-      mainWindow?.show()
+      focusMainWindow()
     }
   })
 })

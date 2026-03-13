@@ -3,10 +3,10 @@ import { ChatSidebar } from '@/components/sidebar/ChatSidebar';
 import { ChatPanelContainer } from '@/components/chat/ChatPanelContainer';
 import { SettingsModal } from '@/components/settings/SettingsModal';
 import { SetupWizard } from '@/components/settings/SetupWizard';
-import { GitHubPanel, GitHubAnalyzer } from '@/components/github';
-import { KnowledgePanel } from '@/components/settings/KnowledgePanel';
 import { CreatePRModal } from '@/components/github/CreatePRModal';
+import { RepoIssueBrowser } from '@/components/github/RepoIssueBrowser';
 import { useUIStore } from '@/stores/ui-store';
+import { useShallow } from 'zustand/shallow';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useChangesetStore } from '@/stores/changeset-store';
 import { PreviewSidebar } from '@/components/preview/PreviewSidebar';
@@ -24,8 +24,20 @@ import { cn } from '@/lib/utils';
 export const AppLayout: React.FC = () => {
   useTheme();
   useGlobalStyles();
-  const { sidebarOpen, setSidebarOpen, toggleSidebar, sidebarWidth, setSidebarWidth, activeTab } = useUIStore();
-  const { isSetupComplete, activeProvider, providers } = useSettingsStore();
+  const {
+    sidebarOpen,
+    setSidebarOpen,
+    toggleSidebar,
+    sidebarWidth,
+    setSidebarWidth,
+    activeTab,
+    setActiveTab,
+    repoBrowserOpen,
+    setRepoBrowserOpen,
+  } = useUIStore();
+  const { isSetupComplete, activeProvider, providers } = useSettingsStore(
+    useShallow((s) => ({ isSetupComplete: s.isSetupComplete, activeProvider: s.activeProvider, providers: s.providers })),
+  );
   const { getChangeset, getChangeCount, getLineTotals, clearChanges, getStagedCount, getStagedChanges } = useChangesetStore();
   const { conversations, deleteConversation, renameConversation, pinConversation } = useChatStore();
   const { panels, focusedPanelId, openPanel, setConversationForPanel, focusPanel } = usePanelStore();
@@ -45,6 +57,16 @@ export const AppLayout: React.FC = () => {
   const changeCount = getChangeCount(focusedPanelId);
   const lineTotals = getLineTotals(focusedPanelId, 'all');
   const stagedCount = getStagedCount(focusedPanelId);
+  const cachedRepoFileCount = focusedChangeset.repoFileTree.filter(
+    (path) => focusedChangeset.repoFileCache[path] !== undefined,
+  ).length;
+  const repoFooterStatus = focusedChangeset.repoFileTreeStatus === 'loading'
+    ? 'Indexing repo tree'
+    : focusedChangeset.repoFileTreeStatus === 'error'
+      ? 'Repo index failed'
+      : focusedChangeset.repoFileTree.length > 0
+        ? `${focusedChangeset.repoFileTree.length} indexed · ${cachedRepoFileCount} cached`
+        : 'No repo files indexed';
 
   // For the PR modal, use the panel that triggered it (or focused panel in single-panel mode)
   const prTargetPanelId = prPanelId || focusedPanelId;
@@ -69,6 +91,12 @@ export const AppLayout: React.FC = () => {
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, [headerMenuOpen]);
+
+  useEffect(() => {
+    if (activeTab !== 'chat') {
+      setActiveTab('chat');
+    }
+  }, [activeTab, setActiveTab]);
 
   const config = providers[activeProvider];
   const footerProvider = activeTab === 'chat' ? footerUsage?.provider ?? activeProvider : activeProvider;
@@ -149,12 +177,15 @@ export const AppLayout: React.FC = () => {
     <>
       {!isSetupComplete && <SetupWizard />}
       <SettingsModal />
+      <RepoIssueBrowser isOpen={repoBrowserOpen} onClose={() => setRepoBrowserOpen(false)} />
       {prActiveRepo && (
         <CreatePRModal
           isOpen={prModalOpen}
           onClose={() => { setPrModalOpen(false); setPrPanelId(null); }}
           owner={prActiveRepo.owner}
           repo={prActiveRepo.name}
+          baseOwner={prActiveRepo.baseOwner}
+          baseRepo={prActiveRepo.baseName}
           baseBranch={prActiveRepo.defaultBranch}
           files={pendingFiles}
           onSuccess={handlePrSuccess}
@@ -167,7 +198,7 @@ export const AppLayout: React.FC = () => {
           <div className="flex-shrink-0 relative" style={sidebarOpen ? { width: sidebarWidth } : { width: 0 }}>
             <div
               className={cn(
-                'h-full overflow-hidden rounded-[22px] border border-border/60 bg-background/88',
+                'h-full overflow-hidden rounded-[22px] bg-background/88',
                 !sidebarOpen && 'w-0'
               )}
               style={sidebarOpen ? { width: sidebarWidth, transition: isResizing.current ? 'none' : 'width 200ms' } : { transition: 'width 200ms' }}
@@ -392,17 +423,6 @@ export const AppLayout: React.FC = () => {
                 >
                   <ChatPanelContainer onOpenPR={handleOpenPRForPanel} />
                 </div>
-                {activeTab === 'github' && <GitHubPanel />}
-                {activeTab === 'analyzer' && (
-                  <div className="h-full overflow-y-auto p-6">
-                    <GitHubAnalyzer />
-                  </div>
-                )}
-                {activeTab === 'knowledge' && (
-                  <div className="h-full overflow-y-auto p-6">
-                    <KnowledgePanel />
-                  </div>
-                )}
               </div>
               <div className={cn(activeTab !== 'chat' && 'hidden')} aria-hidden={activeTab !== 'chat'}>
                 <PreviewSidebar />
@@ -412,7 +432,7 @@ export const AppLayout: React.FC = () => {
         </div>
 
         {/* Bottom status bar — Codex style */}
-        <footer className="flex items-center h-7 px-4 text-[11px] leading-7 text-muted-foreground gap-4 flex-shrink-0 border-t border-border">
+        <footer className="flex items-center h-8 px-4 text-[11px] text-muted-foreground gap-4 flex-shrink-0 mt-[-2px]">
           <div className="flex items-center gap-1.5">
             <Shield className="h-3 w-3" />
             <span>Default permissions</span>
@@ -420,22 +440,59 @@ export const AppLayout: React.FC = () => {
           {activeRepo && (
             <div className="flex items-center gap-1.5">
               <Circle className="h-2 w-2 fill-emerald-500 text-emerald-500" />
-              <span>Editing</span>
+              <span>Repo attached</span>
               <GitBranch className="h-3 w-3 ml-1" />
               <span className="font-mono">{activeRepo.fullName}</span>
+              {activeRepo.issue && (
+                <>
+                  <span className="text-muted-foreground/35">·</span>
+                  <span>Issue #{activeRepo.issue.number}</span>
+                </>
+              )}
+              {activeRepo.localPath && (
+                <>
+                  <span className="text-muted-foreground/35">·</span>
+                  <span>Local clone ready</span>
+                </>
+              )}
+              <span className="text-muted-foreground/35">·</span>
+              <FileCode2 className="h-3 w-3" />
+              <span>{repoFooterStatus}</span>
             </div>
           )}
           <div className="flex-1" />
-          <div className="flex items-center gap-2 min-w-0">
+          <div className="flex items-center gap-2.5 min-w-0">
             <span className="font-mono truncate">
               {footerProviderInfo?.label ?? footerProvider} · {footerDisplayModel}
             </span>
-            {footerContextLabel && (
+            {activeTab === 'chat' && footerUsage && (
               <>
                 <span className="text-muted-foreground/35">·</span>
-                <span className="font-mono tabular-nums text-foreground/80">
-                  {footerContextLabel}
-                </span>
+                <div className="flex items-center gap-2">
+                  <div className="w-16 h-1.5 bg-muted/60 rounded-full overflow-hidden">
+                    <div
+                      className={cn(
+                        'h-full rounded-full transition-all duration-500 ease-out',
+                        footerUsage.percentage > 90
+                          ? 'bg-red-400'
+                          : footerUsage.percentage > 70
+                            ? 'bg-amber-400'
+                            : 'bg-primary/60'
+                      )}
+                      style={{ width: `${Math.min(footerUsage.percentage, 100)}%` }}
+                    />
+                  </div>
+                  <span className={cn(
+                    'font-mono tabular-nums text-[10px]',
+                    footerUsage.percentage > 90
+                      ? 'text-red-400'
+                      : footerUsage.percentage > 70
+                        ? 'text-amber-400'
+                        : 'text-foreground/70'
+                  )}>
+                    {Math.round(footerUsage.percentage)}%
+                  </span>
+                </div>
               </>
             )}
           </div>

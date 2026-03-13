@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "build:dev": "vite build --mode development",
+    "icons": "bash scripts/generate-icons.sh",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
@@ -83,6 +84,7 @@
     "sonner": "^1.7.4",
     "tailwind-merge": "^2.6.0",
     "tailwindcss-animate": "^1.0.7",
+    "undici": "^7.22.0",
     "vaul": "^0.9.9",
     "zod": "^3.25",
     "zustand": "^5.0.11"

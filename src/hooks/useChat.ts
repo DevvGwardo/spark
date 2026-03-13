@@ -7,18 +7,77 @@ import { useKnowledgeStore } from '@/stores/knowledge-store';
 import { useChangesetStore } from '@/stores/changeset-store';
 import { usePreviewStore, type FileType, type PreviewFile, type ProjectType } from '@/stores/preview-store';
 import { useActivityStore } from '@/stores/activity-store';
+import { useUIStore } from '@/stores/ui-store';
 import { db, type Message as StoredMessage } from '@/lib/db';
-import { getApiBaseUrl } from '@/lib/api';
+import { fetchRepoFileTreeResult, getApiBaseUrl } from '@/lib/api';
 import { createQueuedMessage, moveQueuedMessageToFront, removeQueuedMessage, type QueuedMessage } from '@/lib/chat-queue';
 import { PROVIDERS, supportsReasoningEffort } from '@/lib/providers';
 import { useHermesStore } from '@/stores/hermes-store';
 import { findPendingProposal, getProposalDigest, type ProposalMessageLike } from '@/lib/proposed-changes';
-import { extractPseudoToolInvocations } from '@/lib/pseudo-tool-calls';
+import { extractPseudoToolInvocations, extractTextFileEdits, getPseudoToolSourceText, type PseudoToolMessageLike } from '@/lib/pseudo-tool-calls';
+import { getRepoTurnIntentInstruction, isRepoEditIntentMessage } from '@/lib/repo-intent';
 import type { ToolActivityEvent } from '@/components/chat/AgentActivity';
+import { countContentLines, getChangeLineDelta } from '@/lib/change-diff';
+import { getErrorMessage } from '@/lib/errors';
 
-function countLines(content: string): number {
-  if (!content) return 0;
-  return content.split('\n').length;
+function normalizeRepoPath(path: string): string {
+  return path
+    .replace(/\\/g, '/')
+    .replace(/^\.?\//, '')
+    .replace(/\/{2,}/g, '/')
+    .trim();
+}
+
+function isInvalidRepoReadPath(path: string): boolean {
+  return !path || path === '.' || path === '/' || path.endsWith('/');
+}
+
+function getRepoPathSuggestions(paths: string[], requestedPath: string, limit = 6): string[] {
+  const normalizedRequestedPath = normalizeRepoPath(requestedPath).toLowerCase();
+  const requestedBasename = normalizedRequestedPath.split('/').at(-1) || normalizedRequestedPath;
+
+  return paths
+    .map((candidatePath) => {
+      const normalizedCandidate = candidatePath.toLowerCase();
+      const candidateBasename = normalizedCandidate.split('/').at(-1) || normalizedCandidate;
+      let score = 0;
+
+      if (normalizedCandidate === normalizedRequestedPath) score += 100;
+      if (candidateBasename === requestedBasename) score += 60;
+      if (requestedBasename && candidateBasename.includes(requestedBasename)) score += 30;
+      if (requestedBasename && normalizedCandidate.includes(requestedBasename)) score += 20;
+      if (normalizedRequestedPath && normalizedCandidate.includes(normalizedRequestedPath)) score += 10;
+
+      return { candidatePath, score };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => right.score - left.score || left.candidatePath.localeCompare(right.candidatePath))
+    .slice(0, limit)
+    .map((entry) => entry.candidatePath);
+}
+
+function formatMissingRepoFileError(requestedPath: string, repoPaths: string[]): string {
+  const normalizedPath = normalizeRepoPath(requestedPath);
+  const suggestions = getRepoPathSuggestions(repoPaths, normalizedPath);
+
+  if (suggestions.length > 0) {
+    return `Error: \`${normalizedPath}\` is not present in the selected repository. Choose a real path from the loaded repo tree instead. Possible matches:\n${suggestions.map((path) => `- ${path}`).join('\n')}`;
+  }
+
+  const samplePaths = repoPaths.slice(0, 8);
+  return `Error: \`${normalizedPath}\` is not present in the selected repository. Choose a real path from the loaded repo tree instead.${samplePaths.length > 0 ? ` Example paths:\n${samplePaths.map((path) => `- ${path}`).join('\n')}` : ''}`;
+}
+
+function formatRepoTreeUnavailableError(repoStatus: 'idle' | 'loading' | 'ready' | 'error', repoError?: string | null): string {
+  if (repoStatus === 'loading') {
+    return 'Error: The selected repository is still indexing. Wait for the repo tree to finish loading before reading files.';
+  }
+
+  if (repoStatus === 'error') {
+    return `Error: The selected repository tree could not be indexed${repoError ? ` (${repoError})` : ''}. Re-select the repo or wait for indexing to recover before reading files.`;
+  }
+
+  return 'Error: The selected repository file tree is not available yet. Load the repo tree before reading files so you can choose a real path.';
 }
 
 /**
@@ -109,6 +168,84 @@ const STRUCTURED_REPO_TOOL_NAMES = new Set([
   'batch_edit_repo_files',
 ]);
 
+const REPO_EDIT_TOOL_NAMES = new Set([
+  'edit_repo_file',
+  'create_repo_file',
+  'delete_repo_file',
+  'batch_edit_repo_files',
+]);
+
+const REPO_MODE_DISABLED_HERMES_TOOLSETS = new Set([
+  'terminal',
+  'files',
+  'code_execution',
+]);
+
+function collectStructuredToolNames(message: {
+  parts?: Array<{ type?: string; toolInvocation?: { toolName?: string } }>;
+  toolInvocations?: Array<{ toolName?: string }>;
+}): string[] {
+  const partInvocations = message.parts
+    ?.filter((part) => part.type === 'tool-invocation' && part.toolInvocation?.toolName)
+    .map((part) => part.toolInvocation?.toolName ?? '')
+    ?? [];
+  const toolInvocationNames = message.toolInvocations?.map((invocation) => invocation.toolName ?? '') ?? [];
+  return [...partInvocations, ...toolInvocationNames].filter(Boolean);
+}
+
+function collectRepoWorkflowToolNames(
+  message: {
+    content?: string;
+    parts?: Array<{ type?: string; text?: string; toolInvocation?: { toolName?: string } }>;
+    toolInvocations?: Array<{ toolName?: string }>;
+  },
+  toolActivity: ToolActivityEvent[] = [],
+): string[] {
+  const structuredToolNames = collectStructuredToolNames(message);
+  const pseudoToolNames = extractPseudoToolInvocations(getPseudoToolSourceText(message as PseudoToolMessageLike))
+    .map((invocation) => invocation.toolName);
+  const activityNames = toolActivity.map((event) => event.tool.toLowerCase());
+
+  return [...structuredToolNames, ...pseudoToolNames, ...activityNames]
+    .map((toolName) => toolName.toLowerCase())
+    .filter((toolName) =>
+      toolName === 'propose_changes' ||
+      toolName === 'read_repo_file' ||
+      REPO_EDIT_TOOL_NAMES.has(toolName),
+    );
+}
+
+function hasRepoContinuationProgress(
+  message: {
+    content?: string;
+    parts?: Array<{ type?: string; text?: string; toolInvocation?: { toolName?: string } }>;
+    toolInvocations?: Array<{ toolName?: string }>;
+  },
+  toolActivity: ToolActivityEvent[] = [],
+): boolean {
+  return collectRepoWorkflowToolNames(message, toolActivity)
+    .some((toolName) => toolName === 'read_repo_file' || REPO_EDIT_TOOL_NAMES.has(toolName));
+}
+
+function stalledOnRepoRead(
+  message: {
+    content?: string;
+    parts?: Array<{ type?: string; text?: string; toolInvocation?: { toolName?: string } }>;
+    toolInvocations?: Array<{ toolName?: string }>;
+  },
+  toolActivity: ToolActivityEvent[] = [],
+): boolean {
+  const orderedRepoWorkflowNames = collectRepoWorkflowToolNames(message, toolActivity);
+
+  if (!orderedRepoWorkflowNames.includes('read_repo_file')) {
+    return false;
+  }
+
+  // If the final repo workflow step in the assistant turn is still a file read,
+  // the model stopped mid-analysis or mid-editing workflow and should continue.
+  return orderedRepoWorkflowNames.at(-1) === 'read_repo_file';
+}
+
 function hasStructuredRepoToolData(message: {
   parts?: Array<{ type?: string; toolInvocation?: { toolName?: string } }>;
   toolInvocations?: Array<{ toolName?: string }>;
@@ -125,6 +262,61 @@ function hasStructuredRepoToolData(message: {
 interface ProviderOverride {
   provider: string;
   model: string;
+}
+
+interface AutoContinueRequest {
+  conversationId: string;
+  content: string;
+  continuingApprovedProposal: boolean;
+}
+
+function getRepoContinuationProgressDigest(
+  message: {
+    content?: string;
+    parts?: Array<{ type?: string; text?: string; toolInvocation?: { toolName?: string; args?: Record<string, unknown> } }>;
+    toolInvocations?: Array<{ toolName?: string; args?: Record<string, unknown> }>;
+  },
+  toolActivity: ToolActivityEvent[] = [],
+): string {
+  const structuredEntries = [
+    ...(message.parts
+      ?.filter((part) => part.type === 'tool-invocation' && part.toolInvocation?.toolName)
+      .map((part) => ({
+        toolName: part.toolInvocation?.toolName?.toLowerCase() ?? '',
+        path: typeof part.toolInvocation?.args?.path === 'string' ? part.toolInvocation.args.path : '',
+      })) ?? []),
+    ...(message.toolInvocations?.map((invocation) => ({
+      toolName: invocation.toolName?.toLowerCase() ?? '',
+      path: typeof invocation.args?.path === 'string' ? invocation.args.path : '',
+    })) ?? []),
+  ].filter((entry) =>
+    entry.toolName === 'read_repo_file' ||
+    REPO_EDIT_TOOL_NAMES.has(entry.toolName),
+  );
+
+  const pseudoEntries = extractPseudoToolInvocations(getPseudoToolSourceText(message as PseudoToolMessageLike))
+    .map((invocation) => ({
+      toolName: invocation.toolName.toLowerCase(),
+      path: typeof invocation.args.path === 'string' ? invocation.args.path : '',
+    }))
+    .filter((entry) =>
+      entry.toolName === 'read_repo_file' ||
+      REPO_EDIT_TOOL_NAMES.has(entry.toolName),
+    );
+
+  const activityEntries = toolActivity
+    .map((event) => ({
+      toolName: event.tool.toLowerCase(),
+      path: event.input,
+    }))
+    .filter((entry) =>
+      entry.toolName === 'read_repo_file' ||
+      REPO_EDIT_TOOL_NAMES.has(entry.toolName),
+    );
+
+  return [...structuredEntries, ...pseudoEntries, ...activityEntries]
+    .map((entry) => `${entry.toolName}:${entry.path}`)
+    .join('|');
 }
 
 export function useChat(
@@ -151,6 +343,8 @@ export function useChat(
   const changeset = useChangesetStore(useShallow((s) => s.getChangeset(panelId)));
   const addChangeForPanel = useChangesetStore((s) => s.addChange);
   const preview = usePreviewStore(useShallow((s) => s.getPreview(panelId)));
+  const pendingPanelPrompt = useUIStore((s) => s.pendingPanelPrompts[panelId] ?? null);
+  const clearPanelPrompt = useUIStore((s) => s.clearPanelPrompt);
   const { activeRepo, isRepoMode, repoFileTree } = changeset;
   const hermesToolsetConfig = useHermesStore((s) => s.toolsets);
   const hermesToolsets = useMemo(
@@ -159,6 +353,14 @@ export function useChat(
         .filter(([, enabled]) => enabled)
         .map(([toolset]) => toolset),
     [hermesToolsetConfig],
+  );
+  const effectiveHermesToolsets = useMemo(
+    () => (
+      isRepoMode
+        ? hermesToolsets.filter((toolset) => !REPO_MODE_DISABLED_HERMES_TOOLSETS.has(toolset))
+        : hermesToolsets
+    ),
+    [hermesToolsets, isRepoMode],
   );
   const addChange = useCallback((change: Parameters<typeof addChangeForPanel>[1]) => addChangeForPanel(panelId, change), [addChangeForPanel, panelId]);
 
@@ -178,24 +380,27 @@ export function useChat(
   if (isRepoMode && activeRepo) {
     let repoContext = `\n\n--- GitHub Repository ---\nYou are working on the GitHub repository ${activeRepo.fullName} (default branch: ${activeRepo.defaultBranch}).
 
-IMPORTANT: You have tools to work with this repo. When the user asks you to make changes:
+IMPORTANT: First determine whether the current user turn is asking for read-only repository help or for actual code changes.
+- If the user is asking what the repo is, how it works, where something lives, for an overview, or for analysis/review, stay read-only: inspect files as needed and answer directly.
+- Only enter the proposal-and-edit workflow when the user explicitly asks you to modify the repository.
+- Never treat repo selection by itself as permission to edit.
+
+When the user asks you to make changes:
 1. For a NEW change request that does not already have an approved plan, FIRST use propose_changes to present a plan of ALL files you intend to modify. Wait for user approval before proceeding.
 2. If the latest user message is approving your most recent proposal (for example "go ahead", "approved", or "apply it"), do NOT call propose_changes again. Continue executing the already approved plan.
 3. After approval, use read_repo_file to read the files you need to modify.
 4. Then use batch_edit_repo_files to apply ALL changes at once (preferred), or edit_repo_file / create_repo_file individually.
-5. Do NOT ask the user to specify file paths — explore the repo yourself using the file tree below.
+5. Do NOT ask the user to specify file paths or share files — explore the repo yourself using the repository context provided with the request.
 6. Do NOT ask clarifying questions. Use your judgment, explore the repo to understand the codebase, and propose changes directly. If the request is ambiguous, make reasonable assumptions and explain them in your proposal.
 7. When the user asks you to update multiple things, make sure you address ALL of them, not just one.
 8. All changes are staged for a pull request (not applied directly).
 9. Never print pseudo-tool syntax like propose_changes(...) or batch_edit_repo_files(...) in visible text. Use the actual tool calls instead.
-10. IMPORTANT: If you need to edit many large files, split batch_edit_repo_files into multiple calls (max 3-4 files per batch) to avoid output truncation. For very large files, use individual edit_repo_file calls instead.`;
+10. IMPORTANT: If you need to edit many large files, split batch_edit_repo_files into multiple calls (max 3-4 files per batch) to avoid output truncation. For very large files, use individual edit_repo_file calls instead.
+11. Never conclude that the repository is empty or inaccessible just because a guessed file path failed to read. If a read fails, choose another path from the loaded repo tree and continue exploring.
+12. Do not guess generic placeholder paths like \`.\`, \`/\`, \`src/main\`, \`server\`, \`client\`, or \`package.json\` unless that exact path is present in the loaded repo tree.`;
 
     if (autoApproveRepoChanges) {
-      repoContext += `\n11. The user has enabled auto-approval for repo changes. Still call propose_changes first, then continue immediately without waiting for a follow-up approval message.`;
-    }
-
-    if (repoFileTree.length > 0) {
-      repoContext += `\n\nRepository file tree:\n${repoFileTree.join('\n')}`;
+      repoContext += `\n13. The user has enabled auto-approval for repo changes. Still call propose_changes first, then continue immediately without waiting for a follow-up approval message.`;
     }
 
     fullSystemPrompt += repoContext;
@@ -213,13 +418,12 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
   // Keep a just-created conversation local until the first send settles.
   // Switching the panel immediately remounts the chat tree and drops the in-flight transcript.
   const pendingConversationIdRef = useRef<string | null>(null);
+  const repoEditIntentRef = useRef(false);
 
   const resetPanelFileState = useCallback(() => {
     const csStore = useChangesetStore.getState();
     const psStore = usePreviewStore.getState();
     csStore.clearActiveRepo(panelId);
-    csStore.clearChanges(panelId);
-    csStore.setRepoFileTree(panelId, []);
     psStore.resetPreview(panelId);
   }, [panelId]);
 
@@ -240,6 +444,8 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
         isRepoMode: cs.isRepoMode,
         changes: cs.changes,
         repoFileTree: cs.repoFileTree,
+        repoFileCache: cs.repoFileCache,
+        selectedRepoFilePath: cs.selectedRepoFilePath,
       },
       preview: {
         files: ps.files,
@@ -248,8 +454,25 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
         isOpen: ps.isOpen,
         activeView: ps.activeView,
       },
+      repoFileCache: Object.keys(cs.repoFileCache).length > 0
+        ? cs.repoFileCache
+        : undefined,
     });
   }, [panelId]);
+
+  const activeRepoKey = activeRepo ? `${activeRepo.owner}/${activeRepo.name}` : null;
+  const previousActiveRepoKeyRef = useRef<string | null>(activeRepoKey);
+
+  useEffect(() => {
+    const previousRepoKey = previousActiveRepoKeyRef.current;
+    previousActiveRepoKeyRef.current = activeRepoKey;
+
+    if (previousRepoKey === activeRepoKey) {
+      return;
+    }
+
+    appliedPseudoRepoMessageIdsRef.current = new Set();
+  }, [activeRepoKey]);
 
   const [draftInput, setDraftInput] = useState('');
   const [apiKeyModalOpen, setApiKeyModalOpen] = useState(false);
@@ -259,6 +482,7 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
   const requestConversationIdRef = useRef<string | null>(conversationId);
   // Keep the ref in sync with the prop (when conversation switches externally)
   requestConversationIdRef.current = conversationId ?? requestConversationIdRef.current;
+  const activeRequestBodyRef = useRef<Record<string, unknown> | null>(null);
   const continuingApprovedProposalRunRef = useRef(false);
   const toolActivityRef = useRef<Record<string, ToolActivityEvent[]>>({});
   const activeConversationId = conversationId ?? pendingConversationIdRef.current;
@@ -268,6 +492,7 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
   const awaitingProposalApprovalRef = useRef(false);
   const proposalApprovedRef = useRef(false);
   const stoppedForProposalRef = useRef(false);
+  const [conversationAutoApproveEnabled, setConversationAutoApproveEnabledState] = useState(false);
   // Per-conversation auto-approve: when user clicks "Allow all" in the approval
   // banner, all subsequent proposals in this conversation are auto-approved without
   // requiring individual approval each turn.
@@ -277,18 +502,20 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
   // prevent infinite loops.
   const unknownFinishRetryRef = useRef(0);
   const MAX_UNKNOWN_FINISH_RETRIES = 3;
-  // Signal for the auto-continue effect: set to a convId when onFinish detects an
-  // interrupted repo editing session that should be resumed.
-  const [autoContinueConvId, setAutoContinueConvId] = useState<string | null>(null);
+  const repoStopRetryRef = useRef(0);
+  const MAX_REPO_STOP_RETRIES = 2;
+  const approvedRepoContinuationRetryRef = useRef(0);
+  const MAX_APPROVED_REPO_CONTINUATIONS = 8;
+  const autoContinueTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pausedProposalIdRef = useRef<string | null>(null);
   const pendingProposalCacheRef = useRef<{ digest: string; proposal: ReturnType<typeof findPendingProposal> }>({
     digest: '',
     proposal: null,
   });
-  const repoFileCacheRef = useRef<Record<string, string>>({});
   const messagesRef = useRef<AIMessage[]>([]);
   const pendingProposalRef = useRef<ReturnType<typeof findPendingProposal>>(null);
   const appliedPseudoRepoMessageIdsRef = useRef<Set<string>>(new Set());
+  const lastApprovedRepoProgressDigestRef = useRef('');
 
   const persistAssistantSnapshot = useCallback(async (message: Record<string, unknown>, convId: string) => {
     const messageId = typeof message.id === 'string' && message.id ? message.id : crypto.randomUUID();
@@ -340,15 +567,30 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
               const parsed = JSON.parse(line.slice(6));
               const delta = parsed?.choices?.[0]?.delta;
               if (delta?.tool_activity) {
-                const msgId = parsed.id || 'current';
+                // Use 'current' as the key during streaming — the chunk ID
+                // from providers like Hermes won't match the AI SDK message ID
+                const msgId = 'current';
                 const prev = [...(toolActivityRef.current[msgId] || [])];
                 const activity = delta.tool_activity as ToolActivityEvent;
 
-                const existingIdx = prev.findIndex(
-                  (e) => e.tool === activity.tool && e.input === activity.input && e.status === 'running'
-                );
+                const existingIdx = activity.status === 'completed'
+                  ? prev.findLastIndex(
+                      (e) =>
+                        e.tool === activity.tool &&
+                        e.status === 'running' &&
+                        (!activity.input || e.input === activity.input),
+                    )
+                  : prev.findIndex(
+                      (e) => e.tool === activity.tool && e.input === activity.input && e.status === 'running',
+                    );
+
                 if (existingIdx >= 0 && activity.status === 'completed') {
-                  prev[existingIdx] = activity;
+                  prev[existingIdx] = {
+                    ...prev[existingIdx],
+                    ...activity,
+                    input: prev[existingIdx].input || activity.input,
+                    output: activity.output ?? prev[existingIdx].output,
+                  };
                 } else if (existingIdx < 0) {
                   prev.push(activity);
                 }
@@ -374,6 +616,87 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
     });
   }, [effectiveProvider]);
 
+  const ensureRepoFileTreeLoaded = useCallback(async (): Promise<string[]> => {
+    const currentChangeset = useChangesetStore.getState().getChangeset(panelId);
+    if (!currentChangeset.isRepoMode || !currentChangeset.activeRepo) {
+      return [];
+    }
+
+    if (currentChangeset.repoFileTree.length > 0) {
+      return currentChangeset.repoFileTree;
+    }
+
+    if (!githubPAT) {
+      return [];
+    }
+
+    useChangesetStore.getState().setRepoFileTreeStatus(panelId, 'loading');
+
+    const result = await fetchRepoFileTreeResult(
+      githubPAT,
+      currentChangeset.activeRepo.owner,
+      currentChangeset.activeRepo.name,
+      currentChangeset.activeRepo.defaultBranch,
+    );
+
+    if (result.error) {
+      useChangesetStore.getState().setRepoFileTreeStatus(panelId, 'error', result.error);
+      return [];
+    }
+
+    useChangesetStore.getState().setRepoFileTree(panelId, result.paths);
+    return result.paths;
+  }, [githubPAT, panelId]);
+
+  const buildRequestBody = useCallback((overrides?: {
+    conversationId?: string | null;
+    repoFileTree?: string[];
+    repoFileCache?: Record<string, string>;
+  }) => {
+    const conversationIdForRequest = overrides?.conversationId ?? requestConversationIdRef.current;
+    const repoFileTreeForRequest = overrides?.repoFileTree ?? repoFileTree;
+    const repoFileCacheForRequest = overrides?.repoFileCache ?? changeset.repoFileCache;
+
+    return {
+      provider: effectiveProvider,
+      model: effectiveModel,
+      temperature: config.temperature,
+      top_p: config.topP,
+      max_tokens: config.maxTokens,
+      ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+      api_key: config.apiKey,
+      system_prompt: isRepoMode && activeRepo
+        ? `${fullSystemPrompt}\n\n${getRepoTurnIntentInstruction(repoEditIntentRef.current)}`
+        : fullSystemPrompt,
+      ...(isRepoMode && activeRepo ? { activeRepo } : {}),
+      ...(isRepoMode && activeRepo ? { repo_edit_intent: repoEditIntentRef.current } : {}),
+      ...(effectiveProvider === 'hermes' ? { hermes_toolsets: effectiveHermesToolsets.join(',') } : {}),
+      ...(effectiveProvider === 'hermes' && isRepoMode && activeRepo && githubPAT ? { github_pat: githubPAT } : {}),
+      ...(isRepoMode && repoFileTreeForRequest.length > 0 ? { repo_file_tree: repoFileTreeForRequest } : {}),
+      ...(isRepoMode && Object.keys(repoFileCacheForRequest).length > 0
+        ? { repo_file_cache: repoFileCacheForRequest }
+        : {}),
+      ...(conversationIdForRequest ? { conversation_id: conversationIdForRequest } : {}),
+    };
+  }, [
+    activeRepo,
+    changeset.repoFileCache,
+    config.apiKey,
+    config.maxTokens,
+    config.temperature,
+    config.topP,
+    effectiveHermesToolsets,
+    effectiveModel,
+    effectiveProvider,
+    fullSystemPrompt,
+    githubPAT,
+    isRepoMode,
+    reasoningEffort,
+    repoFileTree,
+  ]);
+
+  const requestBody = activeRequestBodyRef.current ?? buildRequestBody();
+
   const {
     messages,
     append,
@@ -385,21 +708,7 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
   } = useAIChat({
     api: `${apiBaseUrl}/functions/v1/chat`,
     fetch: hermesStreamFetch,
-    body: {
-      provider: effectiveProvider,
-      model: effectiveModel,
-      temperature: config.temperature,
-      top_p: config.topP,
-      max_tokens: config.maxTokens,
-      ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
-      api_key: config.apiKey,
-      system_prompt: fullSystemPrompt,
-      ...(isRepoMode && activeRepo ? { activeRepo } : {}),
-      ...(effectiveProvider === 'hermes' ? { hermes_toolsets: hermesToolsets.join(',') } : {}),
-      ...(effectiveProvider === 'hermes' && isRepoMode && activeRepo && githubPAT ? { github_pat: githubPAT } : {}),
-      ...(requestConversationIdRef.current ? { conversation_id: requestConversationIdRef.current } : {}),
-      ...(continuingApprovedProposalRunRef.current ? { continuing_approved_proposal: true } : {}),
-    },
+    body: requestBody,
     id: chatSessionId,
     streamProtocol: 'data',
     throttle: 32,
@@ -408,38 +717,131 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
       const convId = convIdRef.current;
       if (!convId) return;
 
+      // Remap tool activity from 'current' to the actual message ID
+      if (message?.id && toolActivityRef.current['current']) {
+        const currentActivity = toolActivityRef.current['current'];
+        delete toolActivityRef.current['current'];
+        toolActivityRef.current[message.id] = currentActivity;
+        setToolActivityMap({ ...toolActivityRef.current });
+      }
+
       // Persist assistant message (including parts and tool invocations)
       if (!message) return;
       await persistAssistantSnapshot(message as Record<string, unknown>, convId);
 
       const finishReason = options?.finishReason;
+      const continuingApprovedRepoTurn =
+        continuingApprovedProposalRunRef.current &&
+        proposalApprovedRef.current;
+      const messageToolActivity = message.id ? toolActivityRef.current[message.id] || [] : [];
+      const repoProgressDigest = getRepoContinuationProgressDigest(
+        message as {
+          content?: string;
+          parts?: Array<{ type?: string; text?: string; toolInvocation?: { toolName?: string; args?: Record<string, unknown> } }>;
+          toolInvocations?: Array<{ toolName?: string; args?: Record<string, unknown> }>;
+        },
+        messageToolActivity,
+      );
+      if (
+        continuingApprovedRepoTurn &&
+        repoProgressDigest &&
+        repoProgressDigest !== lastApprovedRepoProgressDigestRef.current
+      ) {
+        repoStopRetryRef.current = 0;
+        lastApprovedRepoProgressDigestRef.current = repoProgressDigest;
+      }
       if (finishReason !== 'tool-calls') {
         // Don't reset proposal state if we manually stopped the stream for approval.
         // The proposal detection effect sets stoppedForProposalRef before calling stop().
         if (stoppedForProposalRef.current) {
           console.log('[useChat:onFinish] Stream stopped for proposal — preserving approval state');
           stoppedForProposalRef.current = false;
+          activeRequestBodyRef.current = null;
         } else if (
           // Auto-continue when the model is interrupted mid-work with an unknown
           // finish reason (common with OpenRouter/Gemini hitting token limits or
           // returning non-standard finish reasons). Only retry if we're in an
           // active repo editing session and haven't exceeded the retry cap.
           (finishReason === 'unknown' || finishReason === 'length') &&
-          continuingApprovedProposalRunRef.current &&
-          proposalApprovedRef.current &&
+          continuingApprovedRepoTurn &&
+          approvedRepoContinuationRetryRef.current < MAX_APPROVED_REPO_CONTINUATIONS &&
           unknownFinishRetryRef.current < MAX_UNKNOWN_FINISH_RETRIES
         ) {
+          approvedRepoContinuationRetryRef.current += 1;
           unknownFinishRetryRef.current += 1;
           console.log(
-            `[useChat:onFinish] Unknown finish during active repo work — auto-continuing (attempt ${unknownFinishRetryRef.current}/${MAX_UNKNOWN_FINISH_RETRIES})`,
+            `[useChat:onFinish] Unknown finish during active repo work — auto-continuing (attempt ${approvedRepoContinuationRetryRef.current}/${MAX_APPROVED_REPO_CONTINUATIONS}, unknown ${unknownFinishRetryRef.current}/${MAX_UNKNOWN_FINISH_RETRIES})`,
           );
-          // Signal the auto-continue effect to send a continuation message.
-          // We can't call append() here because it comes from the same useAIChat
-          // call that this onFinish belongs to.
-          setAutoContinueConvId(convId);
+          scheduleAutoContinue({
+            conversationId: convId,
+            content: 'You were interrupted mid-work. Continue where you left off — complete the remaining file changes from the approved plan.',
+            continuingApprovedProposal: true,
+          });
+        } else if (
+          finishReason === 'stop' &&
+          effectiveProvider === 'hermes' &&
+          activeRepo &&
+          continuingApprovedRepoTurn &&
+          approvedRepoContinuationRetryRef.current < MAX_APPROVED_REPO_CONTINUATIONS &&
+          repoStopRetryRef.current < MAX_REPO_STOP_RETRIES &&
+          !hasRepoContinuationProgress(
+            message as {
+              content?: string;
+              parts?: Array<{ type?: string; text?: string; toolInvocation?: { toolName?: string } }>;
+              toolInvocations?: Array<{ toolName?: string }>;
+            },
+            messageToolActivity,
+          )
+        ) {
+          approvedRepoContinuationRetryRef.current += 1;
+          repoStopRetryRef.current += 1;
+          console.log(
+            `[useChat:onFinish] Hermes acknowledged the approved plan without using repo tools — auto-continuing (attempt ${approvedRepoContinuationRetryRef.current}/${MAX_APPROVED_REPO_CONTINUATIONS}, stall ${repoStopRetryRef.current}/${MAX_REPO_STOP_RETRIES})`,
+          );
+          scheduleAutoContinue({
+            conversationId: convId,
+            content: 'You acknowledged the approved repo plan but did not execute any repo tools. Continue the accepted plan now: read the files you need and stage the approved changes without asking for approval again.',
+            continuingApprovedProposal: true,
+          });
+        } else if (
+          finishReason === 'stop' &&
+          effectiveProvider === 'hermes' &&
+          activeRepo &&
+          (!pendingProposalRef.current || continuingApprovedRepoTurn) &&
+          (!continuingApprovedRepoTurn || approvedRepoContinuationRetryRef.current < MAX_APPROVED_REPO_CONTINUATIONS) &&
+          repoStopRetryRef.current < MAX_REPO_STOP_RETRIES &&
+          stalledOnRepoRead(
+            message as {
+              content?: string;
+              parts?: Array<{ type?: string; text?: string; toolInvocation?: { toolName?: string } }>;
+              toolInvocations?: Array<{ toolName?: string }>;
+            },
+            messageToolActivity,
+          )
+        ) {
+          if (continuingApprovedRepoTurn) {
+            approvedRepoContinuationRetryRef.current += 1;
+          }
+          repoStopRetryRef.current += 1;
+          console.log(
+            `[useChat:onFinish] Hermes stopped after repo read without finishing the repo workflow — auto-continuing (${continuingApprovedRepoTurn ? `approved ${approvedRepoContinuationRetryRef.current}/${MAX_APPROVED_REPO_CONTINUATIONS}, ` : ''}stall ${repoStopRetryRef.current}/${MAX_REPO_STOP_RETRIES})`,
+          );
+          scheduleAutoContinue({
+            conversationId: convId,
+            content: continuingApprovedRepoTurn
+              ? 'You stopped in the middle of the approved repo work after reading a file. Continue the accepted plan now and do not stop after a single read_repo_file result.'
+              : repoEditIntentRef.current
+                ? 'You stopped in the middle of repo analysis after reading a file. Continue inspecting the repo as needed, then call propose_changes with the full plan. Do not stop after a single read_repo_file result.'
+                : "You stopped in the middle of a read-only repo analysis after reading a file. Continue inspecting the repo as needed and answer the user's question directly. Do not call propose_changes or edit repo files unless the user explicitly asks for modifications.",
+            continuingApprovedProposal: continuingApprovedRepoTurn,
+          });
         } else {
           console.log('[useChat:onFinish] Natural finish, resetting proposal state. finishReason:', finishReason);
           unknownFinishRetryRef.current = 0;
+          repoStopRetryRef.current = 0;
+          approvedRepoContinuationRetryRef.current = 0;
+          lastApprovedRepoProgressDigestRef.current = '';
+          activeRequestBodyRef.current = null;
           // If this was a continuation run that made repo edits, signal ready for PR
           if (continuingApprovedProposalRunRef.current) {
             const stagedCount = useChangesetStore.getState().getStagedCount(panelId);
@@ -485,10 +887,38 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
       // Handle repo tool calls
       if (toolCall.toolName === 'read_repo_file') {
         const { path } = toolCall.args as { path: string };
+        const normalizedPath = normalizeRepoPath(path);
         const currentRepo = useChangesetStore.getState().getChangeset(panelId).activeRepo;
         if (!currentRepo || !githubPAT) {
           return 'Error: No active repository or GitHub token not configured.';
         }
+
+        if (isInvalidRepoReadPath(normalizedPath)) {
+          return 'Error: Choose a concrete file path from the loaded repository tree, not `.` , `/`, or a directory path.';
+        }
+
+        const currentChangeset = useChangesetStore.getState().getChangeset(panelId);
+        const repoTree = currentChangeset.repoFileTree.length > 0
+          ? currentChangeset.repoFileTree
+          : await ensureRepoFileTreeLoaded();
+
+        const repoTreeStatus = useChangesetStore.getState().getChangeset(panelId).repoFileTreeStatus;
+        const repoTreeError = useChangesetStore.getState().getChangeset(panelId).repoFileTreeError;
+
+        if (repoTree.length === 0) {
+          return formatRepoTreeUnavailableError(repoTreeStatus, repoTreeError);
+        }
+
+        if (!repoTree.includes(normalizedPath)) {
+          return formatMissingRepoFileError(normalizedPath, repoTree);
+        }
+
+        // Return cached content if available (avoids redundant GitHub API calls)
+        const cached = useChangesetStore.getState().getChangeset(panelId).repoFileCache[normalizedPath];
+        if (cached !== undefined) {
+          return cached;
+        }
+
         try {
           const response = await fetch(
             `${getApiBaseUrl()}/functions/v1/github-integration`,
@@ -500,7 +930,8 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
                 pat: githubPAT,
                 owner: currentRepo.owner,
                 repo: currentRepo.name,
-                path,
+                path: normalizedPath,
+                ref: currentRepo.defaultBranch,
               }),
             }
           );
@@ -510,7 +941,7 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
           }
           const data = await response.json();
           if (data.error) return `Error reading file: ${data.error}`;
-          repoFileCacheRef.current[path] = data.content || '';
+          useChangesetStore.getState().cacheRepoFile(panelId, normalizedPath, data.content || '');
           return data.content || '';
         } catch {
           return 'Error: Failed to read file from GitHub.';
@@ -547,13 +978,12 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
         }
         const { path, content } = toolCall.args as { path: string; content: string; description: string };
         const existing = useChangesetStore.getState().getChangeset(panelId).changes[path];
-        const originalContent = existing?.originalContent ?? repoFileCacheRef.current[path] ?? '';
-        const oldLines = originalContent ? countLines(originalContent) : 0;
-        const newLines = countLines(content);
+        const originalContent = existing?.originalContent ?? useChangesetStore.getState().getChangeset(panelId).repoFileCache[path] ?? '';
         addChange({ path, action: 'edit', content, originalContent, staged: true });
         const convId = convIdRef.current;
         if (convId) {
-          useActivityStore.getState().addLineStats(convId, Math.max(0, newLines - oldLines), Math.max(0, oldLines - newLines));
+          const lineDelta = getChangeLineDelta({ action: 'edit', content, originalContent });
+          useActivityStore.getState().addLineStats(convId, lineDelta.added, lineDelta.removed);
         }
         return `Staged edit to ${path}`;
       }
@@ -566,7 +996,7 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
         addChange({ path, action: 'create', content, staged: true });
         const convId = convIdRef.current;
         if (convId) {
-          useActivityStore.getState().addLineStats(convId, countLines(content), 0);
+          useActivityStore.getState().addLineStats(convId, countContentLines(content), 0);
         }
         return `Staged new file ${path}`;
       }
@@ -577,12 +1007,11 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
         }
         const { path } = toolCall.args as { path: string; reason: string };
         const existing = useChangesetStore.getState().getChangeset(panelId).changes[path];
-        const originalContent = existing?.originalContent ?? repoFileCacheRef.current[path] ?? '';
-        const oldLines = originalContent ? countLines(originalContent) : 0;
+        const originalContent = existing?.originalContent ?? useChangesetStore.getState().getChangeset(panelId).repoFileCache[path] ?? '';
         addChange({ path, action: 'delete', content: '', originalContent, staged: true });
         const convId = convIdRef.current;
         if (convId) {
-          useActivityStore.getState().addLineStats(convId, 0, oldLines);
+          useActivityStore.getState().addLineStats(convId, 0, countContentLines(originalContent));
         }
         return `Staged deletion of ${path}`;
       }
@@ -599,17 +1028,14 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
         let totalRemoved = 0;
         for (const change of fileChanges) {
           const existing = useChangesetStore.getState().getChangeset(panelId).changes[change.path];
-          const originalContent = existing?.originalContent ?? repoFileCacheRef.current[change.path] ?? '';
-          const oldLines = originalContent ? countLines(originalContent) : 0;
-          const newLines = countLines(change.content || '');
-          if (change.action === 'create') {
-            totalAdded += newLines;
-          } else if (change.action === 'delete') {
-            totalRemoved += oldLines;
-          } else {
-            totalAdded += Math.max(0, newLines - oldLines);
-            totalRemoved += Math.max(0, oldLines - newLines);
-          }
+          const originalContent = existing?.originalContent ?? useChangesetStore.getState().getChangeset(panelId).repoFileCache[change.path] ?? '';
+          const lineDelta = getChangeLineDelta({
+            action: change.action,
+            content: change.content || '',
+            originalContent,
+          });
+          totalAdded += lineDelta.added;
+          totalRemoved += lineDelta.removed;
           addChange({
             path: change.path,
             action: change.action,
@@ -627,15 +1053,19 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
       }
     },
     onError: (err) => {
+      activeRequestBodyRef.current = null;
       continuingApprovedProposalRunRef.current = false;
       proposalApprovedRef.current = false;
       awaitingProposalApprovalRef.current = false;
-      console.error('[useChat:onError] Chat error:', err?.message || err, 'provider:', effectiveProvider, 'model:', effectiveModel);
-      if (err?.message?.includes('not configured')) {
+      approvedRepoContinuationRetryRef.current = 0;
+      lastApprovedRepoProgressDigestRef.current = '';
+      const errorMessage = getErrorMessage(err);
+      console.error('[useChat:onError] Chat error:', errorMessage, 'provider:', effectiveProvider, 'model:', effectiveModel);
+      if (errorMessage.includes('not configured')) {
         setProviderUnavailableOpen(true);
       }
       // Handle truncated tool call JSON (model output exceeded token limit)
-      if (err?.message?.includes('JSON parsing failed') || err?.message?.includes('Unexpected end of JSON')) {
+      if (errorMessage.includes('JSON parsing failed') || errorMessage.includes('Unexpected end of JSON')) {
         console.warn('Tool call was truncated — the model likely exceeded its output token limit. The response will be retried with a prompt to use smaller changes.');
       }
     },
@@ -643,6 +1073,48 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
 
   // Keep messagesRef in sync for use in callbacks without adding messages to deps
   messagesRef.current = messages;
+
+  const scheduleAutoContinue = useCallback((request: AutoContinueRequest) => {
+    const currentMessages = messagesRef.current;
+    const sanitized = sanitizePartialToolCalls(currentMessages);
+    if (sanitized !== currentMessages) {
+      setMessages(sanitized);
+    }
+
+    if (autoContinueTimerRef.current) {
+      clearTimeout(autoContinueTimerRef.current);
+    }
+
+    autoContinueTimerRef.current = setTimeout(() => {
+      autoContinueTimerRef.current = null;
+      activeRequestBodyRef.current = buildRequestBody({
+        conversationId: request.conversationId,
+      });
+      append(
+        {
+          role: 'system',
+          content: request.content,
+        },
+        {
+          body: {
+            conversation_id: request.conversationId,
+            ...(isRepoMode && activeRepo ? { repo_edit_intent: repoEditIntentRef.current } : {}),
+            ...(request.continuingApprovedProposal
+              ? { continuing_approved_proposal: true }
+              : {}),
+          },
+        },
+      ).catch((err) => {
+        console.error('[useChat:autoContinue] Failed to auto-continue:', err);
+        awaitingProposalApprovalRef.current = false;
+        proposalApprovedRef.current = false;
+        continuingApprovedProposalRunRef.current = false;
+        approvedRepoContinuationRetryRef.current = 0;
+        lastApprovedRepoProgressDigestRef.current = '';
+        activeRequestBodyRef.current = null;
+      });
+    }, 300);
+  }, [activeRepo, append, buildRequestBody, isRepoMode, setMessages]);
 
   // Track streaming state in global activity store
   const isStreaming = status === 'streaming' || status === 'submitted';
@@ -656,45 +1128,6 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
   const pendingProposal = pendingProposalCacheRef.current.proposal;
   pendingProposalRef.current = pendingProposal;
 
-  // Auto-continue effect: when onFinish signals an interrupted repo editing session,
-  // sanitize any partial tool calls and send a continuation message.
-  useEffect(() => {
-    if (!autoContinueConvId) return;
-    const targetConvId = autoContinueConvId;
-    setAutoContinueConvId(null);
-
-    const currentMessages = messagesRef.current;
-    const sanitized = sanitizePartialToolCalls(currentMessages);
-    if (sanitized !== currentMessages) {
-      setMessages(sanitized);
-    }
-
-    // Small delay to let the sanitized messages settle
-    const timer = setTimeout(() => {
-      append(
-        {
-          role: 'user',
-          content:
-            'You were interrupted mid-work. Continue where you left off — complete the remaining file changes from the approved plan.',
-        },
-        {
-          body: {
-            conversation_id: targetConvId,
-            continuing_approved_proposal: true,
-          },
-        },
-      ).catch((err) => {
-        console.error('[useChat:autoContinue] Failed to auto-continue:', err);
-        awaitingProposalApprovalRef.current = false;
-        proposalApprovedRef.current = false;
-        continuingApprovedProposalRunRef.current = false;
-      });
-    }, 300);
-
-    return () => clearTimeout(timer);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoContinueConvId]);
-
   useEffect(() => {
     if (!pendingProposal) {
       pausedProposalIdRef.current = null;
@@ -706,11 +1139,22 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
     // 2. Already in approval-awaiting state
     // 3. Auto-approve is off and a content-matched proposal is detected
     //    (Hermes/local models may output proposals as text, not structured tool calls)
+    const hasApprovedProposalContinuation =
+      proposalApprovedRef.current ||
+      continuingApprovedProposalRunRef.current;
     const shouldPause =
       pauseForProposalRef.current ||
       awaitingProposalApprovalRef.current ||
-      (!autoApproveRepoChanges && !conversationAutoApproveRef.current);
+      (
+        !hasApprovedProposalContinuation &&
+        !autoApproveRepoChanges &&
+        !conversationAutoApproveRef.current
+      );
     if (!shouldPause) return;
+    // Hermes can re-stream the same pending proposal with a new assistant
+    // message ID while the approval stop is still settling. Once we're already
+    // awaiting approval for a paused proposal, don't stop again.
+    if (awaitingProposalApprovalRef.current && pausedProposalIdRef.current !== null) return;
     if (pausedProposalIdRef.current === pendingProposal.messageId) return;
 
     pausedProposalIdRef.current = pendingProposal.messageId;
@@ -756,14 +1200,16 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
         toolInvocations?: Array<{ toolName?: string }>;
       })) continue;
 
-      const pseudoInvocations = extractPseudoToolInvocations(message.content || '');
+      const sourceText = getPseudoToolSourceText(message);
+      const pseudoInvocations = extractPseudoToolInvocations(sourceText);
       const repoEditInvocation = pseudoInvocations.find((invocation) =>
         ['batch_edit_repo_files', 'edit_repo_file', 'create_repo_file', 'delete_repo_file'].includes(invocation.toolName),
       );
+      const textFileEdits = repoEditInvocation ? [] : extractTextFileEdits(sourceText);
 
-      if (!repoEditInvocation) continue;
+      if (!repoEditInvocation && textFileEdits.length === 0) continue;
 
-      if (repoEditInvocation.toolName === 'batch_edit_repo_files') {
+      if (repoEditInvocation?.toolName === 'batch_edit_repo_files') {
         const fileChanges = Array.isArray(repoEditInvocation.args.changes)
           ? repoEditInvocation.args.changes as Array<{ path?: string; action?: 'create' | 'edit' | 'delete'; content?: string }>
           : [];
@@ -777,7 +1223,7 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
           }
 
           const existing = useChangesetStore.getState().getChangeset(panelId).changes[change.path];
-          const originalContent = existing?.originalContent ?? repoFileCacheRef.current[change.path] ?? '';
+          const originalContent = existing?.originalContent ?? useChangesetStore.getState().getChangeset(panelId).repoFileCache[change.path] ?? '';
           addChange({
             path: change.path,
             action: change.action,
@@ -786,7 +1232,7 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
             staged: true,
           });
         }
-      } else {
+      } else if (repoEditInvocation) {
         const path = typeof repoEditInvocation.args.path === 'string' ? repoEditInvocation.args.path : null;
         const action = repoEditInvocation.toolName === 'create_repo_file'
           ? 'create'
@@ -795,7 +1241,7 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
             : 'edit';
         if (!path) continue;
         const existing = useChangesetStore.getState().getChangeset(panelId).changes[path];
-        const originalContent = existing?.originalContent ?? repoFileCacheRef.current[path] ?? '';
+        const originalContent = existing?.originalContent ?? useChangesetStore.getState().getChangeset(panelId).repoFileCache[path] ?? '';
         addChange({
           path,
           action,
@@ -803,6 +1249,18 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
           originalContent,
           staged: true,
         });
+      } else {
+        for (const edit of textFileEdits) {
+          const existing = useChangesetStore.getState().getChangeset(panelId).changes[edit.path];
+          const originalContent = existing?.originalContent ?? useChangesetStore.getState().getChangeset(panelId).repoFileCache[edit.path] ?? '';
+          addChange({
+            path: edit.path,
+            action: 'edit',
+            content: edit.content,
+            originalContent,
+            staged: true,
+          });
+        }
       }
 
       appliedPseudoRepoMessageIdsRef.current.add(message.id);
@@ -857,18 +1315,23 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
       appliedPseudoRepoMessageIdsRef.current = new Set();
       if (saved) {
         const { changeset: cs, preview } = saved;
-        repoFileCacheRef.current = Object.fromEntries(
-          Object.values(cs.changes)
-            .filter((change) => typeof change.originalContent === 'string')
-            .map((change) => [change.path, change.originalContent as string])
-        );
         if (cs.activeRepo) {
-          csStore.setActiveRepo(panelId, cs.activeRepo);
+          csStore.switchActiveRepo(panelId, cs.activeRepo);
         } else {
           csStore.clearActiveRepo(panelId);
         }
-        csStore.clearChanges(panelId);
         csStore.setRepoFileTree(panelId, cs.repoFileTree);
+        csStore.setSelectedRepoFilePath(panelId, cs.selectedRepoFilePath ?? null);
+        const restoredCache = cs.repoFileCache
+          ?? saved.repoFileCache
+          ?? Object.fromEntries(
+            Object.values(cs.changes)
+              .filter((change) => typeof change.originalContent === 'string')
+              .map((change) => [change.path, change.originalContent as string])
+          );
+        for (const [path, content] of Object.entries(restoredCache)) {
+          csStore.cacheRepoFile(panelId, path, content);
+        }
         for (const change of Object.values(cs.changes)) {
           csStore.addChange(panelId, change);
         }
@@ -877,10 +1340,14 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
           files: preview.files as PreviewFile[],
           activeFileId: preview.activeFileId,
           projectType: preview.projectType as ProjectType,
-          activeView: preview.activeView === 'changes' ? 'changes' : 'preview',
+          activeView:
+            preview.activeView === 'changes'
+              ? 'changes'
+              : preview.activeView === 'repo'
+                ? 'repo'
+                : 'preview',
         });
       } else {
-        repoFileCacheRef.current = {};
         resetPanelFileState();
       }
     });
@@ -941,7 +1408,6 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
       // Restore file state for this conversation
       restoreFileState(conversationId);
     } else {
-      repoFileCacheRef.current = {};
       setMessages([]);
       resetPanelFileState();
     }
@@ -952,6 +1418,7 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
     appliedPseudoRepoMessageIdsRef.current = new Set();
     // Reset per-conversation auto-approve when switching conversations
     conversationAutoApproveRef.current = false;
+    setConversationAutoApproveEnabledState(false);
   }, [conversationId, setMessages, panelId, resetPanelFileState, restoreFileState, saveConversationFiles, hydrateConversationMessages]);
 
   // Auto-save file state (debounced) whenever the panel's file state changes
@@ -970,6 +1437,9 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
 
   useEffect(() => {
     return () => {
+      if (autoContinueTimerRef.current) {
+        clearTimeout(autoContinueTimerRef.current);
+      }
       const convId = convIdRef.current;
       if (convId) {
         void saveConversationFiles(convId);
@@ -1002,6 +1472,9 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
 
     // Reset auto-continue counter on explicit user messages
     unknownFinishRetryRef.current = 0;
+    repoStopRetryRef.current = 0;
+    approvedRepoContinuationRetryRef.current = 0;
+    lastApprovedRepoProgressDigestRef.current = '';
 
     let convId = conversationId ?? pendingConversationIdRef.current;
     let createdConversationId: string | null = null;
@@ -1021,19 +1494,28 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
     }
 
     // Persist user message to IndexedDB
+    const isProposalFollowUp =
+      awaitingProposalApprovalRef.current || pendingProposalRef.current !== null;
     const continuingApprovedProposal =
       isProposalApprovalMessage(content) &&
-      (awaitingProposalApprovalRef.current || pendingProposalRef.current !== null);
+      isProposalFollowUp;
 
     console.log('[useChat:sendMessage] content:', JSON.stringify(content), 'isApproval:', isProposalApprovalMessage(content), 'awaitingRef:', awaitingProposalApprovalRef.current, 'pendingProposal:', !!pendingProposalRef.current, '→ continuingApproved:', continuingApprovedProposal, 'provider:', effectiveProvider, 'model:', effectiveModel);
 
+    if (isProposalFollowUp) {
+      pauseForProposalRef.current = false;
+      pausedProposalIdRef.current = null;
+      awaitingProposalApprovalRef.current = false;
+    }
+
     if (continuingApprovedProposal) {
       proposalApprovedRef.current = true;
-      awaitingProposalApprovalRef.current = false;
       continuingApprovedProposalRunRef.current = true;
+      repoEditIntentRef.current = true;
     } else {
       proposalApprovedRef.current = false;
       continuingApprovedProposalRunRef.current = false;
+      repoEditIntentRef.current = isRepoMode && activeRepo ? isRepoEditIntentMessage(content) : false;
     }
 
     const userMsgId = crypto.randomUUID();
@@ -1065,6 +1547,12 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
       setMessages(sanitized);
     }
 
+    const repoFileTreeForRequest = await ensureRepoFileTreeLoaded();
+    activeRequestBodyRef.current = buildRequestBody({
+      conversationId: convId,
+      repoFileTree: repoFileTreeForRequest,
+    });
+
     try {
       await append(
         { role: 'user', content },
@@ -1072,6 +1560,10 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
           ? {
               body: {
                 conversation_id: convId,
+                ...(isRepoMode && activeRepo ? { repo_edit_intent: repoEditIntentRef.current } : {}),
+                ...(repoFileTreeForRequest.length > 0
+                  ? { repo_file_tree: repoFileTreeForRequest }
+                  : {}),
                 ...(continuingApprovedProposal
                   ? { continuing_approved_proposal: true }
                   : {}),
@@ -1086,8 +1578,12 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
         message.includes('cancel') ||
         message.includes('stopped');
       if (!expectedAbort) {
+        activeRequestBodyRef.current = null;
         throw error;
       }
+      approvedRepoContinuationRetryRef.current = 0;
+      lastApprovedRepoProgressDigestRef.current = '';
+      activeRequestBodyRef.current = null;
     }
 
     if (createdConversationId && pendingConversationIdRef.current === createdConversationId) {
@@ -1098,7 +1594,7 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
       onConversationCreated?.(createdConversationId);
     }
     return true;
-  }, [conversationId, effectiveProvider, effectiveModel, config, defaultSystemPrompt, createConversation, renameConversation, append, onConversationCreated, setMessages]);
+  }, [activeRepo, append, buildRequestBody, config, conversationId, createConversation, defaultSystemPrompt, effectiveModel, effectiveProvider, ensureRepoFileTreeLoaded, isRepoMode, onConversationCreated, renameConversation, setMessages]);
 
   const handleSend = useCallback(() => {
     if (isStreaming) {
@@ -1115,6 +1611,20 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
     }
     void sendMessage(content);
   }, [isStreaming, queueMessage, sendMessage]);
+
+  useEffect(() => {
+    if (!pendingPanelPrompt || isStreaming) {
+      return;
+    }
+
+    clearPanelPrompt(panelId);
+    if (pendingPanelPrompt.autoSend) {
+      void sendMessage(pendingPanelPrompt.content);
+      return;
+    }
+
+    setDraftInput(pendingPanelPrompt.content);
+  }, [clearPanelPrompt, isStreaming, panelId, pendingPanelPrompt, sendMessage]);
 
   const handleRemoveQueuedMessage = useCallback((messageId: string) => {
     setQueuedMessages((prev) => removeQueuedMessage(prev, messageId));
@@ -1157,11 +1667,15 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
   }, [conversationId]);
 
   const handleRegenerate = useCallback(() => {
+    const lastUserMessage = [...messagesRef.current].reverse().find((message) => message.role === 'user')?.content ?? '';
+    repoEditIntentRef.current = isRepoMode && activeRepo ? isRepoEditIntentMessage(lastUserMessage) : false;
+    activeRequestBodyRef.current = buildRequestBody();
     reload();
-  }, [reload]);
+  }, [activeRepo, buildRequestBody, isRepoMode, reload]);
 
   const setConversationAutoApprove = useCallback((value: boolean) => {
     conversationAutoApproveRef.current = value;
+    setConversationAutoApproveEnabledState(value);
   }, []);
 
   return {
@@ -1184,6 +1698,7 @@ IMPORTANT: You have tools to work with this repo. When the user asks you to make
     activeProvider: effectiveProvider,
     activeModel: effectiveModel,
     toolActivityMap,
+    conversationAutoApproveEnabled,
     setConversationAutoApprove,
   };
 }

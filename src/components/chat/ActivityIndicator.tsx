@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { GhostIcon } from './GhostIcon';
+import { usePanelId } from '@/contexts/PanelContext';
+import { useChangesetStore } from '@/stores/changeset-store';
+import type { ToolActivityEvent } from './AgentActivity';
 
 type Activity = 'thinking' | 'reading' | 'editing' | 'planning' | 'writing';
 
@@ -69,9 +72,35 @@ interface ActivityIndicatorProps {
       toolName?: string;
     }>;
   }>;
+  toolActivity?: ToolActivityEvent[];
 }
 
-function deriveActivity(messages: ActivityIndicatorProps['messages']): Activity {
+function parseToolActivityInput(input: string): Record<string, unknown> {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+function deriveActivity(messages: ActivityIndicatorProps['messages'], toolActivity?: ToolActivityEvent[]): Activity {
+  const latestToolActivity = [...(toolActivity || [])].reverse().find((event) => event.status === 'running') ??
+    [...(toolActivity || [])].at(-1);
+
+  if (latestToolActivity) {
+    const name = latestToolActivity.tool || '';
+    if (name === 'read_repo_file') return 'reading';
+    if (name === 'propose_changes') return 'planning';
+    if (['edit_repo_file', 'create_repo_file', 'delete_repo_file', 'batch_edit_repo_files'].includes(name)) return 'editing';
+    if (['create_html_file', 'create_css_file', 'create_js_file', 'create_react_component'].includes(name)) return 'writing';
+  }
+
   // Look at the last assistant message's tool invocations
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
@@ -99,11 +128,43 @@ function deriveActivity(messages: ActivityIndicatorProps['messages']): Activity 
   return 'thinking';
 }
 
-export const ActivityIndicator: React.FC<ActivityIndicatorProps> = ({ isStreaming, messages }) => {
-  const [phraseIndex, setPhraseIndex] = useState(0);
+function deriveEditingPhrase(toolActivity: ToolActivityEvent[] | undefined, stagedCount: number): string | null {
+  const latestToolActivity = [...(toolActivity || [])].reverse().find((event) => event.status === 'running') ??
+    [...(toolActivity || [])].at(-1);
 
-  const activity = useMemo(() => (isStreaming ? deriveActivity(messages) : 'thinking'), [isStreaming, messages]);
+  if (latestToolActivity?.tool === 'batch_edit_repo_files') {
+    const parsed = parseToolActivityInput(latestToolActivity.input);
+    const changes = Array.isArray(parsed.changes) ? parsed.changes : [];
+    if (changes.length > 1) {
+      return `Editing ${changes.length} files...`;
+    }
+  }
+
+  if (stagedCount > 1) {
+    return `Editing ${stagedCount} files...`;
+  }
+
+  if (stagedCount === 1) {
+    return 'Editing 1 file...';
+  }
+
+  return null;
+}
+
+export const ActivityIndicator: React.FC<ActivityIndicatorProps> = ({ isStreaming, messages, toolActivity }) => {
+  const [phraseIndex, setPhraseIndex] = useState(0);
+  const panelId = usePanelId();
+  const stagedCount = useChangesetStore((state) => state.getStagedCount(panelId));
+
+  const activity = useMemo(
+    () => (isStreaming ? deriveActivity(messages, toolActivity) : 'thinking'),
+    [isStreaming, messages, toolActivity],
+  );
   const phrases = PHRASES[activity];
+  const editingPhrase = useMemo(
+    () => (activity === 'editing' ? deriveEditingPhrase(toolActivity, stagedCount) : null),
+    [activity, stagedCount, toolActivity],
+  );
 
   // Rotate phrases every 3 seconds
   useEffect(() => {
@@ -121,7 +182,7 @@ export const ActivityIndicator: React.FC<ActivityIndicatorProps> = ({ isStreamin
 
   if (!isStreaming) return null;
 
-  const phrase = phrases[phraseIndex % phrases.length];
+  const phrase = editingPhrase || phrases[phraseIndex % phrases.length];
 
   return (
     <div className="flex items-center justify-center gap-2 py-1.5 text-xs text-muted-foreground animate-in fade-in duration-300">

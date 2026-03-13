@@ -2,7 +2,7 @@ import React from 'react';
 import { ChevronDown, Settings } from 'lucide-react';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useUIStore } from '@/stores/ui-store';
-import { PROVIDERS } from '@/lib/providers';
+import { PROVIDERS, getVisibleModelOptions } from '@/lib/providers';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,9 +18,7 @@ export const ModelSelector: React.FC = () => {
   const baseModels = availableModels[activeProvider]?.length
     ? availableModels[activeProvider]!
     : (providerInfo?.models || []);
-  const models = config.model && !baseModels.includes(config.model)
-    ? [config.model, ...baseModels]
-    : baseModels;
+  const models = getVisibleModelOptions(activeProvider, baseModels, config.model);
 
   const displayModel = config.model.split('/').pop() || config.model;
 

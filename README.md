@@ -108,6 +108,13 @@ The Electron app bundles the frontend and API server together. Features include:
 | `HERMES_PORT` | `3002` | Port for the Hermes Bridge server |
 | `HERMES_TOOLSETS` | `web,browser,vision` | Default toolsets for the Hermes agent |
 | `HERMES_DEFAULT_MODEL` | `meta-llama/llama-4-maverick` | Default model for Hermes agent |
+| `HERMES_MAX_ITERATIONS` | `60` | Maximum tool-use iterations per Hermes turn |
+| `HERMES_PROVIDER_TIMEOUT_SECONDS` | `5400` | Per-request timeout for Hermes model calls |
+| `HERMES_RUN_COMMAND_TIMEOUT_SECONDS` | `5400` | Timeout for Hermes `run_command` tool executions |
+| `HERMES_EXECUTE_PYTHON_TIMEOUT_SECONDS` | `5400` | Timeout for Hermes `execute_python` tool executions |
+| `ORCHESTRATOR_SUBTASK_TIMEOUT_MS` | `5400000` | Per-subtask timeout for orchestrator coding agents |
+| `ORCHESTRATOR_HEARTBEAT_MS` | `5000` | Heartbeat interval used to keep orchestrator streams alive |
+| `OPENCLAW_TURN_TIMEOUT_SECONDS` | `5400` | Timeout for a single OpenClaw agent turn |
 | `OPENCLAW_BIN` | `~/.openclaw/bin/openclaw` | Path to the OpenClaw CLI binary |
 
 API keys for individual providers (OpenAI, Anthropic, etc.) are configured in the app's Settings UI and stored in the browser.

@@ -2,11 +2,10 @@ import React, { useRef, useEffect } from 'react';
 import { ArrowUp, Square, Plus, ChevronDown, Mic, CornerDownLeft } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSettingsStore } from '@/stores/settings-store';
-import { PROVIDERS, REASONING_EFFORTS, supportsReasoningEffort } from '@/lib/providers';
+import { PROVIDERS, REASONING_EFFORTS, getVisibleModelOptions, supportsReasoningEffort } from '@/lib/providers';
 import type { QueuedMessage } from '@/lib/chat-queue';
 import { StreamingStatusBar } from './StreamingStatusBar';
 import { QueuedMessageTray } from './QueuedMessageTray';
-import { ContextUsageBar } from './ContextUsageBar';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -22,6 +21,7 @@ interface ChatInputProps {
   isStreaming: boolean;
   toolCallCount?: number;
   disabled?: boolean;
+  disabledPlaceholder?: string;
   messages?: { role: string; content: string }[];
   activeProvider?: string;
   activeModel?: string;
@@ -44,6 +44,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   isStreaming,
   toolCallCount = 0,
   disabled,
+  disabledPlaceholder,
   messages = [],
   activeModel,
   queuedMessages = [],
@@ -57,11 +58,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const baseModels = availableModels[selectedProvider]?.length
     ? availableModels[selectedProvider]!
     : (providerInfo?.models || []);
-  const models = config.model && !baseModels.includes(config.model)
-    ? [config.model, ...baseModels]
-    : baseModels;
+  const models = getVisibleModelOptions(selectedProvider, baseModels, config.model);
   const displayModel = config.model.split('/').pop() || config.model;
-  const meterModel = activeModel ?? config.model;
   const reasoningSupported = supportsReasoningEffort(selectedProvider, config.model);
   const reasoningLabel = REASONING_EFFORT_LABELS[config.reasoningEffort];
 
@@ -83,9 +81,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   };
 
   const hasContent = messages.length > 0;
-  const hasMessageHistory = messages.some((message) => message.content.trim().length > 0);
   const hasQueuedMessages = queuedMessages.length > 0;
   const canQueueDraft = isStreaming && !!safeValue.trim() && !disabled;
+  const placeholder = disabled
+    ? (disabledPlaceholder || 'Input is temporarily unavailable')
+    : (hasContent ? 'Ask for follow-up changes' : 'What do you want to build?');
 
   return (
     <div className="w-full max-w-[720px] mx-auto px-4 pb-3 pt-2">
@@ -110,15 +110,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             embedded
           />
 
-          {hasMessageHistory && (
-            <div className="flex justify-end px-3 pt-3 pb-0">
-              <ContextUsageBar
-                messages={messages}
-                model={meterModel}
-              />
-            </div>
-          )}
-
           {/* Textarea area */}
           <div className="flex items-end gap-2 px-4 py-3">
             <textarea
@@ -128,7 +119,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 if (typeof onChange === 'function') onChange(e.target.value);
               }}
               onKeyDown={handleKeyDown}
-              placeholder={hasContent ? 'Ask for follow-up changes' : 'What do you want to build?'}
+              placeholder={placeholder}
               rows={1}
               disabled={disabled}
               className={cn(
@@ -223,7 +214,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 )}
                 <button
                   onClick={onStop}
-                  className="p-2 rounded-full bg-foreground text-background hover:opacity-80 transition-opacity duration-100"
+                  className="p-2 rounded-full bg-primary text-primary-foreground hover:opacity-80 transition-opacity duration-100"
                   title="Stop generating"
                 >
                   <Square className="h-3.5 w-3.5" />
@@ -236,7 +227,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 className={cn(
                   "p-2 rounded-full transition-opacity duration-100",
                   safeValue.trim()
-                    ? "bg-foreground text-background hover:opacity-80"
+                    ? "bg-primary text-primary-foreground hover:opacity-80"
                     : "bg-muted text-muted-foreground"
                 )}
                 title="Send message"

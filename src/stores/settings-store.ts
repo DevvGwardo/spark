@@ -64,6 +64,14 @@ function makeDefault(model: string): ProviderConfig {
   };
 }
 
+const HERMES_DEFAULT_MODEL = 'meta-llama/llama-4-maverick';
+const LEGACY_HERMES_MODELS = new Set([
+  'nousresearch/hermes-3-llama-3.1-405b',
+  'nousresearch/hermes-3-llama-3.1-405b:free',
+  'nousresearch/hermes-3-llama-3.1-70b',
+  'nousresearch/hermes-3-llama-3.1-70b:free',
+]);
+
 const defaultProviders: Record<Provider, ProviderConfig> = {
   openai: makeDefault('gpt-5.2'),
   anthropic: makeDefault('claude-sonnet-4-5-20250929'),
@@ -81,22 +89,133 @@ const defaultProviders: Record<Provider, ProviderConfig> = {
   cerebras: makeDefault('llama-3.3-70b'),
   openrouter: makeDefault('openai/gpt-oss-120b:free'),
   sambanova: makeDefault('Meta-Llama-3.3-70B-Instruct'),
-  hermes: makeDefault('nousresearch/hermes-3-llama-3.1-70b'),
+  hermes: makeDefault(HERMES_DEFAULT_MODEL),
 };
+
+const DEFAULT_SYSTEM_PROMPT = 'You are a helpful assistant.';
+
+function cloneDefaultProviders(): Record<Provider, ProviderConfig> {
+  return Object.fromEntries(
+    (Object.entries(defaultProviders) as Array<[Provider, ProviderConfig]>).map(([provider, config]) => [
+      provider,
+      { ...config },
+    ]),
+  ) as Record<Provider, ProviderConfig>;
+}
+
+function isProvider(value: unknown): value is Provider {
+  return typeof value === 'string' && value in defaultProviders;
+}
+
+function isThemeMode(value: unknown): value is ThemeMode {
+  return value === 'light' || value === 'dark' || value === 'system';
+}
+
+function isFontSize(value: unknown): value is FontSize {
+  return value === 'small' || value === 'medium' || value === 'large';
+}
+
+function isFontFamily(value: unknown): value is FontFamily {
+  return value === 'inter' || value === 'mono' || value === 'serif';
+}
+
+function isReasoningEffort(value: unknown): value is ReasoningEffort {
+  return value === 'low' || value === 'medium' || value === 'high';
+}
+
+function normalizeProviderConfig(
+  provider: Provider,
+  config: Partial<ProviderConfig> | undefined,
+): ProviderConfig {
+  const defaults = defaultProviders[provider];
+
+  return {
+    apiKey: typeof config?.apiKey === 'string' ? config.apiKey : defaults.apiKey,
+    model: typeof config?.model === 'string' && config.model.trim().length > 0 ? config.model : defaults.model,
+    temperature: typeof config?.temperature === 'number' && Number.isFinite(config.temperature)
+      ? config.temperature
+      : defaults.temperature,
+    topP: typeof config?.topP === 'number' && Number.isFinite(config.topP)
+      ? config.topP
+      : defaults.topP,
+    maxTokens: typeof config?.maxTokens === 'number' && Number.isFinite(config.maxTokens)
+      ? config.maxTokens
+      : defaults.maxTokens,
+    reasoningEffort: isReasoningEffort(config?.reasoningEffort)
+      ? config.reasoningEffort
+      : defaults.reasoningEffort,
+  };
+}
+
+function normalizeAvailableModels(
+  availableModels: PersistedSettingsState['availableModels'],
+): Partial<Record<Provider, string[]>> {
+  const normalized: Partial<Record<Provider, string[]>> = {};
+
+  for (const provider of Object.keys(defaultProviders) as Provider[]) {
+    if (provider === 'hermes') {
+      continue;
+    }
+
+    const models = availableModels?.[provider];
+    if (!Array.isArray(models)) {
+      continue;
+    }
+
+    const nextModels = [...new Set(models.filter((model): model is string => typeof model === 'string' && model.length > 0))];
+    if (nextModels.length > 0) {
+      normalized[provider] = nextModels;
+    }
+  }
+
+  return normalized;
+}
+
+export function normalizePersistedSettingsState(
+  persisted: PersistedSettingsState | undefined,
+): Omit<
+  SettingsState,
+  'setActiveProvider' |
+  'updateProviderConfig' |
+  'setAvailableModels' |
+  'setTheme' |
+  'setFontSize' |
+  'setFontFamily' |
+  'setDefaultSystemPrompt' |
+  'completeSetup' |
+  'setGithubPAT' |
+  'setAutoApproveRepoChanges'
+> {
+  const providers = cloneDefaultProviders();
+
+  for (const provider of Object.keys(defaultProviders) as Provider[]) {
+    providers[provider] = normalizeProviderConfig(provider, persisted?.providers?.[provider]);
+  }
+
+  return {
+    activeProvider: isProvider(persisted?.activeProvider) ? persisted.activeProvider : 'openai',
+    providers,
+    availableModels: normalizeAvailableModels(persisted?.availableModels),
+    theme: isThemeMode(persisted?.theme) ? persisted.theme : 'system',
+    fontSize: isFontSize(persisted?.fontSize) ? persisted.fontSize : 'medium',
+    fontFamily: isFontFamily(persisted?.fontFamily) ? persisted.fontFamily : 'inter',
+    defaultSystemPrompt:
+      typeof persisted?.defaultSystemPrompt === 'string'
+        ? persisted.defaultSystemPrompt
+        : DEFAULT_SYSTEM_PROMPT,
+    isSetupComplete: typeof persisted?.isSetupComplete === 'boolean' ? persisted.isSetupComplete : false,
+    githubPAT: typeof persisted?.githubPAT === 'string' ? persisted.githubPAT : '',
+    autoApproveRepoChanges:
+      typeof persisted?.autoApproveRepoChanges === 'boolean' ? persisted.autoApproveRepoChanges : false,
+  };
+}
+
+const defaultState = normalizePersistedSettingsState(undefined);
 
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
-      activeProvider: 'openai',
-      providers: defaultProviders,
-      availableModels: {},
-      theme: 'system',
-      fontSize: 'medium',
-      fontFamily: 'inter',
-      defaultSystemPrompt: 'You are a helpful assistant.',
-      isSetupComplete: false,
-      githubPAT: '',
-      autoApproveRepoChanges: false,
+      ...defaultState,
 
       setActiveProvider: (p) => set({ activeProvider: p }),
       updateProviderConfig: (p, config) =>
@@ -107,12 +226,20 @@ export const useSettingsStore = create<SettingsState>()(
           },
         })),
       setAvailableModels: (p, models) =>
-        set((state) => ({
-          availableModels: {
-            ...state.availableModels,
-            [p]: [...new Set(models.filter((model) => typeof model === 'string' && model.length > 0))],
-          },
-        })),
+        set((state) => {
+          if (p === 'hermes') {
+            const nextAvailableModels = { ...state.availableModels };
+            delete nextAvailableModels.hermes;
+            return { availableModels: nextAvailableModels };
+          }
+
+          return {
+            availableModels: {
+              ...state.availableModels,
+              [p]: [...new Set(models.filter((model) => typeof model === 'string' && model.length > 0))],
+            },
+          };
+        }),
       setTheme: (t) => set({ theme: t }),
       setFontSize: (f) => set({ fontSize: f }),
       setFontFamily: (f) => set({ fontFamily: f }),
@@ -123,7 +250,7 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'cloudchat-settings',
-      version: 12,
+      version: 15,
       migrate: (persisted: unknown, version: number) => {
         const state = (persisted ?? {}) as PersistedSettingsState;
         if (version < 3) {
@@ -198,14 +325,33 @@ export const useSettingsStore = create<SettingsState>()(
         }
         if (version < 11) {
           if (!state?.providers?.hermes) {
-            state.providers = { ...state.providers, hermes: makeDefault('nousresearch/hermes-3-llama-3.1-70b') };
+            state.providers = { ...state.providers, hermes: makeDefault(HERMES_DEFAULT_MODEL) };
           }
         }
         if (version < 12) {
           state.availableModels = state.availableModels || {};
         }
-        return state;
+        if (version < 14) {
+          const currentHermesModel = state?.providers?.hermes?.model;
+          if (!currentHermesModel || LEGACY_HERMES_MODELS.has(currentHermesModel)) {
+            state.providers = {
+              ...state.providers,
+              hermes: {
+                ...(state.providers?.hermes ?? makeDefault(HERMES_DEFAULT_MODEL)),
+                model: HERMES_DEFAULT_MODEL,
+              },
+            };
+          }
+        }
+        if (version < 15 && state.availableModels) {
+          delete state.availableModels.hermes;
+        }
+        return normalizePersistedSettingsState(state);
       },
+      merge: (persisted, current) => ({
+        ...current,
+        ...normalizePersistedSettingsState((persisted ?? {}) as PersistedSettingsState),
+      }),
     }
   )
 );

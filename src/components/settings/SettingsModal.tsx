@@ -1,14 +1,15 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { X, Eye, EyeOff, Search, Check, Zap, ChevronDown, ExternalLink, Github, Code2, Network, Info } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { X, Eye, EyeOff, Search, Check, Zap, ChevronDown, ExternalLink, Github, Code2, Network, Info, TerminalSquare } from 'lucide-react';
 import { useSettingsStore, type Provider } from '@/stores/settings-store';
 import { useHermesStore, type HermesToolsets } from '@/stores/hermes-store';
 import { useOrchestratorStore } from '@/stores/orchestrator-store';
 import { useUIStore } from '@/stores/ui-store';
-import { PROVIDERS, PROVIDER_ORDER, CATEGORY_LABELS, type ProviderCategory } from '@/lib/providers';
+import { PROVIDERS, PROVIDER_ORDER, CATEGORY_LABELS, getVisibleModelOptions, type ProviderCategory } from '@/lib/providers';
 import { validateApiKey } from '@/lib/api';
 import { KnowledgePanel } from './KnowledgePanel';
 import { PROVIDER_KEY_URLS } from '@/components/chat/ApiKeyModal';
 import { cn } from '@/lib/utils';
+import { getLocalProviderRuntimeDetails, parseLocalProviderRuntimeError } from '@/lib/local-provider-runtime';
 
 const ProviderIcon: React.FC<{ provider: Provider; className?: string }> = ({ provider, className }) => {
   if (PROVIDERS[provider]?.badge === 'Fast') return <Zap className={className} />;
@@ -23,8 +24,8 @@ const settingsCardClass = 'rounded-2xl border border-border/60 bg-background/55'
 const fieldLabelClass = 'text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80';
 const textInputClass = 'w-full rounded-xl border border-border/60 bg-background/70 px-3 py-2.5 text-sm text-foreground outline-none transition-colors duration-100 placeholder:text-muted-foreground focus:border-primary/40 focus:ring-1 focus:ring-primary/30';
 const selectInputClass = `${textInputClass} appearance-none pr-9 cursor-pointer font-mono`;
-const toggleTrackClass = 'relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2';
-const toggleThumbClass = 'inline-block h-4 w-4 rounded-full bg-background transition-transform duration-200';
+const toggleTrackClass = 'relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2';
+const toggleThumbClass = 'pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-md ring-0 transition-transform duration-200';
 
 
 
@@ -87,7 +88,7 @@ function RolesTab() {
           <span
             className={cn(
               toggleThumbClass,
-              enabled ? 'translate-x-6' : 'translate-x-1'
+              enabled ? 'translate-x-5' : 'translate-x-0.5'
             )}
           />
         </button>
@@ -259,6 +260,34 @@ export const SettingsModal: React.FC = () => {
   const [showGithubKey, setShowGithubKey] = useState(false);
   const [tab, setTab] = useState<'providers' | 'roles' | 'github' | 'knowledge' | 'general'>('providers');
   const [search, setSearch] = useState('');
+  const [localRuntimeStatus, setLocalRuntimeStatus] = useState<string | null>(null);
+
+  // Animation state: tracks whether the modal is mounted and whether it's visually open
+  const [mounted, setMounted] = useState(false);
+  const [visible, setVisible] = useState(false);
+  const closingRef = useRef(false);
+
+  useEffect(() => {
+    if (settingsOpen) {
+      setMounted(true);
+      closingRef.current = false;
+      // Trigger enter animation on next frame
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => setVisible(true));
+      });
+    } else if (mounted) {
+      // Trigger exit animation, then unmount
+      closingRef.current = true;
+      setVisible(false);
+    }
+  }, [settingsOpen]);
+
+  const handleTransitionEnd = useCallback(() => {
+    if (closingRef.current) {
+      setMounted(false);
+      closingRef.current = false;
+    }
+  }, []);
 
   const config = providers[activeProvider];
   const providerInfo = PROVIDERS[activeProvider];
@@ -267,48 +296,73 @@ export const SettingsModal: React.FC = () => {
     const baseModels = availableModels[activeProvider]?.length
       ? availableModels[activeProvider]!
       : providerInfo.models;
-
-    if (config.model && !baseModels.includes(config.model)) {
-      return [config.model, ...baseModels];
-    }
-
-    return baseModels;
+    return getVisibleModelOptions(activeProvider, baseModels, config.model);
   }, [activeProvider, availableModels, config.model, providerInfo.models]);
 
   useEffect(() => {
-    if (!settingsOpen || activeProvider !== 'openclaw') return;
+    if (!settingsOpen || (activeProvider !== 'openclaw' && activeProvider !== 'hermes')) {
+      setLocalRuntimeStatus(null);
+      return;
+    }
 
     let cancelled = false;
 
     void (async () => {
       try {
-        const result = await validateApiKey('openclaw', '');
-        if (!result.valid || cancelled) {
+        const apiKey = activeProvider === 'hermes' ? providers.hermes.apiKey : '';
+        if (activeProvider === 'hermes' && !apiKey.trim()) {
+          if (!cancelled) {
+            setLocalRuntimeStatus(null);
+          }
           return;
         }
 
-        const nextModels = (result.models ?? []).filter(Boolean);
-        if (nextModels.length > 0) {
-          setAvailableModels('openclaw', nextModels);
+        const result = await validateApiKey(activeProvider, apiKey);
+        if (cancelled) {
+          return;
         }
 
-        const nextDefaultModel = result.defaultModel || nextModels[0];
-        const currentModel = providers.openclaw.model;
-        if (
-          nextDefaultModel &&
-          (currentModel === 'default' || (nextModels.length > 0 && !nextModels.includes(currentModel)))
-        ) {
-          updateProviderConfig('openclaw', { model: nextDefaultModel });
+        const runtimeError = result.error ? parseLocalProviderRuntimeError(activeProvider, result.error) : null;
+        setLocalRuntimeStatus(runtimeError ? result.error || runtimeError.summary : null);
+
+        if (!result.valid) {
+          return;
+        }
+
+        if (activeProvider === 'openclaw') {
+          const nextModels = (result.models ?? []).filter(Boolean);
+          if (nextModels.length > 0) {
+            setAvailableModels('openclaw', nextModels);
+          }
+
+          const nextDefaultModel = result.defaultModel || nextModels[0];
+          const currentModel = providers.openclaw.model;
+          if (
+            nextDefaultModel &&
+            (currentModel === 'default' || (nextModels.length > 0 && !nextModels.includes(currentModel)))
+          ) {
+            updateProviderConfig('openclaw', { model: nextDefaultModel });
+          }
         }
       } catch (error) {
-        console.error('Failed to load OpenClaw models', error);
+        console.error(`Failed to validate ${activeProvider} runtime`, error);
+        if (!cancelled) {
+          setLocalRuntimeStatus(error instanceof Error ? error.message : `Failed to validate ${activeProvider} runtime`);
+        }
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [activeProvider, providers.openclaw.model, setAvailableModels, settingsOpen, updateProviderConfig]);
+  }, [
+    activeProvider,
+    providers.hermes.apiKey,
+    providers.openclaw.model,
+    setAvailableModels,
+    settingsOpen,
+    updateProviderConfig,
+  ]);
 
   const filteredProviders = useMemo(() => {
     const q = search.toLowerCase();
@@ -328,7 +382,9 @@ export const SettingsModal: React.FC = () => {
     return groups;
   }, [filteredProviders]);
 
-  if (!settingsOpen) return null;
+  if (!mounted) return null;
+
+  const localRuntimeDetails = getLocalProviderRuntimeDetails(activeProvider);
 
   const handleSelectProvider = (p: Provider) => {
     setActiveProvider(p);
@@ -347,8 +403,20 @@ export const SettingsModal: React.FC = () => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" onClick={() => setSettingsOpen(false)} />
-      <div className="relative flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-[28px] border border-border/70 bg-background/96">
+      <div
+        className={cn(
+          'absolute inset-0 bg-black/70 backdrop-blur-md transition-opacity duration-250 ease-out',
+          visible ? 'opacity-100' : 'opacity-0',
+        )}
+        onClick={() => setSettingsOpen(false)}
+      />
+      <div
+        onTransitionEnd={handleTransitionEnd}
+        className={cn(
+          'relative flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-[28px] border border-border/70 bg-background/96 transition-[transform,opacity] duration-250 ease-out',
+          visible ? 'scale-100 opacity-100' : 'scale-95 opacity-0',
+        )}
+      >
         {/* Header */}
         <div className="border-b border-border/60 px-6 py-5">
           <div className="flex items-start justify-between gap-4">
@@ -480,6 +548,47 @@ export const SettingsModal: React.FC = () => {
                   </div>
                 </div>
 
+                {localRuntimeDetails && (
+                  <div className={cn(settingsCardClass, 'px-5 py-5')}>
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-200">
+                        <TerminalSquare className="h-4.5 w-4.5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded-full border border-border/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                            {localRuntimeDetails.badge}
+                          </span>
+                          <span className="rounded-full border border-border/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                            {localRuntimeDetails.title}
+                          </span>
+                        </div>
+                        <p className="mt-2 text-sm font-medium text-foreground">{localRuntimeDetails.summary}</p>
+                        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{localRuntimeDetails.detail}</p>
+                        <div className="mt-3 grid gap-3 md:grid-cols-2">
+                          <div>
+                            <p className={fieldLabelClass}>Start Command</p>
+                            <div className="mt-1 rounded-xl border border-border/60 bg-background/70 px-3 py-2 text-xs font-mono text-foreground">
+                              {localRuntimeDetails.command}
+                            </div>
+                          </div>
+                          <div>
+                            <p className={fieldLabelClass}>{localRuntimeDetails.locationLabel}</p>
+                            <div className="mt-1 rounded-xl border border-border/60 bg-background/70 px-3 py-2 text-xs font-mono text-foreground">
+                              {localRuntimeDetails.locationValue}
+                            </div>
+                          </div>
+                        </div>
+                        {localRuntimeStatus && (
+                          <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/8 px-3 py-2 text-xs text-amber-700 dark:text-amber-200">
+                            {localRuntimeStatus}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <div className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
                   <div className="space-y-5">
                     {needsApiKey && (
@@ -496,9 +605,9 @@ export const SettingsModal: React.FC = () => {
                               href={PROVIDER_KEY_URLS[activeProvider]}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 rounded-full border border-border/60 px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors duration-100 hover:bg-background/80 hover:text-foreground"
+                              className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-muted/50 px-3 py-1.5 text-[11px] font-medium text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
                             >
-                              Provider site
+                              Get API key
                               <ExternalLink className="h-3 w-3" />
                             </a>
                           )}
@@ -565,6 +674,12 @@ export const SettingsModal: React.FC = () => {
                         </select>
                         <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                       </div>
+                      {activeProvider === 'hermes' && (
+                        <p className="text-xs text-muted-foreground">
+                          Hermes uses your OpenRouter key here. The selector is intentionally limited to the recommended
+                          tool-capable models: Llama 4 Maverick, GPT-4.1 Mini, and Gemini 2.5 Flash.
+                        </p>
+                      )}
                     </div>
 
                     {activeProvider === 'hermes' && (
@@ -601,7 +716,7 @@ export const SettingsModal: React.FC = () => {
                                 <span
                                   className={cn(
                                     toggleThumbClass,
-                                    hermesToolsets[key] ? 'translate-x-6' : 'translate-x-1'
+                                    hermesToolsets[key] ? 'translate-x-5' : 'translate-x-0.5'
                                   )}
                                 />
                               </button>
@@ -855,7 +970,7 @@ export const SettingsModal: React.FC = () => {
                       <span
                         className={cn(
                           toggleThumbClass,
-                          autoApproveRepoChanges ? 'translate-x-6' : 'translate-x-1'
+                          autoApproveRepoChanges ? 'translate-x-5' : 'translate-x-0.5'
                         )}
                       />
                     </button>

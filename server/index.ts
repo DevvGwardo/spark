@@ -7,11 +7,16 @@ import {
   createProviderModel,
   getReasoningProviderOptions,
   getProviderHeaders,
+  HERMES_TOOL_CAPABLE_MODELS,
   OPENAI_COMPATIBLE,
   resolveRuntimeProvider,
   VALIDATION_MODELS,
 } from './provider-config';
 import { getOpenClawModels, runOpenClawTurn } from './openclaw';
+import { verifyRepoChanges, type VerificationFileChange } from './repo-verifier';
+import { ensureRepoClone, forkRepository, getManagedRepoClone } from './repo-clone-manager';
+import { getRepoTurnIntentInstruction } from '../src/lib/repo-intent';
+import { registerChatStoreRoutes } from './chat-store';
 
 // ─── Shared helpers ──────────────────────────────────────────────────────────
 
@@ -25,8 +30,207 @@ function sendJson(res: express.Response, status: number, body: unknown) {
   res.status(status).json(body);
 }
 
+interface GitHubRepoPayload {
+  id: number;
+  name: string;
+  full_name: string;
+  private: boolean;
+  description: string | null;
+  default_branch: string;
+  html_url: string;
+  fork: boolean;
+  owner: {
+    login: string;
+    avatar_url: string | null;
+  };
+  permissions?: {
+    pull?: boolean;
+    push?: boolean;
+    admin?: boolean;
+  };
+  localClone: {
+    exists: boolean;
+    path: string | null;
+  };
+}
+
+interface GitHubIssuePayload {
+  id: number;
+  number: number;
+  title: string;
+  body: string;
+  html_url: string;
+  state: string;
+  comments: number;
+  created_at: string;
+  updated_at: string;
+  user: {
+    login: string;
+    avatar_url: string | null;
+  };
+  labels: Array<{
+    id: number;
+    name: string;
+    color: string;
+    description: string | null;
+  }>;
+}
+
 function getUnknownErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+async function withLocalClone(repo: {
+  id?: number;
+  name?: string;
+  full_name?: string;
+  private?: boolean;
+  description?: string | null;
+  default_branch?: string;
+  html_url?: string;
+  fork?: boolean;
+  owner?: { login?: string; avatar_url?: string | null };
+  permissions?: { pull?: boolean; push?: boolean; admin?: boolean };
+}): Promise<GitHubRepoPayload> {
+  const owner = repo.owner?.login || repo.full_name?.split('/')[0] || '';
+  const name = repo.name || repo.full_name?.split('/')[1] || '';
+  const localClone = owner && name
+    ? await getManagedRepoClone(owner, name)
+    : { exists: false, path: null };
+
+  return {
+    id: repo.id || 0,
+    name,
+    full_name: repo.full_name || `${owner}/${name}`,
+    private: !!repo.private,
+    description: repo.description || null,
+    default_branch: repo.default_branch || 'main',
+    html_url: repo.html_url || `https://github.com/${owner}/${name}`,
+    fork: !!repo.fork,
+    owner: {
+      login: owner,
+      avatar_url: repo.owner?.avatar_url || null,
+    },
+    permissions: repo.permissions,
+    localClone,
+  };
+}
+
+function toGitHubIssue(issue: {
+  id?: number;
+  number?: number;
+  title?: string;
+  body?: string | null;
+  html_url?: string;
+  state?: string;
+  comments?: number;
+  created_at?: string;
+  updated_at?: string;
+  user?: { login?: string; avatar_url?: string | null };
+  labels?: Array<{ id?: number; name?: string; color?: string; description?: string | null }>;
+}): GitHubIssuePayload {
+  return {
+    id: issue.id || 0,
+    number: issue.number || 0,
+    title: issue.title || 'Untitled issue',
+    body: issue.body || '',
+    html_url: issue.html_url || '',
+    state: issue.state || 'open',
+    comments: issue.comments || 0,
+    created_at: issue.created_at || new Date(0).toISOString(),
+    updated_at: issue.updated_at || new Date(0).toISOString(),
+    user: {
+      login: issue.user?.login || 'unknown',
+      avatar_url: issue.user?.avatar_url || null,
+    },
+    labels: Array.isArray(issue.labels)
+      ? issue.labels.map((label) => ({
+          id: label.id || 0,
+          name: label.name || '',
+          color: label.color || '94a3b8',
+          description: label.description || null,
+        }))
+      : [],
+  };
+}
+
+function normalizeLocalProviderError(provider: string | undefined, message: string) {
+  const lower = message.toLowerCase();
+
+  if (provider === 'hermes' && lower.includes('cannot connect to api')) {
+    return {
+      status: 503,
+      error:
+        `Hermes bridge is not reachable at ${OPENAI_COMPATIBLE.hermes}. ` +
+        'Start hermes-bridge/main.py and try again.',
+    };
+  }
+
+  if (provider === 'openclaw' && lower.includes('openclaw cli not found')) {
+    return {
+      status: 503,
+      error:
+        'OpenClaw agent is not available. Ensure the OpenClaw CLI is installed and accessible, then try again.',
+    };
+  }
+
+  return null;
+}
+
+async function fetchGitHubRepoTree(
+  owner: string,
+  repo: string,
+  branch: string,
+  headers: Record<string, string>,
+) {
+  const encodedBranch = encodeURIComponent(branch);
+  const branchResponse = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/branches/${encodedBranch}`,
+    { headers },
+  );
+
+  let treeSha: string | null = null;
+  if (branchResponse.ok) {
+    const branchData = await branchResponse.json() as {
+      commit?: { commit?: { tree?: { sha?: string } } }
+    };
+    treeSha = branchData.commit?.commit?.tree?.sha ?? null;
+  }
+
+  const treeTarget = treeSha ?? encodedBranch;
+  const treeResponse = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/git/trees/${treeTarget}?recursive=1`,
+    { headers },
+  );
+
+  if (!treeResponse.ok) {
+    const error = await treeResponse.text();
+    return {
+      ok: false as const,
+      status: treeResponse.status,
+      error: `GitHub API error: ${error}`,
+    };
+  }
+
+  const treeData = await treeResponse.json() as {
+    tree: Array<{ path: string; type: string; size?: number; sha: string }>;
+    truncated: boolean;
+  };
+
+  const items = treeData.tree
+    .filter((item: { type: string }) => item.type === 'blob' || item.type === 'tree')
+    .map((item: { path: string; type: string; size?: number; sha: string }) => ({
+      path: item.path,
+      type: item.type === 'tree' ? 'dir' : 'file',
+      size: item.size || 0,
+      sha: item.sha,
+    }));
+
+  return {
+    ok: true as const,
+    items,
+    truncated: treeData.truncated,
+  };
 }
 
 function createSingleMessageDataStream(text: string, usage?: { input?: number; output?: number; total?: number }) {
@@ -96,6 +300,7 @@ export function createApp() {
   const app = express();
   app.use(cors());
   app.use(express.json({ limit: '10mb' }));
+  registerChatStoreRoutes(app);
 
 app.post('/functions/v1/chat', async (req, res) => {
   try {
@@ -109,10 +314,13 @@ app.post('/functions/v1/chat', async (req, res) => {
       api_key,
       system_prompt,
       activeRepo,
+      repo_edit_intent,
       continuing_approved_proposal,
       reasoning_effort,
       conversation_id,
       hermes_toolsets,
+      repo_file_cache,
+      repo_file_tree,
     } = req.body;
 
     // Resolve API key
@@ -134,18 +342,39 @@ app.post('/functions/v1/chat', async (req, res) => {
     // Build system prompt, appending repo context if activeRepo is present
     let effectiveSystemPrompt = system_prompt || '';
     if (activeRepo) {
+      const repoFileTree = Array.isArray(repo_file_tree)
+        ? repo_file_tree.filter((path): path is string => typeof path === 'string' && path.trim().length > 0)
+        : [];
+      const repoEditIntent = !!repo_edit_intent || !!continuing_approved_proposal;
       const repoContext = `You are working on the GitHub repository ${activeRepo.owner}/${activeRepo.name}. You have tools to read, edit, create, and delete files in this repo.
 
-WORKFLOW — ALWAYS FOLLOW THIS:
+First determine whether the current user turn is asking for read-only repository help or for actual code changes.
+- If the user is asking what the repo is, how it works, where something lives, or for analysis/review, stay read-only: inspect files as needed and answer directly.
+- Only enter the proposal-and-edit workflow when the user explicitly asks you to modify the repository.
+- Never treat repo selection by itself as permission to edit.
+
+WORKFLOW — FOR CHANGE REQUESTS ONLY:
 1. For a NEW change request that does not already have an approved plan, FIRST use propose_changes to present a plan of ALL files you intend to modify. Wait for user approval before proceeding.
 2. If the latest user message is approving your most recent proposal, do NOT call propose_changes again. Continue executing the already approved plan.
 3. After the user approves, use read_repo_file to read the files you need to modify.
 4. Then use batch_edit_repo_files to apply ALL changes at once (preferred for multiple files), or edit_repo_file / create_repo_file individually.
-5. Do NOT ask the user which file to edit — explore the repo yourself.
+5. Do NOT ask the user which file to edit or to share files with you — explore the repo yourself.
 6. Do NOT ask clarifying questions. Use your judgment, explore the repo to understand the codebase, and propose changes directly. If the request is ambiguous, make reasonable assumptions and explain them in your proposal.
 7. When the user asks you to update multiple things, make sure you update ALL of them, not just one.
 8. Never print pseudo-tool syntax like propose_changes(...) or batch_edit_repo_files(...) in visible text. Use the actual tool calls instead.
 9. IMPORTANT: If you need to edit many large files, split batch_edit_repo_files into multiple calls (max 3-4 files per batch) to avoid output truncation. For very large files, use individual edit_repo_file calls instead.
+10. Never conclude that the repository is empty or inaccessible just because a guessed file path failed to read. If a read fails, choose another path from the loaded repo tree and continue exploring.
+
+${repoFileTree.length > 0
+  ? `The selected repository file tree is already available below. Use it to identify candidate files, and do NOT ask the user to provide file paths.
+
+Repository file tree:
+${repoFileTree.join('\n')}
+
+`
+  : `If the repository file tree is missing, do not guess placeholder paths like \`.\`, \`/\`, \`src/main\`, \`server\`, \`client\`, or \`package.json\`. Wait for real repo-tree guidance before reading files.
+
+`}${getRepoTurnIntentInstruction(repoEditIntent)}
 
 All changes are staged for a PR — they are not applied directly to the repo.`;
       effectiveSystemPrompt = effectiveSystemPrompt
@@ -153,6 +382,18 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
         : repoContext;
       if (continuing_approved_proposal) {
         effectiveSystemPrompt = `${effectiveSystemPrompt}\n\nThe latest user message is an approval of the most recent proposal. Do not call propose_changes again for that accepted scope. Continue directly with read_repo_file and repo edit tools, and do not restate the plan unless the user changes scope.`;
+      }
+
+      // Inject cached file contents so the model doesn't need to re-read them
+      if (repo_file_cache && typeof repo_file_cache === 'object') {
+        const paths = Object.keys(repo_file_cache);
+        if (paths.length > 0) {
+          const fileSummaries = paths.map((p) => {
+            const content = repo_file_cache[p];
+            return `### ${p}\n\`\`\`\n${content}\n\`\`\``;
+          });
+          effectiveSystemPrompt += `\n\n--- Previously Read Files (cached) ---\nThe following files have already been read in this conversation. You do NOT need to call read_repo_file for these unless you suspect they have changed. Use the content below directly:\n\n${fileSummaries.join('\n\n')}`;
+        }
       }
     }
 
@@ -341,6 +582,9 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
 
     const runtimeProvider = resolveRuntimeProvider(provider, { activeRepo });
     console.log(`[chat] provider=${provider} runtime=${runtimeProvider} model=${model} activeRepo=${activeRepo?.owner}/${activeRepo?.name || '-'} continuing_approved=${!!continuing_approved_proposal} msgs=${messages?.length}`);
+    if (activeRepo && !req.body.github_pat && (provider === 'hermes' || runtimeProvider === 'hermes')) {
+        console.warn(`[chat] WARNING: activeRepo set (${activeRepo.owner}/${activeRepo.name}) but no github_pat in request body — Hermes won't be able to read repo files`);
+    }
     let aiModel;
     try {
       aiModel = createProviderModel(runtimeProvider, model, apiKey, {
@@ -349,6 +593,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
           ? {
               ...(hermes_toolsets ? { 'X-Hermes-Toolsets': hermes_toolsets } : {}),
               ...(continuing_approved_proposal ? { 'X-Hermes-Continuing-Approved': '1' } : {}),
+              ...(activeRepo ? { 'X-Hermes-Repo-Edit-Intent': repo_edit_intent || continuing_approved_proposal ? '1' : '0' } : {}),
               ...(activeRepo && req.body.github_pat ? {
                 'X-Hermes-Repo-Owner': activeRepo.owner,
                 'X-Hermes-Repo-Name': activeRepo.name,
@@ -482,14 +727,13 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
 
     console.error(`[chat] Request failed: status=${status} error=${errorMessage} provider=${req.body?.provider} model=${req.body?.model}`);
 
-    const lower = errorMessage.toLowerCase();
-    if (req.body?.provider === 'hermes' && lower.includes('cannot connect to api')) {
-      status = 503;
-      errorMessage =
-        `Hermes bridge is not reachable at ${OPENAI_COMPATIBLE.hermes}. ` +
-        'Start hermes-bridge/main.py and try again.';
+    const normalizedProviderError = normalizeLocalProviderError(req.body?.provider, errorMessage);
+    if (normalizedProviderError) {
+      status = normalizedProviderError.status;
+      errorMessage = normalizedProviderError.error;
     }
 
+    const lower = errorMessage.toLowerCase();
     if (lower.includes('data policy') || lower.includes('settings/privacy')) {
       status = 400;
       errorMessage =
@@ -765,7 +1009,7 @@ app.post('/functions/v1/github-integration', async (req, res) => {
     switch (action) {
       case 'list-repos': {
         const response = await fetch(
-          'https://api.github.com/user/repos?sort=updated&per_page=100',
+          'https://api.github.com/user/repos?sort=updated&per_page=50&affiliation=owner,collaborator,organization_member',
           { headers }
         );
         if (!response.ok) {
@@ -773,7 +1017,140 @@ app.post('/functions/v1/github-integration', async (req, res) => {
           return sendJson(res, response.status, { error: `GitHub API error: ${error}` });
         }
         const repos = await response.json();
-        return sendJson(res, 200, { repos });
+        const normalized = await Promise.all((repos || []).map((repo: Record<string, unknown>) => withLocalClone(repo as Parameters<typeof withLocalClone>[0])));
+        return sendJson(res, 200, { repos: normalized });
+      }
+
+      case 'search-repos': {
+        const { query, page = 1 } = params as { query?: string; page?: number };
+        if (!query || !query.trim()) {
+          return sendJson(res, 400, { error: 'query is required' });
+        }
+
+        const response = await fetch(
+          `https://api.github.com/search/repositories?q=${encodeURIComponent(query.trim())}&per_page=25&page=${Number(page) || 1}`,
+          { headers },
+        );
+        if (!response.ok) {
+          const error = await response.text();
+          return sendJson(res, response.status, { error: `GitHub API error: ${error}` });
+        }
+
+        const result = await response.json() as {
+          total_count?: number;
+          incomplete_results?: boolean;
+          items?: Array<Record<string, unknown>>;
+        };
+        const repos = await Promise.all((result.items || []).map((repo) => withLocalClone(repo as Parameters<typeof withLocalClone>[0])));
+        return sendJson(res, 200, {
+          repos,
+          totalCount: result.total_count || 0,
+          incompleteResults: !!result.incomplete_results,
+          page: Number(page) || 1,
+          perPage: 25,
+        });
+      }
+
+      case 'list-issues': {
+        const {
+          owner,
+          repo,
+          page = 1,
+          sort = 'updated',
+          direction = 'desc',
+          state = 'open',
+          query = '',
+        } = params as {
+          owner?: string;
+          repo?: string;
+          page?: number;
+          sort?: 'created' | 'updated' | 'comments';
+          direction?: 'asc' | 'desc';
+          state?: 'open' | 'closed' | 'all';
+          query?: string;
+        };
+
+        if (!owner || !repo) {
+          return sendJson(res, 400, { error: 'owner and repo are required' });
+        }
+
+        const searchTerms = [
+          `repo:${owner}/${repo}`,
+          'is:issue',
+          state !== 'all' ? `state:${state}` : '',
+          typeof query === 'string' ? query.trim() : '',
+        ].filter(Boolean).join(' ');
+
+        const response = await fetch(
+          `https://api.github.com/search/issues?q=${encodeURIComponent(searchTerms)}&sort=${encodeURIComponent(sort)}&order=${encodeURIComponent(direction)}&per_page=25&page=${Number(page) || 1}`,
+          { headers },
+        );
+        if (!response.ok) {
+          const error = await response.text();
+          return sendJson(res, response.status, { error: `GitHub API error: ${error}` });
+        }
+
+        const result = await response.json() as {
+          total_count?: number;
+          incomplete_results?: boolean;
+          items?: Array<Record<string, unknown>>;
+        };
+        const totalCount = result.total_count || 0;
+        const totalPages = Math.max(1, Math.min(Math.ceil(totalCount / 25), 40));
+        const currentPage = Math.min(Math.max(Number(page) || 1, 1), totalPages);
+
+        return sendJson(res, 200, {
+          issues: (result.items || []).map((issue) => toGitHubIssue(issue as Parameters<typeof toGitHubIssue>[0])),
+          totalCount,
+          incompleteResults: !!result.incomplete_results,
+          page: currentPage,
+          perPage: 25,
+          totalPages,
+          hasPreviousPage: currentPage > 1,
+          hasNextPage: currentPage < totalPages,
+        });
+      }
+
+      case 'clone-repo': {
+        const { owner, repo, branch } = params as { owner?: string; repo?: string; branch?: string };
+        if (!owner || !repo) {
+          return sendJson(res, 400, { error: 'owner and repo are required' });
+        }
+
+        const clone = await ensureRepoClone({ owner, repo, pat, branch });
+        return sendJson(res, 200, {
+          clone,
+          repo: await withLocalClone({
+            owner: { login: owner },
+            name: repo,
+            full_name: `${owner}/${repo}`,
+            default_branch: branch || 'main',
+          }),
+        });
+      }
+
+      case 'fork-repo': {
+        const { owner, repo, branch } = params as { owner?: string; repo?: string; branch?: string };
+        if (!owner || !repo) {
+          return sendJson(res, 400, { error: 'owner and repo are required' });
+        }
+
+        const fork = await forkRepository({ owner, repo, pat, branch });
+        return sendJson(res, 200, {
+          repo: await withLocalClone({
+            owner: { login: fork.owner },
+            name: fork.repo,
+            full_name: fork.fullName,
+            default_branch: fork.defaultBranch,
+            html_url: fork.htmlUrl,
+            fork: true,
+          }),
+          sourceRepo: {
+            owner,
+            repo,
+            fullName: `${owner}/${repo}`,
+          },
+        });
       }
 
       case 'read-repo': {
@@ -790,40 +1167,30 @@ app.post('/functions/v1/github-integration', async (req, res) => {
         if (!owner || !repo || !branch) {
           return sendJson(res, 400, { error: 'owner, repo, and branch are required' });
         }
-        const treeResponse = await fetch(
-          `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`,
-          { headers }
-        );
-        if (!treeResponse.ok) {
-          const error = await treeResponse.text();
-          return sendJson(res, treeResponse.status, { error: `GitHub API error: ${error}` });
+        const treeResult = await fetchGitHubRepoTree(owner, repo, branch, headers);
+        if (!treeResult.ok) {
+          return sendJson(res, treeResult.status, { error: treeResult.error });
         }
-        const treeData = await treeResponse.json() as { tree: Array<{ path: string; type: string; size?: number; sha: string }>; truncated: boolean };
-        const items = treeData.tree
-          .filter((item: { type: string }) => item.type === 'blob' || item.type === 'tree')
-          .map((item: { path: string; type: string; size?: number; sha: string }) => ({
-            path: item.path,
-            type: item.type === 'tree' ? 'dir' : 'file',
-            size: item.size || 0,
-            sha: item.sha,
-          }));
-        return sendJson(res, 200, { items, truncated: treeData.truncated });
+        return sendJson(res, 200, { items: treeResult.items, truncated: treeResult.truncated });
       }
 
       case 'read-file': {
-        const { owner, repo, path } = params;
+        const { owner, repo, path, ref } = params;
         if (!owner || !repo || !path) {
           return sendJson(res, 400, { error: 'owner, repo, and path are required' });
         }
 
         const response = await fetch(
-          `https://api.github.com/repos/${owner}/${repo}/contents/${path}`,
+          `https://api.github.com/repos/${owner}/${repo}/contents/${path}${typeof ref === 'string' && ref ? `?ref=${encodeURIComponent(ref)}` : ''}`,
           { headers }
         );
 
         if (!response.ok) {
+          const error = await response.text().catch(() => '');
           return sendJson(res, response.status, {
-            error: 'File not found or inaccessible',
+            error: response.status === 404
+              ? `File \`${path}\` was not found${typeof ref === 'string' && ref ? ` on branch \`${ref}\`` : ''}.`
+              : `GitHub API error: ${error || 'File not found or inaccessible'}`,
           });
         }
 
@@ -838,13 +1205,15 @@ app.post('/functions/v1/github-integration', async (req, res) => {
       }
 
       case 'create-pr': {
-        const { owner, repo, title, body, branch, baseBranch, files } = params as {
+        const { owner, repo, title, body, branch, baseBranch, baseOwner, baseRepo, files } = params as {
           owner: string;
           repo: string;
           title: string;
           body: string;
           branch: string;
           baseBranch: string;
+          baseOwner?: string;
+          baseRepo?: string;
           files: FileChange[];
         };
 
@@ -854,9 +1223,14 @@ app.post('/functions/v1/github-integration', async (req, res) => {
           });
         }
 
+        const headOwner = owner;
+        const headRepo = repo;
+        const pullRequestBaseOwner = baseOwner || owner;
+        const pullRequestBaseRepo = baseRepo || repo;
+
         // 1. Get the base branch's latest commit SHA
         const baseRefRes = await fetch(
-          `https://api.github.com/repos/${owner}/${repo}/git/ref/heads/${baseBranch}`,
+          `https://api.github.com/repos/${headOwner}/${headRepo}/git/ref/heads/${baseBranch}`,
           { headers }
         );
         if (!baseRefRes.ok) {
@@ -869,7 +1243,7 @@ app.post('/functions/v1/github-integration', async (req, res) => {
 
         // 2. Create a new branch from the base
         const createBranchRes = await fetch(
-          `https://api.github.com/repos/${owner}/${repo}/git/refs`,
+          `https://api.github.com/repos/${headOwner}/${headRepo}/git/refs`,
           {
             method: 'POST',
             headers: { ...headers, 'Content-Type': 'application/json' },
@@ -890,7 +1264,7 @@ app.post('/functions/v1/github-integration', async (req, res) => {
         for (const file of files) {
           let fileSha: string | undefined;
           const existingFileRes = await fetch(
-            `https://api.github.com/repos/${owner}/${repo}/contents/${file.path}?ref=${branch}`,
+            `https://api.github.com/repos/${headOwner}/${headRepo}/contents/${file.path}?ref=${branch}`,
             { headers }
           );
           if (existingFileRes.ok) {
@@ -902,7 +1276,7 @@ app.post('/functions/v1/github-integration', async (req, res) => {
             // Only delete if the file actually exists in the repo
             if (!fileSha) continue;
             const deleteRes = await fetch(
-              `https://api.github.com/repos/${owner}/${repo}/contents/${file.path}`,
+              `https://api.github.com/repos/${headOwner}/${headRepo}/contents/${file.path}`,
               {
                 method: 'DELETE',
                 headers: { ...headers, 'Content-Type': 'application/json' },
@@ -920,7 +1294,7 @@ app.post('/functions/v1/github-integration', async (req, res) => {
             }
           } else {
             const updateRes = await fetch(
-              `https://api.github.com/repos/${owner}/${repo}/contents/${file.path}`,
+              `https://api.github.com/repos/${headOwner}/${headRepo}/contents/${file.path}`,
               {
                 method: 'PUT',
                 headers: { ...headers, 'Content-Type': 'application/json' },
@@ -943,14 +1317,16 @@ app.post('/functions/v1/github-integration', async (req, res) => {
 
         // 4. Create the PR
         const prRes = await fetch(
-          `https://api.github.com/repos/${owner}/${repo}/pulls`,
+          `https://api.github.com/repos/${pullRequestBaseOwner}/${pullRequestBaseRepo}/pulls`,
           {
             method: 'POST',
             headers: { ...headers, 'Content-Type': 'application/json' },
             body: JSON.stringify({
               title,
               body,
-              head: branch,
+              head: pullRequestBaseOwner === headOwner && pullRequestBaseRepo === headRepo
+                ? branch
+                : `${headOwner}:${branch}`,
               base: baseBranch,
             }),
           }
@@ -973,22 +1349,66 @@ app.post('/functions/v1/github-integration', async (req, res) => {
             draft: !!pr.draft,
             headBranch: pr?.head?.ref || branch,
             baseBranch: pr?.base?.ref || baseBranch,
+            headRepo: `${headOwner}/${headRepo}`,
+            baseRepo: `${pullRequestBaseOwner}/${pullRequestBaseRepo}`,
           },
         });
       }
 
+      case 'verify-changes': {
+        const {
+          owner,
+          repo,
+          baseBranch,
+          files,
+          provider,
+          model,
+          apiKey,
+        } = params as {
+          owner: string;
+          repo: string;
+          baseBranch: string;
+          files: VerificationFileChange[];
+          provider?: string;
+          model?: string;
+          apiKey?: string;
+        };
+
+        if (!owner || !repo || !baseBranch || !Array.isArray(files) || files.length === 0) {
+          return sendJson(res, 400, {
+            error: 'owner, repo, baseBranch, and files are required',
+          });
+        }
+
+        const verification = await verifyRepoChanges({
+          owner,
+          repo,
+          pat,
+          baseBranch,
+          files,
+          provider,
+          model,
+          apiKey,
+          origin: req.headers.origin as string | undefined,
+        });
+
+        return sendJson(res, 200, verification);
+      }
+
       case 'get-pr-status': {
-        const { owner, repo, number } = params as {
+        const { owner, repo, number, baseOwner, baseRepo } = params as {
           owner: string;
           repo: string;
           number: number;
+          baseOwner?: string;
+          baseRepo?: string;
         };
 
         if (!owner || !repo || !number) {
           return sendJson(res, 400, { error: 'owner, repo, and number are required' });
         }
 
-        const status = await fetchPullRequestStatus(owner, repo, Number(number), headers);
+        const status = await fetchPullRequestStatus(baseOwner || owner, baseRepo || repo, Number(number), headers);
         return sendJson(res, 200, status);
       }
 
@@ -997,6 +1417,8 @@ app.post('/functions/v1/github-integration', async (req, res) => {
           owner,
           repo,
           number,
+          baseOwner,
+          baseRepo,
           method,
           commitTitle,
           commitMessage,
@@ -1004,6 +1426,8 @@ app.post('/functions/v1/github-integration', async (req, res) => {
           owner: string;
           repo: string;
           number: number;
+          baseOwner?: string;
+          baseRepo?: string;
           method?: 'merge' | 'squash' | 'rebase';
           commitTitle?: string;
           commitMessage?: string;
@@ -1014,7 +1438,7 @@ app.post('/functions/v1/github-integration', async (req, res) => {
         }
 
         const mergeRes = await fetch(
-          `https://api.github.com/repos/${owner}/${repo}/pulls/${number}/merge`,
+          `https://api.github.com/repos/${baseOwner || owner}/${baseRepo || repo}/pulls/${number}/merge`,
           {
             method: 'PUT',
             headers: { ...headers, 'Content-Type': 'application/json' },
@@ -1328,6 +1752,14 @@ app.post('/functions/v1/validate-key', async (req, res) => {
       }
 
       if (modelListResponse.ok) {
+        if (provider === 'hermes') {
+          return sendJson(res, 200, {
+            valid: true,
+            defaultModel: HERMES_TOOL_CAPABLE_MODELS[0],
+            models: [...HERMES_TOOL_CAPABLE_MODELS],
+          });
+        }
+
         const data = await modelListResponse.json();
         const models = Array.isArray(data?.data)
           ? (data.data as Array<{ id?: string }>)
@@ -1353,8 +1785,11 @@ app.post('/functions/v1/validate-key', async (req, res) => {
     return sendJson(res, 200, { valid: true });
   } catch (err: unknown) {
     const message = getUnknownErrorMessage(err) || 'Provider validation failed';
-    const status = /401|403|authentication|unauthorized|invalid api key/i.test(message) ? 401 : 500;
-    sendJson(res, status, { valid: false, error: message });
+    const normalizedProviderError = normalizeLocalProviderError(req.body?.provider, message);
+    const status = normalizedProviderError
+      ? normalizedProviderError.status
+      : /401|403|authentication|unauthorized|invalid api key/i.test(message) ? 401 : 500;
+    sendJson(res, status, { valid: false, error: normalizedProviderError?.error || message });
   }
 });
 
