@@ -2,6 +2,8 @@
 
 An AI-powered chat application with multi-provider support, agentic tool calling, live code preview, GitHub integration, and a knowledge base — built with React, Vite, TypeScript, and Electron.
 
+![Cloud Chat Interface](public/cloudchat-screenshot-2026-03-17.png)
+
 ## Features
 
 - **Multi-Provider AI Chat** — Connect to 15+ LLM providers including OpenAI, Anthropic, Google, Groq, DeepSeek, Mistral, xAI, and more.
