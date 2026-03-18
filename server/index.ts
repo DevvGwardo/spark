@@ -16,6 +16,7 @@ import {
   resolveHermesExecutionMode,
   resolveRuntimeProvider,
   sanitizeCompatibleSseLine,
+  usesFirstPartyProviderSdk,
   VALIDATION_MODELS,
 } from './provider-config';
 import { getOpenClawModels, runOpenClawTurn } from './openclaw';
@@ -1184,9 +1185,21 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
       }
     }, 5 * 60 * 1000);
 
-    const allTools = { ...fileTools, ...repoTools };
+    // Only include tools when the provider reliably supports tool_choice.
+    // OpenRouter and other OpenAI-compatible providers host many models —
+    // some (especially free/small ones) reject requests with tool_choice,
+    // causing a 404. First-party SDK providers (Google, xAI, Groq, etc.)
+    // always support tools. For compatible providers, only include tools
+    // when there's an active server repo context (agentic mode), since
+    // those are explicitly opted-in by the user connecting a repo.
+    const isToolSafeProvider = usesFirstPartyProviderSdk(provider);
+    const includeTools = hasServerRepoContext
+      ? true  // Always include repo tools when user explicitly connected a repo
+      : isToolSafeProvider;  // Only include file tools for providers known to support them
+    const allTools = includeTools ? { ...fileTools, ...repoTools } : {};
     const useServerAgentLoop = hasServerRepoContext;
-    console.log(`[chat] Starting streamText. maxTokens=${max_tokens ?? defaultMaxTokens} maxSteps=${useServerAgentLoop ? SERVER_AGENT_MAX_STEPS : 1} tools=${Object.keys(allTools).join(',')}`);
+    const hasTools = Object.keys(allTools).length > 0;
+    console.log(`[chat] Starting streamText. maxTokens=${max_tokens ?? defaultMaxTokens} maxSteps=${useServerAgentLoop ? SERVER_AGENT_MAX_STEPS : 1} tools=${hasTools ? Object.keys(allTools).join(',') : '(none)'} toolSafe=${isToolSafeProvider}`);
     const result = streamText({
       model: aiModel,
       messages: normalizedChatInput.messages,
@@ -1195,20 +1208,15 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
       maxOutputTokens: max_tokens ?? defaultMaxTokens,
       abortSignal: abortController.signal,
       ...(providerOptions ? { providerOptions } : {}),
-      tools: allTools,
-      toolCallStreaming: true,
+      ...(hasTools ? { tools: allTools, toolCallStreaming: true } : {}),
       // When server-side execute handlers are present, maxSteps drives the
       // agentic loop. Without execute handlers, set to 1 so the SDK streams
       // tool calls to the client for execution.
-      ...(useServerAgentLoop ? { maxSteps: SERVER_AGENT_MAX_STEPS } : {}),
-      // Inject server tool events into the data stream so the client can
-      // update its changeset store, file cache, and activity stats.
+      ...(hasTools && useServerAgentLoop ? { maxSteps: SERVER_AGENT_MAX_STEPS } : {}),
       onFinish: () => {
         if (requestTimeout) {
           clearTimeout(requestTimeout);
         }
-        // Events are emitted synchronously from execute handlers during
-        // the stream, so by the time onFinish fires all events are collected.
       },
     });
 
@@ -1288,6 +1296,12 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
       status = 400;
       errorMessage =
         'OpenRouter blocked this free model due to your privacy settings. Enable free model publication in https://openrouter.ai/settings/privacy and try again.';
+    }
+
+    if (lower.includes('tool_choice') || lower.includes("don't support tools") || lower.includes('does not support tools')) {
+      status = 400;
+      errorMessage =
+        `This model (${req.body?.model || 'unknown'}) does not support tool use. It can still be used for basic chat, but file creation and repo editing features won't work. Try a more capable model for tool-based features.`;
     }
 
     if (!res.headersSent) {

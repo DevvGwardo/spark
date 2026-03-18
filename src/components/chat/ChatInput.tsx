@@ -1,10 +1,11 @@
 import React, { useRef, useEffect } from 'react';
-import { ArrowUp, Square, Plus, ChevronDown, Mic, CornerDownLeft } from 'lucide-react';
+import { ArrowUp, Square, Plus, ChevronDown, Mic, CornerDownLeft, Bot } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSettingsStore } from '@/stores/settings-store';
 import { PROVIDERS, REASONING_EFFORTS, getVisibleModelOptions, supportsReasoningEffort } from '@/lib/providers';
 import type { QueuedMessage } from '@/lib/chat-queue';
 import { StreamingStatusBar } from './StreamingStatusBar';
+import { ContextUsageBar } from './ContextUsageBar';
 import { QueuedMessageTray } from './QueuedMessageTray';
 import {
   DropdownMenu,
@@ -25,6 +26,7 @@ interface ChatInputProps {
   messages?: { role: string; content: string }[];
   activeProvider?: string;
   activeModel?: string;
+  agentStatusLabel?: string;
   queuedMessages?: QueuedMessage[];
   onRemoveQueuedMessage?: (messageId: string) => void;
   onSteerQueuedMessage?: (messageId: string) => void;
@@ -47,6 +49,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   disabledPlaceholder,
   messages = [],
   activeModel,
+  agentStatusLabel,
   queuedMessages = [],
   onRemoveQueuedMessage,
   onSteerQueuedMessage,
@@ -88,7 +91,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     : (hasContent ? 'Ask for follow-up changes' : 'What do you want to build?');
 
   return (
-    <div className="w-full max-w-[720px] mx-auto px-4 pb-3 pt-2">
+    <div className="w-full max-w-[720px] mx-auto px-20 pb-3 pt-2">
       <div className="flex flex-col">
         <QueuedMessageTray
           messages={queuedMessages}
@@ -100,18 +103,19 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
         <div
           className={cn(
-            'relative overflow-hidden border border-border bg-card',
-            hasQueuedMessages ? 'rounded-b-2xl rounded-t-none border-t-0' : 'rounded-2xl',
+            'relative overflow-hidden border border-[#3F3F3F] bg-[#222222]',
+            hasQueuedMessages ? 'rounded-b-[10px] rounded-t-none border-t-0' : 'rounded-[10px]',
           )}
         >
           <StreamingStatusBar
             isStreaming={isStreaming}
             toolCallCount={toolCallCount}
+            statusLabel={agentStatusLabel}
             embedded
           />
 
           {/* Textarea area */}
-          <div className="flex items-end gap-2 px-4 py-3">
+          <div className="flex items-end gap-2 px-4 py-3 min-h-[50px]">
             <textarea
               ref={textareaRef}
               value={safeValue}
@@ -123,17 +127,17 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               rows={1}
               disabled={disabled}
               className={cn(
-                "flex-1 resize-none bg-transparent text-sm leading-relaxed placeholder:text-muted-foreground focus:outline-none min-h-[20px] max-h-[200px]",
+                "flex-1 resize-none bg-transparent text-[13px] leading-relaxed placeholder:text-[hsl(var(--text-dim))] focus:outline-none min-h-[20px] max-h-[200px]",
                 disabled && "opacity-50"
               )}
             />
           </div>
 
-          {/* Bottom toolbar — Codex style */}
-          <div className="flex items-center gap-1 px-3 pb-2.5">
+          {/* Bottom toolbar */}
+          <div className="flex items-center gap-1 h-9 px-3 pb-1.5">
             {/* Plus button */}
             <button
-              className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors duration-100"
+              className="h-6 w-6 rounded-full flex items-center justify-center text-[#666666] hover:text-foreground hover:bg-muted transition-colors duration-100"
               title="Attach"
             >
               <Plus className="h-4 w-4" />
@@ -142,7 +146,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             {/* Model selector */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <button className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors duration-100">
+                <button className="flex items-center gap-1 px-2 py-1 rounded-[6px] text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors duration-100">
+                  <Bot className="h-3 w-3" />
                   {displayModel}
                   <ChevronDown className="h-3 w-3" />
                 </button>
@@ -191,9 +196,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
             <div className="flex-1" />
 
+            {/* Context usage ring */}
+            {hasContent && (
+              <ContextUsageBar messages={messages} model={config.model} />
+            )}
+
             {/* Mic button */}
             <button
-              className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors duration-100"
+              className="p-1.5 rounded-lg text-[#555555] hover:text-foreground hover:bg-muted transition-colors duration-100"
               title="Voice input"
             >
               <Mic className="h-4 w-4" />
@@ -214,7 +224,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 )}
                 <button
                   onClick={onStop}
-                  className="p-2 rounded-full bg-primary text-primary-foreground hover:opacity-80 transition-opacity duration-100"
+                  className="h-[30px] w-[30px] flex items-center justify-center rounded-[8px] bg-primary text-primary-foreground hover:opacity-80 transition-opacity duration-100"
                   title="Stop generating"
                 >
                   <Square className="h-3.5 w-3.5" />
@@ -225,7 +235,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 onClick={onSend}
                 disabled={!safeValue.trim() || disabled}
                 className={cn(
-                  "p-2 rounded-full transition-opacity duration-100",
+                  "h-[30px] w-[30px] flex items-center justify-center rounded-[8px] transition-opacity duration-100",
                   safeValue.trim()
                     ? "bg-primary text-primary-foreground hover:opacity-80"
                     : "bg-muted text-muted-foreground"

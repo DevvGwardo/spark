@@ -217,6 +217,59 @@ ipcMain.handle('app:clear-attention', () => {
   clearAttentionRequest()
 })
 
+// ── Terminal PTY management ──────────────────────────────────────────
+// node-pty is a native module — import dynamically so a load failure
+// doesn't crash the entire app (only the terminal feature breaks).
+let ptyModule: typeof import('node-pty') | null = null
+const terminals = new Map<string, import('node-pty').IPty>()
+let terminalIdCounter = 0
+
+async function getPty() {
+  if (!ptyModule) {
+    ptyModule = await import('node-pty')
+  }
+  return ptyModule
+}
+
+ipcMain.handle('terminal:spawn', async (_event, cwd?: string) => {
+  const pty = await getPty()
+  const id = `term-${++terminalIdCounter}`
+  const shellPath = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/zsh'
+  const term = pty.spawn(shellPath, [], {
+    name: 'xterm-256color',
+    cols: 80,
+    rows: 24,
+    cwd: cwd || app.getPath('home'),
+    env: { ...process.env } as Record<string, string>,
+  })
+
+  terminals.set(id, term)
+
+  term.onData((data: string) => {
+    mainWindow?.webContents.send('terminal:data', id, data)
+  })
+
+  term.onExit(({ exitCode }: { exitCode: number }) => {
+    terminals.delete(id)
+    mainWindow?.webContents.send('terminal:exit', id, exitCode)
+  })
+
+  return { id }
+})
+
+ipcMain.on('terminal:write', (_event, id: string, data: string) => {
+  terminals.get(id)?.write(data)
+})
+
+ipcMain.on('terminal:resize', (_event, id: string, cols: number, rows: number) => {
+  terminals.get(id)?.resize(cols, rows)
+})
+
+ipcMain.on('terminal:kill', (_event, id: string) => {
+  terminals.get(id)?.kill()
+  terminals.delete(id)
+})
+
 function createTray() {
   // Use a 16x16 template image for macOS menu bar (or empty placeholder until icon exists)
   const trayTemplatePath = join(__dirname, '../../build/tray-iconTemplate.png')
@@ -309,5 +362,10 @@ app.on('will-quit', () => {
 
 // Cleanup preview-manager child processes on quit
 app.on('before-quit', () => {
+  // Kill all terminal PTY processes
+  for (const [, term] of terminals) {
+    term.kill()
+  }
+  terminals.clear()
   process.emit('SIGINT', 'SIGINT')
 })

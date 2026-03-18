@@ -29,6 +29,7 @@ describe('CreatePRModal', () => {
 
   it('shows PR check results after creation', async () => {
     const onSuccess = vi.fn();
+    const onPullRequestCreated = vi.fn();
 
     vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const payload = JSON.parse(String(init?.body || '{}'));
@@ -152,6 +153,7 @@ describe('CreatePRModal', () => {
         repo="cloudchat"
         baseBranch="main"
         files={[{ path: 'src/App.tsx', content: 'export default 1', action: 'edit' }]}
+        onPullRequestCreated={onPullRequestCreated}
         onSuccess={onSuccess}
       />,
     );
@@ -162,7 +164,7 @@ describe('CreatePRModal', () => {
     expect(screen.getByRole('button', { name: /^create pr$/i })).toBeDisabled();
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /run review & checks/i }));
+      fireEvent.click(screen.getByRole('button', { name: /run checks/i }));
       await Promise.resolve();
     });
 
@@ -177,7 +179,173 @@ describe('CreatePRModal', () => {
     expect(screen.getByText('GitHub Actions')).toBeInTheDocument();
     expect(screen.getByText('Vercel')).toBeInTheDocument();
     expect(onSuccess).toHaveBeenCalledTimes(1);
+    expect(onPullRequestCreated).toHaveBeenCalledWith(expect.objectContaining({ number: 42 }));
     expect(screen.getByRole('button', { name: /squash and merge/i })).toBeDisabled();
+  });
+
+  it('submits draft PR intent to the server', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const payload = JSON.parse(String(init?.body || '{}'));
+
+      if (payload.action === 'verify-changes') {
+        return jsonResponse({
+          summary: {
+            status: 'passed',
+            findings: 0,
+            commandsRun: 1,
+            commandsFailed: 0,
+          },
+          review: {
+            status: 'passed',
+            summary: 'No actionable issues found.',
+            findings: [],
+          },
+          commands: [],
+        });
+      }
+
+      if (payload.action === 'create-pr') {
+        expect(payload.draft).toBe(true);
+        return jsonResponse({
+          pr: {
+            number: 51,
+            url: 'https://github.com/octo/cloudchat/pull/51',
+            title: payload.title,
+            body: payload.body,
+            state: 'open',
+            draft: true,
+            headBranch: payload.branch,
+            baseBranch: payload.baseBranch,
+          },
+        });
+      }
+
+      if (payload.action === 'get-pr-status') {
+        return jsonResponse({
+          pr: {
+            number: 51,
+            title: 'docs: create a draft PR',
+            body: '',
+            url: 'https://github.com/octo/cloudchat/pull/51',
+            state: 'open',
+            draft: true,
+            merged: false,
+            mergeable: true,
+            mergeableState: 'blocked',
+            headBranch: 'ai/chat-changes-51',
+            baseBranch: 'main',
+          },
+          checks: {
+            overall: 'pending',
+            summary: {
+              total: 0,
+              passed: 0,
+              failed: 0,
+              pending: 0,
+            },
+            providers: [],
+          },
+        });
+      }
+
+      throw new Error(`Unexpected action: ${payload.action}`);
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <CreatePRModal
+        isOpen
+        onClose={() => {}}
+        owner="octo"
+        repo="cloudchat"
+        baseBranch="main"
+        files={[{ path: 'docs/notes.md', content: '# Notes', action: 'create' }]}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/feat: polish the workspace shell/i), {
+      target: { value: 'docs: create a draft PR' },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /run checks/i }));
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByLabelText(/create as draft/i));
+    expect(screen.getByRole('button', { name: /create draft pr/i })).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /create draft pr/i }));
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText(/pull request #51/i)).toBeInTheDocument();
+  });
+
+  it('reopens an existing pull request in review mode', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const payload = JSON.parse(String(init?.body || '{}'));
+      if (payload.action === 'get-pr-status') {
+        return jsonResponse({
+          pr: {
+            number: 21,
+            title: 'feat: persisted review',
+            body: '',
+            url: 'https://github.com/octo/cloudchat/pull/21',
+            state: 'open',
+            draft: false,
+            merged: false,
+            mergeable: true,
+            mergeableState: 'clean',
+            headBranch: 'ai/chat-changes-21',
+            baseBranch: 'main',
+          },
+          checks: {
+            overall: 'passing',
+            summary: {
+              total: 1,
+              passed: 1,
+              failed: 0,
+              pending: 0,
+            },
+            providers: [],
+          },
+        });
+      }
+
+      throw new Error(`Unexpected action: ${payload.action}`);
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <CreatePRModal
+        isOpen
+        onClose={() => {}}
+        owner="octo"
+        repo="cloudchat"
+        baseBranch="main"
+        files={[]}
+        initialPullRequest={{
+          number: 21,
+          url: 'https://github.com/octo/cloudchat/pull/21',
+          title: 'feat: persisted review',
+          body: '',
+          state: 'open',
+          draft: false,
+          headBranch: 'ai/chat-changes-21',
+          baseBranch: 'main',
+        }}
+      />,
+    );
+
+    expect(await screen.findByText(/pull request #21/i)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /view on github/i })).toHaveAttribute(
+      'href',
+      'https://github.com/octo/cloudchat/pull/21',
+    );
   });
 
   it('keeps create actions in a pinned footer instead of the scrollable body', () => {
@@ -197,7 +365,8 @@ describe('CreatePRModal', () => {
 
     expect(within(footer).getByRole('button', { name: /^create pr$/i })).toBeInTheDocument();
     expect(within(footer).getByRole('button', { name: /^cancel$/i })).toBeInTheDocument();
-    expect(within(scrollRegion).queryByRole('button', { name: /^create pr$/i })).not.toBeInTheDocument();
+    // Footer is now inside the scroll region per V2 design
+    expect(within(scrollRegion).getByRole('button', { name: /^create pr$/i })).toBeInTheDocument();
   });
 
   it('merges the pull request from the modal once checks pass', async () => {
@@ -313,7 +482,7 @@ describe('CreatePRModal', () => {
     });
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /run review & checks/i }));
+      fireEvent.click(screen.getByRole('button', { name: /run checks/i }));
       await Promise.resolve();
     });
 
@@ -443,7 +612,7 @@ describe('CreatePRModal', () => {
     });
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /run review & checks/i }));
+      fireEvent.click(screen.getByRole('button', { name: /run checks/i }));
       await Promise.resolve();
     });
 
@@ -485,7 +654,7 @@ describe('CreatePRModal', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /run review & checks/i }));
+    fireEvent.click(screen.getByRole('button', { name: /run checks/i }));
 
     expect(await screen.findByRole('status')).toHaveTextContent(/running verification/i);
     expect(screen.getAllByText(/cloning repository snapshot/i).length).toBeGreaterThan(0);
@@ -557,7 +726,7 @@ describe('CreatePRModal', () => {
     );
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /run review & checks/i }));
+      fireEvent.click(screen.getByRole('button', { name: /run checks/i }));
       await Promise.resolve();
     });
 

@@ -39,6 +39,7 @@ describe('changeset store repo boundaries', () => {
         fullName: 'octo/repo-b',
       },
       isRepoMode: true,
+      pullRequest: null,
       changes: {},
       repoFileTree: [],
       repoFileCache: {},
@@ -70,6 +71,7 @@ describe('changeset store repo boundaries', () => {
     expect(store.getChangeset('default')).toEqual({
       activeRepo: null,
       isRepoMode: false,
+      pullRequest: null,
       changes: {},
       repoFileTree: [],
       repoFileCache: {},
@@ -114,6 +116,75 @@ describe('changeset store repo boundaries', () => {
     store.setRepoFileTreeStatus('default', 'error', 'GitHub API error');
     expect(store.getChangeset('default').repoFileTreeStatus).toBe('error');
     expect(store.getChangeset('default').repoFileTreeError).toBe('GitHub API error');
+  });
+
+  it('stores created pull request metadata per panel and clears it on repo switch', () => {
+    const store = useChangesetStore.getState();
+
+    store.setActiveRepo('default', {
+      owner: 'octo',
+      name: 'repo-a',
+      defaultBranch: 'main',
+      fullName: 'octo/repo-a',
+    });
+    store.setPullRequest('default', {
+      number: 42,
+      url: 'https://github.com/octo/repo-a/pull/42',
+      title: 'feat: persist pr state',
+      body: '',
+      state: 'open',
+      draft: false,
+      headBranch: 'ai/chat-changes-42',
+      baseBranch: 'main',
+    });
+
+    expect(store.getChangeset('default').pullRequest?.number).toBe(42);
+
+    store.switchActiveRepo('default', {
+      owner: 'octo',
+      name: 'repo-b',
+      defaultBranch: 'main',
+      fullName: 'octo/repo-b',
+    });
+
+    expect(store.getChangeset('default').pullRequest).toBeNull();
+  });
+
+  it('batchAddChanges applies all changes atomically', () => {
+    const store = useChangesetStore.getState();
+
+    store.batchAddChanges('default', [
+      { path: 'server/src/index.ts', action: 'edit', content: 'new index', originalContent: 'old index', staged: true },
+      { path: 'client/src/main.tsx', action: 'edit', content: 'new main', originalContent: 'old main', staged: true },
+      { path: 'server/src/routes/cards.ts', action: 'edit', content: 'new cards', originalContent: 'old cards', staged: true },
+    ]);
+
+    const changes = store.getChangeset('default').changes;
+    expect(Object.keys(changes)).toHaveLength(3);
+    expect(changes['server/src/index.ts'].content).toBe('new index');
+    expect(changes['client/src/main.tsx'].content).toBe('new main');
+    expect(changes['server/src/routes/cards.ts'].content).toBe('new cards');
+    expect(store.getStagedCount('default')).toBe(3);
+  });
+
+  it('batchAddChanges preserves existing changes from other paths', () => {
+    const store = useChangesetStore.getState();
+
+    store.addChange('default', {
+      path: 'existing.ts',
+      action: 'edit',
+      content: 'existing content',
+      originalContent: 'old',
+      staged: true,
+    });
+
+    store.batchAddChanges('default', [
+      { path: 'new1.ts', action: 'create', content: 'content1', staged: true },
+      { path: 'new2.ts', action: 'create', content: 'content2', staged: true },
+    ]);
+
+    expect(Object.keys(store.getChangeset('default').changes)).toHaveLength(3);
+    expect(store.getChangeset('default').changes['existing.ts'].content).toBe('existing content');
   });
 
   it('counts added and removed lines for same-length edits in totals', () => {

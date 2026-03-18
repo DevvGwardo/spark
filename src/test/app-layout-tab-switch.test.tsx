@@ -30,10 +30,6 @@ vi.mock('@/components/chat/ChatPanelContainer', async () => {
   };
 });
 
-vi.mock('@/components/sidebar/ChatSidebar', () => ({
-  ChatSidebar: () => <div data-testid="chat-sidebar" />,
-}));
-
 vi.mock('@/components/settings/SettingsModal', () => ({
   SettingsModal: () => null,
 }));
@@ -59,6 +55,10 @@ vi.mock('@/components/preview/PreviewSidebar', () => ({
   PreviewSidebar: () => <div data-testid="preview-sidebar" />,
 }));
 
+vi.mock('@/components/terminal/TerminalPanel', () => ({
+  TerminalPanel: () => null,
+}));
+
 vi.mock('@/hooks/useTheme', () => ({
   useTheme: () => undefined,
 }));
@@ -77,7 +77,7 @@ describe('AppLayout tab switching', () => {
 
     useUIStore.setState({
       sidebarOpen: false,
-      sidebarWidth: 256,
+      sidebarWidth: 320,
       settingsOpen: false,
       setupWizardOpen: false,
       repoBrowserOpen: false,
@@ -95,6 +95,7 @@ describe('AppLayout tab switching', () => {
       conversations: [],
       activeConversationId: null,
       searchQuery: '',
+      loadConversations: async () => {},
     });
 
     usePanelStore.setState({
@@ -142,8 +143,10 @@ it('keeps the chat panel mounted and snaps unsupported tabs back to chat', () =>
             name: 'cloudchat',
             defaultBranch: 'main',
             fullName: 'octo/cloudchat',
+            permissions: { pull: true, push: true },
           },
           isRepoMode: true,
+          pullRequest: null,
           changes: {},
           repoFileCache: { 'src/App.tsx': 'export default function App() {}' },
           repoFileTree: ['src/App.tsx', 'src/components/chat/ChatArea.tsx'],
@@ -156,10 +159,45 @@ it('keeps the chat panel mounted and snaps unsupported tabs back to chat', () =>
 
     render(<AppLayout />);
 
-    expect(screen.getByText('Default permissions')).toBeInTheDocument();
-    expect(screen.getByText('Repo attached')).toBeInTheDocument();
-    expect(screen.queryByText('Editing')).not.toBeInTheDocument();
-    expect(screen.getByText('octo/cloudchat')).toBeInTheDocument();
-    expect(screen.getByText('2 indexed · 1 cached')).toBeInTheDocument();
+    expect(screen.getByText('Can push')).toBeInTheDocument();
+    // Repo attachment status is now shown in sidebar footer, not title bar
+    expect(screen.queryByText('Repo attached')).not.toBeInTheDocument();
+  });
+
+  it('keeps a created pull request visible in the thread chrome after staged changes are cleared', () => {
+    useChangesetStore.setState({
+      panelChangesets: {
+        default: {
+          activeRepo: {
+            owner: 'octo',
+            name: 'cloudchat',
+            defaultBranch: 'main',
+            fullName: 'octo/cloudchat',
+          },
+          isRepoMode: true,
+          pullRequest: {
+            number: 42,
+            url: 'https://github.com/octo/cloudchat/pull/42',
+            title: 'feat: persist pr state',
+            body: '',
+            state: 'open',
+            draft: false,
+            headBranch: 'ai/chat-changes-42',
+            baseBranch: 'main',
+          },
+          changes: {},
+          repoFileCache: {},
+          repoFileTree: [],
+          selectedRepoFilePath: null,
+          repoFileTreeStatus: 'idle',
+          repoFileTreeError: null,
+        },
+      },
+    });
+
+    render(<AppLayout />);
+
+    expect(screen.getByRole('button', { name: /pr #42/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^commit$/i })).not.toBeInTheDocument();
   });
 });

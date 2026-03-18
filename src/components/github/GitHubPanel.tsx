@@ -6,6 +6,7 @@ import { usePreviewStore } from '@/stores/preview-store';
 import { usePanelStore } from '@/stores/panel-store';
 import { cn } from '@/lib/utils';
 import { getApiBaseUrl, fetchRepoFileTreeResult } from '@/lib/api';
+import { getChatScopeId } from '@/lib/chat-scope';
 
 interface GitHubRepo {
   id: number;
@@ -15,6 +16,11 @@ interface GitHubRepo {
   description: string | null;
   default_branch: string;
   html_url: string;
+  permissions?: {
+    pull?: boolean;
+    push?: boolean;
+    admin?: boolean;
+  };
 }
 
 interface RepoContent {
@@ -37,7 +43,10 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
   onSelectRepo,
 }) => {
   const { githubPAT } = useSettingsStore();
+  const panels = usePanelStore((s) => s.panels);
   const focusedPanelId = usePanelStore((s) => s.focusedPanelId);
+  const focusedPanel = panels.find((panel) => panel.id === focusedPanelId);
+  const scopeId = getChatScopeId(focusedPanelId, focusedPanel?.conversationId ?? null);
   const setPreviewOpen = usePreviewStore((s) => s.setOpen);
   const setPreviewView = usePreviewStore((s) => s.setView);
   const {
@@ -48,8 +57,8 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
     setRepoFileTree,
     setRepoFileTreeStatus,
   } = useChangesetStore();
-  const { activeRepo, isRepoMode } = getChangeset(focusedPanelId);
-  const clearActiveRepo = () => clearActiveRepoForPanel(focusedPanelId);
+  const { activeRepo, isRepoMode } = getChangeset(scopeId);
+  const clearActiveRepo = () => clearActiveRepoForPanel(scopeId);
   const [repos, setRepos] = useState<GitHubRepo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -274,8 +283,9 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
       name: repoName,
       defaultBranch: repo.default_branch,
       fullName: repo.full_name,
+      permissions: repo.permissions,
     };
-    const changeCount = getChangeCount(focusedPanelId);
+    const changeCount = getChangeCount(scopeId);
     const switchingRepos = activeRepo?.fullName && activeRepo.fullName !== nextRepo.fullName;
 
     if (switchingRepos && changeCount > 0) {
@@ -284,24 +294,23 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
       }
     }
 
-    switchActiveRepo(focusedPanelId, nextRepo);
-    setRepoFileTreeStatus(focusedPanelId, 'loading');
-    setPreviewView(focusedPanelId, 'repo');
-    setPreviewOpen(focusedPanelId, true);
+    switchActiveRepo(scopeId, nextRepo);
+    setRepoFileTreeStatus(scopeId, 'loading');
+    setPreviewView(scopeId, 'repo');
 
     // Fetch full file tree so the agent knows what files exist
     if (githubPAT) {
       const result = await fetchRepoFileTreeResult(githubPAT, owner, repoName, repo.default_branch);
       if (result.error) {
-        setRepoFileTreeStatus(focusedPanelId, 'error', result.error);
+        setRepoFileTreeStatus(scopeId, 'error', result.error);
       } else {
-        setRepoFileTree(focusedPanelId, result.paths);
+        setRepoFileTree(scopeId, result.paths);
       }
     }
   };
 
   const handleDisableEditMode = () => {
-    const changeCount = getChangeCount(focusedPanelId);
+    const changeCount = getChangeCount(scopeId);
     if (changeCount > 0) {
       if (!window.confirm(`You have ${changeCount} pending change${changeCount > 1 ? 's' : ''}. Disable editing mode? Changes will be lost.`)) {
         return;

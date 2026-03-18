@@ -1,61 +1,17 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { GhostIcon } from './GhostIcon';
-import { usePanelId } from '@/contexts/PanelContext';
-import { useChangesetStore } from '@/stores/changeset-store';
+import React, { useMemo } from 'react';
+import { useChatScopeId } from '@/contexts/PanelContext';
+import { useChangesetStore, type FileChange } from '@/stores/changeset-store';
 import type { ToolActivityEvent } from './AgentActivity';
+import { Terminal, FileCode, GitBranch, Search, Pencil, Brain, FileText } from 'lucide-react';
 
 type Activity = 'thinking' | 'reading' | 'editing' | 'planning' | 'writing';
 
-const PHRASES: Record<Activity, string[]> = {
-  thinking: [
-    'Thinking...',
-    'Pondering...',
-    'Mulling it over...',
-    'Combobulating...',
-    'Noodling on it...',
-    'Connecting the dots...',
-    'Brewing ideas...',
-    'Cogitating...',
-    'Percolating...',
-    'Assembling thoughts...',
-  ],
-  reading: [
-    'Reading file...',
-    'Scanning code...',
-    'Parsing contents...',
-    'Studying the source...',
-    'Absorbing context...',
-    'Inspecting the codebase...',
-    'Peeking at the code...',
-    'Deciphering...',
-  ],
-  editing: [
-    'Editing file...',
-    'Applying changes...',
-    'Rewriting code...',
-    'Staging edits...',
-    'Sculpting code...',
-    'Tinkering...',
-    'Refactoring...',
-    'Patching things up...',
-    'Wiring it together...',
-  ],
-  planning: [
-    'Planning changes...',
-    'Drafting a plan...',
-    'Mapping it out...',
-    'Strategizing...',
-    'Sketching the approach...',
-    'Charting the course...',
-  ],
-  writing: [
-    'Writing...',
-    'Composing...',
-    'Crafting a response...',
-    'Putting pen to paper...',
-    'Stringing words together...',
-    'Articulating...',
-  ],
+const ACTIVITY_CONFIG: Record<Activity, { label: string; Icon: typeof Terminal }> = {
+  thinking: { label: 'Reasoning', Icon: Brain },
+  reading: { label: 'Reading files', Icon: Search },
+  editing: { label: 'Applying changes', Icon: Pencil },
+  planning: { label: 'Planning changes', Icon: GitBranch },
+  writing: { label: 'Generating code', Icon: FileCode },
 };
 
 interface ActivityIndicatorProps {
@@ -73,24 +29,22 @@ interface ActivityIndicatorProps {
     }>;
   }>;
   toolActivity?: ToolActivityEvent[];
+  statusLabel?: string;
 }
 
 function parseToolActivityInput(input: string): Record<string, unknown> {
   const trimmed = input.trim();
-  if (!trimmed) {
-    return {};
-  }
-
+  if (!trimmed) return {};
   try {
     const parsed = JSON.parse(trimmed);
-    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {};
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
   } catch {
     return {};
   }
 }
 
 function deriveActivity(messages: ActivityIndicatorProps['messages'], toolActivity?: ToolActivityEvent[]): Activity {
-  const latestToolActivity = [...(toolActivity || [])].reverse().find((event) => event.status === 'running') ??
+  const latestToolActivity = (toolActivity || []).findLast((event) => event.status === 'running') ??
     [...(toolActivity || [])].at(-1);
 
   if (latestToolActivity) {
@@ -101,93 +55,145 @@ function deriveActivity(messages: ActivityIndicatorProps['messages'], toolActivi
     if (['create_html_file', 'create_css_file', 'create_js_file', 'create_react_component'].includes(name)) return 'writing';
   }
 
-  // Look at the last assistant message's tool invocations
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
     if (msg.role !== 'assistant') continue;
-
     const toolInvocations =
       (msg.parts?.filter((p) => p.type === 'tool-invocation').map((p) => p.toolInvocation)) ||
-      msg.toolInvocations ||
-      [];
-
+      msg.toolInvocations || [];
     if (toolInvocations.length === 0) break;
-
-    // Check the last tool invocation
     const last = toolInvocations[toolInvocations.length - 1];
     const name = last?.toolName || '';
-
     if (name === 'read_repo_file') return 'reading';
     if (name === 'propose_changes') return 'planning';
     if (['edit_repo_file', 'create_repo_file', 'delete_repo_file', 'batch_edit_repo_files'].includes(name)) return 'editing';
     if (['create_html_file', 'create_css_file', 'create_js_file', 'create_react_component'].includes(name)) return 'writing';
-
     break;
   }
-
   return 'thinking';
 }
 
-function deriveEditingPhrase(toolActivity: ToolActivityEvent[] | undefined, stagedCount: number): string | null {
-  const latestToolActivity = [...(toolActivity || [])].reverse().find((event) => event.status === 'running') ??
-    [...(toolActivity || [])].at(-1);
+/** Extract file paths being edited from the current tool activity */
+function extractActiveFiles(toolActivity?: ToolActivityEvent[]): string[] {
+  if (!toolActivity?.length) return [];
+  const files: string[] = [];
+  const running = toolActivity.filter((e) => e.status === 'running');
+  const events = running.length > 0 ? running : toolActivity.slice(-3);
 
-  if (latestToolActivity?.tool === 'batch_edit_repo_files') {
-    const parsed = parseToolActivityInput(latestToolActivity.input);
-    const changes = Array.isArray(parsed.changes) ? parsed.changes : [];
-    if (changes.length > 1) {
-      return `Editing ${changes.length} files...`;
+  for (const event of events) {
+    const parsed = parseToolActivityInput(event.input);
+    if (parsed.path && typeof parsed.path === 'string') {
+      files.push(parsed.path);
+    }
+    if (Array.isArray(parsed.changes)) {
+      for (const change of parsed.changes) {
+        if (change && typeof change === 'object' && 'path' in change && typeof (change as Record<string, unknown>).path === 'string') {
+          files.push((change as Record<string, unknown>).path as string);
+        }
+      }
+    }
+    if (parsed.filename && typeof parsed.filename === 'string') {
+      files.push(parsed.filename);
     }
   }
-
-  if (stagedCount > 1) {
-    return `Editing ${stagedCount} files...`;
-  }
-
-  if (stagedCount === 1) {
-    return 'Editing 1 file...';
-  }
-
-  return null;
+  return [...new Set(files)];
 }
 
-export const ActivityIndicator: React.FC<ActivityIndicatorProps> = ({ isStreaming, messages, toolActivity }) => {
-  const [phraseIndex, setPhraseIndex] = useState(0);
-  const panelId = usePanelId();
-  const stagedCount = useChangesetStore((state) => state.getStagedCount(panelId));
+/** Shorten a file path to just the filename or last 2 segments */
+function shortenPath(path: string): string {
+  const parts = path.split('/');
+  if (parts.length <= 2) return path;
+  return parts.slice(-2).join('/');
+}
+
+function FileChip({ path, status }: { path: string; status: 'active' | 'done' }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-muted/60 border border-border/40 text-[11px] font-mono text-muted-foreground">
+      <span
+        className={`h-1.5 w-1.5 rounded-full shrink-0 ${
+          status === 'active' ? 'bg-amber-400 animate-pulse' : 'bg-emerald-500'
+        }`}
+      />
+      <FileText className="h-3 w-3 shrink-0 opacity-50" />
+      <span className="truncate max-w-[180px]">{shortenPath(path)}</span>
+    </span>
+  );
+}
+
+export const ActivityIndicator: React.FC<ActivityIndicatorProps> = ({ isStreaming, messages, toolActivity, statusLabel }) => {
+  const scopeId = useChatScopeId();
+  const stagedPaths = useChangesetStore((state) => {
+    const scope = state.panelChangesets[scopeId];
+    if (!scope) return '';
+    // Return a stable string to avoid infinite re-renders from new array refs
+    return Object.values(scope.changes)
+      .filter((c): c is FileChange => !!c && c.staged === true)
+      .map((c) => c.path)
+      .sort()
+      .join('\n');
+  });
 
   const activity = useMemo(
     () => (isStreaming ? deriveActivity(messages, toolActivity) : 'thinking'),
     [isStreaming, messages, toolActivity],
   );
-  const phrases = PHRASES[activity];
-  const editingPhrase = useMemo(
-    () => (activity === 'editing' ? deriveEditingPhrase(toolActivity, stagedCount) : null),
-    [activity, stagedCount, toolActivity],
-  );
 
-  // Rotate phrases every 3 seconds
-  useEffect(() => {
-    if (!isStreaming) {
-      setPhraseIndex(0);
-      return;
-    }
-    // Pick a random starting index
-    setPhraseIndex(Math.floor(Math.random() * phrases.length));
-    const interval = setInterval(() => {
-      setPhraseIndex((prev) => (prev + 1) % phrases.length);
-    }, 3000);
-    return () => clearInterval(interval);
-  }, [isStreaming, phrases]);
+  const activeFiles = useMemo(
+    () => extractActiveFiles(toolActivity),
+    [toolActivity],
+  );
 
   if (!isStreaming) return null;
 
-  const phrase = editingPhrase || phrases[phraseIndex % phrases.length];
+  const config = ACTIVITY_CONFIG[activity];
+  const Icon = config.Icon;
+  const label = statusLabel || config.label;
+
+  // Combine active files from tool activity + staged changes
+  const allFiles = useMemo(() => {
+    const set = new Set(activeFiles);
+    if (stagedPaths) {
+      for (const p of stagedPaths.split('\n')) {
+        set.add(p);
+      }
+    }
+    return [...set];
+  }, [activeFiles, stagedPaths]);
 
   return (
-    <div className="flex items-center justify-center gap-2 py-1.5 text-xs text-muted-foreground animate-in fade-in duration-300">
-      <GhostIcon size={12} />
-      <span className="transition-opacity duration-500">{phrase}</span>
+    <div className="flex flex-col items-center gap-1.5 py-2 animate-in fade-in duration-200">
+      {/* Status line */}
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <span className="relative flex h-2 w-2">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60 opacity-75" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+        </span>
+        <Icon className="h-3 w-3 opacity-70" />
+        <span className="font-medium tracking-tight">{label}</span>
+        {allFiles.length > 0 && (
+          <span className="text-muted-foreground/50 font-mono text-[10px]">
+            {allFiles.length} {allFiles.length === 1 ? 'file' : 'files'}
+          </span>
+        )}
+      </div>
+
+      {/* File chips */}
+      {allFiles.length > 0 && (
+        <div className="flex flex-wrap items-center justify-center gap-1 max-w-[480px]">
+          {allFiles.slice(0, 5).map((path) => (
+            <FileChip
+              key={path}
+              path={path}
+              status={activeFiles.includes(path) ? 'active' : 'done'}
+            />
+          ))}
+          {allFiles.length > 5 && (
+            <span className="text-[10px] text-muted-foreground/60 font-mono px-1">
+              +{allFiles.length - 5} more
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 };

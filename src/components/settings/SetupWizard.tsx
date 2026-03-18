@@ -1,28 +1,26 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { ArrowRight, ArrowLeft, Eye, EyeOff, CheckCircle, Loader2, Zap, Code } from 'lucide-react';
+import { ArrowRight, ArrowLeft, Eye, EyeOff, Check, Loader2, KeyRound, Info, Lock, Settings } from 'lucide-react';
 import { useSettingsStore, type Provider } from '@/stores/settings-store';
-import { PROVIDERS, PROVIDER_ORDER, CATEGORY_LABELS, type ProviderCategory } from '@/lib/providers';
+import { PROVIDERS, PROVIDER_ORDER } from '@/lib/providers';
 import { validateApiKey } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { getLocalProviderRuntimeDetails, parseLocalProviderRuntimeError } from '@/lib/local-provider-runtime';
 
-// Group providers by category
-function groupProvidersByCategory() {
-  const groups: Record<ProviderCategory, Provider[]> = {
-    featured: [],
-    'open-source': [],
-    specialized: [],
-  };
-  for (const p of PROVIDER_ORDER) {
-    const info = PROVIDERS[p];
-    if (info && groups[info.category]) {
-      groups[info.category].push(p);
-    }
-  }
-  return groups;
-}
+const STEP_LABELS = ['Provider', 'API Key', 'Finish'] as const;
 
-const CATEGORY_ORDER: ProviderCategory[] = ['featured', 'open-source', 'specialized'];
+const PROVIDER_HELP_URLS: Partial<Record<Provider, string>> = {
+  openai: 'platform.openai.com/api-keys',
+  anthropic: 'console.anthropic.com/settings/keys',
+  google: 'aistudio.google.com/apikey',
+  xai: 'console.x.ai',
+  groq: 'console.groq.com/keys',
+  deepseek: 'platform.deepseek.com/api_keys',
+  mistral: 'console.mistral.ai/api-keys',
+  together: 'api.together.xyz/settings/api-keys',
+  cerebras: 'cloud.cerebras.ai/platform',
+  openrouter: 'openrouter.ai/keys',
+  sambanova: 'cloud.sambanova.ai/apis',
+};
 
 export const SetupWizard: React.FC = () => {
   const { isSetupComplete, completeSetup, setActiveProvider, updateProviderConfig } = useSettingsStore();
@@ -41,9 +39,6 @@ export const SetupWizard: React.FC = () => {
   const contentRef = useRef<HTMLDivElement>(null);
   const [contentHeight, setContentHeight] = useState<number | undefined>(undefined);
 
-  const providerGroups = groupProvidersByCategory();
-
-  // Measure content height after each render for smooth container resizing
   const measureHeight = useCallback(() => {
     if (contentRef.current) {
       const inner = contentRef.current.querySelector('[data-step-content]') as HTMLElement;
@@ -55,12 +50,10 @@ export const SetupWizard: React.FC = () => {
 
   useEffect(() => {
     measureHeight();
-    // Re-measure on window resize
     window.addEventListener('resize', measureHeight);
     return () => window.removeEventListener('resize', measureHeight);
   }, [step, measureHeight, validatedModels, validationError]);
 
-  // Small delay to let new step render before measuring
   useEffect(() => {
     const t = setTimeout(measureHeight, 20);
     return () => clearTimeout(t);
@@ -144,8 +137,6 @@ export const SetupWizard: React.FC = () => {
     }
   };
 
-  const availableModels = validatedModels.length > 0 ? validatedModels : providerInfo.models;
-
   const handleComplete = () => {
     setActiveProvider(selectedProvider);
     updateProviderConfig(selectedProvider, {
@@ -155,17 +146,81 @@ export const SetupWizard: React.FC = () => {
     completeSetup();
   };
 
-  const badgeIcon = (badge?: string) => {
-    if (badge === 'Free') return <Zap className="h-3 w-3" />;
-    if (badge === 'Fast') return <Zap className="h-3 w-3" />;
-    if (badge === 'Coding') return <Code className="h-3 w-3" />;
-    return null;
+  const maskedKey = apiKey
+    ? `${apiKey.slice(0, 3)}${'*'.repeat(Math.min(20, apiKey.length - 6))}${apiKey.slice(-3)}`
+    : '';
+
+  // --- Step indicator ---
+  const renderStepIndicator = () => (
+    <div className="flex items-center justify-center gap-0">
+      {STEP_LABELS.map((label, i) => {
+        const isActive = i === step;
+        const isCompleted = i < step;
+        return (
+          <React.Fragment key={label}>
+            {i > 0 && (
+              <div
+                className={cn(
+                  'w-10 h-px',
+                  isCompleted ? 'bg-[hsl(var(--success))]' : 'bg-[#2F2F2F]'
+                )}
+              />
+            )}
+            <div className="flex flex-col items-center gap-1.5">
+              <div
+                className={cn(
+                  'w-7 h-7 rounded-full flex items-center justify-center text-xs font-medium transition-colors',
+                  isActive && 'bg-primary text-primary-foreground',
+                  isCompleted && 'bg-[hsl(var(--success))]',
+                  !isActive && !isCompleted && 'border border-[#2F2F2F] text-[#6A6A6A]'
+                )}
+              >
+                {isCompleted ? (
+                  <Check className="h-3.5 w-3.5 text-black" />
+                ) : (
+                  <span>{i + 1}</span>
+                )}
+              </div>
+              <span
+                className={cn(
+                  'text-[11px] font-medium',
+                  isActive ? 'text-foreground' : 'text-[#6A6A6A]'
+                )}
+              >
+                {label}
+              </span>
+            </div>
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+
+  // --- Provider icon square ---
+  const ProviderIcon: React.FC<{ provider: Provider; size?: number }> = ({ provider, size = 40 }) => {
+    const info = PROVIDERS[provider];
+    return (
+      <div
+        className="flex items-center justify-center rounded-[10px] font-semibold text-white flex-shrink-0"
+        style={{
+          width: size,
+          height: size,
+          backgroundColor: info.iconColor,
+          fontSize: size * 0.4,
+        }}
+      >
+        {info.iconLetter}
+      </div>
+    );
   };
 
+  // --- Step 0: Provider selection ---
   const renderProviderGrid = () => (
     <div key="provider" data-step-content>
-      <h2 className="text-xl font-semibold mb-1">Choose your provider</h2>
-      <p className="text-sm text-muted-foreground mb-5">Select which LLM you'd like to use.</p>
+      <h2 className="text-base font-semibold mb-1" style={{ fontFamily: "'JetBrains Mono', monospace", letterSpacing: '-0.3px' }}>
+        Choose your provider
+      </h2>
+      <p className="text-[13px] text-[#8A8A8A] mb-5">Select which LLM you'd like to use.</p>
       {localRuntimeDetails && (
         <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/8 px-4 py-3">
           <p className="text-sm font-medium text-foreground">{localRuntimeDetails.summary}</p>
@@ -173,59 +228,38 @@ export const SetupWizard: React.FC = () => {
           <div className="mt-2 text-xs font-mono text-foreground">{localRuntimeDetails.command}</div>
         </div>
       )}
-      <div className="space-y-5 max-h-[400px] overflow-y-auto px-1">
-        {CATEGORY_ORDER.map((cat) => {
-          const providers = providerGroups[cat];
-          if (providers.length === 0) return null;
+      <div className="flex flex-col gap-2.5 max-h-[400px] overflow-y-auto px-0.5">
+        {PROVIDER_ORDER.map((p) => {
+          const info = PROVIDERS[p];
+          const isSelected = selectedProvider === p;
           return (
-            <div key={cat}>
-              <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-2">
-                {CATEGORY_LABELS[cat]}
-              </p>
-              <div className="grid grid-cols-2 gap-2">
-                {providers.map((p) => {
-                  const info = PROVIDERS[p];
-                  const isSelected = selectedProvider === p;
-                  return (
-                    <button
-                      key={p}
-                      onClick={() => handleProviderSelect(p)}
-                      className={cn(
-                        'relative flex flex-col p-3 rounded-xl border text-left transition-all duration-200',
-                        'hover:scale-[1.02] active:scale-[0.98]',
-                        isSelected
-                          ? 'border-foreground bg-foreground/[0.04] shadow-sm ring-1 ring-foreground/10'
-                          : 'border-border hover:border-foreground/20 hover:bg-muted/50'
-                      )}
-                    >
-                      {info.badge && (
-                        <span className={cn(
-                          'absolute top-2 right-2 flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full',
-                          info.badge === 'Free' && 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
-                          info.badge === 'Fast' && 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
-                          info.badge === 'Coding' && 'bg-blue-500/10 text-blue-600 dark:text-blue-400',
-                        )}>
-                          {badgeIcon(info.badge)}
-                          {info.badge}
-                        </span>
-                      )}
-                      <p className="text-sm font-medium flex items-center gap-1.5">
-
-                        {info.label}
-                      </p>
-                      <p className="text-[11px] text-muted-foreground mt-0.5 leading-tight pr-8">
-                        {info.description}
-                      </p>
-                      {isSelected && (
-                        <div className="absolute bottom-2 right-2">
-                          <CheckCircle className="h-4 w-4 text-foreground" />
-                        </div>
-                      )}
-                    </button>
-                  );
-                })}
+            <button
+              key={p}
+              onClick={() => handleProviderSelect(p)}
+              className={cn(
+                'flex items-center gap-3.5 p-4 rounded-xl border text-left transition-all duration-200',
+                'hover:scale-[1.01] active:scale-[0.99]',
+                isSelected
+                  ? 'border-primary border-[1.5px] bg-primary/[0.06]'
+                  : 'border-[#2F2F2F] bg-[#1E1E1E] hover:border-[#444]'
+              )}
+            >
+              <ProviderIcon provider={p} />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-foreground">{info.label}</p>
+                <p className="text-[11px] text-[#8A8A8A] mt-0.5 leading-tight truncate">{info.description}</p>
               </div>
-            </div>
+              <div
+                className={cn(
+                  'w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 transition-colors',
+                  isSelected
+                    ? 'bg-primary'
+                    : 'border border-[#2F2F2F]'
+                )}
+              >
+                {isSelected && <Check className="h-3 w-3 text-primary-foreground" />}
+              </div>
+            </button>
           );
         })}
       </div>
@@ -236,44 +270,84 @@ export const SetupWizard: React.FC = () => {
       )}
       <button
         onClick={handleContinueFromProvider}
-        className="mt-5 w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-foreground text-background text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all duration-200"
+        className="mt-5 w-full flex items-center justify-center gap-2 h-11 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all duration-200"
       >
         Continue <ArrowRight className="h-4 w-4" />
+      </button>
+      <button
+        onClick={() => completeSetup()}
+        className="mt-3 w-full text-center text-xs text-[#6A6A6A] hover:text-foreground transition-colors duration-200"
+      >
+        Skip this step
       </button>
     </div>
   );
 
+  // --- Step 1: API key entry ---
   const renderApiKeyStep = () => (
-    <div key="apikey" data-step-content>
-      <h2 className="text-xl font-semibold mb-1">Enter your API key</h2>
-      <p className="text-sm text-muted-foreground mb-6">
-        Your key for <span className="text-foreground font-medium">{providerInfo.label}</span>. Stored locally, sent securely.
-      </p>
-      <div className="relative">
-        <input
-          type={showKey ? 'text' : 'password'}
-          value={apiKey}
-          onChange={(e) => { setApiKey(e.target.value); setValidationError(''); }}
-          placeholder="sk-..."
-          autoFocus
-          className="w-full px-3 py-2.5 pr-10 rounded-xl border border-input bg-background text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-foreground/40 transition-all duration-200"
-        />
+    <div key="apikey" data-step-content className="flex flex-col gap-5">
+      <div>
+        <h2 className="text-base font-semibold mb-1" style={{ fontFamily: "'JetBrains Mono', monospace", letterSpacing: '-0.3px' }}>
+          Enter your API key
+        </h2>
+        <p className="text-[13px] text-[#8A8A8A]">
+          Paste your {providerInfo.label} API key to connect.
+        </p>
+      </div>
+
+      {/* Provider row */}
+      <div className="flex items-center gap-3 p-3 rounded-xl border border-[#2F2F2F] bg-[#1E1E1E]">
+        <ProviderIcon provider={selectedProvider} size={32} />
+        <span className="text-sm font-medium text-foreground flex-1">{providerInfo.label}</span>
         <button
-          onClick={() => setShowKey(!showKey)}
-          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+          onClick={() => goToStep(0)}
+          className="text-xs font-medium text-primary hover:underline"
         >
-          {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          Change
         </button>
       </div>
+
+      {/* Input group */}
+      <div className="flex flex-col gap-1.5">
+        <label className="text-xs text-[#6A6A6A]">API Key</label>
+        <div className="relative">
+          <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#6A6A6A]" />
+          <input
+            type={showKey ? 'text' : 'password'}
+            value={apiKey}
+            onChange={(e) => { setApiKey(e.target.value); setValidationError(''); }}
+            placeholder="sk-..."
+            autoFocus
+            className="w-full h-11 pl-9 pr-10 rounded-lg border border-[#2F2F2F] bg-[#222222] text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 transition-all duration-200"
+          />
+          <button
+            onClick={() => setShowKey(!showKey)}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6A6A6A] hover:text-foreground transition-colors"
+          >
+            {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          </button>
+        </div>
+        {PROVIDER_HELP_URLS[selectedProvider] && (
+          <div className="flex items-center gap-1.5 mt-1">
+            <Info className="h-3 w-3 text-[#6A6A6A] flex-shrink-0" />
+            <span className="text-[11px] text-[#6A6A6A]">
+              Find your API key at {PROVIDER_HELP_URLS[selectedProvider]}
+            </span>
+          </div>
+        )}
+      </div>
+
       {validationError && (
-        <p className="mt-2 text-sm text-destructive animate-in fade-in slide-in-from-top-1 duration-200">
+        <p className="text-sm text-destructive animate-in fade-in slide-in-from-top-1 duration-200">
           {validationError}
         </p>
       )}
-      <div className="flex gap-2 mt-6">
+
+      {/* Button row */}
+      <div className="flex gap-2">
         <button
           onClick={() => goToStep(0)}
-          className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-border text-sm font-medium hover:bg-muted active:scale-[0.98] transition-all duration-200"
+          className="flex items-center justify-center gap-1.5 px-4 h-11 rounded-xl border border-[#2F2F2F] bg-[#1E1E1E] text-sm font-medium text-foreground hover:bg-[#252525] active:scale-[0.98] transition-all duration-200"
         >
           <ArrowLeft className="h-3.5 w-3.5" /> Back
         </button>
@@ -281,71 +355,89 @@ export const SetupWizard: React.FC = () => {
           onClick={handleValidateAndContinue}
           disabled={!apiKey.trim() || validating}
           className={cn(
-            'flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 active:scale-[0.98]',
+            'flex-1 flex items-center justify-center gap-2 h-11 rounded-xl text-sm font-medium transition-all duration-200 active:scale-[0.98]',
             apiKey.trim() && !validating
-              ? 'bg-foreground text-background hover:opacity-90'
+              ? 'bg-primary text-primary-foreground hover:opacity-90'
               : 'bg-muted text-muted-foreground cursor-not-allowed'
           )}
         >
           {validating
             ? <><Loader2 className="h-4 w-4 animate-spin" /> Validating...</>
-            : <>Continue <ArrowRight className="h-4 w-4" /></>
+            : <>Verify & Connect <ArrowRight className="h-4 w-4" /></>
           }
         </button>
       </div>
-      <button
-        onClick={() => completeSetup()}
-        className="mt-3 w-full text-center text-xs text-muted-foreground hover:text-foreground transition-colors duration-200"
-      >
-        Skip setup for now
-      </button>
+
+      {/* Security note */}
+      <div className="flex items-center justify-center gap-1.5">
+        <Lock className="h-3 w-3 text-[#6A6A6A]" />
+        <span className="text-[11px] text-[#6A6A6A]">Keys are encrypted and stored locally</span>
+      </div>
     </div>
   );
 
-  const renderModelStep = () => (
-    <div key="model" data-step-content>
-      <h2 className="text-xl font-semibold mb-1">Select a model</h2>
-      <p className="text-sm text-muted-foreground mb-5">
-        Choose the model for <span className="text-foreground font-medium">{providerInfo.label}</span>.
-      </p>
-      <div className="grid grid-cols-1 gap-1.5 max-h-[280px] overflow-y-auto pr-1 overflow-y-auto">
-        {availableModels.map((m) => (
-          <button
-            key={m}
-            onClick={() => setSelectedModel(m)}
-            className={cn(
-              'flex items-center gap-3 p-3 rounded-xl border text-left text-sm transition-all duration-200',
-              'hover:scale-[1.01] active:scale-[0.99]',
-              selectedModel === m
-                ? 'border-foreground bg-foreground/[0.04] shadow-sm'
-                : 'border-border hover:border-foreground/20 hover:bg-muted/50'
-            )}
-          >
-            {selectedModel === m && <CheckCircle className="h-4 w-4 flex-shrink-0" />}
-            <span className={cn('font-mono text-xs', selectedModel !== m && 'ml-7')}>{m}</span>
-          </button>
-        ))}
+  // --- Step 2: Success / Finish ---
+  const renderFinishStep = () => (
+    <div key="finish" data-step-content className="flex flex-col items-center gap-6">
+      {/* Success icon */}
+      <div className="w-[72px] h-[72px] rounded-full flex items-center justify-center" style={{ backgroundColor: '#00FF8820' }}>
+        <Check className="h-8 w-8" style={{ color: '#00FF88' }} />
       </div>
-      <div className="flex gap-2 mt-6">
-        <button
-          onClick={() => goToStep(needsApiKey ? 1 : 0)}
-          className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-border text-sm font-medium hover:bg-muted active:scale-[0.98] transition-all duration-200"
+
+      <div className="text-center">
+        <h2 className="text-base font-semibold mb-1.5" style={{ fontFamily: "'JetBrains Mono', monospace", letterSpacing: '-0.3px' }}>
+          You're all set!
+        </h2>
+        <p className="text-[13px] text-[#8A8A8A]">
+          CloudChat is ready to go. Start a new thread to begin.
+        </p>
+      </div>
+
+      {/* Summary card */}
+      <div className="w-full rounded-xl border border-[#2F2F2F] bg-[#1E1E1E] p-4">
+        <span
+          className="text-[10px] font-semibold uppercase tracking-[1px]"
+          style={{ color: '#00FF88' }}
         >
-          <ArrowLeft className="h-3.5 w-3.5" /> Back
+          Connected
+        </span>
+        <div className="flex items-center gap-3 mt-2.5">
+          <ProviderIcon provider={selectedProvider} size={32} />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-foreground">{providerInfo.label}</p>
+            {apiKey && (
+              <p className="text-[11px] text-[#6A6A6A] font-mono truncate">{maskedKey}</p>
+            )}
+          </div>
+          <span
+            className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
+            style={{ backgroundColor: '#00FF8818', color: '#00FF88' }}
+          >
+            Online
+          </span>
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="w-full flex flex-col items-center gap-3">
+        <button
+          onClick={handleComplete}
+          className="w-full flex items-center justify-center gap-2 h-11 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all duration-200"
+        >
+          Start Chatting 💬
         </button>
         <button
           onClick={handleComplete}
-          className="flex-1 px-4 py-2.5 rounded-xl bg-foreground text-background text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all duration-200"
+          className="text-xs text-[#6A6A6A] hover:text-foreground transition-colors duration-200 flex items-center gap-1.5"
         >
-          Start chatting
+          <Settings className="h-3 w-3" /> Go to Settings
         </button>
       </div>
     </div>
   );
 
-  const stepRenderers = [renderProviderGrid, renderApiKeyStep, renderModelStep];
+  const stepRenderers = [renderProviderGrid, renderApiKeyStep, renderFinishStep];
 
-  // Animation class based on direction
   const animClass = isAnimating
     ? direction === 'forward'
       ? 'animate-in fade-in slide-in-from-right-4 duration-300'
@@ -353,28 +445,25 @@ export const SetupWizard: React.FC = () => {
     : '';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background">
-      <div className="w-full max-w-lg mx-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background dark:bg-[#1A1A1A]">
+      <div className="w-[480px] mx-4 pt-[60px]">
         {/* Header */}
-        <div className="text-center mb-6">
-          <h1 className="text-2xl font-bold tracking-tight">CloudChat</h1>
-          <p className="text-xs text-muted-foreground mt-1">Set up your AI chat</p>
+        <div className="text-center mb-8">
+          <h1
+            className="text-2xl font-semibold tracking-tight"
+            style={{ fontFamily: "'JetBrains Mono', monospace", letterSpacing: '-0.5px' }}
+          >
+            CloudChat
+          </h1>
+          <p className="text-xs text-[#8A8A8A] mt-1">Set up your AI chat</p>
         </div>
 
         {/* Step indicator */}
-        <div className="flex items-center justify-center gap-2 mb-6">
-          {[0, 1, 2].map((s) => (
-            <div
-              key={s}
-              className={cn(
-                'h-1 rounded-full transition-all duration-400 ease-out',
-                s === step ? 'w-8 bg-foreground' : s < step ? 'w-4 bg-foreground/40' : 'w-4 bg-border'
-              )}
-            />
-          ))}
+        <div className="mb-8">
+          {renderStepIndicator()}
         </div>
 
-        {/* Animated container — px-2 gives room for ring/scale effects inside overflow-hidden */}
+        {/* Animated container */}
         <div
           className="transition-[height] duration-400 ease-out overflow-hidden p-2 -m-2"
           style={{ height: contentHeight ? `${contentHeight + 16}px` : 'auto' }}

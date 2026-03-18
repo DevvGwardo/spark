@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { useOrchestratorStore } from '@/stores/orchestrator-store';
+import { useOrchestratorStore, type SubTask } from '@/stores/orchestrator-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useChatStore } from '@/stores/chat-store';
 import { useKnowledgeStore } from '@/stores/knowledge-store';
@@ -52,27 +52,23 @@ export function useOrchestrator(
     loadConversations,
   } = useChatStore();
 
-  const { providers, defaultSystemPrompt } = useSettingsStore();
+  const { activeProvider, providers, defaultSystemPrompt } = useSettingsStore();
   const knowledgeContext = useKnowledgeStore((s) => s.getActiveContext());
 
   const {
-    planningProvider,
-    planningModel,
-    codingProvider,
-    codingModel,
     maxSubAgents,
+    maxRetries,
+    fallbackModel,
     updateOrchestration,
     updateTask,
     resetOrchestration,
   } = useOrchestratorStore();
 
-  const planningConfig = providers[planningProvider];
-  const codingConfig = providers[codingProvider];
-  const planningReasoningEffort = supportsReasoningEffort(planningProvider, planningModel)
-    ? planningConfig.reasoningEffort
-    : undefined;
-  const codingReasoningEffort = supportsReasoningEffort(codingProvider, codingModel)
-    ? codingConfig.reasoningEffort
+  // Use the active chat provider for all orchestration phases
+  const providerConfig = providers[activeProvider];
+  const activeModel = providerConfig.model;
+  const reasoningEffort = supportsReasoningEffort(activeProvider, activeModel)
+    ? providerConfig.reasoningEffort
     : undefined;
 
   // Build system prompt with knowledge context
@@ -97,6 +93,13 @@ export function useOrchestrator(
   const autoSendingQueuedRef = useRef<string | null>(null);
 
   const abortControllerRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
+
+  // Track component mount status
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   // Load messages from IndexedDB when conversationId changes
   useEffect(() => {
@@ -175,7 +178,7 @@ export function useOrchestrator(
 
               case 'plan': {
                 const plan = parsed.plan as string;
-                const tasks = parsed.tasks as Array<{ id: string; description: string }>;
+                const tasks = parsed.tasks as Array<{ id: string; description: string; toolProfile?: string }>;
 
                 updateOrchestration({
                   phase: 'executing',
@@ -184,6 +187,9 @@ export function useOrchestrator(
                     id: t.id,
                     description: t.description,
                     status: 'pending' as const,
+                    retryCount: 0,
+                    maxRetries: maxRetries,
+                    toolProfile: (t.toolProfile as SubTask['toolProfile']) || 'general',
                   })),
                 });
                 break;
@@ -198,7 +204,61 @@ export function useOrchestrator(
               case 'subtask_complete': {
                 const taskId = parsed.taskId as string;
                 const result = parsed.result as string | undefined;
-                updateTask(taskId, { status: 'done', result });
+                updateTask(taskId, { status: 'done', result, completedAt: Date.now() });
+                break;
+              }
+
+              case 'subtask_failed': {
+                const taskId = parsed.taskId as string;
+                const error = parsed.error as string | undefined;
+                const retryCount = parsed.retryCount as number;
+                const taskMaxRetries = parsed.maxRetries as number;
+                updateTask(taskId, {
+                  status: 'failed',
+                  error,
+                  retryCount,
+                  maxRetries: taskMaxRetries,
+                  completedAt: Date.now(),
+                });
+                break;
+              }
+
+              case 'subtask_retry': {
+                const taskId = parsed.taskId as string;
+                const retryCount = parsed.retryCount as number;
+                const model = parsed.model as string | undefined;
+                updateTask(taskId, {
+                  status: 'retrying',
+                  retryCount,
+                  ...(model ? { model } : {}),
+                });
+                break;
+              }
+
+              case 'subtask_cancelled': {
+                const taskId = parsed.taskId as string;
+                updateTask(taskId, { status: 'cancelled', completedAt: Date.now() });
+                break;
+              }
+
+              case 'registry_update': {
+                const registry = parsed.registry as Array<{
+                  id: string;
+                  status: string;
+                  retryCount: number;
+                  model?: string;
+                  startedAt?: number;
+                  elapsedMs?: number;
+                }>;
+                for (const entry of registry) {
+                  updateTask(entry.id, {
+                    status: entry.status as SubTask['status'],
+                    retryCount: entry.retryCount,
+                    ...(entry.model ? { model: entry.model } : {}),
+                    ...(entry.startedAt != null ? { startedAt: entry.startedAt } : {}),
+                    ...(entry.elapsedMs != null ? { elapsedMs: entry.elapsedMs } : {}),
+                  });
+                }
                 break;
               }
 
@@ -242,7 +302,7 @@ export function useOrchestrator(
 
       return assistantContent;
     },
-    [updateOrchestration, updateTask]
+    [updateOrchestration, updateTask, maxRetries]
   );
 
   const queueMessage = useCallback((contentOverride?: string) => {
@@ -260,12 +320,8 @@ export function useOrchestrator(
     const content = rawContent.trim();
     if (!content) return;
 
-    // Check API keys for both planning and coding providers
-    if (!planningConfig?.apiKey) {
-      setApiKeyModalOpen(true);
-      return;
-    }
-    if (!codingConfig?.apiKey) {
+    // Check API key for the active provider
+    if (!providerConfig?.apiKey) {
       setApiKeyModalOpen(true);
       return;
     }
@@ -280,8 +336,8 @@ export function useOrchestrator(
     if (!convId) {
       try {
         convId = await createConversation(
-          planningProvider,
-          planningModel,
+          activeProvider,
+          activeModel,
           defaultSystemPrompt
         );
         createdConversationId = convId;
@@ -347,18 +403,16 @@ export function useOrchestrator(
         headers: { 'Content-Type': 'application/json' },
         signal: abortController.signal,
         body: JSON.stringify({
-          orchestrator_provider: planningProvider,
-          orchestrator_model: planningModel,
-          orchestrator_api_key: planningConfig.apiKey,
-          ...(planningReasoningEffort ? { orchestrator_reasoning_effort: planningReasoningEffort } : {}),
-          sub_agent_provider: codingProvider,
-          sub_agent_model: codingModel,
-          sub_agent_api_key: codingConfig.apiKey,
-          ...(codingReasoningEffort ? { sub_agent_reasoning_effort: codingReasoningEffort } : {}),
+          provider: activeProvider,
+          model: activeModel,
+          api_key: providerConfig.apiKey,
+          ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
           messages: allMessages,
           system_prompt: fullSystemPrompt,
           max_sub_agents: maxSubAgents,
-          temperature: planningConfig.temperature,
+          max_retries: maxRetries,
+          fallback_model: fallbackModel || undefined,
+          temperature: providerConfig.temperature,
         }),
       });
 
@@ -415,15 +469,13 @@ export function useOrchestrator(
   }, [
     conversationId,
     messages,
-    planningProvider,
-    planningModel,
-    planningConfig,
-    planningReasoningEffort,
-    codingProvider,
-    codingModel,
-    codingConfig,
-    codingReasoningEffort,
+    providerConfig,
+    activeProvider,
+    activeModel,
+    reasoningEffort,
     maxSubAgents,
+    maxRetries,
+    fallbackModel,
     fullSystemPrompt,
     apiBaseUrl,
     defaultSystemPrompt,
@@ -473,6 +525,7 @@ export function useOrchestrator(
   }, [isStreaming, queuedMessages, sendMessage]);
 
   useEffect(() => {
+    if (!mountedRef.current) return;
     if (isStreaming) return;
     if (queuedMessages.length === 0) return;
     if (autoSendingQueuedRef.current) return;
@@ -482,7 +535,7 @@ export function useOrchestrator(
 
     void (async () => {
       const sent = await sendMessage(nextMessage.content);
-      if (sent) {
+      if (sent && mountedRef.current) {
         setQueuedMessages((prev) => removeQueuedMessage(prev, nextMessage.id));
       }
       autoSendingQueuedRef.current = null;
@@ -502,10 +555,10 @@ export function useOrchestrator(
 
   const handleRegenerateWrapper = useCallback(async () => {
     // Remove the last assistant message
-    const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant');
+    const lastAssistant = messages.findLast((m) => m.role === 'assistant');
     if (!lastAssistant) return;
 
-    const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+    const lastUser = messages.findLast((m) => m.role === 'user');
     if (!lastUser) return;
 
     // Remove both last assistant and last user from state
@@ -521,6 +574,7 @@ export function useOrchestrator(
   // Auto-trigger send when regenerate sets draft input
   const regeneratePendingRef = useRef(false);
   useEffect(() => {
+    if (!mountedRef.current) return;
     if (regeneratePendingRef.current && draftInput) {
       regeneratePendingRef.current = false;
       handleSend();
@@ -544,7 +598,7 @@ export function useOrchestrator(
     setApiKeyModalOpen,
     providerUnavailableOpen,
     setProviderUnavailableOpen,
-    activeProvider: planningProvider,
-    activeModel: planningModel,
+    activeProvider,
+    activeModel,
   };
 }

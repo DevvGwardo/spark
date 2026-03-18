@@ -18,6 +18,8 @@ interface ConversationRow {
   created_at: string;
   updated_at: string;
   pinned: number;
+  lines_added: number;
+  lines_removed: number;
 }
 
 interface MessageRow {
@@ -67,6 +69,8 @@ function toConversation(row: ConversationRow): Conversation {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     pinned: row.pinned === 1,
+    linesAdded: row.lines_added || 0,
+    linesRemoved: row.lines_removed || 0,
   };
 }
 
@@ -124,66 +128,65 @@ function ensureParentDirectory(dbPath: string) {
   mkdirSync(dirname(dbPath), { recursive: true });
 }
 
-function createChatStore(dbPath = resolveDbPath()) {
-  ensureParentDirectory(dbPath);
+const SCHEMA_SQL = `
+  PRAGMA foreign_keys = ON;
 
-  const db = new DatabaseSync(dbPath);
-  db.exec(`
-    PRAGMA foreign_keys = ON;
+  CREATE TABLE IF NOT EXISTS conversations (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    system_prompt TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    pinned INTEGER NOT NULL DEFAULT 0,
+    lines_added INTEGER NOT NULL DEFAULT 0,
+    lines_removed INTEGER NOT NULL DEFAULT 0
+  );
 
-    CREATE TABLE IF NOT EXISTS conversations (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      provider TEXT NOT NULL,
-      model TEXT NOT NULL,
-      system_prompt TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      pinned INTEGER NOT NULL DEFAULT 0
-    );
+  CREATE TABLE IF NOT EXISTS messages (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    token_count INTEGER,
+    error TEXT,
+    parts_json TEXT,
+    tool_invocations_json TEXT
+  );
 
-    CREATE TABLE IF NOT EXISTS messages (
-      id TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-      role TEXT NOT NULL,
-      content TEXT NOT NULL,
-      timestamp TEXT NOT NULL,
-      token_count INTEGER,
-      error TEXT,
-      parts_json TEXT,
-      tool_invocations_json TEXT
-    );
+  CREATE INDEX IF NOT EXISTS idx_messages_conversation_id
+    ON messages (conversation_id);
 
-    CREATE INDEX IF NOT EXISTS idx_messages_conversation_id
-      ON messages (conversation_id);
+  CREATE INDEX IF NOT EXISTS idx_messages_conversation_timestamp
+    ON messages (conversation_id, timestamp);
 
-    CREATE INDEX IF NOT EXISTS idx_messages_conversation_timestamp
-      ON messages (conversation_id, timestamp);
+  CREATE TABLE IF NOT EXISTS conversation_files (
+    conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+    data_json TEXT NOT NULL
+  );
+`;
 
-    CREATE TABLE IF NOT EXISTS conversation_files (
-      conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
-      data_json TEXT NOT NULL
-    );
-  `);
-
-  const listConversationsStmt = db.prepare(`
-    SELECT id, title, provider, model, system_prompt, created_at, updated_at, pinned
+const SQL = {
+  listConversations: `
+    SELECT id, title, provider, model, system_prompt, created_at, updated_at, pinned, lines_added, lines_removed
     FROM conversations
     ORDER BY pinned DESC, updated_at DESC
-  `);
-  const insertConversationStmt = db.prepare(`
+  `,
+  insertConversation: `
     INSERT INTO conversations (
-      id, title, provider, model, system_prompt, created_at, updated_at, pinned
+      id, title, provider, model, system_prompt, created_at, updated_at, pinned, lines_added, lines_removed
     ) VALUES (
-      :id, :title, :provider, :model, :systemPrompt, :createdAt, :updatedAt, :pinned
+      :id, :title, :provider, :model, :systemPrompt, :createdAt, :updatedAt, :pinned, :linesAdded, :linesRemoved
     )
-  `);
-  const getConversationStmt = db.prepare(`
-    SELECT id, title, provider, model, system_prompt, created_at, updated_at, pinned
+  `,
+  getConversation: `
+    SELECT id, title, provider, model, system_prompt, created_at, updated_at, pinned, lines_added, lines_removed
     FROM conversations
     WHERE id = :id
-  `);
-  const updateConversationStmt = db.prepare(`
+  `,
+  updateConversation: `
     UPDATE conversations
     SET
       title = :title,
@@ -192,15 +195,16 @@ function createChatStore(dbPath = resolveDbPath()) {
       system_prompt = :systemPrompt,
       created_at = :createdAt,
       updated_at = :updatedAt,
-      pinned = :pinned
+      pinned = :pinned,
+      lines_added = :linesAdded,
+      lines_removed = :linesRemoved
     WHERE id = :id
-  `);
-  const deleteConversationStmt = db.prepare(`
+  `,
+  deleteConversation: `
     DELETE FROM conversations
     WHERE id = :id
-  `);
-
-  const listMessagesStmt = db.prepare(`
+  `,
+  listMessages: `
     SELECT
       id,
       conversation_id,
@@ -214,8 +218,8 @@ function createChatStore(dbPath = resolveDbPath()) {
     FROM messages
     WHERE conversation_id = :conversationId
     ORDER BY timestamp ASC
-  `);
-  const insertMessageStmt = db.prepare(`
+  `,
+  saveMessage: `
     INSERT INTO messages (
       id,
       conversation_id,
@@ -237,8 +241,17 @@ function createChatStore(dbPath = resolveDbPath()) {
       :partsJson,
       :toolInvocationsJson
     )
-  `);
-  const getMessageStmt = db.prepare(`
+    ON CONFLICT(id) DO UPDATE SET
+      conversation_id = excluded.conversation_id,
+      role = excluded.role,
+      content = excluded.content,
+      timestamp = excluded.timestamp,
+      token_count = excluded.token_count,
+      error = excluded.error,
+      parts_json = excluded.parts_json,
+      tool_invocations_json = excluded.tool_invocations_json
+  `,
+  getMessage: `
     SELECT
       id,
       conversation_id,
@@ -251,8 +264,8 @@ function createChatStore(dbPath = resolveDbPath()) {
       tool_invocations_json
     FROM messages
     WHERE id = :id
-  `);
-  const updateMessageStmt = db.prepare(`
+  `,
+  updateMessage: `
     UPDATE messages
     SET
       conversation_id = :conversationId,
@@ -264,34 +277,87 @@ function createChatStore(dbPath = resolveDbPath()) {
       parts_json = :partsJson,
       tool_invocations_json = :toolInvocationsJson
     WHERE id = :id
-  `);
-  const deleteMessagesByConversationStmt = db.prepare(`
+  `,
+  deleteMessagesByConversation: `
     DELETE FROM messages
     WHERE conversation_id = :conversationId
-  `);
-
-  const getConversationFilesStmt = db.prepare(`
+  `,
+  getConversationFiles: `
     SELECT conversation_id, data_json
     FROM conversation_files
     WHERE conversation_id = :conversationId
-  `);
-  const saveConversationFilesStmt = db.prepare(`
+  `,
+  saveConversationFiles: `
     INSERT INTO conversation_files (conversation_id, data_json)
     VALUES (:conversationId, :dataJson)
     ON CONFLICT(conversation_id) DO UPDATE SET data_json = excluded.data_json
-  `);
-  const deleteConversationFilesStmt = db.prepare(`
+  `,
+  deleteConversationFiles: `
     DELETE FROM conversation_files
     WHERE conversation_id = :conversationId
-  `);
+  `,
+} as const;
+
+type StmtCache = Record<keyof typeof SQL, ReturnType<DatabaseSync['prepare']>>;
+
+function isStatementFinalized(error: unknown): boolean {
+  return error instanceof Error && /finalized/i.test(error.message);
+}
+
+function createChatStore(dbPath = resolveDbPath()) {
+  ensureParentDirectory(dbPath);
+
+  let db: DatabaseSync;
+  let stmts: StmtCache;
+
+  function migrateColumns() {
+    // Add lines_added/lines_removed columns if they don't exist (for existing databases)
+    const cols = db.prepare("PRAGMA table_info(conversations)").all() as Array<{ name: string }>;
+    const colNames = new Set(cols.map((c) => c.name));
+    if (!colNames.has('lines_added')) {
+      db.exec('ALTER TABLE conversations ADD COLUMN lines_added INTEGER NOT NULL DEFAULT 0');
+    }
+    if (!colNames.has('lines_removed')) {
+      db.exec('ALTER TABLE conversations ADD COLUMN lines_removed INTEGER NOT NULL DEFAULT 0');
+    }
+  }
+
+  function openDb() {
+    db = new DatabaseSync(dbPath);
+    db.exec(SCHEMA_SQL);
+    migrateColumns();
+    stmts = Object.fromEntries(
+      Object.entries(SQL).map(([key, sql]) => [key, db.prepare(sql)]),
+    ) as StmtCache;
+  }
+
+  function stmt<K extends keyof typeof SQL>(key: K): StmtCache[K] {
+    return stmts[key];
+  }
+
+  /** Run a callback, auto-reconnecting once if statements have been finalized. */
+  function run<T>(fn: () => T): T {
+    try {
+      return fn();
+    } catch (error) {
+      if (isStatementFinalized(error)) {
+        console.warn('[chat-store] Prepared statement finalized — reconnecting to database');
+        openDb();
+        return fn();
+      }
+      throw error;
+    }
+  }
+
+  openDb();
 
   return {
     listConversations(): Conversation[] {
-      return (listConversationsStmt.all() as ConversationRow[]).map(toConversation);
+      return run(() => (stmt('listConversations').all() as ConversationRow[]).map(toConversation));
     },
 
     addConversation(conversation: Conversation) {
-      insertConversationStmt.run({
+      run(() => stmt('insertConversation').run({
         id: conversation.id,
         title: conversation.title,
         provider: conversation.provider,
@@ -300,105 +366,124 @@ function createChatStore(dbPath = resolveDbPath()) {
         createdAt: conversation.createdAt,
         updatedAt: conversation.updatedAt,
         pinned: conversation.pinned ? 1 : 0,
-      });
+        linesAdded: conversation.linesAdded ?? 0,
+        linesRemoved: conversation.linesRemoved ?? 0,
+      }));
     },
 
     updateConversation(id: string, fields: Partial<Conversation>) {
-      const existing = getConversationStmt.get({ id }) as ConversationRow | undefined;
-      if (!existing) {
-        return;
-      }
+      run(() => {
+        const existing = stmt('getConversation').get({ id }) as ConversationRow | undefined;
+        if (!existing) {
+          return;
+        }
 
-      const next = {
-        ...toConversation(existing),
-        ...fields,
-      };
+        const next = {
+          ...toConversation(existing),
+          ...fields,
+        };
 
-      updateConversationStmt.run({
-        id,
-        title: next.title,
-        provider: next.provider,
-        model: next.model,
-        systemPrompt: next.systemPrompt,
-        createdAt: next.createdAt,
-        updatedAt: next.updatedAt,
-        pinned: next.pinned ? 1 : 0,
+        stmt('updateConversation').run({
+          id,
+          title: next.title,
+          provider: next.provider,
+          model: next.model,
+          systemPrompt: next.systemPrompt,
+          createdAt: next.createdAt,
+          updatedAt: next.updatedAt,
+          pinned: next.pinned ? 1 : 0,
+          linesAdded: next.linesAdded ?? 0,
+          linesRemoved: next.linesRemoved ?? 0,
+        });
       });
     },
 
     deleteConversation(id: string) {
-      deleteConversationStmt.run({ id });
+      run(() => stmt('deleteConversation').run({ id }));
     },
 
     listMessages(conversationId: string): Message[] {
-      return (listMessagesStmt.all({ conversationId }) as MessageRow[]).map(toMessage);
+      return run(() => (stmt('listMessages').all({ conversationId }) as MessageRow[]).map(toMessage));
     },
 
     addMessage(message: Message) {
-      insertMessageStmt.run({
-        id: message.id,
-        conversationId: message.conversationId,
-        role: message.role,
-        content: message.content,
-        timestamp: message.timestamp,
-        tokenCount: typeof message.tokenCount === 'number' ? message.tokenCount : null,
-        error: message.error ?? null,
-        partsJson: message.parts ? JSON.stringify(message.parts) : null,
-        toolInvocationsJson: message.toolInvocations ? JSON.stringify(message.toolInvocations) : null,
+      run(() => {
+        const existingConversation = stmt('getConversation').get({ id: message.conversationId }) as ConversationRow | undefined;
+        if (!existingConversation) {
+          throw new Error(`Conversation ${message.conversationId} not found`);
+        }
+
+        stmt('saveMessage').run({
+          id: message.id,
+          conversationId: message.conversationId,
+          role: message.role,
+          content: message.content,
+          timestamp: message.timestamp,
+          tokenCount: typeof message.tokenCount === 'number' ? message.tokenCount : null,
+          error: message.error ?? null,
+          partsJson: message.parts ? JSON.stringify(message.parts) : null,
+          toolInvocationsJson: message.toolInvocations ? JSON.stringify(message.toolInvocations) : null,
+        });
       });
     },
 
     updateMessage(id: string, fields: Partial<Message>) {
-      const existing = getMessageStmt.get({ id }) as MessageRow | undefined;
-      if (!existing) {
-        return;
-      }
+      run(() => {
+        const existing = stmt('getMessage').get({ id }) as MessageRow | undefined;
+        if (!existing) {
+          return;
+        }
 
-      const next = {
-        ...toMessage(existing),
-        ...fields,
-      };
+        const next = {
+          ...toMessage(existing),
+          ...fields,
+        };
 
-      updateMessageStmt.run({
-        id,
-        conversationId: next.conversationId,
-        role: next.role,
-        content: next.content,
-        timestamp: next.timestamp,
-        tokenCount: typeof next.tokenCount === 'number' ? next.tokenCount : null,
-        error: next.error ?? null,
-        partsJson: next.parts ? JSON.stringify(next.parts) : null,
-        toolInvocationsJson: next.toolInvocations ? JSON.stringify(next.toolInvocations) : null,
+        stmt('updateMessage').run({
+          id,
+          conversationId: next.conversationId,
+          role: next.role,
+          content: next.content,
+          timestamp: next.timestamp,
+          tokenCount: typeof next.tokenCount === 'number' ? next.tokenCount : null,
+          error: next.error ?? null,
+          partsJson: next.parts ? JSON.stringify(next.parts) : null,
+          toolInvocationsJson: next.toolInvocations ? JSON.stringify(next.toolInvocations) : null,
+        });
       });
     },
 
     deleteMessagesByConversation(conversationId: string) {
-      deleteMessagesByConversationStmt.run({ conversationId });
+      run(() => stmt('deleteMessagesByConversation').run({ conversationId }));
     },
 
     getConversationFiles(conversationId: string): ConversationFiles | undefined {
-      const row = getConversationFilesStmt.get({ conversationId }) as ConversationFilesRow | undefined;
-      if (!row) {
-        return undefined;
-      }
+      return run(() => {
+        const row = stmt('getConversationFiles').get({ conversationId }) as ConversationFilesRow | undefined;
+        if (!row) {
+          return undefined;
+        }
 
-      return parseJson<ConversationFiles | undefined>(row.data_json, undefined);
+        return parseJson<ConversationFiles | undefined>(row.data_json, undefined);
+      });
     },
 
     saveConversationFiles(data: ConversationFiles) {
-      const existing = getConversationStmt.get({ id: data.conversationId }) as ConversationRow | undefined;
-      if (!existing) {
-        throw new Error(`Conversation ${data.conversationId} not found`);
-      }
+      run(() => {
+        const existing = stmt('getConversation').get({ id: data.conversationId }) as ConversationRow | undefined;
+        if (!existing) {
+          throw new Error(`Conversation ${data.conversationId} not found`);
+        }
 
-      saveConversationFilesStmt.run({
-        conversationId: data.conversationId,
-        dataJson: JSON.stringify(data),
+        stmt('saveConversationFiles').run({
+          conversationId: data.conversationId,
+          dataJson: JSON.stringify(data),
+        });
       });
     },
 
     deleteConversationFiles(conversationId: string) {
-      deleteConversationFilesStmt.run({ conversationId });
+      run(() => stmt('deleteConversationFiles').run({ conversationId }));
     },
   };
 }
@@ -407,7 +492,11 @@ export function registerChatStoreRoutes(app: express.Express) {
   const chatStore = createChatStore();
 
   app.get('/functions/v1/chat-store/conversations', (_req, res) => {
-    res.json({ conversations: chatStore.listConversations() });
+    try {
+      res.json({ conversations: chatStore.listConversations() });
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+    }
   });
 
   app.post('/functions/v1/chat-store/conversations', (req, res) => {
@@ -443,7 +532,11 @@ export function registerChatStoreRoutes(app: express.Express) {
   });
 
   app.get('/functions/v1/chat-store/conversations/:id/messages', (req, res) => {
-    res.json({ messages: chatStore.listMessages(req.params.id) });
+    try {
+      res.json({ messages: chatStore.listMessages(req.params.id) });
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+    }
   });
 
   app.post('/functions/v1/chat-store/messages', (req, res) => {
@@ -486,12 +579,7 @@ export function registerChatStoreRoutes(app: express.Express) {
   app.get('/functions/v1/chat-store/conversations/:id/files', (req, res) => {
     try {
       const files = chatStore.getConversationFiles(req.params.id);
-      if (!files) {
-        res.status(404).json({ error: 'Conversation files not found' });
-        return;
-      }
-
-      res.json({ conversationFiles: files });
+      res.json({ conversationFiles: files ?? null });
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
     }

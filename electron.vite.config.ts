@@ -12,7 +12,7 @@ export default defineConfig({
       rollupOptions: {
         // Externalize server code so it loads at runtime from the packaged app
         external: [
-          'express', 'cors', '@ai-sdk/openai', '@ai-sdk/anthropic', 'ai', 'zod'
+          'express', 'cors', '@ai-sdk/openai', '@ai-sdk/anthropic', 'ai', 'zod', 'node-pty'
         ]
       }
     }

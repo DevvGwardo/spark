@@ -1,4 +1,5 @@
 import { getApiBaseUrl } from '@/lib/api';
+import type { PullRequestRecord } from '@/lib/pull-request';
 
 export interface Conversation {
   id: string;
@@ -9,6 +10,8 @@ export interface Conversation {
   createdAt: string;
   updatedAt: string;
   pinned?: boolean;
+  linesAdded?: number;
+  linesRemoved?: number;
 }
 
 export interface Message {
@@ -31,6 +34,11 @@ export interface ConversationFiles {
       name: string;
       defaultBranch: string;
       fullName: string;
+      permissions?: {
+        pull?: boolean;
+        push?: boolean;
+        admin?: boolean;
+      };
       baseOwner?: string;
       baseName?: string;
       baseFullName?: string;
@@ -38,6 +46,7 @@ export interface ConversationFiles {
       issue?: {
         number: number;
         title: string;
+        body?: string | null;
         url: string;
         state: string;
         labels: string[];
@@ -45,6 +54,7 @@ export interface ConversationFiles {
       } | null;
     } | null;
     isRepoMode: boolean;
+    pullRequest?: PullRequestRecord | null;
     changes: Record<string, { path: string; action: 'create' | 'edit' | 'delete'; content: string; originalContent?: string; staged?: boolean }>;
     repoFileTree: string[];
     repoFileCache?: Record<string, string>;
@@ -78,7 +88,7 @@ let backendMode: BackendMode = 'unknown';
 let migrationPromise: Promise<void> | null = null;
 
 function isFallbackableServerError(error: unknown): boolean {
-  return error instanceof TypeError || (error instanceof HttpError && [404, 405, 501, 503].includes(error.status));
+  return error instanceof TypeError || (error instanceof HttpError && [404, 405, 500, 501, 503].includes(error.status));
 }
 
 function createStoresIfNeeded(db: IDBDatabase) {
@@ -164,7 +174,7 @@ const legacyDb = {
       return all.sort((a, b) => {
         if (a.pinned && !b.pinned) return -1;
         if (!a.pinned && b.pinned) return 1;
-        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       });
     },
     async add(conversation: Conversation): Promise<void> {
@@ -334,12 +344,12 @@ const serverDb = {
   },
   conversationFiles: {
     async get(conversationId: string): Promise<ConversationFiles | undefined> {
-      const response = await requestServer<{ conversationFiles: ConversationFiles }>(
+      const response = await requestServer<{ conversationFiles: ConversationFiles | null }>(
         `/functions/v1/chat-store/conversations/${encodeURIComponent(conversationId)}/files`,
         undefined,
         { allowNotFound: true },
       );
-      return response?.conversationFiles;
+      return response?.conversationFiles ?? undefined;
     },
     async save(data: ConversationFiles): Promise<void> {
       await requestServer(`/functions/v1/chat-store/conversations/${encodeURIComponent(data.conversationId)}/files`, {

@@ -6,6 +6,7 @@ export type AppTab = 'chat' | 'github' | 'analyzer' | 'knowledge';
 export interface PendingPanelPrompt {
   content: string;
   autoSend: boolean;
+  repoEditIntentOverride?: boolean;
 }
 
 interface UIState {
@@ -14,16 +15,24 @@ interface UIState {
   settingsOpen: boolean;
   setupWizardOpen: boolean;
   repoBrowserOpen: boolean;
+  terminalOpen: boolean;
+  terminalHeight: number;
   activeTab: AppTab;
   pendingPanelPrompts: Record<string, PendingPanelPrompt | undefined>;
+  preservePanelRepoHandoffs: Record<string, boolean | undefined>;
   setSidebarOpen: (v: boolean) => void;
   toggleSidebar: () => void;
   setSidebarWidth: (w: number) => void;
   setSettingsOpen: (v: boolean) => void;
   setSetupWizardOpen: (v: boolean) => void;
   setRepoBrowserOpen: (v: boolean) => void;
+  setTerminalOpen: (v: boolean) => void;
+  toggleTerminal: () => void;
+  setTerminalHeight: (h: number) => void;
   queuePanelPrompt: (panelId: string, prompt: PendingPanelPrompt) => void;
   clearPanelPrompt: (panelId: string) => void;
+  markPanelRepoHandoff: (panelId: string) => void;
+  clearPanelRepoHandoff: (panelId: string) => void;
   setActiveTab: (tab: AppTab) => void;
 }
 
@@ -31,18 +40,24 @@ export const useUIStore = create<UIState>()(
   persist(
     (set) => ({
       sidebarOpen: false,
-      sidebarWidth: 256,
+      sidebarWidth: 350,
       settingsOpen: false,
       setupWizardOpen: false,
       repoBrowserOpen: false,
+      terminalOpen: false,
+      terminalHeight: 300,
       activeTab: 'chat',
       pendingPanelPrompts: {},
+      preservePanelRepoHandoffs: {},
       setSidebarOpen: (v) => set({ sidebarOpen: v }),
       toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
       setSidebarWidth: (w) => set({ sidebarWidth: Math.max(200, Math.min(480, w)) }),
       setSettingsOpen: (v) => set({ settingsOpen: v }),
       setSetupWizardOpen: (v) => set({ setupWizardOpen: v }),
       setRepoBrowserOpen: (v) => set({ repoBrowserOpen: v }),
+      setTerminalOpen: (v) => set({ terminalOpen: v }),
+      toggleTerminal: () => set((s) => ({ terminalOpen: !s.terminalOpen })),
+      setTerminalHeight: (h) => set({ terminalHeight: Math.max(150, Math.min(600, h)) }),
       queuePanelPrompt: (panelId, prompt) =>
         set((state) => ({
           pendingPanelPrompts: {
@@ -58,11 +73,26 @@ export const useUIStore = create<UIState>()(
             pendingPanelPrompts: nextPrompts,
           };
         }),
+      markPanelRepoHandoff: (panelId) =>
+        set((state) => ({
+          preservePanelRepoHandoffs: {
+            ...state.preservePanelRepoHandoffs,
+            [panelId]: true,
+          },
+        })),
+      clearPanelRepoHandoff: (panelId) =>
+        set((state) => {
+          const nextHandoffs = { ...state.preservePanelRepoHandoffs };
+          delete nextHandoffs[panelId];
+          return {
+            preservePanelRepoHandoffs: nextHandoffs,
+          };
+        }),
       setActiveTab: (tab) => set({ activeTab: tab }),
     }),
     {
       name: 'ui-store',
-      partialize: (state) => ({ sidebarOpen: state.sidebarOpen, sidebarWidth: state.sidebarWidth }),
+      partialize: (state) => ({ sidebarOpen: state.sidebarOpen, sidebarWidth: state.sidebarWidth, terminalHeight: state.terminalHeight }),
     }
   )
 );

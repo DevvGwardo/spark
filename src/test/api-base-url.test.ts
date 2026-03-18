@@ -14,7 +14,7 @@ describe('getApiBaseUrl', () => {
     expect(getApiPortFromUrl('http://localhost:5173/')).toBeNull();
   });
 
-  it('prefers the preload-exposed Electron API port', () => {
+  it('prefers the URL query param over the preload-exposed Electron API port', () => {
     window.electronAPI = {
       apiPort: 3555,
       platform: 'darwin',
@@ -25,6 +25,21 @@ describe('getApiBaseUrl', () => {
       },
     };
     window.history.replaceState({}, '', '/?apiPort=4312');
+
+    // URL param wins — Electron main process sets it on every launch
+    expect(getApiBaseUrl()).toBe('http://localhost:4312');
+  });
+
+  it('falls back to the preload-exposed Electron API port when no URL param', () => {
+    window.electronAPI = {
+      apiPort: 3555,
+      platform: 'darwin',
+      versions: {
+        electron: '1',
+        node: '1',
+        chrome: '1',
+      },
+    };
 
     expect(getApiBaseUrl()).toBe('http://localhost:3555');
   });

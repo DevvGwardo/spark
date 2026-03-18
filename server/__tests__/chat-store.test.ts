@@ -214,7 +214,76 @@ describe('chat store routes', () => {
       expect(deletedMessagesBody.messages).toEqual([]);
 
       const deletedFilesResponse = await fetch(`${server.url}/functions/v1/chat-store/conversations/conv-2/files`);
-      expect(deletedFilesResponse.status).toBe(404);
+      const deletedFilesBody = await deletedFilesResponse.json();
+      expect(deletedFilesResponse.status).toBe(200);
+      expect(deletedFilesBody).toEqual({ conversationFiles: null });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('treats duplicate message writes as idempotent updates', async () => {
+    const server = await createTestServer();
+
+    try {
+      await fetch(`${server.url}/functions/v1/chat-store/conversations`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          id: 'conv-3',
+          title: 'Idempotent thread',
+          provider: 'minimax',
+          model: 'text-01',
+          systemPrompt: 'System prompt',
+          createdAt: '2026-03-12T12:00:00.000Z',
+          updatedAt: '2026-03-12T12:00:00.000Z',
+          pinned: false,
+        }),
+      });
+
+      const firstWrite = await fetch(`${server.url}/functions/v1/chat-store/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          id: 'msg-3',
+          conversationId: 'conv-3',
+          role: 'assistant',
+          content: 'draft',
+          timestamp: '2026-03-12T12:01:00.000Z',
+        }),
+      });
+      expect(firstWrite.status).toBe(201);
+
+      const secondWrite = await fetch(`${server.url}/functions/v1/chat-store/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          id: 'msg-3',
+          conversationId: 'conv-3',
+          role: 'assistant',
+          content: 'final answer',
+          timestamp: '2026-03-12T12:02:00.000Z',
+          toolInvocations: [{ toolName: 'edit_repo_file', state: 'result' }],
+        }),
+      });
+      expect(secondWrite.status).toBe(201);
+
+      const messagesResponse = await fetch(`${server.url}/functions/v1/chat-store/conversations/conv-3/messages`);
+      const messagesBody = await messagesResponse.json();
+      expect(messagesBody.messages).toEqual([
+        expect.objectContaining({
+          id: 'msg-3',
+          content: 'final answer',
+          timestamp: '2026-03-12T12:02:00.000Z',
+          toolInvocations: [{ toolName: 'edit_repo_file', state: 'result' }],
+        }),
+      ]);
     } finally {
       await server.close();
     }

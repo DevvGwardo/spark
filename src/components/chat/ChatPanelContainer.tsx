@@ -4,7 +4,7 @@ import { usePanelStore } from '@/stores/panel-store';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 
 interface ChatPanelContainerProps {
-  onOpenPR?: (panelId: string) => void;
+  onOpenPR?: (panelId: string, mode?: 'create' | 'review') => void;
 }
 
 export const ChatPanelContainer: React.FC<ChatPanelContainerProps> = ({ onOpenPR }) => {
@@ -14,7 +14,7 @@ export const ChatPanelContainer: React.FC<ChatPanelContainerProps> = ({ onOpenPR
   if (panels.length === 1) {
     return (
       <ChatPanel
-        key={`${panels[0].id}:${panels[0].conversationId ?? 'new'}`}
+        key={panels[0].id}
         panelId={panels[0].id}
         conversationId={panels[0].conversationId}
         isFocused={true}
@@ -27,7 +27,7 @@ export const ChatPanelContainer: React.FC<ChatPanelContainerProps> = ({ onOpenPR
   return (
     <ResizablePanelGroup direction="horizontal">
       {panels.map((panel, i) => (
-        <React.Fragment key={`${panel.id}:${panel.conversationId ?? 'new'}`}>
+        <React.Fragment key={panel.id}>
           {i > 0 && <ResizableHandle withHandle />}
           <ResizablePanel minSize={20}>
             <ChatPanel

@@ -376,4 +376,65 @@ describe('ChatArea auto-scroll', () => {
       expect(scrollEl.scrollTop).toBe(560);
     });
   });
+
+  it('waits until streaming stops before showing the approval banner', async () => {
+    const messages = [
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: 'I have a proposed plan.',
+        toolInvocations: [
+          {
+            toolName: 'propose_changes',
+          },
+        ],
+      },
+    ];
+
+    const { rerender } = render(
+      <PanelProvider value="panel-1">
+        <ChatArea
+          conversationId="conv-1"
+          messages={messages}
+          input=""
+          setInput={() => {}}
+          handleSend={() => {}}
+          handleQuickSend={() => {}}
+          handleStop={() => {}}
+          handleRegenerate={() => {}}
+          isStreaming
+          error={null}
+          apiKeyModalOpen={false}
+          setApiKeyModalOpen={() => {}}
+          activeProvider="hermes"
+          activeModel="meta-llama/llama-4-maverick"
+        />
+      </PanelProvider>,
+    );
+
+    expect(screen.queryByTestId('change-approval-banner')).not.toBeInTheDocument();
+
+    rerender(
+      <PanelProvider value="panel-1">
+        <ChatArea
+          conversationId="conv-1"
+          messages={messages}
+          input=""
+          setInput={() => {}}
+          handleSend={() => {}}
+          handleQuickSend={() => {}}
+          handleStop={() => {}}
+          handleRegenerate={() => {}}
+          isStreaming={false}
+          error={null}
+          apiKeyModalOpen={false}
+          setApiKeyModalOpen={() => {}}
+          activeProvider="hermes"
+          activeModel="meta-llama/llama-4-maverick"
+        />
+      </PanelProvider>,
+    );
+
+    expect(await screen.findByTestId('change-approval-banner')).toBeInTheDocument();
+  });
 });

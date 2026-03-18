@@ -4,6 +4,7 @@ import { Clock, Wrench } from 'lucide-react';
 interface StreamingStatusBarProps {
   isStreaming: boolean;
   toolCallCount: number;
+  statusLabel?: string;
   embedded?: boolean;
 }
 
@@ -17,6 +18,7 @@ function formatElapsed(seconds: number): string {
 export const StreamingStatusBar: React.FC<StreamingStatusBarProps> = ({
   isStreaming,
   toolCallCount,
+  statusLabel,
   embedded = false,
 }) => {
   const [elapsed, setElapsed] = useState(0);
@@ -50,6 +52,11 @@ export const StreamingStatusBar: React.FC<StreamingStatusBarProps> = ({
           <Clock className="h-3 w-3" />
           <span className="tabular-nums">{formatElapsed(elapsed)}</span>
         </div>
+        {statusLabel ? (
+          <div className="min-w-0 flex-1 px-3 text-center">
+            <span className="truncate text-[11px] text-foreground/80">{statusLabel}</span>
+          </div>
+        ) : <div className="flex-1" />}
         <div className="flex items-center gap-1.5">
           <Wrench className="h-3 w-3" />
           <span className="tabular-nums">{toolCallCount} tool{toolCallCount !== 1 ? 's' : ''}</span>
@@ -68,6 +75,11 @@ export const StreamingStatusBar: React.FC<StreamingStatusBarProps> = ({
           <Clock className="h-3 w-3" />
           <span className="tabular-nums">{formatElapsed(elapsed)}</span>
         </div>
+        {statusLabel ? (
+          <div className="min-w-0 flex-1 px-3 text-center">
+            <span className="truncate text-[11px] text-foreground/80">{statusLabel}</span>
+          </div>
+        ) : <div className="flex-1" />}
         <div className="flex items-center gap-1.5">
           <Wrench className="h-3 w-3" />
           <span className="tabular-nums">{toolCallCount} tool{toolCallCount !== 1 ? 's' : ''}</span>

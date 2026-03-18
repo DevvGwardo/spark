@@ -44,6 +44,21 @@ describe('ActivityIndicator', () => {
       </PanelProvider>,
     );
 
-    expect(screen.getByText('Editing 2 files...')).toBeInTheDocument();
+    expect(screen.getByText('Applying changes')).toBeInTheDocument();
+    expect(screen.getByText('2 files')).toBeInTheDocument();
+  });
+
+  it('prefers an explicit streaming status label when provided', () => {
+    render(
+      <PanelProvider value="panel-1">
+        <ActivityIndicator
+          isStreaming
+          messages={[]}
+          statusLabel="Analyzing repository context..."
+        />
+      </PanelProvider>,
+    );
+
+    expect(screen.getByText('Analyzing repository context...')).toBeInTheDocument();
   });
 });

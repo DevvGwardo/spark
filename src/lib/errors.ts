@@ -141,8 +141,8 @@ export function getErrorMessage(error: unknown): string {
       if (serialized && serialized !== '{}' && serialized !== '[]') {
         return serialized;
       }
-    } catch {
-      // Ignore JSON serialization failures and fall through to the generic message.
+    } catch (err) {
+      console.warn('[errors] Failed to JSON.stringify error object', err);
     }
   }
 

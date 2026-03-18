@@ -1,3 +1,12 @@
+import {
+  normalizeBatchEditRepoFilesArgs,
+  normalizeCreateRepoFileArgs,
+  normalizeDeleteRepoFileArgs,
+  normalizeEditRepoFileArgs,
+  normalizeProposeChangesArgs,
+} from './repo-tool-args';
+import { isRecord } from './utils';
+
 export interface PseudoToolInvocation {
   toolName: string;
   args: Record<string, unknown>;
@@ -34,6 +43,7 @@ const TOOL_CALL_PATTERN = /\[?(propose_changes|batch_edit_repo_files|edit_repo_f
 const FENCED_CODE_BLOCK_PATTERN = /```([A-Za-z0-9_+-]+)?\n([\s\S]*?)```/g;
 const PATH_CANDIDATE_PATTERN = /[A-Za-z0-9_./-]+\.[A-Za-z0-9]{1,8}/g;
 const HTML_PARAGRAPH_PATTERN = /<p>[\s\S]*?<\/p>/gi;
+const JSON_BLOCK_START_PATTERN = /(^|\n)([ \t]*)([\[{])/g;
 const HTML_ENTITY_REPLACEMENTS: Array<[RegExp, string]> = [
   [/&lt;/gi, '<'],
   [/&gt;/gi, '>'],
@@ -41,6 +51,11 @@ const HTML_ENTITY_REPLACEMENTS: Array<[RegExp, string]> = [
   [/&#39;/gi, '\''],
   [/&amp;/gi, '&'],
 ];
+const JSON_WRAPPER_KEYS = ['parameters', 'arguments', 'input', 'payload', 'data'] as const;
+const JSON_CHANGE_KEYS = ['changes', 'edits', 'files', 'operations', 'items'] as const;
+const JSON_PATH_KEYS = ['path', 'filePath', 'filepath', 'filename', 'file', 'target', 'targetPath'] as const;
+const JSON_CONTENT_KEYS = ['content', 'contents', 'text', 'value', 'code', 'newContent'] as const;
+const JSON_ACTION_KEYS = ['action', 'type', 'kind', 'operation', 'op', 'mode'] as const;
 
 function countMatches(input: string, pattern: RegExp): number {
   const matches = input.match(pattern);
@@ -337,6 +352,207 @@ function decodeValue(rawValue: string): unknown {
   return trimmed;
 }
 
+function parseMaybeJsonValue(value: unknown): unknown {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed || (!trimmed.startsWith('{') && !trimmed.startsWith('['))) {
+    return value;
+  }
+
+  try {
+    return JSON.parse(normalizeJsonLike(trimmed));
+  } catch {
+    return value;
+  }
+}
+
+function unwrapJsonPayload(value: unknown): unknown {
+  let current = parseMaybeJsonValue(value);
+
+  for (let depth = 0; depth < 5; depth += 1) {
+    if (!isRecord(current)) {
+      return current;
+    }
+
+    const wrapperKey = JSON_WRAPPER_KEYS.find((key) => key in current);
+    if (!wrapperKey) {
+      return current;
+    }
+
+    current = parseMaybeJsonValue(current[wrapperKey]);
+  }
+
+  return current;
+}
+
+function readJsonStringField(record: Record<string, unknown>, keys: readonly string[]): string | undefined {
+  for (const key of keys) {
+    const value = parseMaybeJsonValue(record[key]);
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return undefined;
+}
+
+function readJsonArrayField(record: Record<string, unknown>, keys: readonly string[]): unknown[] | null {
+  for (const key of keys) {
+    const value = parseMaybeJsonValue(record[key]);
+    if (Array.isArray(value)) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function normalizeJsonToolName(record: Record<string, unknown>): 'create_repo_file' | 'edit_repo_file' | 'delete_repo_file' | null {
+  const explicitAction = readJsonStringField(record, JSON_ACTION_KEYS)?.toLowerCase();
+  if (explicitAction) {
+    if (['create', 'add', 'new', 'write'].includes(explicitAction)) {
+      return 'create_repo_file';
+    }
+    if (['delete', 'remove', 'del'].includes(explicitAction)) {
+      return 'delete_repo_file';
+    }
+    if (['edit', 'update', 'modify', 'replace', 'overwrite'].includes(explicitAction)) {
+      return 'edit_repo_file';
+    }
+  }
+
+  if (record.delete === true || record.deleted === true || record.remove === true || record.removed === true) {
+    return 'delete_repo_file';
+  }
+
+  return null;
+}
+
+function toInvocationArgs(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function extractJsonWrappedRepoInvocations(content: string): PseudoToolInvocation[] {
+  const invocations: PseudoToolInvocation[] = [];
+  if (!content) return invocations;
+
+  JSON_BLOCK_START_PATTERN.lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = JSON_BLOCK_START_PATTERN.exec(content)) !== null) {
+    const start = match.index + match[1].length + match[2].length;
+    const openChar = match[3];
+    const closeChar = openChar === '[' ? ']' : '}';
+    const end = findMatchingDelimiter(content, start, openChar, closeChar);
+    if (end < 0) {
+      continue;
+    }
+
+    const rawText = content.slice(start, end + 1);
+    if (!/"(?:parameters|arguments|input|payload|data)"\s*:/.test(rawText)) {
+      JSON_BLOCK_START_PATTERN.lastIndex = start + 1;
+      continue;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(normalizeJsonLike(rawText.trim()));
+    } catch {
+      JSON_BLOCK_START_PATTERN.lastIndex = start + 1;
+      continue;
+    }
+
+    const appendInvocation = (toolName: PseudoToolInvocation['toolName'], args: unknown) => {
+      invocations.push({
+        toolName,
+        args: toInvocationArgs(args),
+        rawText,
+        start,
+        end: end + 1,
+      });
+    };
+
+    if (Array.isArray(parsed)) {
+      const unwrappedItems = parsed.map((item) => unwrapJsonPayload(item)).filter(isRecord);
+      const hasBatchChanges = unwrappedItems.some((item) => !!readJsonArrayField(item, JSON_CHANGE_KEYS));
+      const hasEditLikeItems = unwrappedItems.some((item) => {
+        const toolName = normalizeJsonToolName(item);
+        return (
+          toolName === 'delete_repo_file' ||
+          toolName === 'create_repo_file' ||
+          readJsonStringField(item, JSON_CONTENT_KEYS) !== undefined
+        );
+      });
+
+      if (hasBatchChanges || hasEditLikeItems) {
+        const batchSource = hasBatchChanges && parsed.length === 1 ? parsed[0] : parsed;
+        const normalized = normalizeBatchEditRepoFilesArgs(batchSource) as { changes?: unknown };
+        if (Array.isArray(normalized.changes) && normalized.changes.some((change) => isRecord(change) && typeof change.path === 'string')) {
+          appendInvocation('batch_edit_repo_files', normalized);
+          JSON_BLOCK_START_PATTERN.lastIndex = end + 1;
+          continue;
+        }
+      }
+
+      const readPaths = unwrappedItems
+        .map((item) => readJsonStringField(item, JSON_PATH_KEYS))
+        .filter((path): path is string => !!path);
+
+      if (readPaths.length === unwrappedItems.length && readPaths.length > 0) {
+        readPaths.forEach((path) => appendInvocation('read_repo_file', { path }));
+        JSON_BLOCK_START_PATTERN.lastIndex = end + 1;
+        continue;
+      }
+    }
+
+    const unwrapped = unwrapJsonPayload(parsed);
+    if (!isRecord(unwrapped)) {
+      JSON_BLOCK_START_PATTERN.lastIndex = start + 1;
+      continue;
+    }
+
+    if (readJsonArrayField(unwrapped, ['plan'])) {
+      const normalized = normalizeProposeChangesArgs(parsed);
+      appendInvocation('propose_changes', normalized);
+      JSON_BLOCK_START_PATTERN.lastIndex = end + 1;
+      continue;
+    }
+
+    if (readJsonArrayField(unwrapped, JSON_CHANGE_KEYS)) {
+      const normalized = normalizeBatchEditRepoFilesArgs(parsed);
+      appendInvocation('batch_edit_repo_files', normalized);
+      JSON_BLOCK_START_PATTERN.lastIndex = end + 1;
+      continue;
+    }
+
+    const path = readJsonStringField(unwrapped, JSON_PATH_KEYS);
+    if (!path) {
+      JSON_BLOCK_START_PATTERN.lastIndex = start + 1;
+      continue;
+    }
+
+    const toolName = normalizeJsonToolName(unwrapped);
+    const contentValue = readJsonStringField(unwrapped, JSON_CONTENT_KEYS);
+
+    if (toolName === 'delete_repo_file') {
+      appendInvocation('delete_repo_file', normalizeDeleteRepoFileArgs(parsed));
+    } else if (toolName === 'create_repo_file') {
+      appendInvocation('create_repo_file', normalizeCreateRepoFileArgs(parsed));
+    } else if (contentValue !== undefined) {
+      appendInvocation('edit_repo_file', normalizeEditRepoFileArgs(parsed));
+    } else {
+      appendInvocation('read_repo_file', { path });
+    }
+
+    JSON_BLOCK_START_PATTERN.lastIndex = end + 1;
+  }
+
+  return invocations;
+}
+
 function parseArgumentMap(input: string): Record<string, unknown> {
   return Object.fromEntries(
     splitArgumentAssignments(input).map(({ key, rawValue }) => [key, decodeValue(rawValue)]),
@@ -397,6 +613,7 @@ export function extractPseudoToolInvocations(content: string): PseudoToolInvocat
     TOOL_CALL_PATTERN.lastIndex = end;
   }
 
+  invocations.push(...extractJsonWrappedRepoInvocations(content));
   return invocations;
 }
 
@@ -507,10 +724,17 @@ export function stripPseudoToolInvocations(content: string, isStreaming = false)
   if (invocations.length === 0 && partialStart < 0 && !hasPotentialPayloadLeak && !hasRawToolDump && !hasToolParamCodeBlocks) return content;
 
   // Build ranges to cut, expanding each to include surrounding code fences
-  const cuts: Array<{ start: number; end: number }> = invocations.map((inv) => ({
-    start: expandToCodeFence(content, inv.start),
-    end: expandPastClosingFence(content, inv.end),
-  }));
+  const cuts = Array.from(
+    new Map(
+      invocations.map((inv) => {
+        const cut = {
+          start: expandToCodeFence(content, inv.start),
+          end: expandPastClosingFence(content, inv.end),
+        };
+        return [`${cut.start}:${cut.end}`, cut] as const;
+      }),
+    ).values(),
+  ).sort((left, right) => left.start - right.start);
 
   let cursor = 0;
   let cleaned = '';

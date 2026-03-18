@@ -318,6 +318,56 @@ describe('MessageBubble', () => {
     expect(screen.getAllByText('client/src/components/BoardCard.tsx').length).toBeGreaterThan(0);
   });
 
+  it('focuses the first file with a glimmer row while a Hermes batch edit is still running', () => {
+    useChangesetStore.getState().cacheRepoFile('panel-1', 'client/src/components/KanbanBoard.tsx', ['old board line 1', 'old board line 2'].join('\n'));
+
+    const { container } = render(
+      <PanelProvider value="panel-1">
+        <MessageBubble
+          message={{
+            id: 'assistant-batch-edit-running',
+            conversationId: 'conv-1',
+            role: 'assistant',
+            content: '',
+            timestamp: new Date().toISOString(),
+          }}
+          parts={[
+            {
+              type: 'tool-invocation',
+              toolInvocation: {
+                toolCallId: 'batch-edit-1',
+                toolName: 'batch_edit_repo_files',
+                args: {
+                  changes: [
+                    {
+                      path: 'client/src/components/KanbanBoard.tsx',
+                      action: 'edit',
+                      content: ['new board line 1', 'new board line 2'].join('\n'),
+                    },
+                    {
+                      path: 'client/src/components/BoardCard.tsx',
+                      action: 'edit',
+                      content: 'new card',
+                    },
+                  ],
+                },
+                state: 'call',
+              },
+            },
+          ]}
+        />
+      </PanelProvider>,
+    );
+
+    expect(container.querySelector('.chat-tool-glimmer')).not.toBeNull();
+    expect(screen.getByText('Editing file')).toBeInTheDocument();
+    expect(screen.getByText('client/src/components/KanbanBoard.tsx')).toBeInTheDocument();
+    expect(screen.getByText('+1 more queued')).toBeInTheDocument();
+    expect(screen.getByText('2 lines')).toBeInTheDocument();
+    expect(screen.queryByText('Editing 2 files')).not.toBeInTheDocument();
+    expect(screen.queryByText('client/src/components/BoardCard.tsx')).not.toBeInTheDocument();
+  });
+
   it('strips leaked Hermes blockquote status lines while keeping the real assistant summary', () => {
     render(
       <PanelProvider value="panel-1">
@@ -328,6 +378,8 @@ describe('MessageBubble', () => {
             role: 'assistant',
             content: [
               '> “Reading file”',
+              '',
+              '> “Editing files” — `src/chat.tsx`, `src/MessageBubble.tsx`',
               '',
               '> “Done — read 58 chars”',
               '',
@@ -342,6 +394,7 @@ describe('MessageBubble', () => {
     );
 
     expect(screen.queryByText(/^Reading file$/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Editing files$/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Done — read 58 chars/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/^Thinking/i)).not.toBeInTheDocument();
     expect(screen.getByText(/I found the relevant layout shell/i)).toBeInTheDocument();
@@ -448,6 +501,101 @@ The changes are staged for review.`,
     expect(screen.getByText(/Applying the approved changes now\./)).toBeInTheDocument();
     expect(screen.getByText(/The changes are staged for review\./)).toBeInTheDocument();
     expect(screen.queryByText(/edit_repo_file/)).not.toBeInTheDocument();
+  });
+
+  it('suppresses pseudo repo write rows when the surrounding turn is read-only', () => {
+    render(
+      <PanelProvider value="panel-1">
+        <MessageBubble
+          message={{
+            id: 'assistant-read-only-pseudo-edit',
+            conversationId: 'conv-1',
+            role: 'assistant',
+            content: '',
+            timestamp: new Date().toISOString(),
+          }}
+          parts={[
+            {
+              type: 'text',
+              text: `Here is an example patch you could apply:
+
+[edit_repo_file(path="src/app.ts", content="export const updated = true;")]
+
+I did not change the repository.`,
+            },
+          ]}
+          allowPseudoRepoWrites={false}
+        />
+      </PanelProvider>,
+    );
+
+    expect(screen.queryByText('Editing file')).not.toBeInTheDocument();
+    expect(screen.queryByText('src/app.ts')).not.toBeInTheDocument();
+    expect(screen.getByText(/Here is an example patch you could apply:/i)).toBeInTheDocument();
+    expect(screen.getByText(/I did not change the repository\./i)).toBeInTheDocument();
+  });
+
+  it('renders wrapped JSON repo payload leaks as tool rows instead of raw arrays', () => {
+    render(
+      <PanelProvider value="panel-1">
+        <MessageBubble
+          message={{
+            id: 'assistant-json-wrapper-leak',
+            conversationId: 'conv-1',
+            role: 'assistant',
+            content: `The changes have been successfully applied to the repository.
+
+The optimized code for \`KanbanBoard.tsx\`, \`cards.ts\`, and \`gateway-client.ts\` has been updated.
+
+[ { "parameters": { "path": "client/src/components/KanbanBoard.tsx" } }, { "parameters": { "path": "server/src/routes/cards.ts" } }, { "parameters": { "path": "server/src/services/gateway-client.ts" } } ]
+
+[ { "parameters": { "changes": [ { "path": "client/src/components/KanbanBoard.tsx", "action": "edit", "content": "import { useState } from 'react';", "description": "Optimized KanbanBoard.tsx for better performance" }, { "path": "server/src/routes/cards.ts", "action": "edit", "content": "import { Router } from 'express';", "description": "Optimized cards.ts for better error handling" }, { "path": "server/src/services/gateway-client.ts", "action": "edit", "content": "import WebSocket from 'ws';", "description": "Optimized gateway-client.ts for better WebSocket connection management" } ] } } ]`,
+            timestamp: new Date().toISOString(),
+          }}
+        />
+      </PanelProvider>,
+    );
+
+    expect(screen.getByText(/The changes have been successfully applied to the repository\./)).toBeInTheDocument();
+    expect(screen.getAllByText('Reading file').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('client/src/components/KanbanBoard.tsx').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('server/src/routes/cards.ts').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('server/src/services/gateway-client.ts').length).toBeGreaterThan(0);
+    expect(screen.getByText('Editing 3 files')).toBeInTheDocument();
+    expect(screen.queryByText(/"parameters"/)).not.toBeInTheDocument();
+  });
+
+  it('renders direct tool invocations even when the message only has step marker parts', () => {
+    render(
+      <PanelProvider value="panel-1">
+        <MessageBubble
+          message={{
+            id: 'assistant-step-only-tools',
+            conversationId: 'conv-1',
+            role: 'assistant',
+            content: '',
+            timestamp: new Date().toISOString(),
+          }}
+          parts={[
+            {
+              type: 'step-start',
+            },
+          ]}
+          toolInvocations={[
+            {
+              toolCallId: 'server-read-1',
+              toolName: 'read_repo_file',
+              args: { path: 'src/components/chat/ChatArea.tsx' },
+              state: 'result',
+              result: 'export function ChatArea() {}',
+            },
+          ]}
+        />
+      </PanelProvider>,
+    );
+
+    expect(screen.getByText('Reading file')).toBeInTheDocument();
+    expect(screen.getByText('src/components/chat/ChatArea.tsx')).toBeInTheDocument();
   });
 
   it('renders synthesized repo edit rows from plain text file dumps even when local file tools were used', () => {

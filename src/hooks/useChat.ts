@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useChat as useAIChat, type Message as AIMessage } from '@ai-sdk/react';
+import { parseDataStreamPart } from 'ai';
 import { useShallow } from 'zustand/shallow';
 import { useChatStore } from '@/stores/chat-store';
 import { useSettingsStore } from '@/stores/settings-store';
@@ -13,12 +14,39 @@ import { fetchRepoFileTreeResult, getApiBaseUrl } from '@/lib/api';
 import { createQueuedMessage, moveQueuedMessageToFront, removeQueuedMessage, type QueuedMessage } from '@/lib/chat-queue';
 import { PROVIDERS, supportsReasoningEffort } from '@/lib/providers';
 import { useHermesStore } from '@/stores/hermes-store';
-import { findPendingProposal, getProposalDigest, type ProposalMessageLike } from '@/lib/proposed-changes';
-import { extractPseudoToolInvocations, extractTextFileEdits, getPseudoToolSourceText, type PseudoToolMessageLike } from '@/lib/pseudo-tool-calls';
-import { getRepoTurnIntentInstruction, isRepoEditIntentMessage } from '@/lib/repo-intent';
+
+import { findPendingProposal, type PendingProposal } from '@/lib/proposed-changes';
+import {
+  getRepoTurnIntentInstruction,
+  isRepoApprovalFollowUpMessage,
+  isRepoEditIntentMessage,
+  isRepoWriteMessage,
+} from '@/lib/repo-intent';
 import type { ToolActivityEvent } from '@/components/chat/AgentActivity';
 import { countContentLines, getChangeLineDelta } from '@/lib/change-diff';
 import { getErrorMessage } from '@/lib/errors';
+import { handleServerToolEvent, SERVER_EXECUTED_REPO_TOOLS, SERVER_TOOL_EVENT_TYPES, type ServerToolEvent } from '@/lib/server-tool-events';
+import { getChatScopeId } from '@/lib/chat-scope';
+import { extractPseudoToolInvocations, extractTextFileEdits, getPseudoToolSourceText } from '@/lib/pseudo-tool-calls';
+import {
+  normalizeBatchEditRepoFilesArgs,
+  normalizeCreateRepoFileArgs,
+  normalizeDeleteRepoFileArgs,
+  normalizeEditRepoFileArgs,
+  normalizeProposeChangesArgs,
+} from '@/lib/repo-tool-args';
+
+/** Delay before auto-continue fires after a stalled or interrupted response. */
+const AUTO_CONTINUE_DELAY_MS = 300;
+
+/** Debounce interval for auto-saving conversation file state to IndexedDB. */
+const AUTO_SAVE_DEBOUNCE_MS = 1000;
+
+/** Max character length for auto-generated conversation titles. */
+const CONVERSATION_TITLE_MAX_LENGTH = 50;
+
+/** Max sample paths shown when a repo file lookup fails. */
+const REPO_PATH_SAMPLE_LIMIT = 8;
 
 function normalizeRepoPath(path: string): string {
   return path
@@ -64,7 +92,7 @@ function formatMissingRepoFileError(requestedPath: string, repoPaths: string[]):
     return `Error: \`${normalizedPath}\` is not present in the selected repository. Choose a real path from the loaded repo tree instead. Possible matches:\n${suggestions.map((path) => `- ${path}`).join('\n')}`;
   }
 
-  const samplePaths = repoPaths.slice(0, 8);
+  const samplePaths = repoPaths.slice(0, REPO_PATH_SAMPLE_LIMIT);
   return `Error: \`${normalizedPath}\` is not present in the selected repository. Choose a real path from the loaded repo tree instead.${samplePaths.length > 0 ? ` Example paths:\n${samplePaths.map((path) => `- ${path}`).join('\n')}` : ''}`;
 }
 
@@ -78,6 +106,26 @@ function formatRepoTreeUnavailableError(repoStatus: 'idle' | 'loading' | 'ready'
   }
 
   return 'Error: The selected repository file tree is not available yet. Load the repo tree before reading files so you can choose a real path.';
+}
+
+function getRepoToolExistingPaths(scopeId: string): Set<string> {
+  const changeset = useChangesetStore.getState().getChangeset(scopeId);
+  return new Set<string>([
+    ...changeset.repoFileTree,
+    ...Object.keys(changeset.repoFileCache),
+    ...Object.keys(changeset.changes),
+  ]);
+}
+
+function resolveRepoWriteAction(
+  requestedAction: 'create' | 'edit' | 'delete',
+  path: string,
+  existingPaths: Set<string>,
+): 'create' | 'edit' | 'delete' {
+  if (requestedAction === 'create' && existingPaths.has(path)) {
+    return 'edit';
+  }
+  return requestedAction;
 }
 
 /**
@@ -103,7 +151,7 @@ function sanitizePartialToolCalls<T extends { parts?: Array<Record<string, unkno
           toolInvocation: {
             ...(part as { toolInvocation: Record<string, unknown> }).toolInvocation,
             state: 'result',
-            result: { error: 'Tool call was interrupted' },
+            result: { error: 'Tool call was interrupted mid-execution. Please retry this tool call to complete the operation.' },
           },
         };
       }
@@ -113,7 +161,7 @@ function sanitizePartialToolCalls<T extends { parts?: Array<Record<string, unkno
     const fixedInvocations = msg.toolInvocations?.map((inv) => {
       if (inv.state === 'partial-call' || inv.state === 'call') {
         msgDirty = true;
-        return { ...inv, state: 'result', result: { error: 'Tool call was interrupted' } };
+        return { ...inv, state: 'result', result: { error: 'Tool call was interrupted mid-execution. Please retry this tool call to complete the operation.' } };
       }
       return inv;
     });
@@ -140,6 +188,43 @@ function toStoredAIMessages(msgs: Awaited<ReturnType<typeof db.messages.getByCon
   return sanitizePartialToolCalls(restored);
 }
 
+function isServerToolEvent(value: unknown): value is ServerToolEvent {
+  return !!value && typeof value === 'object' && 'type' in value && SERVER_TOOL_EVENT_TYPES.has((value as { type: string }).type);
+}
+
+function isServerExecutedRepoToolName(toolName: unknown): toolName is string {
+  return typeof toolName === 'string' && SERVER_EXECUTED_REPO_TOOLS.has(toolName);
+}
+
+function isHermesToolActivityData(
+  value: unknown,
+): value is { type: 'hermes_tool_activity'; activity: ToolActivityEvent } {
+  return !!value
+    && typeof value === 'object'
+    && (value as { type?: unknown }).type === 'hermes_tool_activity'
+    && !!(value as { activity?: unknown }).activity
+    && typeof (value as { activity?: unknown }).activity === 'object';
+}
+
+export interface AgentStatusEvent {
+  label: string;
+  phase?: string;
+  iteration?: number;
+  elapsed_ms?: number;
+  source?: string;
+}
+
+function isAgentStatusData(
+  value: unknown,
+): value is { type: 'agent_status'; status: AgentStatusEvent } {
+  return !!value
+    && typeof value === 'object'
+    && (value as { type?: unknown }).type === 'agent_status'
+    && !!(value as { status?: unknown }).status
+    && typeof (value as { status?: unknown }).status === 'object'
+    && typeof ((value as { status: { label?: unknown } }).status.label) === 'string';
+}
+
 async function upsertStoredMessage(message: StoredMessage): Promise<void> {
   try {
     await db.messages.add(message);
@@ -147,26 +232,6 @@ async function upsertStoredMessage(message: StoredMessage): Promise<void> {
     await db.messages.update(message.id, message);
   }
 }
-
-function isProposalApprovalMessage(content: string): boolean {
-  const normalized = content.trim().toLowerCase();
-  if (!normalized) return false;
-
-  return [
-    /^(go ahead|proceed|apply|accept|approved|looks good|ship it)[.!]?$/,
-    /^(yes|yep|yeah|sure|ok|okay)(,?\s+(go ahead|proceed|apply))?[.!]?$/,
-    /^(please\s+)?(apply|continue)\b/,
-  ].some((pattern) => pattern.test(normalized));
-}
-
-const STRUCTURED_REPO_TOOL_NAMES = new Set([
-  'propose_changes',
-  'read_repo_file',
-  'edit_repo_file',
-  'create_repo_file',
-  'delete_repo_file',
-  'batch_edit_repo_files',
-]);
 
 const REPO_EDIT_TOOL_NAMES = new Set([
   'edit_repo_file',
@@ -200,31 +265,35 @@ function collectRepoWorkflowToolNames(
     toolInvocations?: Array<{ toolName?: string }>;
   },
   toolActivity: ToolActivityEvent[] = [],
+  serverToolEvents: ServerToolEvent[] = [],
 ): string[] {
   const structuredToolNames = collectStructuredToolNames(message);
-  const pseudoToolNames = extractPseudoToolInvocations(getPseudoToolSourceText(message as PseudoToolMessageLike))
-    .map((invocation) => invocation.toolName);
   const activityNames = toolActivity.map((event) => event.tool.toLowerCase());
+  const serverEventNames = serverToolEvents.flatMap((event) => {
+    switch (event.type) {
+      case 'repo_file_read':
+        return ['read_repo_file'];
+      case 'repo_file_edit':
+        return ['edit_repo_file'];
+      case 'repo_file_create':
+        return ['create_repo_file'];
+      case 'repo_file_delete':
+        return ['delete_repo_file'];
+      case 'repo_batch_edit':
+        return ['batch_edit_repo_files'];
+      case 'repo_proposal':
+        return ['propose_changes'];
+      default:
+        return [];
+    }
+  });
 
-  return [...structuredToolNames, ...pseudoToolNames, ...activityNames]
+  return [...structuredToolNames, ...activityNames, ...serverEventNames]
     .map((toolName) => toolName.toLowerCase())
     .filter((toolName) =>
-      toolName === 'propose_changes' ||
       toolName === 'read_repo_file' ||
       REPO_EDIT_TOOL_NAMES.has(toolName),
     );
-}
-
-function hasRepoContinuationProgress(
-  message: {
-    content?: string;
-    parts?: Array<{ type?: string; text?: string; toolInvocation?: { toolName?: string } }>;
-    toolInvocations?: Array<{ toolName?: string }>;
-  },
-  toolActivity: ToolActivityEvent[] = [],
-): boolean {
-  return collectRepoWorkflowToolNames(message, toolActivity)
-    .some((toolName) => toolName === 'read_repo_file' || REPO_EDIT_TOOL_NAMES.has(toolName));
 }
 
 function stalledOnRepoRead(
@@ -234,30 +303,62 @@ function stalledOnRepoRead(
     toolInvocations?: Array<{ toolName?: string }>;
   },
   toolActivity: ToolActivityEvent[] = [],
+  serverToolEvents: ServerToolEvent[] = [],
 ): boolean {
-  const orderedRepoWorkflowNames = collectRepoWorkflowToolNames(message, toolActivity);
+  const orderedRepoWorkflowNames = collectRepoWorkflowToolNames(message, toolActivity, serverToolEvents);
 
-  if (!orderedRepoWorkflowNames.includes('read_repo_file')) {
+  if (orderedRepoWorkflowNames.length === 0) {
     return false;
   }
 
-  // If the final repo workflow step in the assistant turn is still a file read,
-  // the model stopped mid-analysis or mid-editing workflow and should continue.
-  return orderedRepoWorkflowNames.at(-1) === 'read_repo_file';
+  const lastTool = orderedRepoWorkflowNames.at(-1);
+
+  // Stalled if the final repo workflow step is a file read (stopped mid-analysis)
+  if (lastTool === 'read_repo_file') {
+    return true;
+  }
+
+  return false;
 }
 
-function hasStructuredRepoToolData(message: {
-  parts?: Array<{ type?: string; toolInvocation?: { toolName?: string } }>;
-  toolInvocations?: Array<{ toolName?: string }>;
-}): boolean {
-  const partInvocations = message.parts
-    ?.filter((part) => part.type === 'tool-invocation' && part.toolInvocation?.toolName)
-    .map((part) => part.toolInvocation?.toolName);
-  const toolInvocationNames = message.toolInvocations?.map((invocation) => invocation.toolName);
-  return [...(partInvocations || []), ...(toolInvocationNames || [])]
-    .some((toolName) => !!toolName && STRUCTURED_REPO_TOOL_NAMES.has(toolName));
-}
+/**
+ * Detect when the agent describes what edit tools it will use in text
+ * but stops without actually calling them. This happens when the LLM
+ * generates text like "I'll use batch_edit_repo_files" instead of
+ * actually invoking the tool.
+ */
+function describedEditButDidNotExecute(
+  message: {
+    content?: string;
+    parts?: Array<{ type?: string; text?: string; toolInvocation?: { toolName?: string } }>;
+    toolInvocations?: Array<{ toolName?: string }>;
+  },
+  toolActivity: ToolActivityEvent[] = [],
+  serverToolEvents: ServerToolEvent[] = [],
+  editIntent: boolean,
+): boolean {
+  if (!editIntent) return false;
 
+  const content = getPseudoToolSourceText(message);
+  const pseudoInvocations = extractPseudoToolInvocations(content);
+  const recoverablePseudoEdit = pseudoInvocations.some((invocation) => REPO_EDIT_TOOL_NAMES.has(invocation.toolName));
+  const recoverableTextEdit = extractTextFileEdits(content).length > 0;
+
+  if (recoverablePseudoEdit || recoverableTextEdit) {
+    return false;
+  }
+
+  // Check if the response text mentions repo edit tools
+  const mentionsEditTools = /\b(?:batch_edit_repo_files|edit_repo_file|create_repo_file|delete_repo_file)\b/.test(content);
+  if (!mentionsEditTools) return false;
+
+  // Check if any edit tool was actually called (via structured tool invocations or tool activity)
+  const repoWorkflowNames = collectRepoWorkflowToolNames(message, toolActivity, serverToolEvents);
+  const calledEditTool = repoWorkflowNames.some((name) => REPO_EDIT_TOOL_NAMES.has(name));
+
+  // Agent described an edit tool but never actually called one
+  return !calledEditTool;
+}
 
 interface ProviderOverride {
   provider: string;
@@ -267,56 +368,70 @@ interface ProviderOverride {
 interface AutoContinueRequest {
   conversationId: string;
   content: string;
-  continuingApprovedProposal: boolean;
+  continuingApprovedProposal?: boolean;
+  forceRepoEditIntent?: boolean;
 }
 
-function getRepoContinuationProgressDigest(
+interface SendMessageOptions {
+  clearDraft?: boolean;
+  repoEditIntentOverride?: boolean;
+}
+
+function summarizeContentForLog(content: string, limit = 220): string {
+  const normalized = content.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= limit) {
+    return normalized;
+  }
+  return `${normalized.slice(0, limit)}...`;
+}
+
+function getPendingProposalKey(proposal: PendingProposal | null): string | null {
+  if (!proposal) return null;
+  return JSON.stringify({
+    summary: proposal.summary ?? null,
+    excerpt: proposal.excerpt ?? null,
+    plan: proposal.plan,
+  });
+}
+
+function getServerToolEventKey(event: ServerToolEvent): string {
+  return JSON.stringify(event);
+}
+
+function hasRecoverablePseudoRepoWrites(
   message: {
     content?: string;
-    parts?: Array<{ type?: string; text?: string; toolInvocation?: { toolName?: string; args?: Record<string, unknown> } }>;
-    toolInvocations?: Array<{ toolName?: string; args?: Record<string, unknown> }>;
+    parts?: Array<{ type?: string; text?: string }>;
   },
-  toolActivity: ToolActivityEvent[] = [],
-): string {
-  const structuredEntries = [
-    ...(message.parts
-      ?.filter((part) => part.type === 'tool-invocation' && part.toolInvocation?.toolName)
-      .map((part) => ({
-        toolName: part.toolInvocation?.toolName?.toLowerCase() ?? '',
-        path: typeof part.toolInvocation?.args?.path === 'string' ? part.toolInvocation.args.path : '',
-      })) ?? []),
-    ...(message.toolInvocations?.map((invocation) => ({
-      toolName: invocation.toolName?.toLowerCase() ?? '',
-      path: typeof invocation.args?.path === 'string' ? invocation.args.path : '',
-    })) ?? []),
-  ].filter((entry) =>
-    entry.toolName === 'read_repo_file' ||
-    REPO_EDIT_TOOL_NAMES.has(entry.toolName),
+  allowPseudoRepoWrites: boolean,
+): boolean {
+  if (!allowPseudoRepoWrites) {
+    return false;
+  }
+
+  const sourceText = getPseudoToolSourceText(message);
+  if (
+    extractPseudoToolInvocations(sourceText).some((invocation) => REPO_EDIT_TOOL_NAMES.has(invocation.toolName))
+  ) {
+    return true;
+  }
+
+  return extractTextFileEdits(sourceText).length > 0;
+}
+
+function allowPseudoRepoWritesForAssistantMessage(
+  messages: Array<{ role: string; content: string }>,
+  assistantIndex: number,
+): boolean {
+  if (assistantIndex <= 0) {
+    return false;
+  }
+
+  const previousUserMessage = messages.slice(0, assistantIndex).findLast((message) =>
+    message.role === 'user' && typeof message.content === 'string' && message.content.trim().length > 0,
   );
 
-  const pseudoEntries = extractPseudoToolInvocations(getPseudoToolSourceText(message as PseudoToolMessageLike))
-    .map((invocation) => ({
-      toolName: invocation.toolName.toLowerCase(),
-      path: typeof invocation.args.path === 'string' ? invocation.args.path : '',
-    }))
-    .filter((entry) =>
-      entry.toolName === 'read_repo_file' ||
-      REPO_EDIT_TOOL_NAMES.has(entry.toolName),
-    );
-
-  const activityEntries = toolActivity
-    .map((event) => ({
-      toolName: event.tool.toLowerCase(),
-      path: event.input,
-    }))
-    .filter((entry) =>
-      entry.toolName === 'read_repo_file' ||
-      REPO_EDIT_TOOL_NAMES.has(entry.toolName),
-    );
-
-  return [...structuredEntries, ...pseudoEntries, ...activityEntries]
-    .map((entry) => `${entry.toolName}:${entry.path}`)
-    .join('|');
+  return previousUserMessage ? isRepoWriteMessage(previousUserMessage.content) : false;
 }
 
 export function useChat(
@@ -325,7 +440,9 @@ export function useChat(
   providerOverride?: ProviderOverride,
   panelId: string = 'default',
   onReadyForPR?: (panelId: string) => void,
+  stateScopeId?: string,
 ) {
+  const scopeId = stateScopeId ?? panelId;
   const createConversation = useChatStore((s) => s.createConversation);
   const renameConversation = useChatStore((s) => s.renameConversation);
   const loadConversations = useChatStore((s) => s.loadConversations);
@@ -340,9 +457,9 @@ export function useChat(
     })),
   );
   const knowledgeContext = useKnowledgeStore((s) => s.getActiveContext());
-  const changeset = useChangesetStore(useShallow((s) => s.getChangeset(panelId)));
+  const changeset = useChangesetStore(useShallow((s) => s.getChangeset(scopeId)));
   const addChangeForPanel = useChangesetStore((s) => s.addChange);
-  const preview = usePreviewStore(useShallow((s) => s.getPreview(panelId)));
+  const preview = usePreviewStore(useShallow((s) => s.getPreview(scopeId)));
   const pendingPanelPrompt = useUIStore((s) => s.pendingPanelPrompts[panelId] ?? null);
   const clearPanelPrompt = useUIStore((s) => s.clearPanelPrompt);
   const { activeRepo, isRepoMode, repoFileTree } = changeset;
@@ -362,7 +479,7 @@ export function useChat(
     ),
     [hermesToolsets, isRepoMode],
   );
-  const addChange = useCallback((change: Parameters<typeof addChangeForPanel>[1]) => addChangeForPanel(panelId, change), [addChangeForPanel, panelId]);
+  const addChange = useCallback((change: Parameters<typeof addChangeForPanel>[1]) => addChangeForPanel(scopeId, change), [addChangeForPanel, scopeId]);
 
   // When orchestrator is enabled, use its provider/model instead
   const effectiveProvider = providerOverride?.provider ?? activeProvider;
@@ -372,39 +489,50 @@ export function useChat(
     ? config.reasoningEffort
     : undefined;
 
-  // Build system prompt with knowledge context and active repo
-  let fullSystemPrompt = knowledgeContext
+  const baseSystemPrompt = knowledgeContext
     ? `${defaultSystemPrompt}\n\n--- Knowledge Base ---\n${knowledgeContext}`
     : defaultSystemPrompt;
 
-  if (isRepoMode && activeRepo) {
-    let repoContext = `\n\n--- GitHub Repository ---\nYou are working on the GitHub repository ${activeRepo.fullName} (default branch: ${activeRepo.defaultBranch}).
+  const buildRepoSystemPrompt = useCallback((
+    repo: typeof activeRepo,
+    repoMode: boolean,
+    repoEditIntent: boolean,
+    hasRepoAccess: boolean,
+  ) => {
+    let prompt = baseSystemPrompt;
+
+    if (repoMode && repo) {
+      let repoContext = `\n\n--- GitHub Repository ---\nYou are working on the GitHub repository ${repo.fullName} (default branch: ${repo.defaultBranch}).
 
 IMPORTANT: First determine whether the current user turn is asking for read-only repository help or for actual code changes.
 - If the user is asking what the repo is, how it works, where something lives, for an overview, or for analysis/review, stay read-only: inspect files as needed and answer directly.
-- Only enter the proposal-and-edit workflow when the user explicitly asks you to modify the repository.
+- Only begin editing when the user explicitly asks you to modify the repository.
 - Never treat repo selection by itself as permission to edit.
 
 When the user asks you to make changes:
-1. For a NEW change request that does not already have an approved plan, FIRST use propose_changes to present a plan of ALL files you intend to modify. Wait for user approval before proceeding.
-2. If the latest user message is approving your most recent proposal (for example "go ahead", "approved", or "apply it"), do NOT call propose_changes again. Continue executing the already approved plan.
-3. After approval, use read_repo_file to read the files you need to modify.
-4. Then use batch_edit_repo_files to apply ALL changes at once (preferred), or edit_repo_file / create_repo_file individually.
-5. Do NOT ask the user to specify file paths or share files — explore the repo yourself using the repository context provided with the request.
-6. Do NOT ask clarifying questions. Use your judgment, explore the repo to understand the codebase, and propose changes directly. If the request is ambiguous, make reasonable assumptions and explain them in your proposal.
-7. When the user asks you to update multiple things, make sure you address ALL of them, not just one.
-8. All changes are staged for a pull request (not applied directly).
-9. Never print pseudo-tool syntax like propose_changes(...) or batch_edit_repo_files(...) in visible text. Use the actual tool calls instead.
-10. IMPORTANT: If you need to edit many large files, split batch_edit_repo_files into multiple calls (max 3-4 files per batch) to avoid output truncation. For very large files, use individual edit_repo_file calls instead.
-11. Never conclude that the repository is empty or inaccessible just because a guessed file path failed to read. If a read fails, choose another path from the loaded repo tree and continue exploring.
-12. Do not guess generic placeholder paths like \`.\`, \`/\`, \`src/main\`, \`server\`, \`client\`, or \`package.json\` unless that exact path is present in the loaded repo tree.`;
+1. Use read_repo_file to read the files you need to understand and modify.
+2. Then use batch_edit_repo_files to apply ALL changes at once (preferred), or edit_repo_file / create_repo_file individually.
+3. Do NOT ask the user to specify file paths or share files — explore the repo yourself using the repository context provided with the request.
+4. Do NOT ask clarifying questions. Use your judgment, explore the repo to understand the codebase, and make the changes directly. If the request is ambiguous, make reasonable assumptions and explain them.
+5. When the user asks you to update multiple things, make sure you address ALL of them, not just one.
+6. All changes are staged for a pull request (not applied directly).
+7. Never print pseudo-tool syntax like batch_edit_repo_files(...) in visible text. Use the actual tool calls instead.
+8. IMPORTANT: If you need to edit many large files, split batch_edit_repo_files into multiple calls (max 3-4 files per batch) to avoid output truncation. For very large files, use individual edit_repo_file calls instead.
+9. Never conclude that the repository is empty or inaccessible just because a guessed file path failed to read. If a read fails, choose another path from the loaded repo tree and continue exploring.
+10. Do not guess generic placeholder paths like \`.\`, \`/\`, \`src/main\`, \`server\`, \`client\`, or \`package.json\` unless that exact path is present in the loaded repo tree.`;
 
-    if (autoApproveRepoChanges) {
-      repoContext += `\n13. The user has enabled auto-approval for repo changes. Still call propose_changes first, then continue immediately without waiting for a follow-up approval message.`;
+      if (!hasRepoAccess) {
+        repoContext += `\n11. GitHub file access is unavailable for this request because no GitHub token is configured. Do not call repo tools and do not search the web just to compensate for missing repo access.
+12. If the user asked for explanation or analysis, work only from the issue text and any already provided context. Mention the access limitation once, then provide the best concise analysis you can without repeating the issue description verbatim.
+13. If the user asked for code changes, explain briefly that repository access is unavailable and that you cannot inspect or modify files until GitHub access is configured.`;
+      }
+
+      prompt += repoContext;
+      prompt = `${prompt}\n\n${getRepoTurnIntentInstruction(repoEditIntent)}`;
     }
 
-    fullSystemPrompt += repoContext;
-  }
+    return prompt;
+  }, [baseSystemPrompt]);
 
   const apiBaseUrl = getApiBaseUrl();
 
@@ -419,17 +547,33 @@ When the user asks you to make changes:
   // Switching the panel immediately remounts the chat tree and drops the in-flight transcript.
   const pendingConversationIdRef = useRef<string | null>(null);
   const repoEditIntentRef = useRef(false);
+  const pendingProposalRef = useRef<PendingProposal | null>(null);
+  const explicitProposalKeyRef = useRef<string | null>(null);
+  const approvedProposalContinuationRef = useRef<{
+    conversationId: string | null;
+    proposalKey: string | null;
+  } | null>(null);
+  const pausedProposalKeyRef = useRef<string | null>(null);
+  const contentProposalStabilityRef = useRef<{ key: string | null; cycles: number }>({
+    key: null,
+    cycles: 0,
+  });
+  const appliedPseudoRepoMessageIdsRef = useRef(new Set<string>());
+  // Track scopes that have been hydrated from DB this session.
+  // Once a scope is hydrated (or populated by the user), we use in-memory state
+  // on subsequent visits and skip the async DB read entirely.
+  const hydratedScopesRef = useRef(new Set<string>());
 
   const resetPanelFileState = useCallback(() => {
     const csStore = useChangesetStore.getState();
     const psStore = usePreviewStore.getState();
-    csStore.clearActiveRepo(panelId);
-    psStore.resetPreview(panelId);
-  }, [panelId]);
+    csStore.clearActiveRepo(scopeId);
+    psStore.resetPreview(scopeId);
+  }, [scopeId]);
 
-  const saveConversationFiles = useCallback((convId: string) => {
-    const cs = useChangesetStore.getState().getChangeset(panelId);
-    const ps = usePreviewStore.getState().getPreview(panelId);
+  const saveConversationFiles = useCallback((convId: string, sourceScopeId: string = scopeId) => {
+    const cs = useChangesetStore.getState().getChangeset(sourceScopeId);
+    const ps = usePreviewStore.getState().getPreview(sourceScopeId);
     const hasChanges = Object.keys(cs.changes).length > 0 || cs.activeRepo !== null;
     const hasFiles = ps.files.length > 0;
 
@@ -442,6 +586,7 @@ When the user asks you to make changes:
       changeset: {
         activeRepo: cs.activeRepo,
         isRepoMode: cs.isRepoMode,
+        pullRequest: cs.pullRequest,
         changes: cs.changes,
         repoFileTree: cs.repoFileTree,
         repoFileCache: cs.repoFileCache,
@@ -458,7 +603,7 @@ When the user asks you to make changes:
         ? cs.repoFileCache
         : undefined,
     });
-  }, [panelId]);
+  }, [scopeId]);
 
   const activeRepoKey = activeRepo ? `${activeRepo.owner}/${activeRepo.name}` : null;
   const previousActiveRepoKeyRef = useRef<string | null>(activeRepoKey);
@@ -471,7 +616,7 @@ When the user asks you to make changes:
       return;
     }
 
-    appliedPseudoRepoMessageIdsRef.current = new Set();
+
   }, [activeRepoKey]);
 
   const [draftInput, setDraftInput] = useState('');
@@ -479,43 +624,42 @@ When the user asks you to make changes:
   const [providerUnavailableOpen, setProviderUnavailableOpen] = useState(false);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
   const [toolActivityMap, setToolActivityMap] = useState<Record<string, ToolActivityEvent[]>>({});
+  const [agentStatus, setAgentStatus] = useState<AgentStatusEvent | null>(null);
   const requestConversationIdRef = useRef<string | null>(conversationId);
   // Keep the ref in sync with the prop (when conversation switches externally)
   requestConversationIdRef.current = conversationId ?? requestConversationIdRef.current;
   const activeRequestBodyRef = useRef<Record<string, unknown> | null>(null);
-  const continuingApprovedProposalRunRef = useRef(false);
   const toolActivityRef = useRef<Record<string, ToolActivityEvent[]>>({});
-  const activeConversationId = conversationId ?? pendingConversationIdRef.current;
-  const chatSessionId = `${activeConversationId ?? 'draft'}:${panelId}`;
+  const serverToolEventsRef = useRef<Record<string, ServerToolEvent[]>>({});
+  const serverToolEventKeysRef = useRef<Record<string, Set<string>>>({});
+  const serverSideToolsDetectedRef = useRef(false);
+  // Use only the prop-level conversationId for the AI SDK session key.
+  // pendingConversationIdRef must NOT influence the session ID because it gets
+  // set inside sendMessage *before* append() runs. If the session switches early,
+  // append targets the old draft session while the UI shows the new (empty) one,
+  // causing messages to vanish.
+  // A unique draft epoch ensures each "New thread" gets a fresh AI SDK session
+  // so stale messages/status from a previous draft don't bleed through.
+  const draftEpochRef = useRef(0);
+  const prevConversationIdForSessionRef = useRef(conversationId);
+  if (prevConversationIdForSessionRef.current !== null && conversationId === null) {
+    draftEpochRef.current += 1;
+  }
+  prevConversationIdForSessionRef.current = conversationId;
+  const chatSessionId = `${conversationId ?? `draft-${draftEpochRef.current}`}:${panelId}`;
+  const stableChatSessionIdRef = useRef(chatSessionId);
+  const isStreamingRef = useRef(false);
+  const isSendingRef = useRef(false);
   const autoSendingQueuedRef = useRef<string | null>(null);
-  const pauseForProposalRef = useRef(false);
-  const awaitingProposalApprovalRef = useRef(false);
-  const proposalApprovedRef = useRef(false);
-  const stoppedForProposalRef = useRef(false);
-  const [conversationAutoApproveEnabled, setConversationAutoApproveEnabledState] = useState(false);
-  // Per-conversation auto-approve: when user clicks "Allow all" in the approval
-  // banner, all subsequent proposals in this conversation are auto-approved without
-  // requiring individual approval each turn.
-  const conversationAutoApproveRef = useRef(false);
   // Track consecutive 'unknown' finish reasons during active repo work to auto-continue
   // when the model is interrupted (e.g. token limit, dropped stream). Cap retries to
   // prevent infinite loops.
   const unknownFinishRetryRef = useRef(0);
-  const MAX_UNKNOWN_FINISH_RETRIES = 3;
+  const MAX_UNKNOWN_FINISH_RETRIES = 6;
   const repoStopRetryRef = useRef(0);
-  const MAX_REPO_STOP_RETRIES = 2;
-  const approvedRepoContinuationRetryRef = useRef(0);
-  const MAX_APPROVED_REPO_CONTINUATIONS = 8;
+  const MAX_REPO_STOP_RETRIES = 5;
   const autoContinueTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pausedProposalIdRef = useRef<string | null>(null);
-  const pendingProposalCacheRef = useRef<{ digest: string; proposal: ReturnType<typeof findPendingProposal> }>({
-    digest: '',
-    proposal: null,
-  });
   const messagesRef = useRef<AIMessage[]>([]);
-  const pendingProposalRef = useRef<ReturnType<typeof findPendingProposal>>(null);
-  const appliedPseudoRepoMessageIdsRef = useRef<Set<string>>(new Set());
-  const lastApprovedRepoProgressDigestRef = useRef('');
 
   const persistAssistantSnapshot = useCallback(async (message: Record<string, unknown>, convId: string) => {
     const messageId = typeof message.id === 'string' && message.id ? message.id : crypto.randomUUID();
@@ -533,18 +677,153 @@ When the user asks you to make changes:
   }, [loadConversations]);
 
   const hermesStreamFetch = useCallback(async (url: string, init?: RequestInit) => {
-    console.log(`[useChat:fetch] Sending request to ${url} provider=${effectiveProvider}`);
     const response = await fetch(url, init);
-    console.log(`[useChat:fetch] Response status=${response.status} ok=${response.ok} hasBody=${!!response.body}`);
     if (!response.ok) {
       const text = await response.clone().text().catch(() => '');
       console.error(`[useChat:fetch] Error response body:`, text.slice(0, 500));
+      if (text) {
+        try {
+          const parsed = JSON.parse(text) as { error?: unknown };
+          if (typeof parsed.error === 'string' && parsed.error.trim()) {
+            throw new Error(parsed.error);
+          }
+        } catch (parseError) {
+          if (parseError instanceof Error && parseError.message !== text) {
+            throw parseError;
+          }
+        }
+        throw new Error(text);
+      }
+      throw new Error(`Request failed with status ${response.status}`);
     }
     if (effectiveProvider !== 'hermes' || !response.body) return response;
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+
+    const applyServerToolEvent = (event: ServerToolEvent) => {
+      const msgId = 'current';
+      const eventKey = getServerToolEventKey(event);
+      const seenEventKeys = serverToolEventKeysRef.current[msgId] ?? new Set<string>();
+
+      if (seenEventKeys.has(eventKey)) {
+        return;
+      }
+
+      seenEventKeys.add(eventKey);
+      serverToolEventKeysRef.current[msgId] = seenEventKeys;
+      serverSideToolsDetectedRef.current = true;
+      const currentEvents = serverToolEventsRef.current[msgId] || [];
+      serverToolEventsRef.current = {
+        ...serverToolEventsRef.current,
+        [msgId]: [...currentEvents, event],
+      };
+      if (event.type === 'repo_proposal') {
+        const plan = Array.isArray(event.plan)
+          ? event.plan
+              .filter((item): item is { path: string; action: string; description: string } =>
+                !!item &&
+                typeof item === 'object' &&
+                typeof (item as { path?: unknown }).path === 'string' &&
+                typeof (item as { action?: unknown }).action === 'string' &&
+                typeof (item as { description?: unknown }).description === 'string',
+              )
+              .map((item) => ({
+                path: item.path,
+                action: item.action,
+                description: item.description,
+              }))
+          : [];
+        pendingProposalRef.current = {
+          messageId: '',
+          summary: typeof event.summary === 'string' ? event.summary : null,
+          excerpt: null,
+          plan,
+        };
+        explicitProposalKeyRef.current = getPendingProposalKey(pendingProposalRef.current);
+      }
+      const addChangeFn = (change: { path: string; action: 'create' | 'edit' | 'delete'; content: string; originalContent?: string; staged: boolean }) => {
+        const changesetStore = useChangesetStore.getState();
+        const existing = changesetStore.getChangeset(scopeId).changes[change.path];
+        const originalContent = change.originalContent ?? existing?.originalContent ?? '';
+        changesetStore.addChange(scopeId, {
+          path: change.path,
+          action: change.action,
+          content: change.content,
+          originalContent,
+          staged: change.staged,
+        });
+      };
+      const batchAddChangesFn = (changes: Array<{ path: string; action: 'create' | 'edit' | 'delete'; content: string; originalContent?: string; staged: boolean }>) => {
+        const changesetStore = useChangesetStore.getState();
+        // Resolve originalContent for each change before the batch update
+        const resolved = changes.map((change) => {
+          const existing = changesetStore.getChangeset(scopeId).changes[change.path];
+          return {
+            ...change,
+            originalContent: change.originalContent ?? existing?.originalContent ?? '',
+          };
+        });
+        changesetStore.batchAddChanges(scopeId, resolved);
+        // Verify
+      };
+      handleServerToolEvent(
+        event,
+        scopeId,
+        {
+          conversationId: convIdRef.current,
+          addChange: addChangeFn,
+          batchAddChanges: batchAddChangesFn,
+        },
+      );
+    };
+
+    const updateToolActivity = (activity: ToolActivityEvent) => {
+      const msgId = 'current';
+      const prev = [...(toolActivityRef.current[msgId] || [])];
+
+      const existingIdx = activity.status === 'completed'
+        ? prev.findLastIndex(
+            (e) =>
+              e.tool === activity.tool &&
+              e.status === 'running' &&
+              (!activity.input || e.input === activity.input),
+          )
+        : prev.findIndex(
+            (e) => e.tool === activity.tool && e.input === activity.input && e.status === 'running',
+          );
+
+      if (existingIdx >= 0 && activity.status === 'completed') {
+        // Preserve the running event's input (which has the full args)
+        const fullInput = prev[existingIdx].input || activity.input;
+        prev[existingIdx] = {
+          ...prev[existingIdx],
+          ...activity,
+          input: fullInput,
+          output: activity.output ?? prev[existingIdx].output,
+        };
+      } else if (existingIdx < 0) {
+        prev.push(activity);
+      }
+
+      toolActivityRef.current = { ...toolActivityRef.current, [msgId]: prev };
+      setToolActivityMap({ ...toolActivityRef.current });
+    };
+
+    const updateAgentStatus = (nextStatus: AgentStatusEvent) => {
+      setAgentStatus((current) => {
+        if (
+          current?.label === nextStatus.label &&
+          current?.phase === nextStatus.phase &&
+          current?.iteration === nextStatus.iteration &&
+          current?.elapsed_ms === nextStatus.elapsed_ms
+        ) {
+          return current;
+        }
+        return nextStatus;
+      });
+    };
 
     const stream = new ReadableStream({
       async pull(controller) {
@@ -557,6 +836,12 @@ When the user asks you to make changes:
         const text = decoder.decode(value, { stream: true });
         buffer += text;
 
+        // Safety: if buffer grows beyond 1MB without newlines, flush it
+        // to prevent memory issues from malformed streams
+        if (buffer.length > 1_048_576 && !buffer.includes('\n')) {
+          buffer = '';
+        }
+
         // Extract tool_activity from SSE data lines before SDK processes them
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
@@ -567,40 +852,50 @@ When the user asks you to make changes:
               const parsed = JSON.parse(line.slice(6));
               const delta = parsed?.choices?.[0]?.delta;
               if (delta?.tool_activity) {
-                // Use 'current' as the key during streaming — the chunk ID
-                // from providers like Hermes won't match the AI SDK message ID
-                const msgId = 'current';
-                const prev = [...(toolActivityRef.current[msgId] || [])];
-                const activity = delta.tool_activity as ToolActivityEvent;
-
-                const existingIdx = activity.status === 'completed'
-                  ? prev.findLastIndex(
-                      (e) =>
-                        e.tool === activity.tool &&
-                        e.status === 'running' &&
-                        (!activity.input || e.input === activity.input),
-                    )
-                  : prev.findIndex(
-                      (e) => e.tool === activity.tool && e.input === activity.input && e.status === 'running',
-                    );
-
-                if (existingIdx >= 0 && activity.status === 'completed') {
-                  prev[existingIdx] = {
-                    ...prev[existingIdx],
-                    ...activity,
-                    input: prev[existingIdx].input || activity.input,
-                    output: activity.output ?? prev[existingIdx].output,
-                  };
-                } else if (existingIdx < 0) {
-                  prev.push(activity);
-                }
-
-                toolActivityRef.current = { ...toolActivityRef.current, [msgId]: prev };
-                setToolActivityMap({ ...toolActivityRef.current });
+                updateToolActivity(delta.tool_activity as ToolActivityEvent);
+              }
+              if (delta?.agent_status && typeof delta.agent_status === 'object') {
+                updateAgentStatus(delta.agent_status as AgentStatusEvent);
+              }
+              if (delta?.server_tool_event && isServerToolEvent(delta.server_tool_event)) {
+                applyServerToolEvent(delta.server_tool_event as ServerToolEvent);
+              }
+              if (isServerToolEvent(parsed)) {
+                applyServerToolEvent(parsed);
               }
             } catch {
               // Not valid JSON, skip
             }
+            continue;
+          }
+
+          try {
+            const parsedPart = parseDataStreamPart(line);
+
+            if (
+              (parsedPart.type === 'tool_call' || parsedPart.type === 'tool_call_streaming_start') &&
+              isServerExecutedRepoToolName(parsedPart.value.toolName)
+            ) {
+              serverSideToolsDetectedRef.current = true;
+            }
+
+            if (parsedPart.type === 'data' && Array.isArray(parsedPart.value)) {
+              for (const item of parsedPart.value) {
+                if (isHermesToolActivityData(item)) {
+                  updateToolActivity(item.activity);
+                  continue;
+                }
+                if (isAgentStatusData(item)) {
+                  updateAgentStatus(item.status);
+                  continue;
+                }
+                if (isServerToolEvent(item)) {
+                  applyServerToolEvent(item);
+                }
+              }
+            }
+          } catch {
+            // Not an AI SDK data-stream line, skip.
           }
         }
 
@@ -614,10 +909,10 @@ When the user asks you to make changes:
       status: response.status,
       statusText: response.statusText,
     });
-  }, [effectiveProvider]);
+  }, [effectiveProvider, scopeId]);
 
   const ensureRepoFileTreeLoaded = useCallback(async (): Promise<string[]> => {
-    const currentChangeset = useChangesetStore.getState().getChangeset(panelId);
+    const currentChangeset = useChangesetStore.getState().getChangeset(scopeId);
     if (!currentChangeset.isRepoMode || !currentChangeset.activeRepo) {
       return [];
     }
@@ -630,7 +925,7 @@ When the user asks you to make changes:
       return [];
     }
 
-    useChangesetStore.getState().setRepoFileTreeStatus(panelId, 'loading');
+    useChangesetStore.getState().setRepoFileTreeStatus(scopeId, 'loading');
 
     const result = await fetchRepoFileTreeResult(
       githubPAT,
@@ -640,22 +935,32 @@ When the user asks you to make changes:
     );
 
     if (result.error) {
-      useChangesetStore.getState().setRepoFileTreeStatus(panelId, 'error', result.error);
+      useChangesetStore.getState().setRepoFileTreeStatus(scopeId, 'error', result.error);
       return [];
     }
 
-    useChangesetStore.getState().setRepoFileTree(panelId, result.paths);
+    useChangesetStore.getState().setRepoFileTree(scopeId, result.paths);
     return result.paths;
-  }, [githubPAT, panelId]);
+  }, [githubPAT, scopeId]);
 
   const buildRequestBody = useCallback((overrides?: {
     conversationId?: string | null;
     repoFileTree?: string[];
     repoFileCache?: Record<string, string>;
+    continuingApprovedProposal?: boolean;
+    repoEditIntent?: boolean;
   }) => {
+    const currentChangeset = useChangesetStore.getState().getChangeset(scopeId);
+    const currentGithubPAT = useSettingsStore.getState().githubPAT;
+    const currentActiveRepo = currentChangeset.activeRepo;
+    const currentIsRepoMode = currentChangeset.isRepoMode && !!currentActiveRepo;
     const conversationIdForRequest = overrides?.conversationId ?? requestConversationIdRef.current;
-    const repoFileTreeForRequest = overrides?.repoFileTree ?? repoFileTree;
-    const repoFileCacheForRequest = overrides?.repoFileCache ?? changeset.repoFileCache;
+    const repoFileTreeForRequest = overrides?.repoFileTree ?? currentChangeset.repoFileTree;
+    const repoFileCacheForRequest = overrides?.repoFileCache ?? currentChangeset.repoFileCache;
+    const repoEditIntentForRequest = typeof overrides?.repoEditIntent === 'boolean'
+      ? overrides.repoEditIntent
+      : repoEditIntentRef.current;
+    const continuingApprovedProposal = overrides?.continuingApprovedProposal === true;
 
     return {
       provider: effectiveProvider,
@@ -665,22 +970,32 @@ When the user asks you to make changes:
       max_tokens: config.maxTokens,
       ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
       api_key: config.apiKey,
-      system_prompt: isRepoMode && activeRepo
-        ? `${fullSystemPrompt}\n\n${getRepoTurnIntentInstruction(repoEditIntentRef.current)}`
-        : fullSystemPrompt,
-      ...(isRepoMode && activeRepo ? { activeRepo } : {}),
-      ...(isRepoMode && activeRepo ? { repo_edit_intent: repoEditIntentRef.current } : {}),
+      system_prompt: buildRepoSystemPrompt(
+        currentActiveRepo,
+        currentIsRepoMode,
+        repoEditIntentForRequest,
+        !!(currentIsRepoMode && currentActiveRepo && currentGithubPAT),
+      ),
+      ...(currentIsRepoMode && currentActiveRepo
+        ? {
+            activeRepo: {
+              ...currentActiveRepo,
+              default_branch: currentActiveRepo.defaultBranch,
+            },
+          }
+        : {}),
+      ...(currentIsRepoMode && currentActiveRepo ? { repo_edit_intent: repoEditIntentForRequest } : {}),
       ...(effectiveProvider === 'hermes' ? { hermes_toolsets: effectiveHermesToolsets.join(',') } : {}),
-      ...(effectiveProvider === 'hermes' && isRepoMode && activeRepo && githubPAT ? { github_pat: githubPAT } : {}),
-      ...(isRepoMode && repoFileTreeForRequest.length > 0 ? { repo_file_tree: repoFileTreeForRequest } : {}),
-      ...(isRepoMode && Object.keys(repoFileCacheForRequest).length > 0
+      ...(currentIsRepoMode && currentActiveRepo && currentGithubPAT ? { github_pat: currentGithubPAT } : {}),
+      ...(currentIsRepoMode && repoFileTreeForRequest.length > 0 ? { repo_file_tree: repoFileTreeForRequest } : {}),
+      ...(currentIsRepoMode && Object.keys(repoFileCacheForRequest).length > 0
         ? { repo_file_cache: repoFileCacheForRequest }
         : {}),
       ...(conversationIdForRequest ? { conversation_id: conversationIdForRequest } : {}),
+      ...(continuingApprovedProposal ? { continuing_approved_proposal: true } : {}),
     };
   }, [
-    activeRepo,
-    changeset.repoFileCache,
+    buildRepoSystemPrompt,
     config.apiKey,
     config.maxTokens,
     config.temperature,
@@ -688,14 +1003,18 @@ When the user asks you to make changes:
     effectiveHermesToolsets,
     effectiveModel,
     effectiveProvider,
-    fullSystemPrompt,
-    githubPAT,
-    isRepoMode,
     reasoningEffort,
-    repoFileTree,
+    scopeId,
   ]);
 
-  const requestBody = activeRequestBodyRef.current ?? buildRequestBody();
+  const requestBody = (() => {
+    const nextBody = activeRequestBodyRef.current ?? buildRequestBody();
+    if (!('continuing_approved_proposal' in nextBody)) {
+      return nextBody;
+    }
+    const { continuing_approved_proposal: _ignoredContinuation, ...rest } = nextBody;
+    return rest;
+  })();
 
   const {
     messages,
@@ -709,13 +1028,21 @@ When the user asks you to make changes:
     api: `${apiBaseUrl}/functions/v1/chat`,
     fetch: hermesStreamFetch,
     body: requestBody,
-    id: chatSessionId,
+    experimental_prepareRequestBody: ({ id, messages: requestMessages, requestData, requestBody: perRequestBody }) => ({
+      id,
+      messages: requestMessages,
+      data: requestData,
+      ...(activeRequestBodyRef.current ?? buildRequestBody()),
+      ...(perRequestBody ?? {}),
+    }),
+    id: stableChatSessionIdRef.current,
     streamProtocol: 'data',
     throttle: 32,
-    maxSteps: 50,
+    maxSteps: 100,
     onFinish: async (message, options) => {
       const convId = convIdRef.current;
       if (!convId) return;
+      setAgentStatus(null);
 
       // Remap tool activity from 'current' to the actual message ID
       if (message?.id && toolActivityRef.current['current']) {
@@ -724,91 +1051,93 @@ When the user asks you to make changes:
         toolActivityRef.current[message.id] = currentActivity;
         setToolActivityMap({ ...toolActivityRef.current });
       }
+      if (message?.id && serverToolEventsRef.current['current']) {
+        const currentEvents = serverToolEventsRef.current['current'];
+        delete serverToolEventsRef.current['current'];
+        serverToolEventsRef.current[message.id] = currentEvents;
+      }
+      if (message?.id && serverToolEventKeysRef.current.current) {
+        const currentEventKeys = serverToolEventKeysRef.current.current;
+        delete serverToolEventKeysRef.current.current;
+        serverToolEventKeysRef.current[message.id] = currentEventKeys;
+      }
 
       // Persist assistant message (including parts and tool invocations)
       if (!message) return;
       await persistAssistantSnapshot(message as Record<string, unknown>, convId);
 
       const finishReason = options?.finishReason;
-      const continuingApprovedRepoTurn =
-        continuingApprovedProposalRunRef.current &&
-        proposalApprovedRef.current;
       const messageToolActivity = message.id ? toolActivityRef.current[message.id] || [] : [];
-      const repoProgressDigest = getRepoContinuationProgressDigest(
+      const messageServerToolEvents = message.id ? serverToolEventsRef.current[message.id] || [] : [];
+      const repoWorkflowNames = collectRepoWorkflowToolNames(
         message as {
           content?: string;
-          parts?: Array<{ type?: string; text?: string; toolInvocation?: { toolName?: string; args?: Record<string, unknown> } }>;
-          toolInvocations?: Array<{ toolName?: string; args?: Record<string, unknown> }>;
+          parts?: Array<{ type?: string; text?: string; toolInvocation?: { toolName?: string } }>;
+          toolInvocations?: Array<{ toolName?: string }>;
         },
         messageToolActivity,
+        messageServerToolEvents,
       );
-      if (
-        continuingApprovedRepoTurn &&
-        repoProgressDigest &&
-        repoProgressDigest !== lastApprovedRepoProgressDigestRef.current
-      ) {
-        repoStopRetryRef.current = 0;
-        lastApprovedRepoProgressDigestRef.current = repoProgressDigest;
+      const latestUserApproval = isRepoApprovalFollowUpMessage(
+        messagesRef.current.findLast((entry) => entry.role === 'user')?.content ?? '',
+      );
+      const approvedPlanMentioned = /\b(?:approved|accepted)\s+plan\b/i.test(
+        typeof message.content === 'string' ? message.content : '',
+      );
+      const inferredApprovedContinuation =
+        pendingProposalRef.current !== null &&
+        (
+          latestUserApproval ||
+          repoWorkflowNames.some((toolName) => REPO_EDIT_TOOL_NAMES.has(toolName)) ||
+          approvedPlanMentioned
+        );
+      const continuingApprovedProposal =
+        approvedProposalContinuationRef.current !== null || inferredApprovedContinuation;
+      if (continuingApprovedProposal && approvedProposalContinuationRef.current === null) {
+        approvedProposalContinuationRef.current = {
+          conversationId: convId,
+          proposalKey: getPendingProposalKey(pendingProposalRef.current),
+        };
       }
       if (finishReason !== 'tool-calls') {
-        // Don't reset proposal state if we manually stopped the stream for approval.
-        // The proposal detection effect sets stoppedForProposalRef before calling stop().
-        if (stoppedForProposalRef.current) {
-          console.log('[useChat:onFinish] Stream stopped for proposal — preserving approval state');
-          stoppedForProposalRef.current = false;
-          activeRequestBodyRef.current = null;
-        } else if (
+        if (
           // Auto-continue when the model is interrupted mid-work with an unknown
           // finish reason (common with OpenRouter/Gemini hitting token limits or
-          // returning non-standard finish reasons). Only retry if we're in an
-          // active repo editing session and haven't exceeded the retry cap.
+          // returning non-standard finish reasons). Recover when the turn was
+          // actively doing repo work, including read-only analysis with
+          // server-side repo reads, and cap retries to avoid loops.
           (finishReason === 'unknown' || finishReason === 'length') &&
-          continuingApprovedRepoTurn &&
-          approvedRepoContinuationRetryRef.current < MAX_APPROVED_REPO_CONTINUATIONS &&
+          activeRepo &&
+          (
+            repoEditIntentRef.current ||
+            continuingApprovedProposal ||
+            repoWorkflowNames.length > 0 ||
+            stalledOnRepoRead(
+              message as {
+                content?: string;
+                parts?: Array<{ type?: string; text?: string; toolInvocation?: { toolName?: string } }>;
+                toolInvocations?: Array<{ toolName?: string }>;
+              },
+              messageToolActivity,
+              messageServerToolEvents,
+            )
+          ) &&
           unknownFinishRetryRef.current < MAX_UNKNOWN_FINISH_RETRIES
         ) {
-          approvedRepoContinuationRetryRef.current += 1;
           unknownFinishRetryRef.current += 1;
-          console.log(
-            `[useChat:onFinish] Unknown finish during active repo work — auto-continuing (attempt ${approvedRepoContinuationRetryRef.current}/${MAX_APPROVED_REPO_CONTINUATIONS}, unknown ${unknownFinishRetryRef.current}/${MAX_UNKNOWN_FINISH_RETRIES})`,
-          );
           scheduleAutoContinue({
             conversationId: convId,
-            content: 'You were interrupted mid-work. Continue where you left off — complete the remaining file changes from the approved plan.',
-            continuingApprovedProposal: true,
+            content: continuingApprovedProposal
+              ? 'You were interrupted in the middle of the accepted repo plan. Continue the accepted plan now and complete the remaining file changes.'
+              : repoEditIntentRef.current
+                ? 'You were interrupted mid-work. Continue where you left off — complete the remaining file changes.'
+                : "You were interrupted in the middle of a read-only repo analysis. Continue inspecting the repo as needed and answer the user's question directly.",
+            continuingApprovedProposal,
+            forceRepoEditIntent: continuingApprovedProposal || repoEditIntentRef.current,
           });
         } else if (
           finishReason === 'stop' &&
-          effectiveProvider === 'hermes' &&
           activeRepo &&
-          continuingApprovedRepoTurn &&
-          approvedRepoContinuationRetryRef.current < MAX_APPROVED_REPO_CONTINUATIONS &&
-          repoStopRetryRef.current < MAX_REPO_STOP_RETRIES &&
-          !hasRepoContinuationProgress(
-            message as {
-              content?: string;
-              parts?: Array<{ type?: string; text?: string; toolInvocation?: { toolName?: string } }>;
-              toolInvocations?: Array<{ toolName?: string }>;
-            },
-            messageToolActivity,
-          )
-        ) {
-          approvedRepoContinuationRetryRef.current += 1;
-          repoStopRetryRef.current += 1;
-          console.log(
-            `[useChat:onFinish] Hermes acknowledged the approved plan without using repo tools — auto-continuing (attempt ${approvedRepoContinuationRetryRef.current}/${MAX_APPROVED_REPO_CONTINUATIONS}, stall ${repoStopRetryRef.current}/${MAX_REPO_STOP_RETRIES})`,
-          );
-          scheduleAutoContinue({
-            conversationId: convId,
-            content: 'You acknowledged the approved repo plan but did not execute any repo tools. Continue the accepted plan now: read the files you need and stage the approved changes without asking for approval again.',
-            continuingApprovedProposal: true,
-          });
-        } else if (
-          finishReason === 'stop' &&
-          effectiveProvider === 'hermes' &&
-          activeRepo &&
-          (!pendingProposalRef.current || continuingApprovedRepoTurn) &&
-          (!continuingApprovedRepoTurn || approvedRepoContinuationRetryRef.current < MAX_APPROVED_REPO_CONTINUATIONS) &&
           repoStopRetryRef.current < MAX_REPO_STOP_RETRIES &&
           stalledOnRepoRead(
             message as {
@@ -817,49 +1146,113 @@ When the user asks you to make changes:
               toolInvocations?: Array<{ toolName?: string }>;
             },
             messageToolActivity,
+            messageServerToolEvents,
           )
         ) {
-          if (continuingApprovedRepoTurn) {
-            approvedRepoContinuationRetryRef.current += 1;
-          }
           repoStopRetryRef.current += 1;
-          console.log(
-            `[useChat:onFinish] Hermes stopped after repo read without finishing the repo workflow — auto-continuing (${continuingApprovedRepoTurn ? `approved ${approvedRepoContinuationRetryRef.current}/${MAX_APPROVED_REPO_CONTINUATIONS}, ` : ''}stall ${repoStopRetryRef.current}/${MAX_REPO_STOP_RETRIES})`,
-          );
           scheduleAutoContinue({
             conversationId: convId,
-            content: continuingApprovedRepoTurn
-              ? 'You stopped in the middle of the approved repo work after reading a file. Continue the accepted plan now and do not stop after a single read_repo_file result.'
+            content: continuingApprovedProposal
+              ? 'Continue the accepted plan now. You stopped after reading a file but the approved repo work is not finished yet. Keep using repo tools until the accepted changes are complete.'
               : repoEditIntentRef.current
-                ? 'You stopped in the middle of repo analysis after reading a file. Continue inspecting the repo as needed, then call propose_changes with the full plan. Do not stop after a single read_repo_file result.'
-                : "You stopped in the middle of a read-only repo analysis after reading a file. Continue inspecting the repo as needed and answer the user's question directly. Do not call propose_changes or edit repo files unless the user explicitly asks for modifications.",
-            continuingApprovedProposal: continuingApprovedRepoTurn,
+                ? 'You stopped in the middle of repo work after reading a file. Continue making the requested changes. Do not stop after a single read_repo_file result.'
+                : "You stopped in the middle of a read-only repo analysis after reading a file. Continue inspecting the repo as needed and answer the user's question directly.",
+            continuingApprovedProposal,
+            forceRepoEditIntent: continuingApprovedProposal || repoEditIntentRef.current,
+          });
+        } else if (
+          finishReason === 'stop' &&
+          activeRepo &&
+          repoStopRetryRef.current < MAX_REPO_STOP_RETRIES &&
+          describedEditButDidNotExecute(
+            message as {
+              content?: string;
+              parts?: Array<{ type?: string; text?: string; toolInvocation?: { toolName?: string } }>;
+              toolInvocations?: Array<{ toolName?: string }>;
+            },
+            messageToolActivity,
+            messageServerToolEvents,
+            repoEditIntentRef.current,
+          )
+        ) {
+          repoStopRetryRef.current += 1;
+          scheduleAutoContinue({
+            conversationId: convId,
+            content: continuingApprovedProposal
+              ? 'Continue the accepted plan now. You described the approved changes but did not execute any repo tools. Do not narrate the plan again. Call read_repo_file or the repo edit tools directly.'
+              : 'You described changes but did not apply them. Do not describe what you will do — actually call the edit tools now. Use batch_edit_repo_files or edit_repo_file to make the changes directly.',
+            continuingApprovedProposal,
+            forceRepoEditIntent: continuingApprovedProposal || repoEditIntentRef.current,
+          });
+        } else if (
+          finishReason === 'stop' &&
+          continuingApprovedProposal &&
+          activeRepo &&
+          repoStopRetryRef.current < MAX_REPO_STOP_RETRIES &&
+          repoWorkflowNames.length === 0
+        ) {
+          repoStopRetryRef.current += 1;
+          scheduleAutoContinue({
+            conversationId: convId,
+            content: 'Continue the accepted plan now. You did not execute any repo tools in the last step. Use read_repo_file for more context or call the repo edit tools directly.',
+            continuingApprovedProposal: true,
+            forceRepoEditIntent: true,
           });
         } else {
-          console.log('[useChat:onFinish] Natural finish, resetting proposal state. finishReason:', finishReason);
+          // Natural finish — reset retry counters
           unknownFinishRetryRef.current = 0;
           repoStopRetryRef.current = 0;
-          approvedRepoContinuationRetryRef.current = 0;
-          lastApprovedRepoProgressDigestRef.current = '';
           activeRequestBodyRef.current = null;
-          // If this was a continuation run that made repo edits, signal ready for PR
-          if (continuingApprovedProposalRunRef.current) {
-            const stagedCount = useChangesetStore.getState().getStagedCount(panelId);
-            if (stagedCount > 0 && onReadyForPR) {
-              console.log('[useChat:onFinish] Continuation run finished with', stagedCount, 'staged changes — signaling ready for PR');
-              // Delay slightly to let pseudo-tool extraction finish processing
-              setTimeout(() => onReadyForPR(panelId), 500);
-            }
-          }
-          awaitingProposalApprovalRef.current = false;
-          proposalApprovedRef.current = false;
-          continuingApprovedProposalRunRef.current = false;
+          approvedProposalContinuationRef.current = null;
+          pendingProposalRef.current = null;
+          explicitProposalKeyRef.current = null;
+          // PR readiness is handled by the auto-PR useEffect that watches
+          // the isStreaming transition — don't signal here since the stream
+          // may not be fully consumed yet.
         }
       } else {
-        console.log('[useChat:onFinish] Tool-calls finish, keeping proposal state');
+        // Tool-calls finish — let the AI SDK continue the conversation
+        activeRequestBodyRef.current = null;
       }
     },
     onToolCall: async ({ toolCall }) => {
+      // When server-side tool execution is active, repo tools are handled
+      // server-side — return a no-op result to avoid duplicate execution.
+      if (serverSideToolsDetectedRef.current && SERVER_EXECUTED_REPO_TOOLS.has(toolCall.toolName)) {
+        return `Handled server-side`;
+      }
+
+      if (toolCall.toolName === 'propose_changes') {
+        if (approvedProposalContinuationRef.current) {
+          return 'This proposal was already approved. Continue directly with read_repo_file or the repo edit tools now.';
+        }
+        const normalizedArgs = normalizeProposeChangesArgs(toolCall.args, {
+          existingPaths: getRepoToolExistingPaths(scopeId),
+        }) as { summary?: unknown; plan?: unknown };
+        pendingProposalRef.current = {
+          messageId: '',
+          summary: typeof normalizedArgs.summary === 'string' ? normalizedArgs.summary : null,
+          excerpt: null,
+          plan: Array.isArray(normalizedArgs.plan)
+            ? normalizedArgs.plan
+                .filter((item): item is { path: string; action: string; description: string } =>
+                  !!item &&
+                  typeof item === 'object' &&
+                  typeof (item as { path?: unknown }).path === 'string' &&
+                  typeof (item as { action?: unknown }).action === 'string' &&
+                  typeof (item as { description?: unknown }).description === 'string',
+                )
+                .map((item) => ({
+                  path: item.path,
+                  action: item.action,
+                  description: item.description,
+                }))
+            : [],
+        };
+        explicitProposalKeyRef.current = getPendingProposalKey(pendingProposalRef.current);
+        return 'Proposal ready for review. Pause for approval before editing repo files.';
+      }
+
       // Handle file creation tools (artifacts/preview)
       const FILE_TYPE_MAP: Record<string, FileType> = {
         create_html_file: 'html',
@@ -873,13 +1266,13 @@ When the user asks you to make changes:
       if (fileType) {
         const { filename, content } = toolCall.args as { filename: string; content: string };
         const previewStore = usePreviewStore.getState();
-        const previewState = previewStore.getPreview(panelId);
+        const previewState = previewStore.getPreview(scopeId);
         // Check if file already exists (update it) or add new
         const existing = previewState.files.find((f) => f.filename === filename);
         if (existing) {
-          previewStore.updateFile(panelId, existing.id, content);
+          previewStore.updateFile(scopeId, existing.id, content);
         } else {
-          previewStore.addFile(panelId, { filename, content, type: fileType });
+          previewStore.addFile(scopeId, { filename, content, type: fileType });
         }
         return JSON.stringify({ success: true, filename, message: `Created ${filename}` });
       }
@@ -888,7 +1281,7 @@ When the user asks you to make changes:
       if (toolCall.toolName === 'read_repo_file') {
         const { path } = toolCall.args as { path: string };
         const normalizedPath = normalizeRepoPath(path);
-        const currentRepo = useChangesetStore.getState().getChangeset(panelId).activeRepo;
+        const currentRepo = useChangesetStore.getState().getChangeset(scopeId).activeRepo;
         if (!currentRepo || !githubPAT) {
           return 'Error: No active repository or GitHub token not configured.';
         }
@@ -897,13 +1290,13 @@ When the user asks you to make changes:
           return 'Error: Choose a concrete file path from the loaded repository tree, not `.` , `/`, or a directory path.';
         }
 
-        const currentChangeset = useChangesetStore.getState().getChangeset(panelId);
+        const currentChangeset = useChangesetStore.getState().getChangeset(scopeId);
         const repoTree = currentChangeset.repoFileTree.length > 0
           ? currentChangeset.repoFileTree
           : await ensureRepoFileTreeLoaded();
 
-        const repoTreeStatus = useChangesetStore.getState().getChangeset(panelId).repoFileTreeStatus;
-        const repoTreeError = useChangesetStore.getState().getChangeset(panelId).repoFileTreeError;
+        const repoTreeStatus = useChangesetStore.getState().getChangeset(scopeId).repoFileTreeStatus;
+        const repoTreeError = useChangesetStore.getState().getChangeset(scopeId).repoFileTreeError;
 
         if (repoTree.length === 0) {
           return formatRepoTreeUnavailableError(repoTreeStatus, repoTreeError);
@@ -914,7 +1307,7 @@ When the user asks you to make changes:
         }
 
         // Return cached content if available (avoids redundant GitHub API calls)
-        const cached = useChangesetStore.getState().getChangeset(panelId).repoFileCache[normalizedPath];
+        const cached = useChangesetStore.getState().getChangeset(scopeId).repoFileCache[normalizedPath];
         if (cached !== undefined) {
           return cached;
         }
@@ -941,44 +1334,32 @@ When the user asks you to make changes:
           }
           const data = await response.json();
           if (data.error) return `Error reading file: ${data.error}`;
-          useChangesetStore.getState().cacheRepoFile(panelId, normalizedPath, data.content || '');
+          useChangesetStore.getState().cacheRepoFile(scopeId, normalizedPath, data.content || '');
           return data.content || '';
         } catch {
           return 'Error: Failed to read file from GitHub.';
         }
       }
 
-      if (toolCall.toolName === 'propose_changes') {
-        // The plan is rendered in the chat as the tool result — no side effects needed
-        const { summary: overallSummary, plan } = toolCall.args as {
-          summary?: string;
-          plan: Array<{ path: string; action: string; description: string }>;
-        };
-        console.log('[useChat:onToolCall] propose_changes called. approvedRef:', proposalApprovedRef.current, 'awaitingRef:', awaitingProposalApprovalRef.current, 'autoApprove:', autoApproveRepoChanges, 'plan items:', plan?.length);
-        if (proposalApprovedRef.current && !awaitingProposalApprovalRef.current) {
-          pauseForProposalRef.current = false;
-          continuingApprovedProposalRunRef.current = true;
-          const summary = plan.map((p, i) => `${i + 1}. **${p.action}** \`${p.path}\` — ${p.description}`).join('\n');
-          return `The user already approved the current proposal. Do not ask for approval again. Continue directly with read_repo_file and repo edit tools for this accepted scope.\n\n${overallSummary ? `${overallSummary}\n\n` : ''}${summary}`;
-        }
-        const proposalIsAutoApproved = autoApproveRepoChanges || conversationAutoApproveRef.current;
-        pauseForProposalRef.current = !proposalIsAutoApproved;
-        awaitingProposalApprovalRef.current = !proposalIsAutoApproved;
-        proposalApprovedRef.current = proposalIsAutoApproved;
-        continuingApprovedProposalRunRef.current = proposalIsAutoApproved;
-        const summary = plan.map((p, i) => `${i + 1}. **${p.action}** \`${p.path}\` — ${p.description}`).join('\n');
-        return proposalIsAutoApproved
-          ? `## Proposed Changes\n\n${overallSummary ? `${overallSummary}\n\n` : ''}${summary}\n\nAuto-approved. Proceeding with the requested changes now.`
-          : `## Proposed Changes\n\n${overallSummary ? `${overallSummary}\n\n` : ''}${summary}\n\nUse the accept button below to apply these changes, or tell me what to adjust.`;
-      }
-
       if (toolCall.toolName === 'edit_repo_file') {
-        if (awaitingProposalApprovalRef.current || !proposalApprovedRef.current) {
-          return 'Error: Changes are locked until the user explicitly accepts the proposed changes.';
+        const normalizedArgs = normalizeEditRepoFileArgs(toolCall.args) as {
+          path?: unknown;
+          content?: unknown;
+        };
+        const path = typeof normalizedArgs.path === 'string' ? normalizedArgs.path : '';
+        const content = typeof normalizedArgs.content === 'string' ? normalizedArgs.content : '';
+        if (!path) {
+          return 'Error: edit_repo_file is missing a valid path.';
         }
-        const { path, content } = toolCall.args as { path: string; content: string; description: string };
-        const existing = useChangesetStore.getState().getChangeset(panelId).changes[path];
-        const originalContent = existing?.originalContent ?? useChangesetStore.getState().getChangeset(panelId).repoFileCache[path] ?? '';
+        const existingPaths = getRepoToolExistingPaths(scopeId);
+        const approvedPlanAllowsEdit =
+          approvedProposalContinuationRef.current !== null &&
+          (pendingProposalRef.current?.plan ?? []).some((item) => item.action === 'edit' && item.path === path);
+        if (!existingPaths.has(path) && !approvedPlanAllowsEdit) {
+          return `Error: edit_repo_file can only modify existing repo files. \`${path}\` is not in the indexed repo tree or staged changes. Use create_repo_file only for genuinely new paths.`;
+        }
+        const existing = useChangesetStore.getState().getChangeset(scopeId).changes[path];
+        const originalContent = existing?.originalContent ?? useChangesetStore.getState().getChangeset(scopeId).repoFileCache[path] ?? '';
         addChange({ path, action: 'edit', content, originalContent, staged: true });
         const convId = convIdRef.current;
         if (convId) {
@@ -989,25 +1370,38 @@ When the user asks you to make changes:
       }
 
       if (toolCall.toolName === 'create_repo_file') {
-        if (awaitingProposalApprovalRef.current || !proposalApprovedRef.current) {
-          return 'Error: Changes are locked until the user explicitly accepts the proposed changes.';
+        const normalizedArgs = normalizeCreateRepoFileArgs(toolCall.args) as {
+          path?: unknown;
+          content?: unknown;
+        };
+        const path = typeof normalizedArgs.path === 'string' ? normalizedArgs.path : '';
+        const content = typeof normalizedArgs.content === 'string' ? normalizedArgs.content : '';
+        if (!path) {
+          return 'Error: create_repo_file is missing a valid path.';
         }
-        const { path, content } = toolCall.args as { path: string; content: string; description: string };
-        addChange({ path, action: 'create', content, staged: true });
+        const existingPaths = getRepoToolExistingPaths(scopeId);
+        const action = resolveRepoWriteAction('create', path, existingPaths);
+        const existing = useChangesetStore.getState().getChangeset(scopeId).changes[path];
+        const originalContent = action === 'edit'
+          ? existing?.originalContent ?? useChangesetStore.getState().getChangeset(scopeId).repoFileCache[path] ?? ''
+          : '';
+        addChange({ path, action, content, originalContent, staged: true });
         const convId = convIdRef.current;
         if (convId) {
-          useActivityStore.getState().addLineStats(convId, countContentLines(content), 0);
+          const lineDelta = getChangeLineDelta({ action, content, originalContent });
+          useActivityStore.getState().addLineStats(convId, lineDelta.added, lineDelta.removed);
         }
-        return `Staged new file ${path}`;
+        return action === 'edit' ? `Staged edit to ${path}` : `Staged new file ${path}`;
       }
 
       if (toolCall.toolName === 'delete_repo_file') {
-        if (awaitingProposalApprovalRef.current || !proposalApprovedRef.current) {
-          return 'Error: Changes are locked until the user explicitly accepts the proposed changes.';
+        const normalizedArgs = normalizeDeleteRepoFileArgs(toolCall.args) as { path?: unknown };
+        const path = typeof normalizedArgs.path === 'string' ? normalizedArgs.path : '';
+        if (!path) {
+          return 'Error: delete_repo_file is missing a valid path.';
         }
-        const { path } = toolCall.args as { path: string; reason: string };
-        const existing = useChangesetStore.getState().getChangeset(panelId).changes[path];
-        const originalContent = existing?.originalContent ?? useChangesetStore.getState().getChangeset(panelId).repoFileCache[path] ?? '';
+        const existing = useChangesetStore.getState().getChangeset(scopeId).changes[path];
+        const originalContent = existing?.originalContent ?? useChangesetStore.getState().getChangeset(scopeId).repoFileCache[path] ?? '';
         addChange({ path, action: 'delete', content: '', originalContent, staged: true });
         const convId = convIdRef.current;
         if (convId) {
@@ -1017,20 +1411,35 @@ When the user asks you to make changes:
       }
 
       if (toolCall.toolName === 'batch_edit_repo_files') {
-        if (awaitingProposalApprovalRef.current || !proposalApprovedRef.current) {
-          return 'Error: Changes are locked until the user explicitly accepts the proposed changes.';
-        }
-        const { changes: fileChanges } = toolCall.args as {
-          changes: Array<{ path: string; action: 'create' | 'edit' | 'delete'; content: string; description: string }>;
-        };
+        const normalizedArgs = normalizeBatchEditRepoFilesArgs(toolCall.args, {
+          existingPaths: getRepoToolExistingPaths(scopeId),
+        }) as { changes?: unknown };
+        const fileChanges = Array.isArray(normalizedArgs.changes)
+          ? normalizedArgs.changes as Array<{ path: string; action: 'create' | 'edit' | 'delete'; content: string; description: string }>
+          : [];
+        const knownPaths = getRepoToolExistingPaths(scopeId);
+        const approvedPlanEditPaths = new Set(
+          approvedProposalContinuationRef.current !== null
+            ? (pendingProposalRef.current?.plan ?? [])
+                .filter((item) => item.action === 'edit')
+                .map((item) => item.path)
+            : [],
+        );
         const results: string[] = [];
         let totalAdded = 0;
         let totalRemoved = 0;
         for (const change of fileChanges) {
-          const existing = useChangesetStore.getState().getChangeset(panelId).changes[change.path];
-          const originalContent = existing?.originalContent ?? useChangesetStore.getState().getChangeset(panelId).repoFileCache[change.path] ?? '';
+          if (!change?.path || (change.action !== 'create' && change.action !== 'edit' && change.action !== 'delete')) {
+            continue;
+          }
+          const action = resolveRepoWriteAction(change.action, change.path, knownPaths);
+          if (action === 'edit' && !knownPaths.has(change.path) && !approvedPlanEditPaths.has(change.path)) {
+            return `Error: batch_edit_repo_files cannot edit missing file \`${change.path}\`. Use create only for genuinely new files and edit only for paths already in the repo.`;
+          }
+          const existing = useChangesetStore.getState().getChangeset(scopeId).changes[change.path];
+          const originalContent = existing?.originalContent ?? useChangesetStore.getState().getChangeset(scopeId).repoFileCache[change.path] ?? '';
           const lineDelta = getChangeLineDelta({
-            action: change.action,
+            action,
             content: change.content || '',
             originalContent,
           });
@@ -1038,12 +1447,17 @@ When the user asks you to make changes:
           totalRemoved += lineDelta.removed;
           addChange({
             path: change.path,
-            action: change.action,
+            action,
             content: change.content || '',
             originalContent,
             staged: true,
           });
-          results.push(`Staged ${change.action} on ${change.path}`);
+          if (action === 'delete') {
+            knownPaths.delete(change.path);
+          } else {
+            knownPaths.add(change.path);
+          }
+          results.push(`Staged ${action} on ${change.path}`);
         }
         const convId = convIdRef.current;
         if (convId && (totalAdded > 0 || totalRemoved > 0)) {
@@ -1054,11 +1468,13 @@ When the user asks you to make changes:
     },
     onError: (err) => {
       activeRequestBodyRef.current = null;
-      continuingApprovedProposalRunRef.current = false;
-      proposalApprovedRef.current = false;
-      awaitingProposalApprovalRef.current = false;
-      approvedRepoContinuationRetryRef.current = 0;
-      lastApprovedRepoProgressDigestRef.current = '';
+      pendingProposalRef.current = null;
+      explicitProposalKeyRef.current = null;
+      approvedProposalContinuationRef.current = null;
+      delete toolActivityRef.current.current;
+      delete serverToolEventsRef.current.current;
+      delete serverToolEventKeysRef.current.current;
+      setAgentStatus(null);
       const errorMessage = getErrorMessage(err);
       console.error('[useChat:onError] Chat error:', errorMessage, 'provider:', effectiveProvider, 'model:', effectiveModel);
       if (errorMessage.includes('not configured')) {
@@ -1074,11 +1490,17 @@ When the user asks you to make changes:
   // Keep messagesRef in sync for use in callbacks without adding messages to deps
   messagesRef.current = messages;
 
+  // Wrapper that prevents overwriting the AI SDK streaming buffer unless forced
+  const safeSetMessages = useCallback((msgs: AIMessage[], force = false) => {
+    if (!force && isStreamingRef.current) return;
+    setMessages(msgs);
+  }, [setMessages]);
+
   const scheduleAutoContinue = useCallback((request: AutoContinueRequest) => {
     const currentMessages = messagesRef.current;
     const sanitized = sanitizePartialToolCalls(currentMessages);
     if (sanitized !== currentMessages) {
-      setMessages(sanitized);
+      safeSetMessages(sanitized, true);
     }
 
     if (autoContinueTimerRef.current) {
@@ -1087,8 +1509,11 @@ When the user asks you to make changes:
 
     autoContinueTimerRef.current = setTimeout(() => {
       autoContinueTimerRef.current = null;
+      serverSideToolsDetectedRef.current = false;
       activeRequestBodyRef.current = buildRequestBody({
         conversationId: request.conversationId,
+        continuingApprovedProposal: request.continuingApprovedProposal,
+        repoEditIntent: request.forceRepoEditIntent,
       });
       append(
         {
@@ -1098,121 +1523,142 @@ When the user asks you to make changes:
         {
           body: {
             conversation_id: request.conversationId,
-            ...(isRepoMode && activeRepo ? { repo_edit_intent: repoEditIntentRef.current } : {}),
-            ...(request.continuingApprovedProposal
-              ? { continuing_approved_proposal: true }
-              : {}),
+            ...(isRepoMode && activeRepo ? {
+              repo_edit_intent: typeof request.forceRepoEditIntent === 'boolean'
+                ? request.forceRepoEditIntent
+                : repoEditIntentRef.current,
+            } : {}),
+            ...(request.continuingApprovedProposal ? { continuing_approved_proposal: true } : {}),
           },
         },
       ).catch((err) => {
         console.error('[useChat:autoContinue] Failed to auto-continue:', err);
-        awaitingProposalApprovalRef.current = false;
-        proposalApprovedRef.current = false;
-        continuingApprovedProposalRunRef.current = false;
-        approvedRepoContinuationRetryRef.current = 0;
-        lastApprovedRepoProgressDigestRef.current = '';
         activeRequestBodyRef.current = null;
       });
-    }, 300);
-  }, [activeRepo, append, buildRequestBody, isRepoMode, setMessages]);
+    }, AUTO_CONTINUE_DELAY_MS);
+  }, [activeRepo, append, buildRequestBody, isRepoMode, safeSetMessages]);
 
   // Track streaming state in global activity store
   const isStreaming = status === 'streaming' || status === 'submitted';
-  const proposalDigest = getProposalDigest(messages as ProposalMessageLike[]);
-  if (pendingProposalCacheRef.current.digest !== proposalDigest) {
-    pendingProposalCacheRef.current = {
-      digest: proposalDigest,
-      proposal: findPendingProposal(messages as ProposalMessageLike[]),
-    };
+  isStreamingRef.current = isStreaming;
+  // Only update stable session ID when not streaming to prevent AI SDK message resets
+  if (!isStreaming) {
+    stableChatSessionIdRef.current = chatSessionId;
   }
-  const pendingProposal = pendingProposalCacheRef.current.proposal;
-  pendingProposalRef.current = pendingProposal;
-
   useEffect(() => {
-    if (!pendingProposal) {
-      pausedProposalIdRef.current = null;
+    const pendingProposal = findPendingProposal(messages as Array<{
+      id: string;
+      role: string;
+      content?: string;
+      parts?: Array<{ type?: string; text?: string; reasoning?: string; toolInvocation?: { toolName?: string; state?: string; args?: Record<string, unknown>; result?: unknown } }>;
+      toolInvocations?: Array<{ toolName?: string; state?: string; args?: Record<string, unknown>; result?: unknown }>;
+    }>);
+    const proposalKey = getPendingProposalKey(pendingProposal);
+    const isExplicitProposal = !!proposalKey && explicitProposalKeyRef.current === proposalKey;
+
+    pendingProposalRef.current = pendingProposal ?? pendingProposalRef.current;
+
+    if (!isStreaming || !pendingProposal || autoApproveRepoChanges || approvedProposalContinuationRef.current) {
+      if (!pendingProposal) {
+        pausedProposalKeyRef.current = null;
+        contentProposalStabilityRef.current = { key: null, cycles: 0 };
+      }
       return;
     }
-    if (!isStreaming) return;
-    // Pause when:
-    // 1. Explicit flag from onToolCall for propose_changes
-    // 2. Already in approval-awaiting state
-    // 3. Auto-approve is off and a content-matched proposal is detected
-    //    (Hermes/local models may output proposals as text, not structured tool calls)
-    const hasApprovedProposalContinuation =
-      proposalApprovedRef.current ||
-      continuingApprovedProposalRunRef.current;
-    const shouldPause =
-      pauseForProposalRef.current ||
-      awaitingProposalApprovalRef.current ||
-      (
-        !hasApprovedProposalContinuation &&
-        !autoApproveRepoChanges &&
-        !conversationAutoApproveRef.current
-      );
-    if (!shouldPause) return;
-    // Hermes can re-stream the same pending proposal with a new assistant
-    // message ID while the approval stop is still settling. Once we're already
-    // awaiting approval for a paused proposal, don't stop again.
-    if (awaitingProposalApprovalRef.current && pausedProposalIdRef.current !== null) return;
-    if (pausedProposalIdRef.current === pendingProposal.messageId) return;
 
-    pausedProposalIdRef.current = pendingProposal.messageId;
-    pauseForProposalRef.current = false;
-    // Ensure the approval-awaiting state is set even for content-matched proposals
-    // (where onToolCall was never invoked for propose_changes).
-    awaitingProposalApprovalRef.current = true;
-    // Mark that we're stopping for a proposal so onFinish doesn't reset proposal state
-    stoppedForProposalRef.current = true;
-
-    console.log('[useChat:proposalEffect] Pausing stream for proposal approval. messageId:', pendingProposal.messageId);
-
-    const convId = convIdRef.current;
-    const latestAssistant = [...messages].reverse().find((message) => message.role === 'assistant');
-
-    void (async () => {
-      if (convId && latestAssistant) {
-        await persistAssistantSnapshot(latestAssistant as Record<string, unknown>, convId);
+    if (!isExplicitProposal) {
+      const stability = contentProposalStabilityRef.current;
+      if (stability.key === proposalKey) {
+        stability.cycles += 1;
+      } else {
+        contentProposalStabilityRef.current = { key: proposalKey, cycles: 1 };
       }
 
-      stop();
-
-      if (!conversationId && pendingConversationIdRef.current) {
-        const createdConversationId = pendingConversationIdRef.current;
-        // Don't clear pendingConversationIdRef here — clearing it before
-        // onConversationCreated sets conversationId causes chatSessionId to
-        // change to 'draft:...', which makes the AI SDK reset messages to [].
-        // The conversation-switch effect (line 757) clears it once conversationId is set.
-        skipNextLoadRef.current = true;
-        onConversationCreated?.(createdConversationId);
+      if (contentProposalStabilityRef.current.cycles < 3) {
+        return;
       }
-    })();
-  }, [autoApproveRepoChanges, conversationId, isStreaming, messages, onConversationCreated, pendingProposal, persistAssistantSnapshot, stop]);
+    } else {
+      contentProposalStabilityRef.current = { key: proposalKey, cycles: 0 };
+    }
 
+    if (!proposalKey || pausedProposalKeyRef.current === proposalKey) {
+      return;
+    }
+
+    pausedProposalKeyRef.current = proposalKey;
+    stop();
+
+    const proposalMessage = messages.find((message) => message.id === pendingProposal.messageId);
+    const persistedConversationId = convIdRef.current ?? pendingConversationIdRef.current;
+    if (proposalMessage && persistedConversationId) {
+      void persistAssistantSnapshot(proposalMessage as Record<string, unknown>, persistedConversationId);
+    }
+
+    if (!conversationId && pendingConversationIdRef.current) {
+      skipNextLoadRef.current = true;
+      onConversationCreated?.(pendingConversationIdRef.current);
+    }
+  }, [
+    autoApproveRepoChanges,
+    conversationId,
+    isStreaming,
+    messages,
+    onConversationCreated,
+    persistAssistantSnapshot,
+    stop,
+  ]);
   useEffect(() => {
     if (isStreaming || !activeRepo) return;
 
     for (const message of messages) {
       if (message.role !== 'assistant') continue;
       if (appliedPseudoRepoMessageIdsRef.current.has(message.id)) continue;
-      if (hasStructuredRepoToolData(message as {
-        parts?: Array<{ type?: string; toolInvocation?: { toolName?: string } }>;
-        toolInvocations?: Array<{ toolName?: string }>;
-      })) continue;
 
-      const sourceText = getPseudoToolSourceText(message);
+      const messageToolActivity = message.id ? toolActivityRef.current[message.id] || [] : [];
+      const messageServerToolEvents = message.id ? serverToolEventsRef.current[message.id] || [] : [];
+      const executedRepoWrites = collectRepoWorkflowToolNames(
+        message as {
+          content?: string;
+          parts?: Array<{ type?: string; text?: string; toolInvocation?: { toolName?: string } }>;
+          toolInvocations?: Array<{ toolName?: string }>;
+        },
+        messageToolActivity,
+        messageServerToolEvents,
+      ).some((toolName) => REPO_EDIT_TOOL_NAMES.has(toolName));
+
+      if (executedRepoWrites) continue;
+
+      const sourceText = getPseudoToolSourceText(message as {
+        content?: string;
+        parts?: Array<{ type?: string; text?: string }>;
+      });
+      const messageIndex = messages.findIndex((entry) => entry.id === message.id);
+      const previousUserMessage = messageIndex > 0
+        ? messages.slice(0, messageIndex).findLast((entry) =>
+            entry.role === 'user' && typeof entry.content === 'string' && entry.content.trim().length > 0,
+          )
+        : undefined;
+      const allowPseudoRepoWrites = (previousUserMessage
+        ? isRepoWriteMessage(previousUserMessage.content)
+        : false) || repoEditIntentRef.current;
       const pseudoInvocations = extractPseudoToolInvocations(sourceText);
-      const repoEditInvocation = pseudoInvocations.find((invocation) =>
-        ['batch_edit_repo_files', 'edit_repo_file', 'create_repo_file', 'delete_repo_file'].includes(invocation.toolName),
-      );
-      const textFileEdits = repoEditInvocation ? [] : extractTextFileEdits(sourceText);
+      const repoEditInvocation = allowPseudoRepoWrites
+        ? pseudoInvocations.find((invocation) =>
+            ['batch_edit_repo_files', 'edit_repo_file', 'create_repo_file', 'delete_repo_file'].includes(invocation.toolName),
+          )
+        : undefined;
+      const textFileEdits = repoEditInvocation || !allowPseudoRepoWrites ? [] : extractTextFileEdits(sourceText);
 
       if (!repoEditInvocation && textFileEdits.length === 0) continue;
 
       if (repoEditInvocation?.toolName === 'batch_edit_repo_files') {
-        const fileChanges = Array.isArray(repoEditInvocation.args.changes)
-          ? repoEditInvocation.args.changes as Array<{ path?: string; action?: 'create' | 'edit' | 'delete'; content?: string }>
+        const normalizedArgs = normalizeBatchEditRepoFilesArgs(repoEditInvocation.args, {
+          existingPaths: getRepoToolExistingPaths(scopeId),
+        }) as { changes?: unknown };
+        const fileChanges = Array.isArray(normalizedArgs.changes)
+          ? normalizedArgs.changes as Array<{ path?: string; action?: 'create' | 'edit' | 'delete'; content?: string }>
           : [];
+        const knownPaths = getRepoToolExistingPaths(scopeId);
 
         for (const change of fileChanges) {
           if (
@@ -1221,38 +1667,53 @@ When the user asks you to make changes:
           ) {
             continue;
           }
+          const action = resolveRepoWriteAction(change.action, change.path, knownPaths);
 
-          const existing = useChangesetStore.getState().getChangeset(panelId).changes[change.path];
-          const originalContent = existing?.originalContent ?? useChangesetStore.getState().getChangeset(panelId).repoFileCache[change.path] ?? '';
+          const existing = useChangesetStore.getState().getChangeset(scopeId).changes[change.path];
+          const originalContent = existing?.originalContent ?? useChangesetStore.getState().getChangeset(scopeId).repoFileCache[change.path] ?? '';
           addChange({
             path: change.path,
-            action: change.action,
+            action,
             content: typeof change.content === 'string' ? change.content : '',
             originalContent,
             staged: true,
           });
+          if (action === 'delete') {
+            knownPaths.delete(change.path);
+          } else {
+            knownPaths.add(change.path);
+          }
         }
       } else if (repoEditInvocation) {
-        const path = typeof repoEditInvocation.args.path === 'string' ? repoEditInvocation.args.path : null;
+        const normalizedArgs = repoEditInvocation.toolName === 'create_repo_file'
+          ? normalizeCreateRepoFileArgs(repoEditInvocation.args)
+          : repoEditInvocation.toolName === 'delete_repo_file'
+            ? normalizeDeleteRepoFileArgs(repoEditInvocation.args)
+            : normalizeEditRepoFileArgs(repoEditInvocation.args);
+        const path = typeof (normalizedArgs as { path?: unknown }).path === 'string'
+          ? (normalizedArgs as { path: string }).path
+          : null;
         const action = repoEditInvocation.toolName === 'create_repo_file'
           ? 'create'
           : repoEditInvocation.toolName === 'delete_repo_file'
             ? 'delete'
             : 'edit';
         if (!path) continue;
-        const existing = useChangesetStore.getState().getChangeset(panelId).changes[path];
-        const originalContent = existing?.originalContent ?? useChangesetStore.getState().getChangeset(panelId).repoFileCache[path] ?? '';
+        const knownPaths = getRepoToolExistingPaths(scopeId);
+        const resolvedAction = resolveRepoWriteAction(action, path, knownPaths);
+        const existing = useChangesetStore.getState().getChangeset(scopeId).changes[path];
+        const originalContent = existing?.originalContent ?? useChangesetStore.getState().getChangeset(scopeId).repoFileCache[path] ?? '';
         addChange({
           path,
-          action,
-          content: typeof repoEditInvocation.args.content === 'string' ? repoEditInvocation.args.content : '',
+          action: resolvedAction,
+          content: typeof (normalizedArgs as { content?: unknown }).content === 'string' ? (normalizedArgs as { content: string }).content : '',
           originalContent,
           staged: true,
         });
       } else {
         for (const edit of textFileEdits) {
-          const existing = useChangesetStore.getState().getChangeset(panelId).changes[edit.path];
-          const originalContent = existing?.originalContent ?? useChangesetStore.getState().getChangeset(panelId).repoFileCache[edit.path] ?? '';
+          const existing = useChangesetStore.getState().getChangeset(scopeId).changes[edit.path];
+          const originalContent = existing?.originalContent ?? useChangesetStore.getState().getChangeset(scopeId).repoFileCache[edit.path] ?? '';
           addChange({
             path: edit.path,
             action: 'edit',
@@ -1265,41 +1726,75 @@ When the user asks you to make changes:
 
       appliedPseudoRepoMessageIdsRef.current.add(message.id);
     }
-  }, [activeRepo, addChange, isStreaming, messages, panelId]);
-
-  // Auto-open PR modal when hermes finishes editing files (pseudo-tool path).
-  // The pseudo-tool extraction effect above runs when !isStreaming and adds
-  // staged changes. We watch for that transition and signal readyForPR.
+  }, [activeRepo, addChange, isStreaming, messages, scopeId]);
+  // Auto-open PR modal when streaming finishes with staged changes.
   const prevStreamingRef = useRef(false);
   useEffect(() => {
     const wasStreaming = prevStreamingRef.current;
     prevStreamingRef.current = isStreaming;
 
-    // Only trigger on streaming → not streaming transition
-    if (wasStreaming && !isStreaming && activeRepo && effectiveProvider === 'hermes' && onReadyForPR) {
-      // Use a timeout to let the pseudo-tool extraction effect run first
-      const timer = setTimeout(() => {
-        const stagedCount = useChangesetStore.getState().getStagedCount(panelId);
-        if (stagedCount > 0) {
-          console.log('[useChat:autoPR] Hermes finished streaming with', stagedCount, 'staged changes — opening PR modal');
-          onReadyForPR(panelId);
-        }
-      }, 800);
-      return () => clearTimeout(timer);
+    if (wasStreaming && !isStreaming && activeRepo && onReadyForPR) {
+      const lastAssistantMessage = messages.findLast((message) => message.role === 'assistant');
+      const lastAssistantIndex = lastAssistantMessage
+        ? messages.findIndex((message) => message.id === lastAssistantMessage.id)
+        : -1;
+      const allowPseudoRepoWrites = lastAssistantIndex >= 0
+        ? allowPseudoRepoWritesForAssistantMessage(messages as Array<{
+            id: string;
+            role: string;
+            content: string;
+            parts?: Array<{ type?: string; text?: string; reasoning?: string; toolInvocation?: ProposalToolInvocationLike }>;
+            toolInvocations?: ProposalToolInvocationLike[];
+          }>, lastAssistantIndex) || repoEditIntentRef.current
+        : repoEditIntentRef.current;
+      const messageToolActivity = lastAssistantMessage?.id
+        ? toolActivityRef.current[lastAssistantMessage.id] || []
+        : [];
+      const messageServerToolEvents = lastAssistantMessage?.id
+        ? serverToolEventsRef.current[lastAssistantMessage.id] || []
+        : [];
+      const executedRepoWrites = lastAssistantMessage
+        ? collectRepoWorkflowToolNames(
+            lastAssistantMessage as {
+              content?: string;
+              parts?: Array<{ type?: string; text?: string; toolInvocation?: { toolName?: string } }>;
+              toolInvocations?: Array<{ toolName?: string }>;
+            },
+            messageToolActivity,
+            messageServerToolEvents,
+          ).some((toolName) => REPO_EDIT_TOOL_NAMES.has(toolName))
+        : false;
+      const recoverablePseudoRepoWrites = lastAssistantMessage
+        ? hasRecoverablePseudoRepoWrites(
+            lastAssistantMessage as {
+              content?: string;
+              parts?: Array<{ type?: string; text?: string }>;
+            },
+            allowPseudoRepoWrites,
+          )
+        : false;
+
+      if (!executedRepoWrites && !recoverablePseudoRepoWrites) {
+        return;
+      }
+
+      const stagedCount = useChangesetStore.getState().getStagedCount(scopeId);
+      if (stagedCount > 0) {
+        // Streaming finished with staged changes — open PR modal
+        onReadyForPR(panelId);
+      }
     }
-  }, [activeRepo, effectiveProvider, isStreaming, onReadyForPR, panelId]);
+  }, [activeRepo, isStreaming, messages, onReadyForPR, panelId, scopeId]);
 
   // requestConversationIdRef is synced with conversationId during render (line 264)
 
   useEffect(() => {
-    const convId = convIdRef.current;
-    if (convId) {
-      useActivityStore.getState().setStreaming(convId, isStreaming);
+    if (conversationId) {
+      useActivityStore.getState().setStreaming(conversationId, isStreaming);
     }
     return () => {
-      const id = convIdRef.current;
-      if (id) {
-        useActivityStore.getState().setStreaming(id, false);
+      if (conversationId) {
+        useActivityStore.getState().setStreaming(conversationId, false);
       }
     };
   }, [isStreaming, conversationId]);
@@ -1309,19 +1804,37 @@ When the user asks you to make changes:
 
   /** Replace the panel's changeset + preview with saved data from IndexedDB. */
   const restoreFileState = useCallback((convId: string) => {
+    // If this scope was already hydrated (from DB or user interaction) this session,
+    // the in-memory changeset store already has the correct state — skip the async DB read.
+    // This eliminates race conditions when rapidly switching between visited conversations.
+    if (hydratedScopesRef.current.has(scopeId)) {
+  
+      return;
+    }
+
     db.conversationFiles.get(convId).then((saved) => {
+      // Each conversation has its own isolated scope in the changeset store,
+      // so writing to a non-current scope is safe — it pre-populates the store
+      // for when the user returns to that conversation. No staleness guard needed.
+      hydratedScopesRef.current.add(scopeId);
       const csStore = useChangesetStore.getState();
       const psStore = usePreviewStore.getState();
-      appliedPseudoRepoMessageIdsRef.current = new Set();
+      const currentChangeset = csStore.getChangeset(scopeId);
+      const currentPreview = psStore.getPreview(scopeId);
+      const hasLiveState =
+        currentChangeset.activeRepo !== null ||
+        Object.keys(currentChangeset.changes).length > 0 ||
+        currentPreview.files.length > 0;
       if (saved) {
         const { changeset: cs, preview } = saved;
         if (cs.activeRepo) {
-          csStore.switchActiveRepo(panelId, cs.activeRepo);
-        } else {
-          csStore.clearActiveRepo(panelId);
+            csStore.switchActiveRepo(scopeId, cs.activeRepo);
+          } else {
+          csStore.clearActiveRepo(scopeId);
         }
-        csStore.setRepoFileTree(panelId, cs.repoFileTree);
-        csStore.setSelectedRepoFilePath(panelId, cs.selectedRepoFilePath ?? null);
+        csStore.setPullRequest(scopeId, cs.pullRequest ?? null);
+        csStore.setRepoFileTree(scopeId, cs.repoFileTree);
+        csStore.setSelectedRepoFilePath(scopeId, cs.selectedRepoFilePath ?? null);
         const restoredCache = cs.repoFileCache
           ?? saved.repoFileCache
           ?? Object.fromEntries(
@@ -1330,12 +1843,12 @@ When the user asks you to make changes:
               .map((change) => [change.path, change.originalContent as string])
           );
         for (const [path, content] of Object.entries(restoredCache)) {
-          csStore.cacheRepoFile(panelId, path, content);
+          csStore.cacheRepoFile(scopeId, path, content);
         }
         for (const change of Object.values(cs.changes)) {
-          csStore.addChange(panelId, change);
+          csStore.addChange(scopeId, change);
         }
-        psStore.replacePreview(panelId, {
+        psStore.replacePreview(scopeId, {
           isOpen: preview.isOpen ?? false,
           files: preview.files as PreviewFile[],
           activeFileId: preview.activeFileId,
@@ -1345,37 +1858,47 @@ When the user asks you to make changes:
               ? 'changes'
               : preview.activeView === 'repo'
                 ? 'repo'
-                : 'preview',
+              : 'preview',
         });
-      } else {
+      } else if (!hasLiveState) {
         resetPanelFileState();
       }
+      // Reset pseudo-repo tracking only for the scope the user is currently viewing.
+      if (convIdRef.current === convId) {
+        appliedPseudoRepoMessageIdsRef.current = new Set();
+      }
     });
-  }, [panelId, resetPanelFileState]);
+  }, [resetPanelFileState, scopeId]);
 
   const hydrateConversationMessages = useCallback((convId: string) => {
     db.messages.getByConversation(convId).then((msgs) => {
-      setMessages(toStoredAIMessages(msgs));
+      // Guard against stale results when rapidly switching conversations.
+      if (convIdRef.current !== convId) return;
+      safeSetMessages(toStoredAIMessages(msgs));
     });
-  }, [setMessages]);
+  }, [safeSetMessages]);
 
   // Load messages (and file state) from IndexedDB when switching conversations
   useEffect(() => {
-    const prevConvId = prevConversationIdRef.current;
-    prevConversationIdRef.current = conversationId;
-
+    // Always keep these refs in sync — they're needed by callbacks (onFinish, onToolCall)
+    // even during streaming.
     if (conversationId && pendingConversationIdRef.current === conversationId) {
       pendingConversationIdRef.current = null;
     }
-
-    // Update convIdRef for callbacks (onFinish, onToolCall).
-    // When switching from a conversation to null (new thread), keep the old ID briefly
-    // so that an in-flight onFinish can still persist the assistant's response.
     if (conversationId !== null) {
       convIdRef.current = conversationId;
     }
     // When going to null, we intentionally leave convIdRef pointing at the old conversation
     // until the next conversation is assigned. This prevents losing streaming responses.
+
+    // Don't hydrate or reset messages while streaming — it would clobber the live buffer.
+    // The effect will re-run once streaming ends (isStreaming is in deps).
+    // Note: prevConversationIdRef is NOT updated here so that the deferred re-run
+    // still sees the actual previous conversation and performs the full switch.
+    if (isStreaming) return;
+
+    const prevConvId = prevConversationIdRef.current;
+    prevConversationIdRef.current = conversationId;
 
     // Transition: null → new conversation (just created).
     // The user may have already set up a repo/changeset on the blank thread.
@@ -1384,6 +1907,26 @@ When the user asks you to make changes:
       if (skipNextLoadRef.current) {
         // Just created this conversation — preserve current state
         skipNextLoadRef.current = false;
+        hydratedScopesRef.current.add(scopeId);
+
+        // Migrate changeset data from the panel scope to the new conversation scope.
+        // When startRepoChatInNewThread attaches a repo on scopeId=panelId and then
+        // a conversation is created, the scope shifts to conversationId. Without this
+        // migration, onToolCall and subsequent reads see an empty changeset.
+        const prevScopeId = panelId;
+        if (prevScopeId !== scopeId) {
+          const csStore = useChangesetStore.getState();
+          const psStore = usePreviewStore.getState();
+          csStore.replaceChangeset(scopeId, csStore.getChangeset(prevScopeId));
+          psStore.replacePreview(scopeId, psStore.getPreview(prevScopeId));
+        }
+
+        // When stableChatSessionIdRef changed (draft→convId), the AI SDK resets
+        // its internal message store to []. If that happened, hydrate from DB
+        // so the user message and assistant response aren't lost.
+        if (messagesRef.current.length === 0) {
+          hydrateConversationMessages(conversationId);
+        }
         void saveConversationFiles(conversationId);
         return;
       }
@@ -1393,14 +1936,23 @@ When the user asks you to make changes:
       return;
     }
 
-    // Save file state for the conversation we're leaving
+    // Save file state for the conversation we're leaving.
+    // Pass the previous conversation's scope so we read from the correct
+    // changeset store entry — scopeId already points at the NEW conversation.
     if (prevConvId) {
-      void saveConversationFiles(prevConvId);
+      const prevScopeId = getChatScopeId(panelId, prevConvId);
+      void saveConversationFiles(prevConvId, prevScopeId);
     }
 
     if (conversationId) {
       if (skipNextLoadRef.current) {
         skipNextLoadRef.current = false;
+        hydratedScopesRef.current.add(scopeId);
+        // Same guard as above: if the AI SDK reset messages due to a session ID
+        // change, we need to restore them from the database.
+        if (messagesRef.current.length === 0) {
+          hydrateConversationMessages(conversationId);
+        }
         return;
       }
       hydrateConversationMessages(conversationId);
@@ -1408,18 +1960,26 @@ When the user asks you to make changes:
       // Restore file state for this conversation
       restoreFileState(conversationId);
     } else {
-      setMessages([]);
-      resetPanelFileState();
+      const initialBlankThread = prevConvId === null;
+      const preservePanelRepoHandoff = useUIStore.getState().preservePanelRepoHandoffs[panelId] === true;
+      if (preservePanelRepoHandoff) {
+        useUIStore.getState().clearPanelRepoHandoff(panelId);
+      }
+      safeSetMessages([] as AIMessage[]);
+      if (!preservePanelRepoHandoff && !initialBlankThread) {
+        resetPanelFileState();
+      }
     }
 
-    // Clear hermes tool activity on conversation switch
+    // Clear hermes tool activity and server-side detection flag on conversation switch
     setToolActivityMap({});
+    setAgentStatus(null);
     toolActivityRef.current = {};
-    appliedPseudoRepoMessageIdsRef.current = new Set();
-    // Reset per-conversation auto-approve when switching conversations
-    conversationAutoApproveRef.current = false;
-    setConversationAutoApproveEnabledState(false);
-  }, [conversationId, setMessages, panelId, resetPanelFileState, restoreFileState, saveConversationFiles, hydrateConversationMessages]);
+    serverToolEventsRef.current = {};
+    serverToolEventKeysRef.current = {};
+    serverSideToolsDetectedRef.current = false;
+
+  }, [conversationId, safeSetMessages, panelId, resetPanelFileState, restoreFileState, saveConversationFiles, hydrateConversationMessages, isStreaming, scopeId]);
 
   // Auto-save file state (debounced) whenever the panel's file state changes
   useEffect(() => {
@@ -1431,7 +1991,7 @@ When the user asks you to make changes:
 
     const timer = setTimeout(() => {
       void saveConversationFiles(convId);
-    }, 1000);
+    }, AUTO_SAVE_DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [conversationId, changeset, preview, saveConversationFiles]);
 
@@ -1458,14 +2018,23 @@ When the user asks you to make changes:
     return true;
   }, [draftInput]);
 
-  const sendMessage = useCallback(async (rawContent: string, clearDraft = false) => {
+  const sendMessage = useCallback(async (rawContent: string, options?: SendMessageOptions) => {
     const content = rawContent.trim();
     if (!content) return;
+    // Guard against duplicate / reentrant sends (e.g. React StrictMode, fast
+    // double-clicks, or effects re-firing while the first send is in-flight).
+    if (isSendingRef.current) {
+      console.warn('[useChat:sendMessage] Duplicate send blocked');
+      return;
+    }
+    isSendingRef.current = true;
+    const clearDraft = options?.clearDraft ?? false;
 
     const providerInfo = PROVIDERS[effectiveProvider as keyof typeof PROVIDERS];
 
     // Check if API key is needed but missing
     if (providerInfo?.needsApiKey && !config.apiKey) {
+      isSendingRef.current = false;
       setApiKeyModalOpen(true);
       return;
     }
@@ -1473,8 +2042,6 @@ When the user asks you to make changes:
     // Reset auto-continue counter on explicit user messages
     unknownFinishRetryRef.current = 0;
     repoStopRetryRef.current = 0;
-    approvedRepoContinuationRetryRef.current = 0;
-    lastApprovedRepoProgressDigestRef.current = '';
 
     let convId = conversationId ?? pendingConversationIdRef.current;
     let createdConversationId: string | null = null;
@@ -1487,35 +2054,40 @@ When the user asks you to make changes:
         pendingConversationIdRef.current = convId;
         convIdRef.current = convId;
         requestConversationIdRef.current = convId;
+        await saveConversationFiles(convId, scopeId);
       } catch (e) {
         console.error('Failed to create conversation:', e);
+        isSendingRef.current = false;
         return;
       }
     }
 
+    const currentPendingProposal = findPendingProposal(messagesRef.current as Array<{
+      id: string;
+      role: string;
+      content?: string;
+      parts?: Array<{ type?: string; text?: string; reasoning?: string; toolInvocation?: { toolName?: string; state?: string; args?: Record<string, unknown>; result?: unknown } }>;
+      toolInvocations?: Array<{ toolName?: string; state?: string; args?: Record<string, unknown>; result?: unknown }>;
+    }>) ?? pendingProposalRef.current;
+    const pendingProposalKey = getPendingProposalKey(currentPendingProposal);
+    const approvalFollowUp = isRepoApprovalFollowUpMessage(content) &&
+      (pendingProposalKey !== null || approvedProposalContinuationRef.current !== null);
     // Persist user message to IndexedDB
-    const isProposalFollowUp =
-      awaitingProposalApprovalRef.current || pendingProposalRef.current !== null;
-    const continuingApprovedProposal =
-      isProposalApprovalMessage(content) &&
-      isProposalFollowUp;
+    const effectiveRepoEditIntent = isRepoMode && activeRepo
+      ? (typeof options?.repoEditIntentOverride === 'boolean'
+          ? options.repoEditIntentOverride
+          : approvalFollowUp || isRepoEditIntentMessage(content))
+      : false;
 
-    console.log('[useChat:sendMessage] content:', JSON.stringify(content), 'isApproval:', isProposalApprovalMessage(content), 'awaitingRef:', awaitingProposalApprovalRef.current, 'pendingProposal:', !!pendingProposalRef.current, '→ continuingApproved:', continuingApprovedProposal, 'provider:', effectiveProvider, 'model:', effectiveModel);
-
-    if (isProposalFollowUp) {
-      pauseForProposalRef.current = false;
-      pausedProposalIdRef.current = null;
-      awaitingProposalApprovalRef.current = false;
-    }
-
-    if (continuingApprovedProposal) {
-      proposalApprovedRef.current = true;
-      continuingApprovedProposalRunRef.current = true;
-      repoEditIntentRef.current = true;
-    } else {
-      proposalApprovedRef.current = false;
-      continuingApprovedProposalRunRef.current = false;
-      repoEditIntentRef.current = isRepoMode && activeRepo ? isRepoEditIntentMessage(content) : false;
+    repoEditIntentRef.current = effectiveRepoEditIntent;
+    if (approvalFollowUp) {
+      approvedProposalContinuationRef.current = {
+        conversationId: convId,
+        proposalKey: pendingProposalKey ?? approvedProposalContinuationRef.current?.proposalKey ?? null,
+      };
+      pendingProposalRef.current = currentPendingProposal;
+    } else if (!effectiveRepoEditIntent) {
+      approvedProposalContinuationRef.current = null;
     }
 
     const userMsgId = crypto.randomUUID();
@@ -1531,7 +2103,7 @@ When the user asks you to make changes:
     // Auto-rename conversation from first message
     const conv = useChatStore.getState().conversations.find((c) => c.id === convId);
     if (conv?.title === 'New conversation') {
-      const title = content.slice(0, 50) + (content.length > 50 ? '...' : '');
+      const title = content.slice(0, CONVERSATION_TITLE_MAX_LENGTH) + (content.length > CONVERSATION_TITLE_MAX_LENGTH ? '...' : '');
       await renameConversation(convId, title);
     }
 
@@ -1544,13 +2116,20 @@ When the user asks you to make changes:
     const currentMessages = messagesRef.current;
     const sanitized = sanitizePartialToolCalls(currentMessages);
     if (sanitized !== currentMessages) {
-      setMessages(sanitized);
+      safeSetMessages(sanitized, true);
     }
 
     const repoFileTreeForRequest = await ensureRepoFileTreeLoaded();
+    delete toolActivityRef.current.current;
+    delete serverToolEventsRef.current.current;
+    delete serverToolEventKeysRef.current.current;
+    serverSideToolsDetectedRef.current = false;
+    setAgentStatus(null);
     activeRequestBodyRef.current = buildRequestBody({
       conversationId: convId,
       repoFileTree: repoFileTreeForRequest,
+      continuingApprovedProposal: approvalFollowUp,
+      repoEditIntent: effectiveRepoEditIntent,
     });
 
     try {
@@ -1564,9 +2143,7 @@ When the user asks you to make changes:
                 ...(repoFileTreeForRequest.length > 0
                   ? { repo_file_tree: repoFileTreeForRequest }
                   : {}),
-                ...(continuingApprovedProposal
-                  ? { continuing_approved_proposal: true }
-                  : {}),
+                ...(approvalFollowUp ? { continuing_approved_proposal: true } : {}),
               },
             }
           : undefined,
@@ -1579,11 +2156,12 @@ When the user asks you to make changes:
         message.includes('stopped');
       if (!expectedAbort) {
         activeRequestBodyRef.current = null;
+        isSendingRef.current = false;
         throw error;
       }
-      approvedRepoContinuationRetryRef.current = 0;
-      lastApprovedRepoProgressDigestRef.current = '';
       activeRequestBodyRef.current = null;
+    } finally {
+      isSendingRef.current = false;
     }
 
     if (createdConversationId && pendingConversationIdRef.current === createdConversationId) {
@@ -1594,14 +2172,14 @@ When the user asks you to make changes:
       onConversationCreated?.(createdConversationId);
     }
     return true;
-  }, [activeRepo, append, buildRequestBody, config, conversationId, createConversation, defaultSystemPrompt, effectiveModel, effectiveProvider, ensureRepoFileTreeLoaded, isRepoMode, onConversationCreated, renameConversation, setMessages]);
+  }, [activeRepo, append, buildRequestBody, config, conversationId, createConversation, defaultSystemPrompt, effectiveModel, effectiveProvider, ensureRepoFileTreeLoaded, isRepoMode, onConversationCreated, renameConversation, saveConversationFiles, scopeId, safeSetMessages]);
 
   const handleSend = useCallback(() => {
     if (isStreaming) {
       queueMessage();
       return;
     }
-    void sendMessage(draftInput, true);
+    void sendMessage(draftInput, { clearDraft: true });
   }, [draftInput, isStreaming, queueMessage, sendMessage]);
 
   const handleQuickSend = useCallback((content: string) => {
@@ -1619,7 +2197,9 @@ When the user asks you to make changes:
 
     clearPanelPrompt(panelId);
     if (pendingPanelPrompt.autoSend) {
-      void sendMessage(pendingPanelPrompt.content);
+      void sendMessage(pendingPanelPrompt.content, {
+        repoEditIntentOverride: pendingPanelPrompt.repoEditIntentOverride,
+      });
       return;
     }
 
@@ -1664,19 +2244,19 @@ When the user asks you to make changes:
   useEffect(() => {
     setQueuedMessages([]);
     autoSendingQueuedRef.current = null;
+    pendingProposalRef.current = null;
+    explicitProposalKeyRef.current = null;
+    approvedProposalContinuationRef.current = null;
+    pausedProposalKeyRef.current = null;
+    contentProposalStabilityRef.current = { key: null, cycles: 0 };
   }, [conversationId]);
 
   const handleRegenerate = useCallback(() => {
-    const lastUserMessage = [...messagesRef.current].reverse().find((message) => message.role === 'user')?.content ?? '';
+    const lastUserMessage = messagesRef.current.findLast((message) => message.role === 'user')?.content ?? '';
     repoEditIntentRef.current = isRepoMode && activeRepo ? isRepoEditIntentMessage(lastUserMessage) : false;
     activeRequestBodyRef.current = buildRequestBody();
     reload();
   }, [activeRepo, buildRequestBody, isRepoMode, reload]);
-
-  const setConversationAutoApprove = useCallback((value: boolean) => {
-    conversationAutoApproveRef.current = value;
-    setConversationAutoApproveEnabledState(value);
-  }, []);
 
   return {
     messages,
@@ -1698,7 +2278,6 @@ When the user asks you to make changes:
     activeProvider: effectiveProvider,
     activeModel: effectiveModel,
     toolActivityMap,
-    conversationAutoApproveEnabled,
-    setConversationAutoApprove,
+    agentStatus,
   };
 }

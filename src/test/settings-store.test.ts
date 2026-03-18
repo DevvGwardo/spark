@@ -24,7 +24,7 @@ describe('normalizePersistedSettingsState', () => {
       model: 'custom/hermes-model',
       temperature: 0.7,
       topP: 0.9,
-      maxTokens: 16384,
+      maxTokens: 32768,
       reasoningEffort: 'high',
     });
     expect(normalized.providers.openai.apiKey).toBe('sk-test');
@@ -56,6 +56,8 @@ describe('normalizePersistedSettingsState', () => {
     const normalized = normalizePersistedSettingsState(undefined);
 
     expect(normalized.providers.hermes.model).toBe('meta-llama/llama-4-maverick');
+    expect(normalized.providers.openai.model).toBe('gpt-5.4');
+    expect(normalized.providers.openai.maxTokens).toBe(32768);
   });
 
   it('migrates the legacy Hermes default model forward', async () => {
@@ -75,5 +77,22 @@ describe('normalizePersistedSettingsState', () => {
       .toBe('meta-llama/llama-4-maverick');
     expect((migrated as ReturnType<typeof normalizePersistedSettingsState>).availableModels.hermes)
       .toBeUndefined();
+  });
+
+  it('upgrades legacy default OpenAI presets to gpt-5.4 with a larger token budget', async () => {
+    const migrate = useSettingsStore.persist.getOptions().migrate;
+    const migrated = await migrate?.({
+      providers: {
+        openai: {
+          model: 'gpt-5.2',
+          maxTokens: 16384,
+        },
+      },
+    } as never, 15);
+
+    expect((migrated as ReturnType<typeof normalizePersistedSettingsState>).providers.openai.model)
+      .toBe('gpt-5.4');
+    expect((migrated as ReturnType<typeof normalizePersistedSettingsState>).providers.openai.maxTokens)
+      .toBe(32768);
   });
 });

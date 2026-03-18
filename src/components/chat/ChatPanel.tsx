@@ -9,8 +9,11 @@ import { usePanelStore } from '@/stores/panel-store';
 import { useChatStore } from '@/stores/chat-store';
 import { useChangesetStore } from '@/stores/changeset-store';
 import { usePreviewStore } from '@/stores/preview-store';
+import { useActivityStore } from '@/stores/activity-store';
 import { PanelProvider } from '@/contexts/PanelContext';
 import { cn } from '@/lib/utils';
+import { SlotNumber } from '@/components/ui/SlotNumber';
+import { getChatScopeId } from '@/lib/chat-scope';
 
 interface ChatPanelProps {
   panelId: string;
@@ -18,7 +21,7 @@ interface ChatPanelProps {
   isFocused: boolean;
   onFocus: () => void;
   onClose?: () => void;  // undefined for the last remaining panel (can't close)
-  onOpenPR?: (panelId: string) => void;
+  onOpenPR?: (panelId: string, mode?: 'create' | 'review') => void;
 }
 
 type ChatRuntime = ReturnType<typeof useChat> | ReturnType<typeof useOrchestrator>;
@@ -50,6 +53,7 @@ function ChatRuntimeArea({
       activeProvider={chat.activeProvider}
       activeModel={chat.activeModel}
       toolActivityMap={'toolActivityMap' in chat ? chat.toolActivityMap : undefined}
+      agentStatus={'agentStatus' in chat ? chat.agentStatus : undefined}
       conversationAutoApproveEnabled={'conversationAutoApproveEnabled' in chat ? chat.conversationAutoApproveEnabled : false}
       setConversationAutoApprove={'setConversationAutoApprove' in chat ? chat.setConversationAutoApprove : undefined}
     />
@@ -65,10 +69,22 @@ function StandardChatRuntime({
   panelId: string;
   conversationId: string | null;
   onConversationCreated: (id: string) => void;
-  onOpenPR?: (panelId: string) => void;
+  onOpenPR?: (panelId: string, mode?: 'create' | 'review') => void;
 }) {
-  const chat = useChat(conversationId, onConversationCreated, undefined, panelId, onOpenPR);
+  const scopeId = getChatScopeId(panelId, conversationId);
+  const chat = useChat(conversationId, onConversationCreated, undefined, panelId, onOpenPR, scopeId);
   return <ChatRuntimeArea conversationId={conversationId} chat={chat} />;
+}
+
+function BackgroundStandardChatRuntime({
+  panelId,
+  conversationId,
+}: {
+  panelId: string;
+  conversationId: string;
+}) {
+  useChat(conversationId, undefined, undefined, panelId, undefined, conversationId);
+  return null;
 }
 
 function OrchestratorChatRuntime({
@@ -91,26 +107,35 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   onOpenPR,
 }) => {
   const { setConversationForPanel, panels, openPanel } = usePanelStore();
+  const activities = useActivityStore((s) => s.activities);
   const conversations = useChatStore((s) => s.conversations);
   const deleteConversation = useChatStore((s) => s.deleteConversation);
   const renameConversation = useChatStore((s) => s.renameConversation);
   const pinConversation = useChatStore((s) => s.pinConversation);
   const getChangeCount = useChangesetStore((s) => s.getChangeCount);
-  const getLineTotals = useChangesetStore((s) => s.getLineTotals);
   const getChangeset = useChangesetStore((s) => s.getChangeset);
   const getStagedCount = useChangesetStore((s) => s.getStagedCount);
-  const preview = usePreviewStore(useShallow((s) => s.getPreview(panelId)));
+  const scopeId = getChatScopeId(panelId, conversationId);
+  const preview = usePreviewStore(useShallow((s) => s.getPreview(scopeId)));
   const setPreviewOpen = usePreviewStore((s) => s.setOpen);
   const setPreviewView = usePreviewStore((s) => s.setView);
   const orchestratorEnabled = useOrchestratorStore((s) => s.enabled);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [backgroundConversationIds, setBackgroundConversationIds] = useState<string[]>([]);
   const menuRef = useRef<HTMLDivElement>(null);
+  const previousConversationIdRef = useRef<string | null>(conversationId);
 
   const isMultiPanel = onClose !== undefined;
-  const changeCount = getChangeCount(panelId);
-  const lineTotals = getLineTotals(panelId, 'all');
-  const stagedCount = getStagedCount(panelId);
-  const { activeRepo } = getChangeset(panelId);
+  const changeCount = getChangeCount(scopeId);
+  const stagedCount = getStagedCount(scopeId);
+  const { activeRepo, pullRequest } = getChangeset(scopeId);
+  const getPendingLineStats = useActivityStore((s) => s.getPendingLineStats);
+  const currentConv = conversations.find((c) => c.id === conversationId);
+  const pendingStats = conversationId ? getPendingLineStats(conversationId) : { added: 0, removed: 0 };
+  const lineTotals = {
+    added: (currentConv?.linesAdded ?? 0) + pendingStats.added,
+    removed: (currentConv?.linesRemoved ?? 0) + pendingStats.removed,
+  };
 
   // Close menu on outside click
   useEffect(() => {
@@ -124,7 +149,38 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     return () => document.removeEventListener('mousedown', handleClick);
   }, [menuOpen]);
 
+  useEffect(() => {
+    const previousConversationId = previousConversationIdRef.current;
+    previousConversationIdRef.current = conversationId;
+
+    setBackgroundConversationIds((current) => {
+      let next = current;
+
+      // If switching away from a streaming conversation, track it in background
+      if (
+        previousConversationId &&
+        previousConversationId !== conversationId &&
+        activities[previousConversationId]?.streaming &&
+        !current.includes(previousConversationId)
+      ) {
+        next = [...next, previousConversationId];
+      }
+
+      // Filter out conversations that are no longer streaming or are now active
+      next = next.filter((id) => id !== conversationId && activities[id]?.streaming);
+
+      return next;
+    });
+  }, [activities, conversationId]);
+
   const handleConversationCreated = useCallback((newId: string) => {
+    const nextScopeId = getChatScopeId(panelId, newId);
+    if (nextScopeId !== panelId) {
+      const changesetStore = useChangesetStore.getState();
+      const previewStore = usePreviewStore.getState();
+      changesetStore.replaceChangeset(nextScopeId, changesetStore.getChangeset(panelId));
+      previewStore.replacePreview(nextScopeId, previewStore.getPreview(panelId));
+    }
     setConversationForPanel(panelId, newId);
   }, [panelId, setConversationForPanel]);
 
@@ -135,7 +191,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const convTitle = activeConv?.title || (conversationId ? 'Chat' : 'New conversation');
 
   return (
-    <PanelProvider value={panelId}>
+    <PanelProvider value={{ panelId, scopeId }}>
       <div
         className={cn(
           'flex flex-col h-full',
@@ -143,6 +199,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         )}
         onClick={onFocus}
       >
+        {!orchestratorEnabled && backgroundConversationIds.map((backgroundConversationId) => (
+          <BackgroundStandardChatRuntime
+            key={`background:${backgroundConversationId}`}
+            panelId={panelId}
+            conversationId={backgroundConversationId}
+          />
+        ))}
         {/* Panel header - only show when multiple panels exist */}
         {isMultiPanel && (
           <div className="flex items-center h-9 px-3 border-b border-border bg-muted/20 shrink-0 gap-2">
@@ -156,8 +219,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    setPreviewView(panelId, 'changes');
-                    setPreviewOpen(panelId, true);
+                    setPreviewView(scopeId, 'changes');
+                    setPreviewOpen(scopeId, true);
                   }}
                   className={cn(
                     'flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-mono font-medium tabular-nums transition-colors',
@@ -167,14 +230,14 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   )}
                 >
                   <PanelRight className="h-3 w-3" />
-                  <span className="text-emerald-500">+{lineTotals.added}</span>
+                  <SlotNumber value={lineTotals.added} prefix="+" className="text-emerald-500" />
                   <span className="text-muted-foreground/40">/</span>
-                  <span className="text-red-400">-{lineTotals.removed}</span>
+                  <SlotNumber value={lineTotals.removed} prefix="-" className="text-red-400" />
                 </button>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    onOpenPR?.(panelId);
+                    onOpenPR?.(panelId, 'create');
                   }}
                   disabled={stagedCount === 0}
                   className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold bg-foreground text-background hover:opacity-90 transition-opacity duration-100 disabled:cursor-not-allowed disabled:opacity-40"
@@ -183,6 +246,18 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   Commit
                 </button>
               </div>
+            )}
+            {activeRepo && pullRequest && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenPR?.(panelId, 'review');
+                }}
+                className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold border border-border/60 bg-background/65 text-foreground hover:bg-background/90 transition-colors duration-100"
+              >
+                <GitPullRequest className="h-3 w-3" />
+                {`PR #${pullRequest.number}`}
+              </button>
             )}
 
             {/* Thread menu */}

@@ -1,11 +1,16 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Bug } from 'lucide-react';
+import { Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork, Search, ChevronRight } from 'lucide-react';
+import { Github } from 'lucide-react';
 import { GhostIcon } from '@/components/chat/GhostIcon';
 import { useChatStore } from '@/stores/chat-store';
 import { useUIStore } from '@/stores/ui-store';
 import { usePanelStore } from '@/stores/panel-store';
 import { useActivityStore } from '@/stores/activity-store';
+import { useChangesetStore } from '@/stores/changeset-store';
+import { getChatScopeId } from '@/lib/chat-scope';
+import { getRepoAccessLabel } from '@/lib/repo-access';
 import { cn } from '@/lib/utils';
+import { SlotNumber } from '@/components/ui/SlotNumber';
 import type { Conversation } from '@/lib/db';
 
 function relativeTime(dateStr: string): string {
@@ -71,23 +76,46 @@ export const ChatSidebar: React.FC = () => {
     conversations,
     loadConversations,
     deleteConversation,
+    deleteOldConversations,
     renameConversation,
     pinConversation,
   } = useChatStore();
 
   const { panels, focusedPanelId, setConversationForPanel, openPanel } = usePanelStore();
-  const { activeTab, setActiveTab, setSettingsOpen, setRepoBrowserOpen } = useUIStore();
+  const { activeTab, setActiveTab, setSettingsOpen, setRepoBrowserOpen, sidebarWidth } = useUIStore();
   const activities = useActivityStore((s) => s.activities);
+  const getPendingLineStats = useActivityStore((s) => s.getPendingLineStats);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [cleanupOpen, setCleanupOpen] = useState(false);
+  const [cleanupDays, setCleanupDays] = useState<number | null>(null);
+  const [cleanupCount, setCleanupCount] = useState(0);
+
+  // Get active repo from focused panel's changeset
+  const focusedPanel = panels.find((p) => p.id === focusedPanelId);
+  const focusedScopeId = getChatScopeId(focusedPanelId, focusedPanel?.conversationId ?? null);
+  const focusedChangeset = useChangesetStore((s) => s.getChangeset(focusedScopeId));
+  const activeRepo = focusedChangeset.activeRepo;
+  const isCompactHeader = sidebarWidth <= 280;
+  const isCompactFooter = sidebarWidth <= 320;
+  const isUltraCompactFooter = sidebarWidth <= 280;
+  const accessStatusLabel = getRepoAccessLabel(activeRepo);
+  const permissionsLabel = isUltraCompactFooter ? null : isCompactFooter ? accessStatusLabel : accessStatusLabel;
+  const repoDisplayName = activeRepo
+    ? isCompactFooter
+      ? activeRepo.name
+      : activeRepo.fullName
+    : isCompactFooter
+      ? 'No repo'
+      : 'No repo attached';
 
   useEffect(() => {
     loadConversations();
   }, [loadConversations]);
 
-  const focusedConvId = panels.find((p) => p.id === focusedPanelId)?.conversationId;
+  const focusedConvId = focusedPanel?.conversationId;
 
   const handleNew = () => {
     setActiveTab('chat');
@@ -109,6 +137,30 @@ export const ChatSidebar: React.FC = () => {
     setConversationForPanel(focusedPanelId, convId);
   };
 
+  const handleCleanupSelect = (days: number) => {
+    const cutoff = Date.now() - days * 86400000;
+    const count = conversations.filter((c) => {
+      if (c.pinned) return false;
+      const ts = new Date(c.updatedAt || c.createdAt).getTime();
+      return ts < cutoff;
+    }).length;
+    setCleanupDays(days);
+    setCleanupCount(count);
+  };
+
+  const handleCleanupConfirm = async () => {
+    if (cleanupDays !== null) {
+      await deleteOldConversations(cleanupDays);
+    }
+    setCleanupDays(null);
+    setCleanupOpen(false);
+  };
+
+  const handleCleanupCancel = () => {
+    setCleanupDays(null);
+    setCleanupOpen(false);
+  };
+
   const displayLimit = showAll ? conversations.length : 15;
   const visibleConversations = conversations.slice(0, displayLimit);
   const hasMore = conversations.length > 15 && !showAll;
@@ -116,41 +168,141 @@ export const ChatSidebar: React.FC = () => {
 
   return (
     <div className="flex h-full flex-col bg-transparent text-foreground">
-      {/* New thread button + settings shortcut */}
-      <div className="flex items-center gap-2 border-b border-border/40 px-3 pb-3 pt-6">
+      {/* macOS traffic light spacer — clears hiddenInset titlebar buttons */}
+      <div className="h-[38px] shrink-0" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
+      {/* Top bar */}
+      <div
+        className={cn(
+          'flex h-11 items-center',
+          isCompactHeader ? 'gap-1.5 px-3' : 'gap-2 px-4'
+        )}
+        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+      >
+        {/* Shared SVG defs for animated rainbow gradient */}
+        <svg className="absolute h-0 w-0" aria-hidden="true">
+          <defs>
+            <linearGradient id="sidebar-rainbow" x1="0%" y1="0%" x2="100%" y2="100%" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stopColor="#ff6b6b">
+                <animate attributeName="stop-color" values="#ff6b6b;#ffd43b;#51cf66;#339af0;#cc5de8;#ff6b6b" dur="3s" repeatCount="indefinite" />
+              </stop>
+              <stop offset="25%" stopColor="#ffd43b">
+                <animate attributeName="stop-color" values="#ffd43b;#51cf66;#339af0;#cc5de8;#ff6b6b;#ffd43b" dur="3s" repeatCount="indefinite" />
+              </stop>
+              <stop offset="50%" stopColor="#51cf66">
+                <animate attributeName="stop-color" values="#51cf66;#339af0;#cc5de8;#ff6b6b;#ffd43b;#51cf66" dur="3s" repeatCount="indefinite" />
+              </stop>
+              <stop offset="75%" stopColor="#339af0">
+                <animate attributeName="stop-color" values="#339af0;#cc5de8;#ff6b6b;#ffd43b;#51cf66;#339af0" dur="3s" repeatCount="indefinite" />
+              </stop>
+              <stop offset="100%" stopColor="#cc5de8">
+                <animate attributeName="stop-color" values="#cc5de8;#ff6b6b;#ffd43b;#51cf66;#339af0;#cc5de8" dur="3s" repeatCount="indefinite" />
+              </stop>
+            </linearGradient>
+          </defs>
+        </svg>
+
+        {/* New thread button */}
         <button
           onClick={handleNew}
-          className="group flex h-10 flex-1 items-center rounded-xl border border-border/50 bg-background/55 px-3 text-sm font-medium text-foreground transition-colors duration-200 hover:border-primary/30 hover:bg-primary/5"
+          className={cn(
+            'group/new relative flex h-9 items-center overflow-hidden rounded-[8px] border border-[#2F2F2F] bg-[hsl(var(--card))] text-[13px] font-normal text-[#e0e0e0] transition-colors duration-100 hover:bg-[hsl(var(--card))]/80',
+            isCompactHeader ? 'w-9 justify-center px-0' : 'flex-1 px-3.5'
+          )}
+          title="New thread"
+          aria-label="New thread"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
-          <span className="overflow-hidden transition-[width,opacity,transform,margin] duration-200 ease-out w-0 -translate-x-1 opacity-0 group-hover:mr-2 group-hover:w-3.5 group-hover:translate-x-0 group-hover:opacity-100">
-            <Plus className="h-3.5 w-3.5 text-muted-foreground" />
-          </span>
-          <span className="min-w-0">
-            New thread
-          </span>
+          <Plus className={cn(
+            'h-3.5 w-3.5 text-[#888888] group-hover/new:[stroke:url(#sidebar-rainbow)]',
+            !isCompactHeader && 'mr-2 w-0 -ml-0.5 opacity-0 group-hover/new:w-3.5 group-hover/new:ml-0 group-hover/new:opacity-100 transition-all duration-200 ease-out'
+          )} />
+          {!isCompactHeader && 'New thread'}
+          <span className="pointer-events-none absolute inset-0 z-0 translate-x-[-120%] bg-[linear-gradient(115deg,transparent_0%,transparent_30%,hsl(var(--foreground)/0.12)_48%,transparent_62%,transparent_100%)] opacity-0 group-hover/new:animate-[sidebar-btn-glimmer_4s_ease-in-out_infinite] group-hover/new:opacity-100" />
         </button>
+
+        {/* GitHub button */}
         <button
           onClick={() => setRepoBrowserOpen(true)}
-          className="group inline-flex h-10 w-10 items-center justify-center rounded-xl border border-border/50 bg-background/50 text-muted-foreground transition-colors duration-200 hover:bg-background/60 hover:text-foreground"
+          className="group/gh relative inline-flex h-9 w-9 items-center justify-center overflow-hidden rounded-[8px] border border-[#2F2F2F] bg-[hsl(var(--card))] text-[#888888] transition-colors duration-100 hover:text-[hsl(var(--text-secondary))]"
           title="Browse repo issues"
           aria-label="Browse repo issues"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
-          <Bug className="h-4 w-4 transition-[transform,opacity] duration-300 ease-out group-hover:-rotate-6 group-hover:scale-105 opacity-80" />
+          <Github className="relative z-[1] h-4 w-4 group-hover/gh:[stroke:url(#sidebar-rainbow)] group-hover/gh:drop-shadow-[0_0_4px_rgba(200,100,255,0.4)]" />
+          <span className="pointer-events-none absolute inset-0 z-0 translate-x-[-120%] bg-[linear-gradient(115deg,transparent_0%,transparent_30%,hsl(var(--foreground)/0.12)_48%,transparent_62%,transparent_100%)] opacity-0 group-hover/gh:animate-[sidebar-btn-glimmer_4s_ease-in-out_infinite] group-hover/gh:opacity-100" />
         </button>
+
+        {/* Settings button */}
         <button
           onClick={() => setSettingsOpen(true)}
-          className="group inline-flex h-10 w-10 items-center justify-center rounded-xl border border-border/50 bg-background/50 text-muted-foreground transition-colors duration-200 hover:bg-background/60 hover:text-foreground"
+          className="group/cog relative inline-flex h-9 w-9 items-center justify-center overflow-hidden rounded-[8px] border border-[#2F2F2F] bg-[hsl(var(--card))] text-[#888888] transition-colors duration-100 hover:text-[hsl(var(--text-secondary))]"
           title="Settings"
           aria-label="Open settings"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
-          <Settings className="h-4 w-4 transition-[transform,opacity] duration-500 ease-out group-hover:rotate-[360deg] group-hover:opacity-100 opacity-80" />
+          <Settings className="relative z-[1] h-4 w-4 group-hover/cog:animate-[cog-spin_3s_cubic-bezier(0.16,1,0.3,1)_infinite] group-hover/cog:[stroke:url(#sidebar-rainbow)]" />
+          <span className="pointer-events-none absolute inset-0 z-0 translate-x-[-120%] bg-[linear-gradient(115deg,transparent_0%,transparent_30%,hsl(var(--foreground)/0.12)_48%,transparent_62%,transparent_100%)] opacity-0 group-hover/cog:animate-[sidebar-btn-glimmer_4s_ease-in-out_infinite] group-hover/cog:opacity-100" />
         </button>
       </div>
 
       {/* Threads section header */}
       <div className="flex items-center justify-between px-4 py-3">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/80">Threads</span>
-        <span className="text-[11px] font-mono text-muted-foreground/55">{conversations.length}</span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] font-semibold uppercase tracking-[1px] text-[#666666]">Threads</span>
+          <span className="text-[11px] font-mono text-[#555555]">{conversations.length}</span>
+        </div>
+        <div className="relative flex items-center gap-1.5">
+          <button
+            onClick={() => { setCleanupOpen(!cleanupOpen); setCleanupDays(null); }}
+            className="rounded-md p-0.5 text-[#666666] transition-colors duration-100 hover:text-[hsl(var(--text-secondary))]"
+            title="Clean up old threads"
+            aria-label="Clean up old threads"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+          <Search className="h-3.5 w-3.5 text-[#666666]" />
+          {cleanupOpen && (
+            <div className="absolute right-0 top-full z-50 mt-1 min-w-[160px] rounded-lg border border-[#2F2F2F] bg-[hsl(var(--card))] py-1 shadow-lg">
+              {cleanupDays === null ? (
+                <>
+                  <button
+                    onClick={() => handleCleanupSelect(1)}
+                    className="flex w-full items-center px-3 py-1.5 text-[11px] text-[hsl(var(--text-secondary))] transition-colors hover:bg-[hsl(var(--sidebar-active))]/40"
+                  >
+                    Older than 1 day
+                  </button>
+                  <button
+                    onClick={() => handleCleanupSelect(7)}
+                    className="flex w-full items-center px-3 py-1.5 text-[11px] text-[hsl(var(--text-secondary))] transition-colors hover:bg-[hsl(var(--sidebar-active))]/40"
+                  >
+                    Older than 7 days
+                  </button>
+                </>
+              ) : (
+                <div className="px-3 py-1.5">
+                  <p className="text-[11px] text-[hsl(var(--text-secondary))]">
+                    Delete {cleanupCount} thread{cleanupCount !== 1 ? 's' : ''}?
+                  </p>
+                  <div className="mt-1.5 flex gap-2">
+                    <button
+                      onClick={handleCleanupConfirm}
+                      className="text-[11px] font-medium text-destructive"
+                      disabled={cleanupCount === 0}
+                    >
+                      Delete
+                    </button>
+                    <button
+                      onClick={handleCleanupCancel}
+                      className="text-[11px] text-muted-foreground"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Thread list */}
@@ -167,15 +319,18 @@ export const ChatSidebar: React.FC = () => {
           <>
             {groups.map((group) => (
               <div key={group.label}>
-                <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60 px-3 pt-4 pb-1">
+                <div className="text-[10px] font-semibold uppercase tracking-[1.2px] text-[#666666] px-4 pt-4 pb-1">
                   {group.label}
                 </div>
                 {group.conversations.map((conv) => {
                   const isFocused = activeTab === 'chat' && focusedConvId === conv.id;
                   const isInAnotherPanel = !isFocused && panels.some((p) => p.conversationId === conv.id);
                   const activity = activities[conv.id];
+                  const pendingLineStats = getPendingLineStats(conv.id);
                   const isProcessing = activity?.streaming;
-                  const hasLineStats = (activity?.linesAdded ?? 0) > 0 || (activity?.linesRemoved ?? 0) > 0;
+                  const totalAdded = (conv.linesAdded ?? 0) + pendingLineStats.added;
+                  const totalRemoved = (conv.linesRemoved ?? 0) + pendingLineStats.removed;
+                  const hasLineStats = totalAdded > 0 || totalRemoved > 0;
                   const showPinned = !!conv.pinned;
 
                   return (
@@ -183,12 +338,12 @@ export const ChatSidebar: React.FC = () => {
                       key={conv.id}
                       onClick={() => handleSelectConversation(conv.id)}
                       className={cn(
-                        'group mb-1 flex cursor-pointer flex-col gap-0.5 rounded-xl px-3 py-2.5 text-[13px] transition-colors duration-100',
+                        'group mb-1 flex cursor-pointer flex-col gap-0.5 rounded-[10px] px-4 py-2.5 text-[13px] transition-colors duration-100',
                         isFocused
-                          ? 'border-l-2 border-l-primary/60 border border-border/60 bg-background/82 text-foreground'
+                          ? 'bg-[#FF840010] border-l-2 border-l-[#FF840020]'
                           : isInAnotherPanel
-                            ? 'border-l-2 border-l-transparent bg-background/55 text-foreground/85'
-                            : 'border-l-2 border-l-transparent text-foreground/75 hover:bg-background/50 hover:text-foreground'
+                            ? 'bg-[hsl(var(--sidebar-active))]/50'
+                            : 'hover:bg-[hsl(var(--sidebar-active))]/40'
                       )}
                     >
                       {/* Top row: title + time + actions */}
@@ -240,7 +395,12 @@ export const ChatSidebar: React.FC = () => {
                             </div>
                             <div className="flex min-w-0 flex-1 items-center gap-2">
                               <span
-                                className="min-w-0 flex-1 truncate font-medium transition-[max-width,color] duration-200 ease-out"
+                                className={cn(
+                                  'min-w-0 flex-1 truncate font-medium transition-[max-width,color] duration-200 ease-out',
+                                  isFocused
+                                    ? 'text-[hsl(var(--text-primary))]'
+                                    : 'text-[hsl(var(--text-tertiary))]'
+                                )}
                                 onDoubleClick={(e) => {
                                   e.stopPropagation();
                                   setEditingId(conv.id);
@@ -249,7 +409,7 @@ export const ChatSidebar: React.FC = () => {
                               >
                                 {conv.title}
                               </span>
-                              <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground/60 transition-opacity duration-200 ease-out group-hover:opacity-70">
+                              <span className="shrink-0 text-[11px] tabular-nums text-[hsl(var(--text-dim))] transition-opacity duration-200 ease-out group-hover:opacity-70">
                                 {relativeTime(conv.updatedAt || conv.createdAt)}
                               </span>
                             </div>
@@ -289,16 +449,19 @@ export const ChatSidebar: React.FC = () => {
                       </div>
 
                       {/* Preview line */}
-                      <div className="truncate pl-6 text-[11px] text-muted-foreground/50 leading-relaxed">
+                      <div className={cn(
+                        'truncate pl-6 text-[12px] leading-relaxed',
+                        isFocused ? 'text-[hsl(var(--text-dim))]' : 'text-[hsl(var(--text-faint))]'
+                      )}>
                         {conv.title}
                       </div>
 
                       {/* Bottom row: line stats */}
                       {hasLineStats && (
                         <div className="flex items-center gap-1 pl-6">
-                          <span className="text-[10px] font-mono text-emerald-500">+{activity!.linesAdded}</span>
+                          <SlotNumber value={totalAdded} prefix="+" className="text-[10px] font-mono text-emerald-500" />
                           <span className="text-[10px] text-muted-foreground/40">/</span>
-                          <span className="text-[10px] font-mono text-red-400">-{activity!.linesRemoved}</span>
+                          <SlotNumber value={totalRemoved} prefix="-" className="text-[10px] font-mono text-red-400" />
                         </div>
                       )}
                     </div>
@@ -317,6 +480,52 @@ export const ChatSidebar: React.FC = () => {
             )}
           </>
         )}
+      </div>
+
+      {/* Footer — permissions + repo status */}
+      <div className={cn(
+        'flex shrink-0 items-center border-t border-[#2F2F2F] px-3 py-2',
+        isCompactFooter ? 'gap-1.5' : 'gap-2'
+      )}>
+        <div
+          className={cn(
+            'inline-flex shrink-0 items-center rounded-full border border-[#2F2F2F] bg-[hsl(var(--card))]/70 py-1 text-[11px] text-[#666666]',
+            isUltraCompactFooter ? 'px-2' : 'gap-1.5 px-2.5'
+          )}
+          title={accessStatusLabel}
+          aria-label={accessStatusLabel}
+        >
+          <Lock className="h-3 w-3 text-[#555555]" />
+          {permissionsLabel && <span className="truncate">{permissionsLabel}</span>}
+          {!isUltraCompactFooter && <ChevronRight className="h-2.5 w-2.5 text-[#444444]" />}
+        </div>
+        <div
+          className={cn(
+            'min-w-0 flex-1 rounded-full border px-2.5 py-1',
+            activeRepo
+              ? 'border-emerald-500/15 bg-emerald-500/[0.06]'
+              : 'border-[#2F2F2F] bg-[hsl(var(--card))]/50'
+          )}
+          title={activeRepo ? activeRepo.fullName : 'No repo attached'}
+        >
+          <div className="flex min-w-0 items-center gap-1.5 text-[11px] leading-none">
+            <Circle
+              className={cn(
+                'h-1.5 w-1.5 shrink-0',
+                activeRepo ? 'fill-emerald-500 text-emerald-500' : 'fill-[#4A4A4A] text-[#4A4A4A]'
+              )}
+            />
+            {activeRepo && <GitFork className="h-3 w-3 shrink-0 text-[hsl(var(--text-dim))]" />}
+            <span
+              className={cn(
+                'min-w-0 flex-1 truncate',
+                activeRepo ? 'font-medium text-[hsl(var(--text-secondary))]' : 'text-[#666666]'
+              )}
+            >
+              {repoDisplayName}
+            </span>
+          </div>
+        </div>
       </div>
     </div>
   );

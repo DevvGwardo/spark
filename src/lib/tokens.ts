@@ -33,10 +33,16 @@ const MODEL_CONTEXT: Record<string, number> = {
   'google/gemini-2.5-pro': 1_000_000,
   'google/gemini-3.1-pro-preview': 1_000_000,
   'openai/gpt-5': 128_000,
+  'openai/gpt-5.4': 128_000,
   'openai/gpt-5-mini': 128_000,
   'openai/gpt-5.2': 128_000,
 
   // OpenAI
+  'gpt-5.4': 128_000,
+  'gpt-5.2': 128_000,
+  'gpt-5.2-codex': 128_000,
+  'gpt-5-mini': 128_000,
+  'gpt-5-nano': 128_000,
   'gpt-4o': 128_000,
   'gpt-4o-mini': 128_000,
   'gpt-4-turbo': 128_000,

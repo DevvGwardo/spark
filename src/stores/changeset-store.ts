@@ -1,11 +1,17 @@
 import { create } from 'zustand';
 import { getChangeLineDelta } from '@/lib/change-diff';
+import type { PullRequestRecord } from '@/lib/pull-request';
 
 export interface ActiveRepo {
   owner: string;
   name: string;
   defaultBranch: string;
   fullName: string;
+  permissions?: {
+    pull?: boolean;
+    push?: boolean;
+    admin?: boolean;
+  };
   baseOwner?: string;
   baseName?: string;
   baseFullName?: string;
@@ -13,6 +19,7 @@ export interface ActiveRepo {
   issue?: {
     number: number;
     title: string;
+    body?: string | null;
     url: string;
     state: string;
     labels: string[];
@@ -33,6 +40,7 @@ export interface FileChange {
 export interface PanelChangeset {
   activeRepo: ActiveRepo | null;
   isRepoMode: boolean;
+  pullRequest: PullRequestRecord | null;
   changes: Record<string, FileChange>;
   repoFileTree: string[];
   repoFileCache: Record<string, string>;
@@ -44,6 +52,7 @@ export interface PanelChangeset {
 const EMPTY_CHANGESET: PanelChangeset = {
   activeRepo: null,
   isRepoMode: false,
+  pullRequest: null,
   changes: {},
   repoFileTree: [],
   repoFileCache: {},
@@ -57,12 +66,15 @@ interface ChangesetState {
   panelChangesets: Record<string, PanelChangeset>;
 
   // Per-panel scoped actions
+  replaceChangeset: (panelId: string, changeset: PanelChangeset) => void;
   setActiveRepo: (panelId: string, repo: ActiveRepo) => void;
   switchActiveRepo: (panelId: string, repo: ActiveRepo) => void;
   clearActiveRepo: (panelId: string) => void;
   addChange: (panelId: string, change: FileChange) => void;
+  batchAddChanges: (panelId: string, changes: FileChange[]) => void;
   removeChange: (panelId: string, path: string) => void;
   clearChanges: (panelId: string) => void;
+  setPullRequest: (panelId: string, pullRequest: PullRequestRecord | null) => void;
   setChangeStaged: (panelId: string, path: string, staged: boolean) => void;
   stageAllChanges: (panelId: string, staged: boolean) => void;
   getChangeset: (panelId: string) => PanelChangeset;
@@ -80,6 +92,7 @@ interface ChangesetState {
   // These read/write the "default" panel for backward compat
   activeRepo: ActiveRepo | null;
   isRepoMode: boolean;
+  pullRequest: PullRequestRecord | null;
   changes: Record<string, FileChange>;
   repoFileTree: string[];
   repoFileCache: Record<string, string>;
@@ -106,18 +119,41 @@ function getOrDefault(state: ChangesetState, panelId: string): PanelChangeset {
   return { ...EMPTY_CHANGESET, ...existing };
 }
 
+function cloneChangeset(changeset: PanelChangeset): PanelChangeset {
+  return {
+    ...EMPTY_CHANGESET,
+    ...changeset,
+    activeRepo: changeset.activeRepo ? { ...changeset.activeRepo } : null,
+    pullRequest: changeset.pullRequest ? { ...changeset.pullRequest } : null,
+    changes: Object.fromEntries(
+      Object.entries(changeset.changes).map(([path, change]) => [path, { ...change }])
+    ),
+    repoFileTree: [...changeset.repoFileTree],
+    repoFileCache: { ...changeset.repoFileCache },
+  };
+}
+
 export const useChangesetStore = create<ChangesetState>()((set, get) => ({
   panelChangesets: {},
 
   // Legacy global fields — derived from 'default' panel for backward compat
   get activeRepo() { return get().panelChangesets['default']?.activeRepo ?? null; },
   get isRepoMode() { return get().panelChangesets['default']?.isRepoMode ?? false; },
+  get pullRequest() { return get().panelChangesets['default']?.pullRequest ?? null; },
   get changes() { return get().panelChangesets['default']?.changes ?? {}; },
   get repoFileTree() { return get().panelChangesets['default']?.repoFileTree ?? []; },
   get repoFileCache() { return get().panelChangesets['default']?.repoFileCache ?? {}; },
   get selectedRepoFilePath() { return get().panelChangesets['default']?.selectedRepoFilePath ?? null; },
   get repoFileTreeStatus() { return get().panelChangesets['default']?.repoFileTreeStatus ?? 'idle'; },
   get repoFileTreeError() { return get().panelChangesets['default']?.repoFileTreeError ?? null; },
+
+  replaceChangeset: (panelId, changeset) =>
+    set((state) => ({
+      panelChangesets: {
+        ...state.panelChangesets,
+        [panelId]: cloneChangeset(changeset),
+      },
+    })),
 
   setActiveRepo: (panelId, repo) =>
     set((state) => {
@@ -132,6 +168,7 @@ export const useChangesetStore = create<ChangesetState>()((set, get) => ({
             isRepoMode: true,
             ...(switchingRepos
               ? {
+                  pullRequest: null,
                   changes: {},
                   repoFileTree: [],
                   repoFileCache: {},
@@ -155,6 +192,7 @@ export const useChangesetStore = create<ChangesetState>()((set, get) => ({
             ...existing,
             activeRepo: repo,
             isRepoMode: true,
+            pullRequest: null,
             changes: {},
             repoFileTree: [],
             repoFileCache: {},
@@ -176,6 +214,7 @@ export const useChangesetStore = create<ChangesetState>()((set, get) => ({
             ...existing,
             activeRepo: null,
             isRepoMode: false,
+            pullRequest: null,
             changes: {},
             repoFileTree: [],
             repoFileCache: {},
@@ -220,6 +259,32 @@ export const useChangesetStore = create<ChangesetState>()((set, get) => ({
       };
     }),
 
+  batchAddChanges: (panelId, changes: FileChange[]) =>
+    set((state) => {
+      let changeset = getOrDefault(state, panelId);
+      let updatedChanges = { ...changeset.changes };
+      for (const change of changes) {
+        const prev = updatedChanges[change.path];
+        if (change.action === 'delete' && prev?.action === 'create') {
+          const { [change.path]: _, ...rest } = updatedChanges;
+          updatedChanges = rest;
+        } else {
+          updatedChanges[change.path] = {
+            ...prev,
+            ...change,
+            staged: change.staged ?? prev?.staged ?? false,
+            originalContent: change.originalContent ?? prev?.originalContent,
+          };
+        }
+      }
+      return {
+        panelChangesets: {
+          ...state.panelChangesets,
+          [panelId]: { ...changeset, changes: updatedChanges },
+        },
+      };
+    }),
+
   removeChange: (panelId, path) =>
     set((state) => {
       const existing = getOrDefault(state, panelId);
@@ -239,6 +304,17 @@ export const useChangesetStore = create<ChangesetState>()((set, get) => ({
         panelChangesets: {
           ...state.panelChangesets,
           [panelId]: { ...existing, changes: {} },
+        },
+      };
+    }),
+
+  setPullRequest: (panelId, pullRequest) =>
+    set((state) => {
+      const existing = getOrDefault(state, panelId);
+      return {
+        panelChangesets: {
+          ...state.panelChangesets,
+          [panelId]: { ...existing, pullRequest },
         },
       };
     }),

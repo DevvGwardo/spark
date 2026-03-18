@@ -146,12 +146,9 @@ describe('createOrchestrateHandler', () => {
     const { createOrchestrateHandler } = await import('../orchestrator')
     const handler = createOrchestrateHandler()
     const req = createRequest({
-      orchestrator_provider: 'openai',
-      orchestrator_model: 'gpt-test',
-      orchestrator_api_key: 'plan-key',
-      sub_agent_provider: 'openai',
-      sub_agent_model: 'gpt-test',
-      sub_agent_api_key: 'code-key',
+      provider: 'openai',
+      model: 'gpt-test',
+      api_key: 'test-key',
       messages: [{ role: 'user', content: 'Do a large refactor' }],
     })
     const { res, writes } = createResponse()
@@ -198,13 +195,11 @@ describe('createOrchestrateHandler', () => {
     const { createOrchestrateHandler } = await import('../orchestrator')
     const handler = createOrchestrateHandler()
     const req = createRequest({
-      orchestrator_provider: 'openai',
-      orchestrator_model: 'gpt-test',
-      orchestrator_api_key: 'plan-key',
-      sub_agent_provider: 'openai',
-      sub_agent_model: 'gpt-test',
-      sub_agent_api_key: 'code-key',
+      provider: 'openai',
+      model: 'gpt-test',
+      api_key: 'test-key',
       messages: [{ role: 'user', content: 'Run a long coding task' }],
+      max_retries: 0,
     })
     const { res, writes } = createResponse()
 
@@ -212,6 +207,59 @@ describe('createOrchestrateHandler', () => {
     await vi.runAllTimersAsync()
     await pending
 
-    expect(writes.join('')).toContain('Error: Sub-task timed out after 15s')
+    expect(writes.join('')).toContain('Sub-task timed out after 15s')
+  })
+
+  it('does not pass system instructions through streamText system fields', async () => {
+    aiMocks.streamText
+      .mockImplementationOnce((options: { abortSignal?: AbortSignal }) =>
+        makeStream(
+          [
+            {
+              text: JSON.stringify({
+                plan: 'Plan',
+                tasks: [{ id: '1', description: 'Inspect payload construction' }],
+              }),
+            },
+          ],
+          options.abortSignal,
+        ),
+      )
+      .mockImplementationOnce((options: { abortSignal?: AbortSignal }) =>
+        makeStream([{ text: 'Subtask complete' }], options.abortSignal),
+      )
+      .mockImplementationOnce((options: { abortSignal?: AbortSignal }) =>
+        makeStream([{ text: 'Final response' }], options.abortSignal),
+      )
+
+    const { createOrchestrateHandler } = await import('../orchestrator')
+    const handler = createOrchestrateHandler()
+    const req = createRequest({
+      provider: 'minimax',
+      model: 'MiniMax-M2.5',
+      api_key: 'test-key',
+      system_prompt: 'Be concise.',
+      messages: [{ role: 'user', content: 'Trace this bug' }],
+    })
+    const { res } = createResponse()
+
+    await handler(req, res)
+
+    expect(aiMocks.streamText).toHaveBeenCalledTimes(3)
+
+    for (const [call] of aiMocks.streamText.mock.calls) {
+      expect(call).not.toHaveProperty('system')
+    }
+
+    expect(aiMocks.streamText.mock.calls[0]?.[0]?.messages).toEqual([
+      {
+        role: 'user',
+        content: expect.stringContaining('Application instructions:'),
+      },
+      {
+        role: 'user',
+        content: 'Trace this bug',
+      },
+    ])
   })
 })

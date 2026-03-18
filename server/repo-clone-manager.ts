@@ -111,17 +111,15 @@ export async function ensureRepoClone({ owner, repo, pat, branch }: EnsureRepoCl
   }
 
   const repoDir = await ensureRepoDirectory(owner, repo)
-  const cloneUrl = `https://x-access-token:${pat}@github.com/${owner}/${repo}.git`
-  const cloneArgs = ['clone', '--depth', '1']
+  const cloneUrl = `https://github.com/${owner}/${repo}.git`
+  const authHeader = `Authorization: Basic ${Buffer.from(`x-access-token:${pat}`).toString('base64')}`
+  const cloneArgs = ['clone', '-c', `http.extraHeader=${authHeader}`, '--depth', '1']
   if (branch) {
     cloneArgs.push('--branch', branch)
   }
   cloneArgs.push(cloneUrl, repoDir)
 
   await runGit(cloneArgs)
-
-  // Strip the token from the saved remote URL after cloning.
-  await runGit(['remote', 'set-url', 'origin', `https://github.com/${owner}/${repo}.git`], repoDir).catch(() => {})
 
   return { exists: true, path: repoDir }
 }

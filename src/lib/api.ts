@@ -25,6 +25,9 @@ export interface GitHubRepoSummary {
     push?: boolean;
     admin?: boolean;
   };
+  stargazers_count?: number;
+  forks_count?: number;
+  language?: string | null;
   localClone: {
     exists: boolean;
     path: string | null;
@@ -107,8 +110,8 @@ export function getApiPortFromUrl(url: string): number | null {
 function storeApiPort(port: number) {
   try {
     window.sessionStorage.setItem(API_PORT_STORAGE_KEY, String(port));
-  } catch {
-    // Ignore storage access failures.
+  } catch (err) {
+    console.warn('[api] Failed to store API port in sessionStorage', err);
   }
 }
 
@@ -185,7 +188,7 @@ export async function fetchRepoFileTreeResult(
     try {
       data = await response.json();
     } catch {
-      data = {};
+      // Non-JSON response body — fall through with empty data
     }
 
     if (!response.ok) {
@@ -239,7 +242,7 @@ async function postGitHubIntegration<T>(payload: Record<string, unknown>): Promi
   try {
     data = await response.json();
   } catch {
-    data = {};
+    // Non-JSON response body — fall through with empty data
   }
 
   if (!response.ok || data.error) {
@@ -276,6 +279,7 @@ export async function listGitHubIssues(
     direction?: 'asc' | 'desc';
     state?: 'open' | 'closed' | 'all';
     query?: string;
+    labels?: string[];
   } = {},
 ): Promise<RepoIssuesResult> {
   return postGitHubIntegration<RepoIssuesResult>({
@@ -285,6 +289,26 @@ export async function listGitHubIssues(
     repo,
     ...options,
   });
+}
+
+export async function createGitHubIssue(
+  pat: string,
+  owner: string,
+  repo: string,
+  input: {
+    title: string;
+    body?: string;
+  },
+): Promise<GitHubIssueSummary> {
+  const result = await postGitHubIntegration<{ issue: GitHubIssueSummary }>({
+    action: 'create-issue',
+    pat,
+    owner,
+    repo,
+    title: input.title,
+    ...(input.body ? { body: input.body } : {}),
+  });
+  return result.issue;
 }
 
 export async function cloneGitHubRepo(
@@ -315,4 +339,181 @@ export async function forkGitHubRepo(
     repo,
     ...(branch ? { branch } : {}),
   });
+}
+
+export type ReactionContent = '+1' | '-1' | 'laugh' | 'hooray' | 'confused' | 'heart' | 'rocket' | 'eyes';
+
+export interface CommentReactions {
+  '+1': number;
+  '-1': number;
+  laugh: number;
+  hooray: number;
+  confused: number;
+  heart: number;
+  rocket: number;
+  eyes: number;
+}
+
+export interface GitHubIssueComment {
+  id: number;
+  user: { login: string; avatar_url: string | null };
+  body: string;
+  created_at: string;
+  updated_at: string;
+  reactions?: CommentReactions;
+}
+
+export interface LinkedPR {
+  number: number;
+  title: string;
+  html_url: string;
+  state: string;
+  user: { login: string };
+  created_at: string;
+}
+
+export async function listIssueComments(
+  pat: string,
+  owner: string,
+  repo: string,
+  issueNumber: number,
+): Promise<GitHubIssueComment[]> {
+  const result = await postGitHubIntegration<{ comments: GitHubIssueComment[] }>({
+    action: 'list-issue-comments',
+    pat,
+    owner,
+    repo,
+    issueNumber,
+  });
+  return result.comments || [];
+}
+
+export async function createIssueComment(
+  pat: string,
+  owner: string,
+  repo: string,
+  issueNumber: number,
+  body: string,
+): Promise<GitHubIssueComment> {
+  const result = await postGitHubIntegration<{ comment: GitHubIssueComment }>({
+    action: 'create-issue-comment',
+    pat,
+    owner,
+    repo,
+    issueNumber,
+    body,
+  });
+  return result.comment;
+}
+
+export async function addCommentReaction(
+  pat: string,
+  owner: string,
+  repo: string,
+  commentId: number,
+  reaction: ReactionContent,
+): Promise<{ id: number; content: string }> {
+  return postGitHubIntegration<{ reaction: { id: number; content: string } }>({
+    action: 'add-comment-reaction',
+    pat,
+    owner,
+    repo,
+    commentId,
+    reaction,
+  }).then((r) => r.reaction);
+}
+
+export async function createIssueBranch(
+  pat: string,
+  owner: string,
+  repo: string,
+  baseBranch: string,
+  issue: { number: number; title: string; labels: Array<{ name: string }> },
+): Promise<{ branch: string; sha: string; created: boolean }> {
+  const isBug = issue.labels.some((l) => /bug/i.test(l.name));
+  const slug = issue.title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 40)
+    .replace(/-$/, '');
+  const prefix = isBug ? 'fix' : 'feat';
+  const newBranchName = `${prefix}/issue-${issue.number}-${slug}`;
+
+  return postGitHubIntegration<{ branch: string; sha: string; created: boolean }>({
+    action: 'create-branch',
+    pat,
+    owner,
+    repo,
+    baseBranch,
+    newBranchName,
+  });
+}
+
+export interface RepoActivityData {
+  days: number[];
+  totalCommits: number;
+  commitsCapped: boolean;
+  openedIssues: number;
+  openedPullRequests: number;
+}
+
+export async function getRepoActivity(
+  pat: string,
+  owner: string,
+  repo: string,
+): Promise<RepoActivityData> {
+  return postGitHubIntegration<RepoActivityData>({
+    action: 'repo-activity',
+    pat,
+    owner,
+    repo,
+  });
+}
+
+export async function listLinkedPRs(
+  pat: string,
+  owner: string,
+  repo: string,
+  issueNumber: number,
+): Promise<LinkedPR[]> {
+  const result = await postGitHubIntegration<{ prs: LinkedPR[] }>({
+    action: 'list-linked-prs',
+    pat,
+    owner,
+    repo,
+    issueNumber,
+  });
+  return result.prs || [];
+}
+
+export async function translateText(
+  provider: string,
+  apiKey: string,
+  model: string,
+  text: string,
+  targetLanguage = 'English',
+): Promise<string> {
+  const res = await fetch(`${getApiBaseUrl()}/functions/v1/translate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, targetLanguage, provider, api_key: apiKey, model }),
+  });
+
+  if (!res.ok) {
+    const raw = await res.text().catch(() => null);
+    let errorMsg = `Translation failed (${res.status})`;
+    if (raw) {
+      try {
+        const data = JSON.parse(raw);
+        if (data?.error) errorMsg = data.error;
+      } catch {
+        // Non-JSON error body — use default message
+      }
+    }
+    throw new Error(errorMsg);
+  }
+
+  const data = await res.json();
+  return data.translated;
 }

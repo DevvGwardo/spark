@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { Provider } from '@/stores/settings-store';
 
 export type OrchestrationPhase =
   | 'idle'
@@ -13,8 +12,16 @@ export type OrchestrationPhase =
 export interface SubTask {
   id: string;
   description: string;
-  status: 'pending' | 'running' | 'done';
+  status: 'pending' | 'running' | 'done' | 'failed' | 'retrying' | 'cancelled';
   result?: string;
+  error?: string;
+  retryCount: number;
+  maxRetries: number;
+  model?: string;
+  toolProfile?: 'research' | 'coding' | 'general';
+  startedAt?: number;
+  completedAt?: number;
+  elapsedMs?: number;
 }
 
 export interface ActiveOrchestration {
@@ -26,24 +33,21 @@ export interface ActiveOrchestration {
 
 interface OrchestratorState {
   enabled: boolean;
-  planningProvider: Provider;
-  planningModel: string;
-  codingProvider: Provider;
-  codingModel: string;
   maxSubAgents: number;
+  maxRetries: number;
+  fallbackModel: string;
 
   // Live orchestration state (not persisted)
   activeOrchestration: ActiveOrchestration;
 
   setEnabled(v: boolean): void;
-  setPlanningProvider(p: Provider): void;
-  setPlanningModel(m: string): void;
-  setCodingProvider(p: Provider): void;
-  setCodingModel(m: string): void;
   setMaxSubAgents(n: number): void;
+  setMaxRetries(n: number): void;
+  setFallbackModel(model: string): void;
 
   updateOrchestration(patch: Partial<ActiveOrchestration>): void;
   updateTask(taskId: string, patch: Partial<SubTask>): void;
+  cancelTask(taskId: string): void;
   resetOrchestration(): void;
 }
 
@@ -52,24 +56,23 @@ const IDLE_ORCHESTRATION: ActiveOrchestration = {
   tasks: [],
 };
 
+const DEFAULT_MAX_SUB_AGENTS = 6;
+const DEFAULT_MAX_RETRIES = 2;
+
 export const useOrchestratorStore = create<OrchestratorState>()(
   persist(
     (set) => ({
-      enabled: false,
-      planningProvider: 'kimi-coding',
-      planningModel: 'kimi-for-coding',
-      codingProvider: 'kimi-coding',
-      codingModel: 'kimi-for-coding',
-      maxSubAgents: 3,
+      enabled: true,
+      maxSubAgents: DEFAULT_MAX_SUB_AGENTS,
+      maxRetries: DEFAULT_MAX_RETRIES,
+      fallbackModel: '',
 
       activeOrchestration: { ...IDLE_ORCHESTRATION },
 
       setEnabled: (v) => set({ enabled: v }),
-      setPlanningProvider: (p) => set({ planningProvider: p }),
-      setPlanningModel: (m) => set({ planningModel: m }),
-      setCodingProvider: (p) => set({ codingProvider: p }),
-      setCodingModel: (m) => set({ codingModel: m }),
       setMaxSubAgents: (n) => set({ maxSubAgents: Math.max(1, Math.min(6, n)) }),
+      setMaxRetries: (n) => set({ maxRetries: Math.max(0, Math.min(10, n)) }),
+      setFallbackModel: (model) => set({ fallbackModel: model }),
 
       updateOrchestration: (patch) =>
         set((s) => ({
@@ -86,35 +89,49 @@ export const useOrchestratorStore = create<OrchestratorState>()(
           },
         })),
 
+      cancelTask: (taskId) =>
+        set((s) => ({
+          activeOrchestration: {
+            ...s.activeOrchestration,
+            tasks: s.activeOrchestration.tasks.map((t) =>
+              t.id === taskId ? { ...t, status: 'cancelled' as const } : t
+            ),
+          },
+        })),
+
       resetOrchestration: () =>
         set({ activeOrchestration: { ...IDLE_ORCHESTRATION } }),
     }),
     {
       name: 'cloudchat-orchestrator',
-      version: 4,
-      migrate: (persisted: any, version: number) => {
-        const state = persisted as any;
-        if (version < 4) {
-          // Migrate from any older shape to dual-provider
-          state.planningProvider = state.provider || state.planningProvider || 'kimi-coding';
-          state.planningModel = state.model || state.planningModel || 'kimi-for-coding';
-          state.codingProvider = state.provider || state.codingProvider || 'kimi-coding';
-          state.codingModel = state.model || state.codingModel || 'kimi-for-coding';
-          state.maxSubAgents = state.maxSubAgents || 3;
-          // Clean up old single-provider fields
-          delete state.provider;
-          delete state.model;
+      version: 8,
+      migrate: (persisted: unknown, version: number) => {
+        const state = (persisted ?? {}) as Record<string, unknown>;
+        if (version < 7) {
+          // Migration: drop all dual-provider fields, keep only enabled + maxSubAgents
+          return {
+            enabled: state.enabled ?? true,
+            maxSubAgents: state.maxSubAgents ?? DEFAULT_MAX_SUB_AGENTS,
+            maxRetries: DEFAULT_MAX_RETRIES,
+            fallbackModel: '',
+          };
+        }
+        if (version < 8) {
+          // Migration: add retry/fallback config fields
+          return {
+            ...state,
+            maxRetries: state.maxRetries ?? DEFAULT_MAX_RETRIES,
+            fallbackModel: state.fallbackModel ?? '',
+          };
         }
         return state;
       },
       // Don't persist live orchestration state
       partialize: (state) => ({
         enabled: state.enabled,
-        planningProvider: state.planningProvider,
-        planningModel: state.planningModel,
-        codingProvider: state.codingProvider,
-        codingModel: state.codingModel,
         maxSubAgents: state.maxSubAgents,
+        maxRetries: state.maxRetries,
+        fallbackModel: state.fallbackModel,
       }),
     }
   )

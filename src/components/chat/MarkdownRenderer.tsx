@@ -1,97 +1,81 @@
-import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
-import rehypeHighlight from 'rehype-highlight';
-import { Check, ChevronDown, Copy, FileCode2 } from 'lucide-react';
+import { Check, ChevronDown, Copy, Terminal } from 'lucide-react';
+import { codeToHtml } from 'shiki';
 
 const LANG_LABELS: Record<string, string> = {
-  js: 'JavaScript',
-  jsx: 'JSX',
-  ts: 'TypeScript',
-  tsx: 'TSX',
-  py: 'Python',
-  rb: 'Ruby',
-  go: 'Go',
-  rs: 'Rust',
-  java: 'Java',
-  cpp: 'C++',
-  c: 'C',
-  cs: 'C#',
-  php: 'PHP',
-  swift: 'Swift',
-  kt: 'Kotlin',
-  html: 'HTML',
-  css: 'CSS',
-  scss: 'SCSS',
-  json: 'JSON',
-  yaml: 'YAML',
-  yml: 'YAML',
-  md: 'Markdown',
-  sql: 'SQL',
-  sh: 'Shell',
-  bash: 'Bash',
-  zsh: 'Zsh',
-  dockerfile: 'Dockerfile',
-  graphql: 'GraphQL',
-  xml: 'XML',
-  toml: 'TOML',
+  js: 'javascript',
+  jsx: 'jsx',
+  ts: 'typescript',
+  tsx: 'tsx',
+  py: 'python',
+  rb: 'ruby',
+  go: 'go',
+  rs: 'rust',
+  java: 'java',
+  cpp: 'c++',
+  c: 'c',
+  cs: 'c#',
+  php: 'php',
+  swift: 'swift',
+  kt: 'kotlin',
+  html: 'html',
+  css: 'css',
+  scss: 'scss',
+  json: 'json',
+  yaml: 'yaml',
+  yml: 'yaml',
+  md: 'markdown',
+  sql: 'sql',
+  sh: 'shell',
+  bash: 'bash',
+  zsh: 'zsh',
+  dockerfile: 'dockerfile',
+  graphql: 'graphql',
+  xml: 'xml',
+  toml: 'toml',
 };
 
-const LANG_COLORS: Record<string, string> = {
-  js: '#f7df1e',
-  jsx: '#61dafb',
-  ts: '#3178c6',
-  tsx: '#3178c6',
-  py: '#3572A5',
-  rb: '#CC342D',
-  go: '#00ADD8',
-  rs: '#dea584',
-  java: '#b07219',
-  html: '#e34c26',
-  css: '#563d7c',
-  scss: '#c6538c',
-  json: '#292929',
-  sql: '#e38c00',
-  sh: '#89e051',
-  bash: '#89e051',
+/** Map short aliases to valid Shiki language identifiers */
+const SHIKI_LANG_MAP: Record<string, string> = {
+  js: 'javascript',
+  jsx: 'jsx',
+  ts: 'typescript',
+  tsx: 'tsx',
+  py: 'python',
+  rb: 'ruby',
+  go: 'go',
+  rs: 'rust',
+  java: 'java',
+  cpp: 'cpp',
+  c: 'c',
+  cs: 'csharp',
+  php: 'php',
+  swift: 'swift',
+  kt: 'kotlin',
+  html: 'html',
+  css: 'css',
+  scss: 'scss',
+  json: 'json',
+  yaml: 'yaml',
+  yml: 'yaml',
+  md: 'markdown',
+  sql: 'sql',
+  sh: 'bash',
+  bash: 'bash',
+  zsh: 'bash',
+  dockerfile: 'dockerfile',
+  graphql: 'graphql',
+  xml: 'xml',
+  toml: 'toml',
+  plaintext: 'text',
+  text: 'text',
 };
 
-const LANG_FILENAMES: Record<string, string> = {
-  js: 'snippet.js',
-  jsx: 'snippet.jsx',
-  ts: 'snippet.ts',
-  tsx: 'snippet.tsx',
-  py: 'snippet.py',
-  rb: 'snippet.rb',
-  go: 'snippet.go',
-  rs: 'snippet.rs',
-  java: 'snippet.java',
-  cpp: 'snippet.cpp',
-  c: 'snippet.c',
-  cs: 'snippet.cs',
-  php: 'snippet.php',
-  swift: 'snippet.swift',
-  kt: 'snippet.kt',
-  html: 'index.html',
-  css: 'styles.css',
-  scss: 'styles.scss',
-  json: 'data.json',
-  yaml: 'config.yaml',
-  yml: 'config.yml',
-  md: 'README.md',
-  sql: 'query.sql',
-  sh: 'script.sh',
-  bash: 'script.sh',
-  zsh: 'script.zsh',
-  dockerfile: 'Dockerfile',
-  graphql: 'query.graphql',
-  xml: 'layout.xml',
-  toml: 'config.toml',
-};
-
-/** Recursively extract plain text from React children (handles rehype-highlight spans). */
+/** Recursively extract plain text from React children */
 function extractText(node: React.ReactNode): string {
   if (node == null || typeof node === 'boolean') return '';
   if (typeof node === 'string' || typeof node === 'number') return String(node);
@@ -100,22 +84,57 @@ function extractText(node: React.ReactNode): string {
   return '';
 }
 
+/** Use Shiki to highlight code asynchronously */
+function useShikiHighlight(code: string, lang: string): string | null {
+  const [html, setHtml] = useState<string | null>(null);
+  const prevKey = useRef('');
+
+  useEffect(() => {
+    const key = `${lang}:${code}`;
+    if (key === prevKey.current) return;
+    prevKey.current = key;
+
+    let cancelled = false;
+    const shikiLang = SHIKI_LANG_MAP[lang] || lang || 'text';
+
+    codeToHtml(code, {
+      lang: shikiLang,
+      theme: 'github-dark-default',
+    })
+      .then((result) => {
+        if (!cancelled) setHtml(result);
+      })
+      .catch(() => {
+        // Fallback: retry with plaintext
+        if (!cancelled) {
+          codeToHtml(code, { lang: 'text', theme: 'github-dark-default' })
+            .then((result) => { if (!cancelled) setHtml(result); })
+            .catch(() => { if (!cancelled) setHtml(null); });
+        }
+      });
+
+    return () => { cancelled = true; };
+  }, [code, lang]);
+
+  return html;
+}
+
 const CodeBlock = React.forwardRef<HTMLElement, React.HTMLAttributes<HTMLElement> & { node?: unknown }>(
-  ({ className, children, node: _node, ...props }, ref) => {
+  ({ className, children, node: _node, ...props }, _ref) => {
     const [copied, setCopied] = useState(false);
     const [expanded, setExpanded] = useState(false);
     const [isOverflowing, setIsOverflowing] = useState(false);
     const contentRef = useRef<HTMLDivElement>(null);
     const code = extractText(children).replace(/\n$/, '');
-    const COLLAPSED_HEIGHT = 220;
-    // rehype-highlight may produce classNames like "hljs language-python"
+    const COLLAPSED_HEIGHT = 240;
+
     const langMatch = className?.match(/language-(\S+)/);
     const langId = langMatch ? langMatch[1] : '';
-    const label = LANG_LABELS[langId] || (langId ? langId.toUpperCase() : 'Code');
-    const dotColor = LANG_COLORS[langId] || 'hsl(var(--muted-foreground))';
-    const virtualFilename = LANG_FILENAMES[langId] || (langId ? `snippet.${langId}` : 'snippet.txt');
+    const label = LANG_LABELS[langId] || langId || 'code';
     const lineCount = code.split('\n').length;
-    const lineNumbers = Array.from({ length: lineCount }, (_, index) => String(index + 1)).join('\n');
+
+    // Shiki async highlighting
+    const shikiHtml = useShikiHighlight(code, langId);
 
     const handleCopy = async () => {
       try {
@@ -131,7 +150,7 @@ const CodeBlock = React.forwardRef<HTMLElement, React.HTMLAttributes<HTMLElement
       if (contentRef.current) {
         setIsOverflowing(contentRef.current.scrollHeight > COLLAPSED_HEIGHT);
       }
-    }, [code, COLLAPSED_HEIGHT]);
+    }, [code, shikiHtml, COLLAPSED_HEIGHT]);
 
     useLayoutEffect(() => {
       if (!isOverflowing && expanded) {
@@ -139,42 +158,34 @@ const CodeBlock = React.forwardRef<HTMLElement, React.HTMLAttributes<HTMLElement
       }
     }, [expanded, isOverflowing]);
 
+    // Generate line numbers
+    const lineNumbers = Array.from({ length: lineCount }, (_, i) => i + 1);
+
     return (
       <div className="chat-code-block group my-3">
-        <div className="chat-code-block__titlebar">
-          <div className="chat-code-block__window-controls" aria-hidden="true">
-            <span className="chat-code-block__window-dot chat-code-block__window-dot--red" />
-            <span className="chat-code-block__window-dot chat-code-block__window-dot--amber" />
-            <span className="chat-code-block__window-dot chat-code-block__window-dot--green" />
+        {/* Header */}
+        <div className="chat-code-block__header">
+          <div className="flex items-center gap-2 min-w-0">
+            <Terminal className="h-3 w-3 shrink-0 opacity-40" />
+            <span className="chat-code-block__lang">{label}</span>
           </div>
-          <div className="chat-code-block__tab">
-            <FileCode2 className="h-3.5 w-3.5 shrink-0 text-[#519aba]" />
-            <span className="chat-code-block__filename">{virtualFilename}</span>
-          </div>
-          <button
-            type="button"
-            onClick={handleCopy}
-            className="chat-code-block__copy"
-            title={copied ? 'Copied!' : 'Copy code'}
-            aria-label={copied ? 'Copied!' : 'Copy code'}
-          >
-            {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-          </button>
-        </div>
-
-        <div className="chat-code-block__meta">
           <div className="flex items-center gap-2">
-            <span
-              className="h-2 w-2 rounded-full shrink-0"
-              style={{ backgroundColor: dotColor }}
-            />
-            <span className="chat-code-block__language">{label}</span>
+            <span className="chat-code-block__line-count">
+              {lineCount} {lineCount === 1 ? 'line' : 'lines'}
+            </span>
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="chat-code-block__copy"
+              title={copied ? 'Copied!' : 'Copy'}
+              aria-label={copied ? 'Copied!' : 'Copy code'}
+            >
+              {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+            </button>
           </div>
-          <span className="chat-code-block__line-count">
-            {lineCount} {lineCount === 1 ? 'line' : 'lines'}
-          </span>
         </div>
 
+        {/* Code body */}
         <div className="chat-code-block__body">
           <div
             ref={contentRef}
@@ -182,17 +193,30 @@ const CodeBlock = React.forwardRef<HTMLElement, React.HTMLAttributes<HTMLElement
             style={{ maxHeight: expanded ? `${contentRef.current?.scrollHeight || 2000}px` : `${COLLAPSED_HEIGHT}px` }}
           >
             <div className="chat-code-block__editor">
-              <pre aria-hidden="true" className="chat-code-block__gutter">
-                {lineNumbers}
-              </pre>
+              {/* Line numbers gutter */}
+              <div className="chat-code-block__gutter" aria-hidden="true">
+                {lineNumbers.map((n) => (
+                  <div key={n} className="chat-code-block__line-num">{n}</div>
+                ))}
+              </div>
+
+              {/* Code content */}
               <div className="chat-code-block__viewport">
-                <pre className="chat-code-block__pre">
-                  <code ref={ref} className={className} {...props}>{children}</code>
-                </pre>
+                {shikiHtml ? (
+                  <div
+                    className="chat-code-block__shiki"
+                    dangerouslySetInnerHTML={{ __html: shikiHtml }}
+                  />
+                ) : (
+                  <pre className="chat-code-block__pre">
+                    <code className={className} {...props}>{children}</code>
+                  </pre>
+                )}
               </div>
             </div>
           </div>
 
+          {/* Collapse/expand controls */}
           {isOverflowing && !expanded && (
             <div className="absolute bottom-0 left-0 right-0">
               <div className="chat-code-block__fade" />
@@ -232,11 +256,11 @@ interface MarkdownRendererProps {
   content: string;
 }
 
-export const MarkdownRenderer = React.forwardRef<HTMLDivElement, MarkdownRendererProps>(
+const MarkdownRendererInner = React.forwardRef<HTMLDivElement, MarkdownRendererProps>(
   ({ content }, ref) => {
     const plugins = useMemo(() => ({
       remark: [remarkGfm, remarkMath],
-      rehype: [rehypeKatex, rehypeHighlight],
+      rehype: [rehypeKatex],
     }), []);
 
     return (
@@ -251,7 +275,7 @@ export const MarkdownRenderer = React.forwardRef<HTMLDivElement, MarkdownRendere
                 return <CodeBlock className={className} {...props}>{children}</CodeBlock>;
               }
               return (
-                <code className="px-1.5 py-0.5 rounded-md bg-muted/80 text-[13px] font-mono border border-border/30" {...props}>
+                <code className="px-1.5 py-0.5 rounded bg-muted/60 text-[13px] font-mono border border-border/30 text-foreground/90" {...props}>
                   {children}
                 </code>
               );
@@ -277,4 +301,6 @@ export const MarkdownRenderer = React.forwardRef<HTMLDivElement, MarkdownRendere
     );
   }
 );
-MarkdownRenderer.displayName = 'MarkdownRenderer';
+MarkdownRendererInner.displayName = 'MarkdownRenderer';
+
+export const MarkdownRenderer = React.memo(MarkdownRendererInner);

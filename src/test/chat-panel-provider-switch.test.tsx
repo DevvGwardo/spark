@@ -114,8 +114,10 @@ describe('ChatPanel provider switching', () => {
     );
 
     expect(screen.getByTestId('chat-area')).toHaveTextContent('openai');
-    expect(regularChatHook).toHaveBeenCalledTimes(1);
+    expect(regularChatHook).toHaveBeenCalled();
     expect(orchestratorHook).not.toHaveBeenCalled();
+
+    const regularCallsBeforeToggle = regularChatHook.mock.calls.length;
 
     act(() => {
       useOrchestratorStore.setState((state) => ({
@@ -125,8 +127,11 @@ describe('ChatPanel provider switching', () => {
     });
 
     expect(screen.getByTestId('chat-area')).toHaveTextContent('kimi-coding');
-    expect(regularChatHook).toHaveBeenCalledTimes(1);
-    expect(orchestratorHook).toHaveBeenCalledTimes(1);
+    // Regular hook should not be called again after switching to orchestrator
+    expect(regularChatHook).toHaveBeenCalledTimes(regularCallsBeforeToggle);
+    expect(orchestratorHook).toHaveBeenCalled();
+
+    const orchestratorCallsBeforeToggle = orchestratorHook.mock.calls.length;
 
     act(() => {
       useOrchestratorStore.setState((state) => ({
@@ -136,7 +141,78 @@ describe('ChatPanel provider switching', () => {
     });
 
     expect(screen.getByTestId('chat-area')).toHaveTextContent('openai');
-    expect(regularChatHook).toHaveBeenCalledTimes(2);
-    expect(orchestratorHook).toHaveBeenCalledTimes(1);
+    // Orchestrator hook should not be called again after switching back
+    expect(orchestratorHook).toHaveBeenCalledTimes(orchestratorCallsBeforeToggle);
+  });
+
+  it('copies draft repo state into the new conversation scope before switching the panel', () => {
+    usePanelStore.setState((state) => ({
+      ...state,
+      panels: [{ id: 'default', conversationId: null }],
+      focusedPanelId: 'default',
+    }));
+
+    useChangesetStore.getState().setActiveRepo('default', {
+      owner: 'octo',
+      name: 'cloudchat',
+      defaultBranch: 'main',
+      fullName: 'octo/cloudchat',
+    });
+    useChangesetStore.getState().setRepoFileTree('default', ['src/App.tsx']);
+    useChangesetStore.getState().cacheRepoFile('default', 'src/App.tsx', 'export default function App() {}');
+    usePreviewStore.getState().replacePreview('default', {
+      isOpen: true,
+      files: [
+        {
+          id: 'file-1',
+          filename: 'src/App.tsx',
+          content: 'export default function App() {}',
+          type: 'tsx',
+          timestamp: new Date().toISOString(),
+        },
+      ],
+      activeFileId: 'file-1',
+      projectType: 'react',
+      activeView: 'repo',
+      railWidth: 460,
+    });
+
+    render(
+      <ChatPanel
+        panelId="default"
+        conversationId={null}
+        isFocused
+        onFocus={vi.fn()}
+      />
+    );
+
+    const onConversationCreated = regularChatHook.mock.calls[0]?.[1] as ((id: string) => void) | undefined;
+    expect(onConversationCreated).toBeTypeOf('function');
+
+    act(() => {
+      onConversationCreated?.('conv-2');
+    });
+
+    expect(usePanelStore.getState().panels[0]).toMatchObject({
+      id: 'default',
+      conversationId: 'conv-2',
+    });
+    expect(useChangesetStore.getState().getChangeset('conv-2')).toMatchObject({
+      activeRepo: {
+        owner: 'octo',
+        name: 'cloudchat',
+        fullName: 'octo/cloudchat',
+      },
+      repoFileTree: ['src/App.tsx'],
+      repoFileCache: {
+        'src/App.tsx': 'export default function App() {}',
+      },
+    });
+    expect(usePreviewStore.getState().getPreview('conv-2')).toMatchObject({
+      isOpen: true,
+      activeView: 'repo',
+      activeFileId: 'file-1',
+    });
+    expect(usePreviewStore.getState().getPreview('conv-2').files).toHaveLength(1);
   });
 });

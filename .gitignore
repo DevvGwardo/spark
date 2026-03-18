@@ -34,3 +34,10 @@ dist-electron/
 
 # Worktrees
 .worktrees/
+
+# Python cache artifacts
+__pycache__/
+*.pyc
+
+# Local task scheduler lock
+.claude/scheduled_tasks.lock

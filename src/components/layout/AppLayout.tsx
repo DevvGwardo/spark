@@ -17,8 +17,11 @@ import { useContextUsageStore } from '@/stores/context-usage-store';
 import { useTheme } from '@/hooks/useTheme';
 import { useGlobalStyles } from '@/hooks/useGlobalStyles';
 import { PROVIDERS } from '@/lib/providers';
-import { formatTokenCount } from '@/lib/tokens';
-import { PanelLeft, GitPullRequest, MoreHorizontal, GitBranch, Shield, Circle, Pin, Pencil, Archive, Copy, PanelRight, Plus, FileCode2 } from 'lucide-react';
+import { getChatScopeId } from '@/lib/chat-scope';
+import { PanelLeft, GitPullRequest, MoreHorizontal, Circle, Pin, Pencil, Archive, Copy, PanelRight, Plus, FileCode2, MessageSquare, TerminalSquare } from 'lucide-react';
+import { TerminalPanel } from '@/components/terminal/TerminalPanel';
+import { useActivityStore } from '@/stores/activity-store';
+import { SlotNumber } from '@/components/ui/SlotNumber';
 import { cn } from '@/lib/utils';
 
 export const AppLayout: React.FC = () => {
@@ -34,51 +37,73 @@ export const AppLayout: React.FC = () => {
     setActiveTab,
     repoBrowserOpen,
     setRepoBrowserOpen,
+    terminalOpen,
+    toggleTerminal,
   } = useUIStore();
   const { isSetupComplete, activeProvider, providers } = useSettingsStore(
     useShallow((s) => ({ isSetupComplete: s.isSetupComplete, activeProvider: s.activeProvider, providers: s.providers })),
   );
-  const { getChangeset, getChangeCount, getLineTotals, clearChanges, getStagedCount, getStagedChanges } = useChangesetStore();
+  const { getChangeset, getChangeCount, clearChanges, getStagedCount, getStagedChanges, setPullRequest } = useChangesetStore();
   const { conversations, deleteConversation, renameConversation, pinConversation } = useChatStore();
   const { panels, focusedPanelId, openPanel, setConversationForPanel, focusPanel } = usePanelStore();
   const footerUsage = useContextUsageStore((state) => state.panelUsage[focusedPanelId]);
-  const preview = usePreviewStore((s) => s.getPreview(focusedPanelId));
   const setPreviewOpen = usePreviewStore((s) => s.setOpen);
   const setPreviewView = usePreviewStore((s) => s.setView);
   const isMultiPanel = panels.length > 1;
   const [prModalOpen, setPrModalOpen] = useState(false);
   const [prPanelId, setPrPanelId] = useState<string | null>(null); // which panel triggered the PR modal
+  const [prModalMode, setPrModalMode] = useState<'create' | 'review'>('create');
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const headerMenuRef = useRef<HTMLDivElement>(null);
+  const focusedPanel = panels.find((p) => p.id === focusedPanelId);
+  const focusedScopeId = getChatScopeId(focusedPanelId, focusedPanel?.conversationId ?? null);
+  const preview = usePreviewStore((s) => s.getPreview(focusedScopeId));
 
   // Get changeset for the focused panel (used in global header for single-panel mode)
-  const focusedChangeset = getChangeset(focusedPanelId);
+  const focusedChangeset = getChangeset(focusedScopeId);
   const activeRepo = focusedChangeset.activeRepo;
-  const changeCount = getChangeCount(focusedPanelId);
-  const lineTotals = getLineTotals(focusedPanelId, 'all');
-  const stagedCount = getStagedCount(focusedPanelId);
-  const cachedRepoFileCount = focusedChangeset.repoFileTree.filter(
-    (path) => focusedChangeset.repoFileCache[path] !== undefined,
-  ).length;
-  const repoFooterStatus = focusedChangeset.repoFileTreeStatus === 'loading'
-    ? 'Indexing repo tree'
-    : focusedChangeset.repoFileTreeStatus === 'error'
-      ? 'Repo index failed'
-      : focusedChangeset.repoFileTree.length > 0
-        ? `${focusedChangeset.repoFileTree.length} indexed · ${cachedRepoFileCount} cached`
-        : 'No repo files indexed';
+  const focusedPullRequest = focusedChangeset.pullRequest;
+  const changeCount = getChangeCount(focusedScopeId);
+  const stagedCount = getStagedCount(focusedScopeId);
+  const focusedConvId = focusedPanel?.conversationId ?? null;
+  const focusedConv = useChatStore((s) => s.conversations.find((c) => c.id === focusedConvId));
+  const getPendingLineStats = useActivityStore((s) => s.getPendingLineStats);
+  const pendingStats = focusedConvId ? getPendingLineStats(focusedConvId) : { added: 0, removed: 0 };
+  const lineTotals = {
+    added: (focusedConv?.linesAdded ?? 0) + pendingStats.added,
+    removed: (focusedConv?.linesRemoved ?? 0) + pendingStats.removed,
+  };
 
   // For the PR modal, use the panel that triggered it (or focused panel in single-panel mode)
   const prTargetPanelId = prPanelId || focusedPanelId;
-  const prChangeset = getChangeset(prTargetPanelId);
+  const prPanel = panels.find((p) => p.id === prTargetPanelId);
+  const prScopeId = getChatScopeId(prTargetPanelId, prPanel?.conversationId ?? null);
+  const prChangeset = getChangeset(prScopeId);
   const prActiveRepo = prChangeset.activeRepo;
-  const pendingFiles = getStagedChanges(prTargetPanelId).map(c => ({ path: c.path, content: c.content, action: c.action }));
+  const prPullRequest = prChangeset.pullRequest;
+  const pendingFiles = getStagedChanges(prScopeId).map((change) => ({
+    path: change.path,
+    content: change.content,
+    action: change.action,
+    originalContent: change.originalContent,
+  }));
 
   // Get active conversation title
-  const focusedPanel = panels.find((p) => p.id === focusedPanelId);
   const activeConv = focusedPanel?.conversationId
     ? conversations.find((c) => c.id === focusedPanel.conversationId)
     : null;
+
+  // Keyboard shortcut: Ctrl+` to toggle terminal
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === '`') {
+        e.preventDefault();
+        toggleTerminal();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [toggleTerminal]);
 
   // Close header menu on outside click
   useEffect(() => {
@@ -103,10 +128,7 @@ export const AppLayout: React.FC = () => {
   const footerModel = activeTab === 'chat' ? footerUsage?.model ?? config.model : config.model;
   const footerProviderInfo = PROVIDERS[footerProvider as keyof typeof PROVIDERS];
   const footerDisplayModel = footerModel.split('/').pop() || footerModel;
-  const footerContextLabel = activeTab === 'chat' && footerUsage
-    ? `${formatTokenCount(footerUsage.used)} / ${formatTokenCount(footerUsage.total)} context`
-    : null;
-  const headerSecondaryLabel = activeTab === 'chat'
+const headerSecondaryLabel = activeTab === 'chat'
     ? activeRepo?.name ?? null
     : activeTab === 'github'
       ? 'Repository tools'
@@ -126,20 +148,27 @@ export const AppLayout: React.FC = () => {
         : 'Knowledge';
 
   const handlePrSuccess = useCallback(() => {
-    clearChanges(prTargetPanelId);
+    clearChanges(prScopeId);
     // Don't close the modal — let the user see the success screen with the GitHub link
-  }, [clearChanges, prTargetPanelId]);
+  }, [clearChanges, prScopeId]);
+
+  const handlePullRequestCreated = useCallback((pullRequest: NonNullable<typeof prPullRequest>) => {
+    setPullRequest(prScopeId, pullRequest);
+  }, [prScopeId, setPullRequest]);
 
   // Callback for per-panel commit buttons
-  const handleOpenPRForPanel = useCallback((targetPanelId: string) => {
+  const handleOpenPRForPanel = useCallback((targetPanelId: string, mode: 'create' | 'review' = 'create') => {
     setPrPanelId(targetPanelId);
+    setPrModalMode(mode);
     focusPanel(targetPanelId);
     setPrModalOpen(true);
   }, [focusPanel]);
 
   const handleOpenChangesSidebar = useCallback((panelId: string) => {
-    setPreviewView(panelId, 'changes');
-    setPreviewOpen(panelId, true);
+    const panel = usePanelStore.getState().panels.find((entry) => entry.id === panelId);
+    const scopeId = getChatScopeId(panelId, panel?.conversationId ?? null);
+    setPreviewView(scopeId, 'changes');
+    setPreviewOpen(scopeId, true);
   }, [setPreviewOpen, setPreviewView]);
 
   // Sidebar resize handling
@@ -181,25 +210,27 @@ export const AppLayout: React.FC = () => {
       {prActiveRepo && (
         <CreatePRModal
           isOpen={prModalOpen}
-          onClose={() => { setPrModalOpen(false); setPrPanelId(null); }}
+          onClose={() => { setPrModalOpen(false); setPrPanelId(null); setPrModalMode('create'); }}
           owner={prActiveRepo.owner}
           repo={prActiveRepo.name}
           baseOwner={prActiveRepo.baseOwner}
           baseRepo={prActiveRepo.baseName}
           baseBranch={prActiveRepo.defaultBranch}
           files={pendingFiles}
+          initialPullRequest={prModalMode === 'review' ? prPullRequest : null}
+          onPullRequestCreated={handlePullRequestCreated}
           onSuccess={handlePrSuccess}
         />
       )}
 
-      <div className="h-[100dvh] flex flex-col bg-[hsl(var(--sidebar-bg))] p-3 gap-3">
-        <div className="flex-1 flex min-h-0 gap-3">
+      <div className="h-[100dvh] flex flex-col bg-[hsl(var(--frame-bg))] p-0 gap-0">
+        <div className="flex-1 flex min-h-0 gap-0">
           {/* Sidebar + resize handle wrapper */}
           <div className="flex-shrink-0 relative" style={sidebarOpen ? { width: sidebarWidth } : { width: 0 }}>
             <div
               className={cn(
-                'h-full overflow-hidden rounded-[22px] bg-background/88',
-                !sidebarOpen && 'w-0'
+                'h-full overflow-hidden bg-[hsl(var(--sidebar-bg))] border-r border-[hsl(var(--sidebar-border))]',
+                !sidebarOpen && 'w-0 border-r-0'
               )}
               style={sidebarOpen ? { width: sidebarWidth, transition: isResizing.current ? 'none' : 'width 200ms' } : { transition: 'width 200ms' }}
             >
@@ -207,7 +238,7 @@ export const AppLayout: React.FC = () => {
                 <ChatSidebar />
               </div>
             </div>
-            {/* Resize handle — positioned to straddle the sidebar edge and the gap */}
+            {/* Resize handle — positioned to straddle the sidebar edge */}
             {sidebarOpen && (
               <div
                 onMouseDown={handleResizeStart}
@@ -227,9 +258,9 @@ export const AppLayout: React.FC = () => {
           )}
 
           {/* Main */}
-          <div className="flex-1 flex flex-col min-w-0 overflow-hidden rounded-[22px] border border-border/60 bg-background/92">
+          <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-background">
             {/* Header */}
-            <header className="flex items-center h-[58px] px-4 flex-shrink-0 border-b border-border/60 bg-background/88" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+            <header className="flex items-center h-[48px] px-5 flex-shrink-0 border-b border-border/60 bg-background" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
               {/* Collapsed sidebar controls — sits in the traffic light area */}
               {!sidebarOpen && (
                 <div className="flex items-center gap-2 mr-3 pl-[60px]" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
@@ -268,8 +299,9 @@ export const AppLayout: React.FC = () => {
               {/* Thread/page title — only show in single-panel or non-chat tabs */}
               {(!isMultiPanel || activeTab !== 'chat') && (
                 <div className="flex items-center gap-2.5 ml-3 min-w-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+                  <div className="flex h-5 w-5 items-center justify-center rounded-[4px] bg-[#2a2a2a]"><MessageSquare className="h-2.5 w-2.5 text-[hsl(var(--text-muted))]" /></div>
                   <div className="min-w-0">
-                    <h1 className="truncate text-[13px] font-semibold tracking-[-0.015em] text-foreground">
+                    <h1 className="truncate text-[13px] font-normal tracking-[-0.015em] text-[hsl(var(--text-secondary))]">
                       {headerTitle}
                     </h1>
                     {headerSecondaryLabel && (
@@ -382,7 +414,23 @@ export const AppLayout: React.FC = () => {
                 </div>
               )}
 
+              {/* Repo attachment status removed — shown in sidebar footer instead */}
+
               <div className="flex-1" />
+
+              {/* Terminal toggle */}
+              <div className="flex items-center mr-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+                <button
+                  onClick={toggleTerminal}
+                  className={cn(
+                    chromeIconButtonClass,
+                    terminalOpen && 'border-primary/30 bg-primary/10 text-foreground'
+                  )}
+                  title="Toggle terminal"
+                >
+                  <TerminalSquare className="h-3.5 w-3.5" />
+                </button>
+              </div>
 
               {/* Commit button — only in single-panel mode (multi-panel has per-panel commit) */}
               {!isMultiPanel && activeRepo && changeCount > 0 && (
@@ -398,12 +446,12 @@ export const AppLayout: React.FC = () => {
                     )}
                   >
                     <FileCode2 className="h-3.5 w-3.5" />
-                    <span className="text-emerald-500">+{lineTotals.added}</span>
+                    <SlotNumber value={lineTotals.added} prefix="+" className="text-emerald-500" />
                     <span className="text-muted-foreground/40">/</span>
-                    <span className="text-red-400">-{lineTotals.removed}</span>
+                    <SlotNumber value={lineTotals.removed} prefix="-" className="text-red-400" />
                   </button>
                   <button
-                    onClick={() => { setPrPanelId(null); setPrModalOpen(true); }}
+                    onClick={() => { setPrPanelId(null); setPrModalMode('create'); setPrModalOpen(true); }}
                     disabled={stagedCount === 0}
                     className="inline-flex h-8 items-center gap-2 rounded-xl border border-border/60 bg-background/65 px-3 text-[12px] font-semibold text-foreground transition-colors duration-100 hover:bg-background/90 disabled:cursor-not-allowed disabled:opacity-40"
                   >
@@ -412,91 +460,71 @@ export const AppLayout: React.FC = () => {
                   </button>
                 </div>
               )}
+              {!isMultiPanel && activeRepo && focusedPullRequest && (
+                <div className="flex items-center gap-2.5" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+                  <button
+                    onClick={() => { setPrPanelId(null); setPrModalMode('review'); setPrModalOpen(true); }}
+                    className="inline-flex h-8 items-center gap-2 rounded-xl border border-border/60 bg-background/65 px-3 text-[12px] font-semibold text-foreground transition-colors duration-100 hover:bg-background/90"
+                  >
+                    <GitPullRequest className="h-3.5 w-3.5" />
+                    {`PR #${focusedPullRequest.number}`}
+                  </button>
+                </div>
+              )}
             </header>
 
             {/* Content — switches based on active tab */}
-            <main className="flex-1 overflow-hidden flex">
-              <div className="flex-1 overflow-hidden">
-                <div
-                  className={cn('h-full overflow-hidden', activeTab !== 'chat' && 'hidden')}
-                  aria-hidden={activeTab !== 'chat'}
-                >
-                  <ChatPanelContainer onOpenPR={handleOpenPRForPanel} />
+            <main className="flex-1 overflow-hidden flex flex-col">
+              <div className="flex-1 overflow-hidden flex min-h-0">
+                <div className="flex-1 overflow-hidden">
+                  <div
+                    className={cn('h-full overflow-hidden', activeTab !== 'chat' && 'hidden')}
+                    aria-hidden={activeTab !== 'chat'}
+                  >
+                    <ChatPanelContainer onOpenPR={handleOpenPRForPanel} />
+                  </div>
+                </div>
+                <div className={cn(activeTab !== 'chat' && 'hidden')} aria-hidden={activeTab !== 'chat'}>
+                  <PreviewSidebar />
                 </div>
               </div>
-              <div className={cn(activeTab !== 'chat' && 'hidden')} aria-hidden={activeTab !== 'chat'}>
-                <PreviewSidebar />
-              </div>
+              <TerminalPanel cwd={activeRepo?.name ? undefined : undefined} />
             </main>
           </div>
         </div>
 
-        {/* Bottom status bar — Codex style */}
-        <footer className="flex items-center h-8 px-4 text-[11px] text-muted-foreground gap-4 flex-shrink-0 mt-[-2px]">
-          <div className="flex items-center gap-1.5">
-            <Shield className="h-3 w-3" />
-            <span>Default permissions</span>
-          </div>
-          {activeRepo && (
-            <div className="flex items-center gap-1.5">
-              <Circle className="h-2 w-2 fill-emerald-500 text-emerald-500" />
-              <span>Repo attached</span>
-              <GitBranch className="h-3 w-3 ml-1" />
-              <span className="font-mono">{activeRepo.fullName}</span>
-              {activeRepo.issue && (
+        {/* Chat area status bar */}
+        {activeTab === 'chat' && (
+          <div className="flex items-center justify-end h-8 px-5 border-t border-[hsl(var(--border))] flex-shrink-0">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="text-[11px] text-[hsl(var(--text-faint))] truncate">
+                {footerProviderInfo?.label ?? footerProvider} · {footerDisplayModel}
+              </span>
+              {footerUsage && (
                 <>
-                  <span className="text-muted-foreground/35">·</span>
-                  <span>Issue #{activeRepo.issue.number}</span>
-                </>
-              )}
-              {activeRepo.localPath && (
-                <>
-                  <span className="text-muted-foreground/35">·</span>
-                  <span>Local clone ready</span>
-                </>
-              )}
-              <span className="text-muted-foreground/35">·</span>
-              <FileCode2 className="h-3 w-3" />
-              <span>{repoFooterStatus}</span>
-            </div>
-          )}
-          <div className="flex-1" />
-          <div className="flex items-center gap-2.5 min-w-0">
-            <span className="font-mono truncate">
-              {footerProviderInfo?.label ?? footerProvider} · {footerDisplayModel}
-            </span>
-            {activeTab === 'chat' && footerUsage && (
-              <>
-                <span className="text-muted-foreground/35">·</span>
-                <div className="flex items-center gap-2">
-                  <div className="w-16 h-1.5 bg-muted/60 rounded-full overflow-hidden">
-                    <div
-                      className={cn(
-                        'h-full rounded-full transition-all duration-500 ease-out',
-                        footerUsage.percentage > 90
-                          ? 'bg-red-400'
-                          : footerUsage.percentage > 70
-                            ? 'bg-amber-400'
-                            : 'bg-primary/60'
-                      )}
-                      style={{ width: `${Math.min(footerUsage.percentage, 100)}%` }}
-                    />
-                  </div>
+                  <Circle className={cn(
+                    'h-1.5 w-1.5 shrink-0',
+                    footerUsage.percentage > 90
+                      ? 'fill-red-400 text-red-400'
+                      : footerUsage.percentage > 70
+                        ? 'fill-amber-400 text-amber-400'
+                        : 'fill-[#FF8800] text-[#FF8800]'
+                  )} />
                   <span className={cn(
-                    'font-mono tabular-nums text-[10px]',
+                    'font-mono tabular-nums text-[11px]',
                     footerUsage.percentage > 90
                       ? 'text-red-400'
                       : footerUsage.percentage > 70
                         ? 'text-amber-400'
-                        : 'text-foreground/70'
+                        : 'text-[hsl(var(--text-faint))]'
                   )}>
                     {Math.round(footerUsage.percentage)}%
                   </span>
-                </div>
-              </>
-            )}
+                </>
+              )}
+            </div>
           </div>
-        </footer>
+        )}
       </div>
     </>
   );

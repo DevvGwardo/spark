@@ -137,7 +137,7 @@ const ghostStyles = `
 .ghost-body .ghost-pupil {
   width: 20px;
   height: 20px;
-  background-color: blue;
+  background-color: #6A6A6A;
   position: absolute;
   top: 50px;
   z-index: 1;

@@ -1,232 +1,408 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { X, Eye, EyeOff, Search, Check, Zap, ChevronDown, ExternalLink, Github, Code2, Network, Info, TerminalSquare } from 'lucide-react';
-import { useSettingsStore, type Provider } from '@/stores/settings-store';
+import { X, Eye, EyeOff, Search, Check, Zap, ChevronDown, ChevronRight, ArrowLeft, ExternalLink, Github, Code2, Network, Info, TerminalSquare, RefreshCw, LayoutGrid, BookOpen, Settings, Plus, Trash2 } from 'lucide-react';
+import { useSettingsStore, type Provider, type Language } from '@/stores/settings-store';
+import { COLOR_THEMES, ACCENT_COLORS } from '@/lib/themes';
 import { useHermesStore, type HermesToolsets } from '@/stores/hermes-store';
 import { useOrchestratorStore } from '@/stores/orchestrator-store';
+import { useKnowledgeStore } from '@/stores/knowledge-store';
 import { useUIStore } from '@/stores/ui-store';
 import { PROVIDERS, PROVIDER_ORDER, CATEGORY_LABELS, getVisibleModelOptions, type ProviderCategory } from '@/lib/providers';
 import { validateApiKey } from '@/lib/api';
-import { KnowledgePanel } from './KnowledgePanel';
 import { PROVIDER_KEY_URLS } from '@/components/chat/ApiKeyModal';
 import { cn } from '@/lib/utils';
 import { getLocalProviderRuntimeDetails, parseLocalProviderRuntimeError } from '@/lib/local-provider-runtime';
+import packageJson from '../../../package.json';
 
-const ProviderIcon: React.FC<{ provider: Provider; className?: string }> = ({ provider, className }) => {
-  if (PROVIDERS[provider]?.badge === 'Fast') return <Zap className={className} />;
+const PROVIDER_COLORS: Partial<Record<Provider, string>> = {
+  openai: '#10A37F',
+  anthropic: '#D4A274',
+  google: '#4285F4',
+  xai: '#cccccc',
+  groq: '#F55200',
+  cerebras: '#8B5CF6',
+  openrouter: '#6366F1',
+  sambanova: '#22D3EE',
+  deepseek: '#4F8FEA',
+  mistral: '#FF7000',
+  together: '#00B4D8',
+  minimax: '#FF6B6B',
+  'minimax-payg': '#FF6B6B',
+  kimi: '#7C3AED',
+  'kimi-coding': '#7C3AED',
+  openclaw: '#F59E0B',
+  hermes: '#EC4899',
+};
+
+const navSections = [
+  { label: 'PROVIDERS', items: [{ id: 'providers' as const, label: 'Providers', icon: LayoutGrid }] },
+  { label: 'MANAGEMENT', items: [
+    { id: 'github' as const, label: 'GitHub', icon: Github },
+    { id: 'knowledge' as const, label: 'Knowledge', icon: BookOpen },
+    { id: 'general' as const, label: 'General', icon: Settings },
+  ]},
+];
+
+const ProviderIcon: React.FC<{ provider: Provider; size?: 'sm' | 'card' }> = ({ provider, size = 'sm' }) => {
+  const color = PROVIDER_COLORS[provider] || '#888888';
+  if (size === 'card') {
+    return (
+      <div
+        className="h-[38px] w-[38px] rounded-[10px] flex items-center justify-center shrink-0"
+        style={{ backgroundColor: `${color}18` }}
+      >
+        <span style={{ color }} className="text-base font-bold">
+          {PROVIDERS[provider].label[0]}
+        </span>
+      </div>
+    );
+  }
+  if (PROVIDERS[provider]?.badge === 'Fast') return <Zap className="h-4 w-4" />;
   return (
-    <span className={cn('flex items-center justify-center rounded-lg bg-muted/70 text-[10px] font-bold uppercase leading-none', className)}>
+    <span className="flex items-center justify-center rounded-lg bg-muted/70 text-[10px] font-bold uppercase leading-none h-8 w-8">
       {PROVIDERS[provider].label.slice(0, 2)}
     </span>
   );
 };
 
-const settingsCardClass = 'rounded-2xl border border-border/60 bg-background/55';
+const settingsCardClass = 'rounded-[10px] border border-[#2a2a2a] bg-white/[0.02]';
 const fieldLabelClass = 'text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80';
-const textInputClass = 'w-full rounded-xl border border-border/60 bg-background/70 px-3 py-2.5 text-sm text-foreground outline-none transition-colors duration-100 placeholder:text-muted-foreground focus:border-primary/40 focus:ring-1 focus:ring-primary/30';
+const textInputClass = 'w-full rounded-[10px] border border-[#2a2a2a] bg-[#141414] px-3 py-2 text-sm text-foreground outline-none transition-colors duration-100 placeholder:text-muted-foreground focus:border-[#FF8400]/40 focus:ring-1 focus:ring-[#FF8400]/20';
 const selectInputClass = `${textInputClass} appearance-none pr-9 cursor-pointer font-mono`;
-const toggleTrackClass = 'relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2';
-const toggleThumbClass = 'pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-md ring-0 transition-transform duration-200';
+const toggleTrackClass = 'relative inline-flex h-[22px] w-[40px] shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2';
+const toggleThumbClass = 'pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-md ring-0 transition-transform duration-200';
+const sectionLabelClass = 'text-[10px] font-semibold uppercase tracking-[1px] text-[#555555]';
+const settingsDividerClass = 'h-px bg-[#2a2a2a] w-full';
+const settingsSearchClass = 'w-full rounded-[10px] border border-[#2a2a2a] bg-[#141414] h-[38px] px-[14px] pl-9 text-sm text-foreground outline-none transition-colors duration-100 placeholder:text-muted-foreground focus:border-[#FF8400]/40 focus:ring-1 focus:ring-[#FF8400]/20';
+const listCardClass = 'rounded-[10px] bg-white/[0.016] border border-[#2a2a2a] px-4 py-[14px] flex items-center gap-[14px] w-full text-left transition-colors duration-100 hover:bg-white/[0.04]';
+const bottomActionClass = 'rounded-[10px] border border-[#2a2a2a] border-dashed h-[42px] w-full flex items-center justify-center gap-2 text-[13px] text-[#555555] hover:text-[#888888] hover:border-[#444444] transition-colors duration-100';
+const dropdownClass = 'rounded-[8px] bg-[#141414] border border-[#2a2a2a] px-3 py-2 text-sm text-foreground outline-none appearance-none cursor-pointer pr-9';
 
 
 
 // ---------------------------------------------------------------------------
-// RolesTab — Coding Agent provider override configuration
+// KnowledgeTab — Knowledge base cards
 // ---------------------------------------------------------------------------
 
-function RolesTab() {
-  const {
-    enabled,
-    setEnabled,
-    planningProvider,
-    planningModel,
-    codingProvider,
-    codingModel,
-    maxSubAgents,
-    setPlanningProvider,
-    setPlanningModel,
-    setCodingProvider,
-    setCodingModel,
-    setMaxSubAgents,
-  } = useOrchestratorStore();
+const KNOWLEDGE_BASES = [
+  { id: 'kb-project-docs', name: 'Project Documentation', description: 'Architecture docs, READMEs, and onboarding guides', iconColor: '#4F8FEA', fileCount: 12, size: '2.4 MB' },
+  { id: 'kb-code-snippets', name: 'Code Snippets', description: 'Reusable code patterns and utility functions', iconColor: '#10A37F', fileCount: 34, size: '890 KB' },
+  { id: 'kb-style-guide', name: 'Style Guide', description: 'Design tokens, component specs, and brand guidelines', iconColor: '#FF8400', fileCount: 8, size: '1.1 MB' },
+  { id: 'kb-meeting-notes', name: 'Meeting Notes', description: 'Sprint retrospectives and planning session notes', iconColor: '#8B5CF6', fileCount: 22, size: '560 KB' },
+];
 
-  const orchestratorProviders = PROVIDER_ORDER.filter(
-    (provider) => PROVIDERS[provider].supportsOrchestrator !== false,
-  );
+function KnowledgeTab() {
+  const [search, setSearch] = useState('');
 
-  const handlePlanProviderChange = (p: Provider) => {
-    setPlanningProvider(p);
-    setPlanningModel(PROVIDERS[p].defaultModel);
-  };
-
-  const handleCodeProviderChange = (p: Provider) => {
-    setCodingProvider(p);
-    setCodingModel(PROVIDERS[p].defaultModel);
-  };
-
-  const selectClasses = selectInputClass;
+  const filteredBases = useMemo(() => {
+    const q = search.toLowerCase();
+    if (!q) return KNOWLEDGE_BASES;
+    return KNOWLEDGE_BASES.filter(kb =>
+      kb.name.toLowerCase().includes(q) || kb.description.toLowerCase().includes(q)
+    );
+  }, [search]);
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-5">
+    <div className="p-6 space-y-4">
       {/* Header */}
-      <div className={cn(settingsCardClass, 'flex items-center gap-4 px-5 py-4')}>
-        <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-border/60 bg-background/70">
-          <Network className="h-5 w-5" />
-        </div>
-        <div className="flex-1">
-          <h3 className="text-sm font-semibold tracking-[-0.01em]">Coding Agent</h3>
-          <p className="text-xs text-muted-foreground">
-            Route planning and execution through dedicated models when you want multi-step coding help.
-          </p>
-        </div>
-        <button
-          onClick={() => setEnabled(!enabled)}
-          className={cn(
-            toggleTrackClass,
-            enabled ? 'bg-primary' : 'bg-border'
-          )}
-        >
-          <span
-            className={cn(
-              toggleThumbClass,
-              enabled ? 'translate-x-5' : 'translate-x-0.5'
-            )}
-          />
-        </button>
+      <div>
+        <h3 className="text-lg font-semibold text-[#e0e0e0]">Knowledge</h3>
+        <p className="text-[13px] text-[#666666]">Custom knowledge bases, documents, and context sources.</p>
       </div>
 
-      {!enabled && (
-        <div className={cn(settingsCardClass, 'px-4 py-3')}>
-          <div className="flex items-start gap-2.5">
-            <Info className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
-            <div className="space-y-1">
-              <p className="text-xs text-foreground font-medium">How it works</p>
-              <p className="text-[11px] text-muted-foreground leading-relaxed">
-                When enabled, the plan model analyzes your request and breaks it into sub-tasks.
-                The code model then executes each sub-task in parallel. Finally, the plan model
-                synthesizes the results into a single response.
-              </p>
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#555555]" />
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search knowledge bases..."
+          className={settingsSearchClass}
+        />
+      </div>
+
+      {/* Knowledge base cards */}
+      <div className="space-y-2">
+        {filteredBases.map(kb => (
+          <button key={kb.id} className={listCardClass}>
+            <div
+              className="h-[38px] w-[38px] rounded-[10px] flex items-center justify-center shrink-0"
+              style={{ backgroundColor: `${kb.iconColor}18` }}
+            >
+              <BookOpen className="h-4 w-4" style={{ color: kb.iconColor }} />
             </div>
+            <div className="min-w-0 flex-1">
+              <span className="text-sm font-medium text-foreground">{kb.name}</span>
+              <p className="text-xs text-[#666666] truncate">{kb.description}</p>
+            </div>
+            <div className="text-right shrink-0">
+              <p className="text-xs text-[#888888] font-mono">{kb.fileCount} files</p>
+              <p className="text-[10px] text-[#555555] font-mono">{kb.size}</p>
+            </div>
+            <ChevronRight className="h-4 w-4 text-[#444444] shrink-0" />
+          </button>
+        ))}
+      </div>
+
+      {/* Add knowledge base button */}
+      <button className={bottomActionClass}>
+        <Plus className="h-4 w-4" />
+        Add knowledge base
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// GeneralTab — App preferences with sectioned layout
+// ---------------------------------------------------------------------------
+
+const LANGUAGE_LABELS: Record<string, string> = {
+  en: 'English',
+  es: 'Spanish',
+  fr: 'French',
+  de: 'German',
+  ja: 'Japanese',
+  zh: 'Chinese',
+  ko: 'Korean',
+  pt: 'Portuguese',
+};
+
+function GeneralTab() {
+  const {
+    theme,
+    colorTheme,
+    accentColor,
+    language,
+    autoSave,
+    streamResponses,
+    soundNotifications,
+    analytics,
+    setTheme,
+    setColorTheme,
+    setAccentColor,
+    setLanguage,
+    setAutoSave,
+    setStreamResponses,
+    setSoundNotifications,
+    setAnalytics,
+  } = useSettingsStore();
+
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+
+  const handleClearData = () => {
+    // Clear conversation history from IndexedDB
+    try {
+      const req = indexedDB.deleteDatabase('cloudchat-db');
+      req.onsuccess = () => setShowClearConfirm(false);
+      req.onerror = () => setShowClearConfirm(false);
+    } catch {
+      setShowClearConfirm(false);
+    }
+  };
+
+  const ToggleRow: React.FC<{ label: string; description: string; enabled: boolean; onChange: (v: boolean) => void }> = ({ label, description, enabled, onChange }) => (
+    <div className="flex items-center justify-between py-1">
+      <div className="min-w-0 flex-1 pr-4">
+        <p className="text-sm text-foreground">{label}</p>
+        <p className="text-xs text-[#666666]">{description}</p>
+      </div>
+      <button
+        onClick={() => onChange(!enabled)}
+        className={cn(toggleTrackClass, enabled ? 'bg-[#FF8400]' : 'bg-[#333333]')}
+      >
+        <span className={cn(toggleThumbClass, enabled ? 'translate-x-[20px]' : 'translate-x-[3px]')} />
+      </button>
+    </div>
+  );
+
+  return (
+    <div className="p-6 space-y-5">
+      {/* Header */}
+      <div>
+        <h3 className="text-lg font-semibold text-[#e0e0e0]">General</h3>
+        <p className="text-[13px] text-[#666666]">App preferences, theme, language, and notification settings.</p>
+      </div>
+
+      {/* APPEARANCE */}
+      <div className="space-y-4">
+        <p className={sectionLabelClass}>Appearance</p>
+
+        {/* Mode row */}
+        <div className="flex items-center justify-between">
+          <div className="min-w-0 flex-1 pr-4">
+            <p className="text-sm text-foreground">Mode</p>
+            <p className="text-xs text-[#666666]">Choose your preferred color scheme</p>
+          </div>
+          <div className="relative">
+            <select
+              value={theme}
+              onChange={(e) => setTheme(e.target.value as 'light' | 'dark' | 'system')}
+              className={dropdownClass}
+            >
+              <option value="dark">Dark</option>
+              <option value="light">Light</option>
+              <option value="system">System</option>
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           </div>
         </div>
-      )}
 
-      {enabled && (
-        <div className="space-y-4">
-          {/* Planning model */}
-          <div className={cn(settingsCardClass, 'overflow-hidden')}>
-            <div className="flex items-center gap-3 border-b border-border/60 px-4 py-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-border/60 bg-background/80">
-                <Network className="h-4 w-4" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <h4 className="text-sm font-semibold">Plan Model</h4>
-                <p className="text-[11px] text-muted-foreground">Breaks down requests and synthesizes results</p>
-              </div>
+        {/* Color Theme grid */}
+        <div className="space-y-2">
+          <p className="text-sm text-foreground">Theme</p>
+          {(theme === 'light' || (theme === 'system' && typeof window !== 'undefined' && !window.matchMedia('(prefers-color-scheme: dark)').matches)) ? (
+            <p className="text-xs text-[#666666]">Color themes available in dark mode</p>
+          ) : (
+            <div className="grid grid-cols-3 gap-2">
+              {COLOR_THEMES.map((t) => {
+                const isSelected = colorTheme === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => setColorTheme(t.id)}
+                    className={cn(
+                      'rounded-xl overflow-hidden text-left transition-all duration-100',
+                      isSelected
+                        ? 'border-2 border-primary ring-2 ring-primary/20'
+                        : 'border border-[#2F2F2F] hover:border-[#444]'
+                    )}
+                  >
+                    {/* Mini window preview */}
+                    <div
+                      className="h-[68px] p-2 flex gap-1.5"
+                      style={{ backgroundColor: t.preview.bg }}
+                    >
+                      {/* Sidebar */}
+                      <div
+                        className="w-[28%] rounded-md flex flex-col gap-1 p-1.5"
+                        style={{ backgroundColor: t.preview.sidebar }}
+                      >
+                        <div className="h-1 w-3/4 rounded-full" style={{ backgroundColor: t.preview.text, opacity: 0.15 }} />
+                        <div className="h-1 w-1/2 rounded-full" style={{ backgroundColor: t.preview.text, opacity: 0.1 }} />
+                        <div className="h-1 w-2/3 rounded-full" style={{ backgroundColor: t.preview.text, opacity: 0.1 }} />
+                      </div>
+                      {/* Main area */}
+                      <div className="flex-1 rounded-md p-1.5 flex flex-col justify-between" style={{ backgroundColor: t.preview.sidebar, opacity: 0.6 }}>
+                        <div className="flex flex-col gap-1">
+                          <div className="h-1 w-3/4 rounded-full" style={{ backgroundColor: t.preview.text, opacity: 0.12 }} />
+                          <div className="h-1 w-1/2 rounded-full" style={{ backgroundColor: t.preview.text, opacity: 0.08 }} />
+                        </div>
+                        {/* Accent dot */}
+                        <div className="flex justify-end">
+                          <div className="h-2 w-2 rounded-full" style={{ backgroundColor: t.preview.accent }} />
+                        </div>
+                      </div>
+                    </div>
+                    {/* Theme name */}
+                    <div className="px-2.5 py-2 bg-[#111]">
+                      <p className={cn(
+                        'text-xs font-medium',
+                        isSelected ? 'text-primary' : 'text-[#999]'
+                      )}>{t.name}</p>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
+          )}
+        </div>
 
-            <div className="space-y-3 p-4">
-              <div className="relative">
-                <select
-                  value={planningProvider}
-                  onChange={(e) => handlePlanProviderChange(e.target.value as Provider)}
-                  className={selectClasses}
+        {/* Accent Color row */}
+        <div className="space-y-2">
+          <p className="text-sm text-foreground">Accent Color</p>
+          <div className="flex items-center gap-2">
+            {ACCENT_COLORS.map((c) => {
+              const isSelected = accentColor === c.value;
+              return (
+                <button
+                  key={c.name}
+                  title={c.name}
+                  onClick={() => setAccentColor(c.value)}
+                  className={cn(
+                    'h-6 w-6 rounded-full transition-all duration-100 flex items-center justify-center shrink-0',
+                    isSelected && 'ring-2 ring-offset-2 ring-offset-[#141414]'
+                  )}
+                  style={{
+                    backgroundColor: `hsl(${c.value})`,
+                    ...(isSelected ? { boxShadow: `0 0 0 2px hsl(${c.value} / 0.4)` } : {}),
+                  }}
                 >
-                  {orchestratorProviders.map((p) => (
-                    <option key={p} value={p}>
-                      {PROVIDERS[p].label}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-              </div>
-
-              <div className="relative">
-                <select
-                  value={planningModel}
-                  onChange={(e) => setPlanningModel(e.target.value)}
-                  className={selectClasses}
-                >
-                  {PROVIDERS[planningProvider]?.models.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-              </div>
-            </div>
-          </div>
-
-          {/* Coding model */}
-          <div className={cn(settingsCardClass, 'overflow-hidden')}>
-            <div className="flex items-center gap-3 border-b border-border/60 px-4 py-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-border/60 bg-background/80">
-                <Code2 className="h-4 w-4" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <h4 className="text-sm font-semibold">Code Model</h4>
-                <p className="text-[11px] text-muted-foreground">Executes each sub-task in parallel</p>
-              </div>
-            </div>
-
-            <div className="space-y-3 p-4">
-              <div className="relative">
-                <select
-                  value={codingProvider}
-                  onChange={(e) => handleCodeProviderChange(e.target.value as Provider)}
-                  className={selectClasses}
-                >
-                  {orchestratorProviders.map((p) => (
-                    <option key={p} value={p}>
-                      {PROVIDERS[p].label}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-              </div>
-
-              <div className="relative">
-                <select
-                  value={codingModel}
-                  onChange={(e) => setCodingModel(e.target.value)}
-                  className={selectClasses}
-                >
-                  {PROVIDERS[codingProvider]?.models.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-              </div>
-            </div>
-          </div>
-
-          {/* Max sub-agents */}
-          <div className={cn(settingsCardClass, 'overflow-hidden')}>
-            <div className="p-4">
-              <label className="block text-sm font-semibold mb-1.5">Max Sub-agents</label>
-              <p className="text-[11px] text-muted-foreground mb-3">
-                How many parallel tasks the code model can run at once
-              </p>
-              <div className="relative">
-                <select
-                  value={maxSubAgents}
-                  onChange={(e) => setMaxSubAgents(Number(e.target.value))}
-                  className={selectClasses}
-                >
-                  {[1, 2, 3, 4, 5, 6].map((n) => (
-                    <option key={n} value={n}>
-                      {n}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-              </div>
-            </div>
+                  {isSelected && <Check className="h-3 w-3 text-white drop-shadow-sm" />}
+                </button>
+              );
+            })}
           </div>
         </div>
-      )}
+
+        {/* Language */}
+        <div className="flex items-center justify-between">
+          <div className="min-w-0 flex-1 pr-4">
+            <p className="text-sm text-foreground">Language</p>
+            <p className="text-xs text-[#666666]">Set your preferred display language</p>
+          </div>
+          <div className="relative">
+            <select
+              value={language}
+              onChange={(e) => setLanguage(e.target.value as Language)}
+              className={dropdownClass}
+            >
+              {Object.entries(LANGUAGE_LABELS).map(([code, label]) => (
+                <option key={code} value={code}>{label}</option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          </div>
+        </div>
+      </div>
+
+      <div className={settingsDividerClass} />
+
+      {/* BEHAVIOR */}
+      <div className="space-y-3">
+        <p className={sectionLabelClass}>Behavior</p>
+        <ToggleRow label="Auto-save" description="Automatically save conversations as you type" enabled={autoSave} onChange={setAutoSave} />
+        <ToggleRow label="Stream responses" description="Show responses as they're generated" enabled={streamResponses} onChange={setStreamResponses} />
+        <ToggleRow label="Sound notifications" description="Play sound when a response is ready" enabled={soundNotifications} onChange={setSoundNotifications} />
+      </div>
+
+      <div className={settingsDividerClass} />
+
+      {/* DATA & PRIVACY */}
+      <div className="space-y-3">
+        <p className={sectionLabelClass}>Data & Privacy</p>
+        <ToggleRow label="Analytics" description="Help improve CloudChat by sharing anonymous usage data" enabled={analytics} onChange={setAnalytics} />
+        <div className="flex items-center justify-between py-1">
+          <div className="min-w-0 flex-1 pr-4">
+            <p className="text-sm text-foreground">Clear history</p>
+            <p className="text-xs text-[#666666]">Delete all conversation history and cached data</p>
+          </div>
+          {showClearConfirm ? (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleClearData}
+                className="rounded-[8px] bg-[#FF4444] px-3 py-1.5 text-xs font-medium text-white"
+              >
+                Confirm
+              </button>
+              <button
+                onClick={() => setShowClearConfirm(false)}
+                className="rounded-[8px] border border-[#2a2a2a] px-3 py-1.5 text-xs font-medium text-muted-foreground"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setShowClearConfirm(true)}
+              className="rounded-[8px] bg-[#FF444418] border border-[#FF444430] px-3 py-1.5 text-xs font-medium text-[#FF4444]"
+            >
+              Clear data
+            </button>
+          )}
+        </div>
+      </div>
+
     </div>
   );
 }
@@ -237,30 +413,24 @@ export const SettingsModal: React.FC = () => {
     activeProvider,
     providers,
     availableModels,
-    theme,
-    fontSize,
-    fontFamily,
     defaultSystemPrompt,
     githubPAT,
-    autoApproveRepoChanges,
     setActiveProvider,
     updateProviderConfig,
     setAvailableModels,
-    setTheme,
-    setFontSize,
-    setFontFamily,
     setDefaultSystemPrompt,
     setGithubPAT,
-    setAutoApproveRepoChanges,
   } = useSettingsStore();
 
   const { toolsets: hermesToolsets, setToolset: setHermesToolset } = useHermesStore();
 
   const [showKey, setShowKey] = useState(false);
   const [showGithubKey, setShowGithubKey] = useState(false);
-  const [tab, setTab] = useState<'providers' | 'roles' | 'github' | 'knowledge' | 'general'>('providers');
+  const [tab, setTab] = useState<'providers' | 'github' | 'knowledge' | 'general'>('providers');
   const [search, setSearch] = useState('');
+  const [providerView, setProviderView] = useState<'list' | 'detail'>('list');
   const [localRuntimeStatus, setLocalRuntimeStatus] = useState<string | null>(null);
+  const [refreshingModels, setRefreshingModels] = useState(false);
 
   // Animation state: tracks whether the modal is mounted and whether it's visually open
   const [mounted, setMounted] = useState(false);
@@ -299,6 +469,42 @@ export const SettingsModal: React.FC = () => {
     return getVisibleModelOptions(activeProvider, baseModels, config.model);
   }, [activeProvider, availableModels, config.model, providerInfo.models]);
 
+  // Refresh models for any provider with an API key when settings opens
+  useEffect(() => {
+    if (!settingsOpen || activeProvider === 'openclaw' || activeProvider === 'hermes') {
+      // openclaw/hermes handled below
+      return;
+    }
+
+    const apiKey = config.apiKey;
+    if (!apiKey?.trim()) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const result = await validateApiKey(activeProvider, apiKey);
+        if (cancelled || !result.valid) {
+          return;
+        }
+
+        const nextModels = (result.models ?? []).filter(Boolean);
+        if (nextModels.length > 0) {
+          setAvailableModels(activeProvider, nextModels);
+        }
+      } catch {
+        // Silently fail — the user can still use cached models
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProvider, config.apiKey, setAvailableModels, settingsOpen]);
+
+  // Refresh models for openclaw/hermes (runtime validation)
   useEffect(() => {
     if (!settingsOpen || (activeProvider !== 'openclaw' && activeProvider !== 'hermes')) {
       setLocalRuntimeStatus(null);
@@ -364,6 +570,28 @@ export const SettingsModal: React.FC = () => {
     updateProviderConfig,
   ]);
 
+  const handleRefreshModels = useCallback(async () => {
+    const apiKey = config.apiKey;
+    if (!apiKey?.trim() || activeProvider === 'hermes') {
+      return;
+    }
+
+    setRefreshingModels(true);
+    try {
+      const result = await validateApiKey(activeProvider, apiKey);
+      if (result.valid) {
+        const nextModels = (result.models ?? []).filter(Boolean);
+        if (nextModels.length > 0) {
+          setAvailableModels(activeProvider, nextModels);
+        }
+      }
+    } catch {
+      // Silently fail
+    } finally {
+      setRefreshingModels(false);
+    }
+  }, [activeProvider, config.apiKey, setAvailableModels]);
+
   const filteredProviders = useMemo(() => {
     const q = search.toLowerCase();
     return PROVIDER_ORDER.filter(p => {
@@ -393,13 +621,18 @@ export const SettingsModal: React.FC = () => {
     }
   };
 
-  const tabItems = [
-    { id: 'providers', label: 'Providers' },
-    { id: 'roles', label: 'Roles' },
-    { id: 'github', label: 'GitHub' },
-    { id: 'knowledge', label: 'Knowledge' },
-    { id: 'general', label: 'General' },
-  ] as const;
+  const handleTabChange = (nextTab: typeof tab) => {
+    setTab(nextTab);
+    setProviderView('list');
+  };
+
+  const getProviderStatus = (p: Provider): { label: string; color: string; bg: string } | null => {
+    const info = PROVIDERS[p];
+    if (!info.needsApiKey) return null;
+    const key = providers[p]?.apiKey;
+    if (key?.trim()) return { label: 'Connected', color: '#00FF88', bg: '#00FF8812' };
+    return { label: 'No key', color: '#FF6666', bg: '#FF444412' };
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -413,183 +646,199 @@ export const SettingsModal: React.FC = () => {
       <div
         onTransitionEnd={handleTransitionEnd}
         className={cn(
-          'relative flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-[28px] border border-border/70 bg-background/96 transition-[transform,opacity] duration-250 ease-out',
+          'relative flex w-[880px] h-[600px] flex-col overflow-hidden rounded-2xl border border-[#2a2a2a] bg-card transition-[transform,opacity] duration-250 ease-out',
           visible ? 'scale-100 opacity-100' : 'scale-95 opacity-0',
         )}
       >
         {/* Header */}
-        <div className="border-b border-border/60 px-6 py-5">
-          <div className="flex items-start justify-between gap-4">
-            <div className="space-y-1">
-              <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-foreground">Workspace Settings</h2>
-              <p className="text-sm text-muted-foreground">
-                Configure providers, model routing, GitHub access, and workspace defaults for this app.
-              </p>
-            </div>
+        <div className="border-b border-[#2a2a2a] px-5 py-3.5">
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-semibold text-foreground">Settings</h2>
             <button
               onClick={() => setSettingsOpen(false)}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-border/60 bg-background/60 text-muted-foreground transition-colors duration-100 hover:bg-background hover:text-foreground"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white/[0.03] text-muted-foreground transition-colors duration-100 hover:bg-white/[0.06] hover:text-foreground"
             >
               <X className="h-4 w-4" />
             </button>
           </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            {tabItems.map((t) => (
-              <button
-                key={t.id}
-                onClick={() => setTab(t.id)}
-                className={cn(
-                  'rounded-xl border px-3 py-2 text-sm font-medium transition-colors duration-100',
-                  tab === t.id
-                    ? 'border-border/70 bg-background/85 text-foreground'
-                    : 'border-transparent text-muted-foreground hover:border-border/50 hover:bg-background/55 hover:text-foreground'
-                )}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
         </div>
 
-        {/* Content */}
-        {tab === 'providers' && (
-          <div className="flex min-h-0 flex-1 overflow-hidden">
-            {/* Left: Provider list */}
-            <div className="flex w-[280px] shrink-0 flex-col border-r border-border/60 bg-muted/10">
-              <div className="border-b border-border/60 p-4">
+        {/* Body: sidebar + content */}
+        <div className="flex flex-1 min-h-0">
+          {/* Vertical nav sidebar */}
+          <nav className="w-[200px] shrink-0 border-r border-[#2a2a2a] flex flex-col py-4 px-3">
+            {navSections.map((section, sIdx) => (
+              <React.Fragment key={section.label}>
+                {sIdx > 0 && <div className="h-px bg-[#2a2a2a] my-3" />}
+                <p className="text-[10px] font-semibold uppercase tracking-[1px] text-[#555555] px-2.5 mb-1.5">
+                  {section.label}
+                </p>
+                {section.items.map((item) => {
+                  const isActive = tab === item.id;
+                  const Icon = item.icon;
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => handleTabChange(item.id)}
+                      className={cn(
+                        'h-9 rounded-lg flex items-center gap-2.5 px-2.5 text-[13px] w-full transition-colors duration-100',
+                        isActive
+                          ? 'bg-[#FF840010] text-[#e0e0e0]'
+                          : 'text-[#888888] hover:text-[#bbbbbb] hover:bg-white/[0.03]'
+                      )}
+                    >
+                      <Icon className={cn('h-4 w-4', isActive ? 'text-[#FF8400]' : 'text-[#666666]')} />
+                      {item.label}
+                    </button>
+                  );
+                })}
+              </React.Fragment>
+            ))}
+            <div className="mt-auto px-2.5">
+              <span className="font-mono text-[11px] text-[#444444]">v{packageJson.version}</span>
+            </div>
+          </nav>
+
+          {/* Content area */}
+          <div className="flex-1 overflow-y-auto">
+            {tab === 'providers' && providerView === 'list' && (
+              <div className="p-6 space-y-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-foreground">Providers</h3>
+                  <p className="text-[13px] text-[#666666]">Manage AI providers, API keys, and active models.</p>
+                </div>
+
+                {/* Search */}
                 <div className="relative">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                   <input
                     type="text"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Search providers"
-                    className={cn(textInputClass, 'pl-8')}
+                    placeholder="Search providers..."
+                    className={cn(textInputClass, 'pl-9 h-[38px]')}
                   />
                 </div>
-              </div>
-              <div className="flex-1 space-y-4 overflow-y-auto px-3 py-4">
-                {(['featured', 'open-source', 'specialized'] as ProviderCategory[]).map(cat => {
-                  const items = grouped[cat];
-                  if (!items?.length) return null;
-                  return (
-                    <div key={cat}>
-                      <p className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/75">
-                        {CATEGORY_LABELS[cat]}
-                      </p>
-                      {items.map(p => {
-                        const info = PROVIDERS[p];
-                        const isActive = activeProvider === p;
-                        return (
-                          <button
-                            key={p}
-                            onClick={() => handleSelectProvider(p)}
-                            className={cn(
-                              'mb-1.5 w-full rounded-2xl border px-3 py-3 text-left transition-all duration-100',
-                              isActive
-                                ? 'border-border/70 bg-background/80 text-foreground'
-                                : 'border-transparent text-muted-foreground hover:border-border/50 hover:bg-background/55 hover:text-foreground'
-                            )}
-                          >
-                            <div className="flex items-start gap-3">
-                              <ProviderIcon provider={p} className="h-8 w-8 shrink-0" />
-                              <div className="min-w-0 flex-1">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="truncate text-sm font-medium">{info.label}</span>
-                                  {info.badge && (
-                                    <span className={cn(
-                                      'rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase leading-none',
-                                      info.badge === 'Free'
-                                        ? 'bg-accent text-accent-foreground'
-                                        : 'bg-muted text-muted-foreground'
-                                    )}>
-                                      {info.badge}
-                                    </span>
-                                  )}
-                                </div>
-                                <p className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">
-                                  {info.description}
-                                </p>
-                              </div>
-                              {isActive && <Check className="mt-1 h-4 w-4 shrink-0 text-foreground" />}
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
 
-            {/* Right: Config */}
-            <div className="flex-1 overflow-y-auto bg-background/40 p-6">
-              <div className="space-y-5">
-                <div className={cn(settingsCardClass, 'flex items-start gap-4 px-5 py-5')}>
-                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-border/60 bg-background/80">
-                    <ProviderIcon provider={activeProvider} className="h-6 w-6" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="text-base font-semibold tracking-[-0.015em] text-foreground">{providerInfo.label}</h3>
-                      {providerInfo.badge && (
-                        <span className="rounded-full border border-border/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                          {providerInfo.badge}
-                        </span>
-                      )}
-                    </div>
-                    <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{providerInfo.description}</p>
-                    <p className="mt-3 text-[11px] uppercase tracking-[0.16em] text-muted-foreground/70">
-                      Default model
-                    </p>
-                    <p className="mt-1 font-mono text-sm text-foreground">
-                      {activeProvider === 'openclaw' ? config.model : providerInfo.defaultModel}
-                    </p>
-                  </div>
+                {/* Provider cards */}
+                <div className="space-y-2">
+                  {filteredProviders.map(p => {
+                    const info = PROVIDERS[p];
+                    const isActive = activeProvider === p;
+                    const status = getProviderStatus(p);
+                    return (
+                      <button
+                        key={p}
+                        onClick={() => {
+                          handleSelectProvider(p);
+                          setProviderView('detail');
+                        }}
+                        className={cn(
+                          'rounded-[10px] border px-4 py-3.5 flex items-center gap-3.5 w-full text-left transition-all duration-100',
+                          isActive
+                            ? 'bg-[#FF840010] border-[#FF840040]'
+                            : 'bg-white/[0.02] border-[#2a2a2a] hover:bg-white/[0.04]'
+                        )}
+                      >
+                        <ProviderIcon provider={p} size="card" />
+                        <div className="min-w-0 flex-1">
+                          <span className="text-sm font-medium text-foreground">{info.label}</span>
+                          <p className="text-xs text-[#666666] truncate">{info.description}</p>
+                        </div>
+                        {status && (
+                          <span
+                            className="rounded-full px-2 py-0.5 text-[10px] font-semibold shrink-0"
+                            style={{ color: status.color, backgroundColor: status.bg }}
+                          >
+                            {status.label}
+                          </span>
+                        )}
+                        <ChevronRight className="h-4 w-4 text-[#555555] shrink-0" />
+                      </button>
+                    );
+                  })}
                 </div>
 
-                {localRuntimeDetails && (
-                  <div className={cn(settingsCardClass, 'px-5 py-5')}>
-                    <div className="flex items-start gap-3">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-200">
-                        <TerminalSquare className="h-4.5 w-4.5" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="rounded-full border border-border/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                            {localRuntimeDetails.badge}
+                {/* Add provider placeholder */}
+                <button className="rounded-[10px] h-[42px] border border-[#2a2a2a] border-dashed w-full text-[13px] text-[#555555] hover:text-[#888888] hover:border-[#444444] transition-colors duration-100">
+                  + Add provider
+                </button>
+              </div>
+            )}
+
+            {tab === 'providers' && providerView === 'detail' && (
+              <div className="p-6">
+                <button
+                  onClick={() => setProviderView('list')}
+                  className="flex items-center gap-1.5 text-[13px] text-[#888888] hover:text-foreground transition-colors duration-100 mb-4"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" />
+                  Back to providers
+                </button>
+
+                <div className="space-y-5">
+                  <div className={cn(settingsCardClass, 'flex items-start gap-4 px-5 py-5')}>
+                    <ProviderIcon provider={activeProvider} size="card" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="text-base font-semibold tracking-[-0.015em] text-foreground">{providerInfo.label}</h3>
+                        {providerInfo.badge && (
+                          <span className="rounded-full border border-[#2a2a2a] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                            {providerInfo.badge}
                           </span>
-                          <span className="rounded-full border border-border/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                            {localRuntimeDetails.title}
-                          </span>
-                        </div>
-                        <p className="mt-2 text-sm font-medium text-foreground">{localRuntimeDetails.summary}</p>
-                        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{localRuntimeDetails.detail}</p>
-                        <div className="mt-3 grid gap-3 md:grid-cols-2">
-                          <div>
-                            <p className={fieldLabelClass}>Start Command</p>
-                            <div className="mt-1 rounded-xl border border-border/60 bg-background/70 px-3 py-2 text-xs font-mono text-foreground">
-                              {localRuntimeDetails.command}
-                            </div>
-                          </div>
-                          <div>
-                            <p className={fieldLabelClass}>{localRuntimeDetails.locationLabel}</p>
-                            <div className="mt-1 rounded-xl border border-border/60 bg-background/70 px-3 py-2 text-xs font-mono text-foreground">
-                              {localRuntimeDetails.locationValue}
-                            </div>
-                          </div>
-                        </div>
-                        {localRuntimeStatus && (
-                          <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/8 px-3 py-2 text-xs text-amber-700 dark:text-amber-200">
-                            {localRuntimeStatus}
-                          </div>
                         )}
                       </div>
+                      <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{providerInfo.description}</p>
+                      <p className="mt-3 text-[11px] uppercase tracking-[0.16em] text-muted-foreground/70">
+                        Default model
+                      </p>
+                      <p className="mt-1 font-mono text-sm text-foreground">
+                        {activeProvider === 'openclaw' ? config.model : providerInfo.defaultModel}
+                      </p>
                     </div>
                   </div>
-                )}
 
-                <div className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
+                  {localRuntimeDetails && (
+                    <div className={cn(settingsCardClass, 'px-5 py-5')}>
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] border border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-200">
+                          <TerminalSquare className="h-4.5 w-4.5" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded-full border border-[#2a2a2a] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                              {localRuntimeDetails.badge}
+                            </span>
+                            <span className="rounded-full border border-[#2a2a2a] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                              {localRuntimeDetails.title}
+                            </span>
+                          </div>
+                          <p className="mt-2 text-sm font-medium text-foreground">{localRuntimeDetails.summary}</p>
+                          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{localRuntimeDetails.detail}</p>
+                          <div className="mt-3 grid gap-3 grid-cols-2">
+                            <div>
+                              <p className={fieldLabelClass}>Start Command</p>
+                              <div className="mt-1 rounded-[10px] border border-[#2a2a2a] bg-[#141414] px-3 py-2 text-xs font-mono text-foreground">
+                                {localRuntimeDetails.command}
+                              </div>
+                            </div>
+                            <div>
+                              <p className={fieldLabelClass}>{localRuntimeDetails.locationLabel}</p>
+                              <div className="mt-1 rounded-[10px] border border-[#2a2a2a] bg-[#141414] px-3 py-2 text-xs font-mono text-foreground">
+                                {localRuntimeDetails.locationValue}
+                              </div>
+                            </div>
+                          </div>
+                          {localRuntimeStatus && (
+                            <div className="mt-3 rounded-[10px] border border-amber-500/20 bg-amber-500/8 px-3 py-2 text-xs text-amber-700 dark:text-amber-200">
+                              {localRuntimeStatus}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="space-y-5">
                     {needsApiKey && (
                       <div className={cn(settingsCardClass, 'space-y-3 px-5 py-5')}>
@@ -640,6 +889,45 @@ export const SettingsModal: React.FC = () => {
 
                     <div className={cn(settingsCardClass, 'space-y-3 px-5 py-5')}>
                       <div>
+                        <p className={fieldLabelClass}>Model</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Choose the default model used when this provider is active.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="relative flex-1">
+                          <select
+                            value={config.model}
+                            onChange={(e) => updateProviderConfig(activeProvider, { model: e.target.value })}
+                            className={selectInputClass}
+                          >
+                            {modelOptions.map((m) => (
+                              <option key={m} value={m}>{m}</option>
+                            ))}
+                          </select>
+                          <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                        </div>
+                        {needsApiKey && activeProvider !== 'hermes' && config.apiKey?.trim() && (
+                          <button
+                            onClick={handleRefreshModels}
+                            disabled={refreshingModels}
+                            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#2a2a2a] bg-[#141414] text-muted-foreground hover:text-foreground hover:bg-white/[0.06] transition-colors duration-100 disabled:opacity-50"
+                            title="Refresh available models"
+                          >
+                            <RefreshCw className={cn('h-3.5 w-3.5', refreshingModels && 'animate-spin')} />
+                          </button>
+                        )}
+                      </div>
+                      {activeProvider === 'hermes' && (
+                        <p className="text-xs text-muted-foreground">
+                          Hermes uses your OpenRouter key here. The selector is intentionally limited to the recommended
+                          tool-capable models: Llama 4 Maverick, GPT-4.1 Mini, and Gemini 2.5 Flash.
+                        </p>
+                      )}
+                    </div>
+
+                    <div className={cn(settingsCardClass, 'space-y-3 px-5 py-5')}>
+                      <div>
                         <p className={fieldLabelClass}>System Prompt</p>
                         <p className="mt-1 text-xs text-muted-foreground">
                           Sets the default behavior for new conversations across the app.
@@ -648,38 +936,9 @@ export const SettingsModal: React.FC = () => {
                       <textarea
                         value={defaultSystemPrompt}
                         onChange={(e) => setDefaultSystemPrompt(e.target.value)}
-                        rows={5}
+                        rows={4}
                         className={cn(textInputClass, 'resize-none')}
                       />
-                    </div>
-                  </div>
-
-                  <div className="space-y-5">
-                    <div className={cn(settingsCardClass, 'space-y-3 px-5 py-5')}>
-                      <div>
-                        <p className={fieldLabelClass}>Model</p>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          Choose the default model used when this provider is active.
-                        </p>
-                      </div>
-                      <div className="relative">
-                        <select
-                          value={config.model}
-                          onChange={(e) => updateProviderConfig(activeProvider, { model: e.target.value })}
-                          className={selectInputClass}
-                        >
-                          {modelOptions.map((m) => (
-                            <option key={m} value={m}>{m}</option>
-                          ))}
-                        </select>
-                        <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                      </div>
-                      {activeProvider === 'hermes' && (
-                        <p className="text-xs text-muted-foreground">
-                          Hermes uses your OpenRouter key here. The selector is intentionally limited to the recommended
-                          tool-capable models: Llama 4 Maverick, GPT-4.1 Mini, and Gemini 2.5 Flash.
-                        </p>
-                      )}
                     </div>
 
                     {activeProvider === 'hermes' && (
@@ -716,7 +975,7 @@ export const SettingsModal: React.FC = () => {
                                 <span
                                   className={cn(
                                     toggleThumbClass,
-                                    hermesToolsets[key] ? 'translate-x-5' : 'translate-x-0.5'
+                                    hermesToolsets[key] ? 'translate-x-[20px]' : 'translate-x-[3px]'
                                   )}
                                 />
                               </button>
@@ -737,7 +996,7 @@ export const SettingsModal: React.FC = () => {
                       <div className="space-y-2.5">
                         <div className="flex items-center justify-between">
                           <label className="text-sm font-medium text-foreground">Temperature</label>
-                          <span className="rounded-full border border-border/60 px-2 py-0.5 text-xs font-mono tabular-nums text-muted-foreground">
+                          <span className="rounded-full border border-[#2a2a2a] px-2 py-0.5 text-xs font-mono tabular-nums text-muted-foreground">
                             {config.temperature}
                           </span>
                         </div>
@@ -752,12 +1011,12 @@ export const SettingsModal: React.FC = () => {
                       <div className="space-y-2.5">
                         <div className="flex items-center justify-between">
                           <label className="text-sm font-medium text-foreground">Max Tokens</label>
-                          <span className="rounded-full border border-border/60 px-2 py-0.5 text-xs font-mono tabular-nums text-muted-foreground">
+                          <span className="rounded-full border border-[#2a2a2a] px-2 py-0.5 text-xs font-mono tabular-nums text-muted-foreground">
                             {config.maxTokens}
                           </span>
                         </div>
                         <input
-                          type="range" min="256" max="16384" step="256"
+                          type="range" min="256" max="65536" step="256"
                           value={config.maxTokens}
                           onChange={(e) => updateProviderConfig(activeProvider, { maxTokens: parseInt(e.target.value) })}
                           className="h-1.5 w-full accent-foreground"
@@ -767,219 +1026,127 @@ export const SettingsModal: React.FC = () => {
                   </div>
                 </div>
               </div>
-            </div>
-          </div>
-        )}
+            )}
 
-        {tab === 'roles' && <RolesTab />}
 
-        {tab === 'github' && (
-          <div className="flex-1 overflow-y-auto bg-background/40 p-6">
-            <div className="space-y-5">
-              <div className={cn(settingsCardClass, 'flex items-start gap-4 px-5 py-5')}>
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-border/60 bg-background/80">
-                  <Github className="h-5 w-5" />
-                </div>
+            {tab === 'github' && (
+              <div className="p-6 space-y-4">
+                {/* Header */}
                 <div>
-                  <h3 className="text-base font-semibold tracking-[-0.015em]">GitHub Integration</h3>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Connect a Personal Access Token to browse repositories, stage changes, and open pull requests from chat.
-                  </p>
+                  <h3 className="text-lg font-semibold text-[#e0e0e0]">GitHub</h3>
+                  <p className="text-[13px] text-[#666666]">Connected repositories, access tokens, and config settings.</p>
                 </div>
-              </div>
 
-              <div className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
-                <div className="space-y-5">
-                  <div className={cn(settingsCardClass, 'space-y-3 px-5 py-5')}>
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className={fieldLabelClass}>Personal Access Token</p>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          Stored locally for GitHub file reads, branch work, and PR creation.
-                        </p>
-                      </div>
-                      <a
-                        href="https://github.com/settings/tokens/new?scopes=repo&description=CloudChat%20Integration"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 rounded-full border border-border/60 px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors duration-100 hover:bg-background/80 hover:text-foreground"
-                      >
-                        Generate token
-                        <ExternalLink className="h-3 w-3" />
-                      </a>
-                    </div>
-                    <div className="relative">
-                      <input
-                        type={showGithubKey ? 'text' : 'password'}
-                        value={githubPAT}
-                        onChange={(e) => setGithubPAT(e.target.value)}
-                        placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
-                        className={cn(textInputClass, 'pr-11 font-mono')}
-                      />
-                      <button
-                        onClick={() => setShowGithubKey(s => !s)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors duration-100"
-                      >
-                        {showGithubKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </button>
-                    </div>
-                    <p className="text-[11px] text-muted-foreground">
-                      Required scopes: <code className="rounded bg-secondary px-1 py-0.5">repo</code>
+                {/* Connection status card */}
+                <div className={cn(settingsCardClass, 'px-4 py-[14px] flex items-center gap-[14px]')}>
+                  <div className="h-[38px] w-[38px] rounded-[10px] flex items-center justify-center shrink-0 bg-white/[0.05]">
+                    <Github className="h-5 w-5 text-foreground" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <span className="text-sm font-medium text-foreground">
+                      {githubPAT ? '@cloudcraft-dev' : 'Not connected'}
+                    </span>
+                    <p className="text-xs text-[#666666]">
+                      {githubPAT ? 'Personal Access Token configured' : 'Add a token to connect'}
                     </p>
                   </div>
-
-                  {githubPAT && (
-                    <div className={cn(settingsCardClass, 'px-5 py-4')}>
-                      <div className="flex items-center gap-2">
-                        <div className="h-2 w-2 rounded-full bg-green-500" />
-                        <p className="text-sm font-medium text-foreground">GitHub connected</p>
-                      </div>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        Repository browsing and pull-request workflows are ready to use.
-                      </p>
-                    </div>
+                  {githubPAT ? (
+                    <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold text-[#00FF88] bg-[#00FF8812] shrink-0">
+                      Connected
+                    </span>
+                  ) : (
+                    <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold text-[#FF6666] bg-[#FF444412] shrink-0">
+                      Disconnected
+                    </span>
                   )}
                 </div>
 
+                {/* PAT input */}
                 <div className={cn(settingsCardClass, 'space-y-3 px-5 py-5')}>
-                  <p className={fieldLabelClass}>Workflow</p>
-                  <ol className="space-y-3 text-sm text-muted-foreground">
-                    {[
-                      'Generate a GitHub Personal Access Token with repo scope.',
-                      'Paste the token here so the app can authenticate your repo actions.',
-                      'Ask the assistant to inspect, edit, or prepare repository changes.',
-                      'Review staged changes and create a pull request when ready.',
-                    ].map((step, index) => (
-                      <li key={step} className="flex gap-3">
-                        <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border/60 text-[10px] font-semibold text-foreground">
-                          {index + 1}
-                        </span>
-                        <span className="leading-relaxed">{step}</span>
-                      </li>
-                    ))}
-                  </ol>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {tab === 'knowledge' && (
-          <div className="flex-1 overflow-y-auto bg-background/40 p-6">
-            <div className={cn(settingsCardClass, 'p-5')}>
-              <KnowledgePanel />
-            </div>
-          </div>
-        )}
-
-        {tab === 'general' && (
-          <div className="flex-1 overflow-y-auto bg-background/40 p-6">
-            <div className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr]">
-              <div className="space-y-5">
-                <div className={cn(settingsCardClass, 'px-5 py-5')}>
-                  <p className={fieldLabelClass}>Theme</p>
-                  <div className="mt-3 flex gap-2">
-                    {(['light', 'dark', 'system'] as const).map((t) => (
-                      <button
-                        key={t}
-                        onClick={() => setTheme(t)}
-                        className={cn(
-                          'flex-1 rounded-xl border px-3 py-2 text-sm font-medium capitalize transition-colors duration-100',
-                          theme === t
-                            ? 'border-border/70 bg-background/85 text-foreground'
-                            : 'border-transparent text-muted-foreground hover:border-border/50 hover:bg-background/55 hover:text-foreground'
-                        )}
-                      >
-                        {t}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className={cn(settingsCardClass, 'px-5 py-5')}>
-                  <p className={fieldLabelClass}>Font Size</p>
-                  <div className="mt-3 flex gap-2">
-                    {(['small', 'medium', 'large'] as const).map((f) => (
-                      <button
-                        key={f}
-                        onClick={() => setFontSize(f)}
-                        className={cn(
-                          'flex-1 rounded-xl border px-3 py-2 text-sm font-medium capitalize transition-colors duration-100',
-                          fontSize === f
-                            ? 'border-border/70 bg-background/85 text-foreground'
-                            : 'border-transparent text-muted-foreground hover:border-border/50 hover:bg-background/55 hover:text-foreground'
-                        )}
-                      >
-                        {f}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-5">
-                <div className={cn(settingsCardClass, 'px-5 py-5')}>
-                  <p className={fieldLabelClass}>Typography</p>
-                  <div className="mt-3 flex gap-2">
-                    {([
-                      { key: 'inter', label: 'Sans', preview: 'Inter' },
-                      { key: 'mono', label: 'Mono', preview: 'JetBrains' },
-                      { key: 'serif', label: 'Serif', preview: 'Source Serif' },
-                    ] as const).map((f) => (
-                      <button
-                        key={f.key}
-                        onClick={() => setFontFamily(f.key)}
-                        className={cn(
-                          'flex-1 rounded-2xl border px-3 py-3 transition-colors duration-100',
-                          fontFamily === f.key
-                            ? 'border-border/70 bg-background/85 text-foreground'
-                            : 'border-transparent text-muted-foreground hover:border-border/50 hover:bg-background/55 hover:text-foreground'
-                        )}
-                      >
-                        <div className={cn(
-                          'text-lg font-medium',
-                          f.key === 'mono' && "font-['JetBrains_Mono',monospace]",
-                          f.key === 'serif' && "font-['Source_Serif_4',serif]",
-                          f.key === 'inter' && "font-['Inter',sans-serif]",
-                        )}>
-                          Aa
-                        </div>
-                        <div className="mt-1 text-[11px] font-medium">{f.label}</div>
-                        <div className="text-[10px] text-muted-foreground">{f.preview}</div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className={cn(settingsCardClass, 'px-5 py-5')}>
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="space-y-1">
-                      <p className={fieldLabelClass}>Repo Approval</p>
-                      <h4 className="text-sm font-semibold text-foreground">Auto-approve repo changes</h4>
-                      <p className="text-xs leading-relaxed text-muted-foreground">
-                        Automatically accept future repo change proposals after the AI shows its plan.
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className={fieldLabelClass}>Personal Access Token</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Stored locally. Required scopes: <code className="rounded bg-secondary px-1 py-0.5">repo</code>
                       </p>
                     </div>
-                    <button
-                      onClick={() => setAutoApproveRepoChanges(!autoApproveRepoChanges)}
-                      className={cn(
-                        toggleTrackClass,
-                        autoApproveRepoChanges ? 'bg-primary' : 'bg-border'
-                      )}
+                    <a
+                      href="https://github.com/settings/tokens/new?scopes=repo&description=CloudChat%20Integration"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 rounded-full border border-[#2a2a2a] px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors duration-100 hover:bg-white/[0.04] hover:text-foreground"
                     >
-                      <span
-                        className={cn(
-                          toggleThumbClass,
-                          autoApproveRepoChanges ? 'translate-x-5' : 'translate-x-0.5'
-                        )}
-                      />
+                      Generate token
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type={showGithubKey ? 'text' : 'password'}
+                      value={githubPAT}
+                      onChange={(e) => setGithubPAT(e.target.value)}
+                      placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                      className={cn(textInputClass, 'pr-11 font-mono')}
+                    />
+                    <button
+                      onClick={() => setShowGithubKey(s => !s)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors duration-100"
+                    >
+                      {showGithubKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </button>
                   </div>
                 </div>
+
+                {/* Repositories section */}
+                {githubPAT && (
+                  <>
+                    <div className="flex items-center gap-3">
+                      <span className={sectionLabelClass}>Repositories</span>
+                      <div className={cn(settingsDividerClass, 'flex-1')} />
+                    </div>
+
+                    <div className="space-y-2">
+                      {[
+                        { name: 'frontend', desc: 'Main web application' },
+                        { name: 'api', desc: 'Backend API service' },
+                        { name: 'docs', desc: 'Documentation site' },
+                        { name: 'infra', desc: 'Infrastructure configs' },
+                      ].map((repo) => (
+                        <div key={repo.name} className={cn(listCardClass, 'cursor-default')}>
+                          <div className="h-[38px] w-[38px] rounded-[10px] flex items-center justify-center shrink-0 bg-[#4F8FEA18]">
+                            <Code2 className="h-4 w-4 text-[#4F8FEA]" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <span className="text-sm font-medium text-foreground">{repo.name}</span>
+                            <p className="text-xs text-[#666666]">{repo.desc}</p>
+                          </div>
+                          <button
+                            className={cn(
+                              toggleTrackClass,
+                              'bg-[#FF8400]'
+                            )}
+                          >
+                            <span className={cn(toggleThumbClass, 'translate-x-[20px]')} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Sync button */}
+                    <button className={bottomActionClass}>
+                      <RefreshCw className="h-4 w-4" />
+                      Sync repositories
+                    </button>
+                  </>
+                )}
               </div>
-            </div>
+            )}
+
+            {tab === 'knowledge' && <KnowledgeTab />}
+
+            {tab === 'general' && <GeneralTab />}
           </div>
-        )}
+        </div>
       </div>
     </div>
   );

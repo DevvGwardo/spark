@@ -22,7 +22,7 @@ const value = 1;
       />,
     );
 
-    expect(screen.getByText('TypeScript')).toBeInTheDocument();
+    expect(screen.getByText('typescript')).toBeInTheDocument();
     expect(screen.getByText('2 lines')).toBeInTheDocument();
 
     const copyButton = screen.getByRole('button', { name: 'Copy code' });

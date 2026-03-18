@@ -1,7 +1,7 @@
 import { spawn, ChildProcess } from 'child_process';
 import { mkdtemp, rm, writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { tmpdir } from 'os';
 
 interface ActivePreview {
@@ -40,7 +40,7 @@ function runCommand(
 ): Promise<number> {
   return new Promise((resolve, reject) => {
     appendLog(preview, `[${label}] ${cmd} ${args.join(' ')}`);
-    const proc = spawn(cmd, args, { cwd, shell: true, env: { ...process.env, CI: 'true' } });
+    const proc = spawn(cmd, args, { cwd, env: { ...process.env, CI: 'true' } });
 
     proc.stdout?.on('data', (data) => {
       const lines = data.toString().split('\n').filter(Boolean);
@@ -99,7 +99,6 @@ function startDevServer(
 
   const proc = spawn(cmd, args, {
     cwd,
-    shell: true,
     env: {
       ...process.env,
       PORT: String(port),
@@ -178,9 +177,10 @@ export async function startPreview(
   activePreview.set(id, preview);
 
   try {
-    // Clone the repo
-    const cloneUrl = `https://x-access-token:${pat}@github.com/${owner}/${repo}.git`;
-    const cloneArgs = ['clone', '--depth', '1'];
+    // Clone the repo — pass auth via http.extraHeader to avoid embedding the PAT in the URL
+    const cloneUrl = `https://github.com/${owner}/${repo}.git`;
+    const authHeader = `Authorization: Basic ${Buffer.from(`x-access-token:${pat}`).toString('base64')}`;
+    const cloneArgs = ['clone', '-c', `http.extraHeader=${authHeader}`, '--depth', '1'];
     if (branch) {
       cloneArgs.push('--branch', branch);
     }
@@ -279,6 +279,10 @@ export async function applyChanges(
 
   for (const change of changes) {
     const filePath = join(preview.dir, change.path);
+    const resolved = resolve(filePath);
+    if (!resolved.startsWith(preview.dir)) {
+      throw new Error(`Path traversal blocked: ${change.path}`);
+    }
 
     if (change.action === 'delete') {
       try {

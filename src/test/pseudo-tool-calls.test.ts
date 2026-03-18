@@ -131,4 +131,36 @@ body { color: white; }
     const cleaned = stripPseudoToolInvocations(content);
     expect(cleaned).toBe('');
   });
+
+  it('parses wrapped JSON repo payload arrays that leak into assistant text', () => {
+    const content = `The changes have been successfully applied to the repository.
+
+The optimized code for \`KanbanBoard.tsx\`, \`cards.ts\`, and \`gateway-client.ts\` has been updated.
+
+[ { "parameters": { "path": "client/src/components/KanbanBoard.tsx" } }, { "parameters": { "path": "server/src/routes/cards.ts" } }, { "parameters": { "path": "server/src/services/gateway-client.ts" } } ]
+
+[ { "parameters": { "changes": [ { "path": "client/src/components/KanbanBoard.tsx", "action": "edit", "content": "import { useState } from 'react';", "description": "Optimized KanbanBoard.tsx for better performance" }, { "path": "server/src/routes/cards.ts", "action": "edit", "content": "import { Router } from 'express';", "description": "Optimized cards.ts for better error handling" } ] } } ]`;
+
+    const invocations = extractPseudoToolInvocations(content);
+
+    expect(invocations.map((invocation) => invocation.toolName)).toEqual([
+      'read_repo_file',
+      'read_repo_file',
+      'read_repo_file',
+      'batch_edit_repo_files',
+    ]);
+    expect(invocations[0]?.args).toEqual({ path: 'client/src/components/KanbanBoard.tsx' });
+    expect(invocations[3]?.args).toMatchObject({
+      changes: [
+        expect.objectContaining({ path: 'client/src/components/KanbanBoard.tsx', action: 'edit' }),
+        expect.objectContaining({ path: 'server/src/routes/cards.ts', action: 'edit' }),
+      ],
+    });
+
+    const cleaned = stripPseudoToolInvocations(content);
+    expect(cleaned).toContain('The changes have been successfully applied to the repository.');
+    expect(cleaned).toContain('The optimized code for `KanbanBoard.tsx`');
+    expect(cleaned).not.toContain('"parameters"');
+    expect(cleaned).not.toContain('"changes"');
+  });
 });

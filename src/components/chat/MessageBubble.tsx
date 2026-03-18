@@ -3,7 +3,7 @@ import { Copy, Check, RotateCcw, Pencil, ChevronDown, Loader2, Wrench, FileCode,
 import { GhostIcon } from './GhostIcon';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { useChangesetStore } from '@/stores/changeset-store';
-import { usePanelId } from '@/contexts/PanelContext';
+import { useChatScopeId } from '@/contexts/PanelContext';
 import { usePreviewStore } from '@/stores/preview-store';
 import type { Message } from '@/lib/db';
 import { computeDiffLines, getChangeLineDelta, summarizeChangeLines } from '@/lib/change-diff';
@@ -105,6 +105,7 @@ interface MessageBubbleProps {
   isReasoningStreaming?: boolean;
   toolInvocations?: ToolInvocation[];
   toolActivity?: ToolActivityEvent[];
+  allowPseudoRepoWrites?: boolean;
   onRegenerate?: () => void;
   onEdit?: (content: string) => void;
 }
@@ -151,6 +152,7 @@ function stripHermesActivityText(content: string): string {
         /^"?proposing changes"?$/i.test(normalized) ||
         /^"?reading file"?(?:\s+—\s+.+)?$/i.test(normalized) ||
         /^"?editing file"?(?:\s+—\s+.+)?$/i.test(normalized) ||
+        /^"?editing files"?(?:\s+—\s+.+)?$/i.test(normalized) ||
         /^"?creating file"?(?:\s+—\s+.+)?$/i.test(normalized) ||
         /^"?deleting file"?(?:\s+—\s+.+)?$/i.test(normalized) ||
         /^"?thinking\.\.\."?$/i.test(normalized) ||
@@ -172,7 +174,7 @@ function sanitizeAssistantTextContent(content: string, isStreaming: boolean): st
     return '';
   }
 
-  return stripHermesActivityText(stripPseudoToolInvocations(content, isStreaming));
+  return stripPseudoToolInvocations(stripHermesActivityText(content), isStreaming);
 }
 
 const TOOL_STATE_PRIORITY: Record<ToolInvocation['state'], number> = {
@@ -309,10 +311,16 @@ const REPO_TOOL_NAMES = new Set([
   'delete_repo_file',
   'batch_edit_repo_files',
 ]);
+const REPO_WRITE_TOOL_NAMES = new Set([
+  'edit_repo_file',
+  'create_repo_file',
+  'delete_repo_file',
+  'batch_edit_repo_files',
+]);
 
 const ACTION_BADGE: Record<string, { label: string; className: string; icon: React.ElementType }> = {
   create: { label: 'Created', className: 'bg-green-500/15 text-green-400 border-green-500/30', icon: FilePlus },
-  edit:   { label: 'Modified', className: 'bg-blue-500/15 text-blue-400 border-blue-500/30', icon: FileCode },
+  edit:   { label: 'Modified', className: 'bg-orange-500/15 text-orange-400 border-orange-500/30', icon: FileCode },
   delete: { label: 'Deleted', className: 'bg-red-500/15 text-red-400 border-red-500/30', icon: FileX },
 };
 
@@ -356,9 +364,25 @@ function getToolTarget(invocation: ToolInvocation): string | null {
   return null;
 }
 
-function getToolDisplayLabel(toolName: string, affectedCount: number): string {
-  if (toolName === 'batch_edit_repo_files' && affectedCount > 0) {
-    return `Editing ${affectedCount} files`;
+function getToolDisplayLabel(
+  toolName: string,
+  affectedCount: number,
+  batchChanges?: Array<{ path: string; action: string; content?: string }>,
+): string {
+  if (toolName === 'batch_edit_repo_files' && batchChanges && batchChanges.length > 0) {
+    const creates = batchChanges.filter((c) => c.action === 'create').length;
+    const deletes = batchChanges.filter((c) => c.action === 'delete').length;
+    const edits = batchChanges.length - creates - deletes;
+    const total = batchChanges.length;
+    const fileSuffix = total === 1 ? 'file' : 'files';
+
+    // Single-action batches
+    if (creates === total) return `Creating ${total} ${fileSuffix}`;
+    if (deletes === total) return `Deleting ${total} ${fileSuffix}`;
+    if (edits === total) return `Editing ${total} ${fileSuffix}`;
+
+    // Mixed batch — just show count
+    return `Updating ${total} ${fileSuffix}`;
   }
 
   if (toolName === 'edit_repo_file' && affectedCount > 1) {
@@ -381,8 +405,8 @@ function FileChangeMetaBadge({
   action?: string;
   showStaged: boolean;
 }) {
-  const panelId = usePanelId();
-  const changeset = useChangesetStore((s) => s.getChangeset(panelId));
+  const scopeId = useChatScopeId();
+  const changeset = useChangesetStore((s) => s.getChangeset(scopeId));
   const stagedChange = filePath ? changeset.changes[filePath] : undefined;
   const resolvedAction = getFileAction(toolName, action);
 
@@ -436,8 +460,8 @@ function FileChangeMetaBadge({
 }
 
 function StagedFileSummary({ paths }: { paths: string[] }) {
-  const panelId = usePanelId();
-  const changes = useChangesetStore((s) => s.getChangeset(panelId).changes);
+  const scopeId = useChatScopeId();
+  const changes = useChangesetStore((s) => s.getChangeset(scopeId).changes);
   const relevantChanges = paths
     .map((p) => changes[p])
     .filter(Boolean);
@@ -465,8 +489,8 @@ function StagedFileSummary({ paths }: { paths: string[] }) {
 
 /** Collapsible code preview of edited lines for a file change. */
 function FileEditPreview({ filePath }: { filePath: string }) {
-  const panelId = usePanelId();
-  const change = useChangesetStore((s) => s.getChangeset(panelId).changes[filePath]);
+  const scopeId = useChatScopeId();
+  const change = useChangesetStore((s) => s.getChangeset(scopeId).changes[filePath]);
   const [expanded, setExpanded] = useState(false);
   const [isOverflowing, setIsOverflowing] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -519,7 +543,7 @@ function FileEditPreview({ filePath }: { filePath: string }) {
           <span className="chat-code-block__window-dot chat-code-block__window-dot--green" />
         </div>
         <div className="chat-code-block__tab">
-          <FileCode2 className="h-3.5 w-3.5 shrink-0 text-[#519aba]" />
+          <FileCode2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           <span className="chat-code-block__filename">{filePath}</span>
         </div>
       </div>
@@ -626,7 +650,7 @@ function FileEditPreview({ filePath }: { filePath: string }) {
 }
 
 function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvocation; isLatest?: boolean }) {
-  const panelId = usePanelId();
+  const scopeId = useChatScopeId();
   const [expanded, setExpanded] = useState(false);
   const toolInfo = TOOL_LABELS[invocation.toolName] || { label: invocation.toolName, icon: Wrench };
   const Icon = toolInfo.icon;
@@ -635,7 +659,7 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
   const errorMessage = getToolErrorMessage(invocation.result);
   const hasError = !!errorMessage;
   const progressLabel = invocation.toolName === 'read_repo_file' ? 'Reading...' : 'In progress';
-  const panelChanges = useChangesetStore((s) => s.getChangeset(panelId).changes);
+  const panelChanges = useChangesetStore((s) => s.getChangeset(scopeId).changes);
 
   // Extract file info from args
   const filePath = invocation.args?.path;
@@ -646,6 +670,9 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
     ? batchChangesRaw as Array<{ path: string; action: string; content?: string }>
     : undefined;
   const isBatch = invocation.toolName === 'batch_edit_repo_files' && batchChanges && batchChanges.length > 0;
+  const shouldFocusPrimaryBatchFile = !!(isBatch && isInProgress && batchChanges && batchChanges.length > 0);
+  const primaryBatchChange = shouldFocusPrimaryBatchFile ? batchChanges?.[0] : undefined;
+  const primaryBatchPath = primaryBatchChange?.path;
   const isFileCreationTool = FILE_CREATION_TOOLS.has(invocation.toolName);
   const stagedPaths = React.useMemo(
     () =>
@@ -664,26 +691,29 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
       : isFileModifyingTool
         ? stagedPaths
         : [];
-  const toolTargetLabel = toolTarget || (affectedPaths.length === 1 ? affectedPaths[0] : null);
-  const displayLabel = getToolDisplayLabel(invocation.toolName, affectedPaths.length);
-  const showMultiFileList = affectedPaths.length > 1 && (isBatch || (!filePath && isFileModifyingTool));
+  const focusedFilePath = filePath || primaryBatchPath;
+  const toolTargetLabel = toolTarget || focusedFilePath || (affectedPaths.length === 1 ? affectedPaths[0] : null);
+  const displayLabel = shouldFocusPrimaryBatchFile
+    ? (primaryBatchChange?.action === 'create' ? 'Creating file' : primaryBatchChange?.action === 'delete' ? 'Deleting file' : 'Editing file')
+    : getToolDisplayLabel(invocation.toolName, affectedPaths.length, batchChanges);
+  const showMultiFileList = affectedPaths.length > 1 && (!shouldFocusPrimaryBatchFile && (isBatch || (!filePath && isFileModifyingTool)));
 
   const handlePreviewClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     const previewStore = usePreviewStore.getState();
-    const preview = previewStore.getPreview(panelId);
-    const changeset = useChangesetStore.getState().getChangeset(panelId);
+    const preview = previewStore.getPreview(scopeId);
+    const changeset = useChangesetStore.getState().getChangeset(scopeId);
     // Focus the file in the preview if it exists
     if (artifactFilename) {
       const file = preview.files.find((f) => f.filename === artifactFilename);
-      if (file) previewStore.setActiveFile(panelId, file.id);
+      if (file) previewStore.setActiveFile(scopeId, file.id);
     }
     if (changeset.activeRepo) {
-      previewStore.setView(panelId, 'repo');
+      previewStore.setView(scopeId, 'repo');
     } else if (Object.keys(changeset.changes).length > 0) {
-      previewStore.setView(panelId, 'changes');
+      previewStore.setView(scopeId, 'changes');
     }
-    previewStore.setOpen(panelId, true);
+    previewStore.setOpen(scopeId, true);
   };
 
   // For file creation tools, show as a Claude-style artifact card
@@ -735,7 +765,7 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
           <span className={cn(
             'shrink-0 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide',
             fileExt === 'html' ? 'bg-orange-500/15 text-orange-400' :
-            fileExt === 'css' ? 'bg-blue-500/15 text-blue-400' :
+            fileExt === 'css' ? 'bg-zinc-500/15 text-zinc-400' :
             fileExt === 'js' ? 'bg-yellow-500/15 text-yellow-400' :
             fileExt === 'jsx' || fileExt === 'tsx' ? 'bg-purple-500/15 text-purple-400' :
             'bg-muted text-muted-foreground'
@@ -771,7 +801,10 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
             {toolTargetLabel}
           </code>
         )}
-        {affectedPaths.length > 1 && (
+        {shouldFocusPrimaryBatchFile && affectedPaths.length > 1 && (
+          <span className="text-foreground/70 text-[12px]">+{affectedPaths.length - 1} more queued</span>
+        )}
+        {!shouldFocusPrimaryBatchFile && affectedPaths.length > 1 && (
           <span className="text-foreground/70 text-[12px]">({affectedPaths.length} files)</span>
         )}
         {isInProgress && (
@@ -779,11 +812,12 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
             {progressLabel}
           </span>
         )}
-        {(isFileModifyingTool && filePath) && (
+        {(isFileModifyingTool && focusedFilePath) && (
           <FileChangeMetaBadge
-            filePath={filePath}
+            filePath={focusedFilePath}
             toolName={invocation.toolName}
-            content={typeof invocation.args?.content === 'string' ? invocation.args.content : undefined}
+            action={primaryBatchChange?.action}
+            content={typeof invocation.args?.content === 'string' ? invocation.args.content : primaryBatchChange?.content}
             showStaged={isComplete}
           />
         )}
@@ -837,7 +871,7 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
   );
 }
 
-export const MessageBubble: React.FC<MessageBubbleProps> = ({
+export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function MessageBubble({
   message,
   isStreaming,
   streamingContent,
@@ -846,9 +880,10 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   isReasoningStreaming,
   toolInvocations,
   toolActivity,
+  allowPseudoRepoWrites = true,
   onRegenerate,
   onEdit,
-}) => {
+}) {
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
@@ -864,15 +899,20 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   const pseudoToolInvocations = React.useMemo(() => {
     if (isUser || hasStructuredRepoToolInvocations) return [];
     const sourceText = getPseudoToolSourceText({ content: rawContent, parts });
-    const pseudoInvocations = extractPseudoToolInvocations(sourceText).map((invocation, index) => ({
-      toolCallId: `pseudo-${message.id}-${index}`,
-      toolName: invocation.toolName,
-      args: invocation.args,
-      state: 'result' as const,
-      result: { synthesized: true },
-    }));
+    const pseudoInvocations = extractPseudoToolInvocations(sourceText)
+      .filter((invocation) => allowPseudoRepoWrites || !REPO_WRITE_TOOL_NAMES.has(invocation.toolName))
+      .map((invocation, index) => ({
+        toolCallId: `pseudo-${message.id}-${index}`,
+        toolName: invocation.toolName,
+        args: invocation.args,
+        state: 'result' as const,
+        result: { synthesized: true },
+      }));
     if (pseudoInvocations.length > 0) {
       return pseudoInvocations;
+    }
+    if (!allowPseudoRepoWrites) {
+      return [];
     }
     return extractTextFileEdits(sourceText).map((edit, index) => ({
       toolCallId: `text-edit-${message.id}-${index}`,
@@ -884,7 +924,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
       state: 'result' as const,
       result: { synthesized: true, source: 'text-file-edit' },
     }));
-  }, [hasStructuredRepoToolInvocations, isUser, message.id, parts, rawContent]);
+  }, [allowPseudoRepoWrites, hasStructuredRepoToolInvocations, isUser, message.id, parts, rawContent]);
   const normalizedRawContent = React.useMemo(() => {
     if (isUser) return rawContent;
     // Always strip raw pseudo tool call text from content, even when structured
@@ -956,7 +996,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
       );
     }
 
-    if (normalizedParts.length === 0 && toolInvocations?.length) {
+    if (!normalizedParts.some((part) => part.type === 'tool-invocation') && toolInvocations?.length) {
       normalizedParts.push(
         ...toolInvocations.map((toolInvocation) => ({
           type: 'tool-invocation' as const,
@@ -976,6 +1016,11 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
 
     return dedupeAssistantParts(normalizedParts);
   }, [displayContent, effectiveReasoning, isUser, parts, pseudoToolInvocations, synthesizedToolInvocations, toolInvocations]);
+
+  const lastToolIndex = React.useMemo(() =>
+    orderedParts.reduce((last, p, i) => (p.type === 'tool-invocation' ? i : last), -1),
+    [orderedParts],
+  );
 
   const showAgentActivity = Boolean(toolActivity?.length) && synthesizedToolInvocations.length === 0;
 
@@ -1038,10 +1083,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
             {isUser ? (
               <p className="text-sm whitespace-pre-wrap font-medium">{displayContent}</p>
             ) : (
-              (() => {
-                const lastToolIndex = orderedParts.reduce((last, p, i) =>
-                  p.type === 'tool-invocation' ? i : last, -1);
-                return orderedParts.map((part, index) => {
+              orderedParts.map((part, index) => {
                 if (part.type === 'step-start') {
                   return null;
                 }
@@ -1100,8 +1142,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                 }
 
                 return null;
-              });
-              })()
+              })
             )}
             {showAgentActivity && toolActivity && toolActivity.length > 0 && (
               <AgentActivity events={toolActivity} />
@@ -1146,4 +1187,4 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
       </div>
     </div>
   );
-};
+});
