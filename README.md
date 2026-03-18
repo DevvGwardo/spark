@@ -157,20 +157,20 @@ electron/
 
 | Provider | Default Model | Notes |
 |----------|--------------|-------|
-| OpenAI | gpt-4o | Supports reasoning effort (o1/o3 models) |
-| Anthropic | claude-sonnet-4 | |
+| OpenAI | gpt-5.2 | Supports reasoning effort (GPT-5/o-series) |
+| Anthropic | claude-sonnet-4-5 | |
 | Google | gemini-2.5-flash | |
-| xAI | grok-3-mini | |
-| Groq | llama-3.3-70b | |
+| xAI | grok-4-fast-reasoning | |
+| Groq | llama-3.3-70b-versatile | |
 | DeepSeek | deepseek-chat | |
 | Mistral | mistral-large-latest | |
-| Together | Llama-3.3-70B | |
-| MiniMax | MiniMax-M2.5 | |
-| Kimi | kimi-k2 | |
-| Cerebras | llama-3.3-70b | |
-| OpenRouter | gpt-oss-120b:free | |
-| SambaNova | Llama-3.3-70B | |
-| Hermes | llama-4-maverick | Agent mode with tool access (requires Hermes Bridge) |
+| Together | Llama-3.3-70B-Instruct-Turbo | |
+| MiniMax | MiniMax-M2.5 | Coding Plan & Pay-as-you-go tiers |
+| Kimi | moonshot-v1-32k | Long-context reasoning |
+| Cerebras | llama-3.3-70b | Ultra-fast free inference |
+| OpenRouter | nvidia/llama-3.1-nemotron-70b-instruct:free | Free models from multiple providers |
+| SambaNova | Meta-Llama-3.3-70B-Instruct | |
+| Hermes | meta-llama/llama-4-maverick | Agent mode with tool access (requires Hermes Bridge) |
 | OpenClaw | (local) | Local agentic AI (requires OpenClaw CLI) |
 
 ## GitHub Integration
@@ -223,4 +223,13 @@ Access via the Knowledge tab in the sidebar or Settings.
 
 ## License
 
-Private project.
+This project is licensed under the **Business Source License 1.1** (BSL 1.1).
+
+- **Permitted**: View, modify, fork, and self-host for personal or internal use.
+- **Restricted**: You may not offer CloudChat (or a substantially similar product built from this source) as a competing hosted or commercial service without explicit written permission from the author.
+- **Change Date**: March 17, 2030
+- **Change License**: Apache License 2.0
+
+After the Change Date, all source code transitions to Apache 2.0 and becomes fully open-source.
+
+See [LICENSE](LICENSE) for the full text.

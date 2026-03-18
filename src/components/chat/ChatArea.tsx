@@ -1,7 +1,11 @@
 import React, { useRef, useEffect, useCallback, useState, useMemo } from 'react';
+import { ArrowDown, ArrowRight, MessageSquare, Settings, Wrench } from 'lucide-react';
 import { MessageBubble } from './MessageBubble';
 import { ChatInput } from './ChatInput';
+import { ContextualSuggestions } from './ContextualSuggestions';
 import { ActivityIndicator } from './ActivityIndicator';
+import { VerificationGhostOverlay } from './VerificationGhostOverlay';
+import type { AgentStatusEvent } from '@/hooks/useChat';
 import { WelcomeScreen } from './WelcomeScreen';
 import { ApiKeyModal } from './ApiKeyModal';
 import { ChangeApprovalModal } from './ChangeApprovalModal';
@@ -9,10 +13,16 @@ import { ChatErrorBanner } from './ChatErrorBanner';
 import { getProviderLabel } from '@/lib/providers';
 import { getErrorMessage } from '@/lib/errors';
 import {
+  buildIssueFixFollowUpPrompt,
+  buildIssueUpdateFollowUpPrompt,
+  isIssueExplainPrompt,
+} from '@/lib/issue-chat-prompts';
+import {
   extractPseudoToolInvocations,
   extractTextFileEdits,
   getPseudoToolSourceText,
 } from '@/lib/pseudo-tool-calls';
+import { isRepoWriteMessage } from '@/lib/repo-intent';
 import {
   findPendingProposal,
   getProposalDigest,
@@ -26,7 +36,7 @@ import { useSettingsStore } from '@/stores/settings-store';
 import { useContextUsageStore } from '@/stores/context-usage-store';
 import { useUIStore } from '@/stores/ui-store';
 import { useChangesetStore } from '@/stores/changeset-store';
-import { usePanelId } from '@/contexts/PanelContext';
+import { useChatScopeId, usePanelId } from '@/contexts/PanelContext';
 
 interface ChatPartLike {
   type?: string;
@@ -42,6 +52,13 @@ interface ChatMessageLike {
   parts?: ChatPartLike[];
   toolInvocations?: ProposalToolInvocationLike[];
 }
+
+const REPO_WRITE_TOOL_NAMES = new Set([
+  'edit_repo_file',
+  'create_repo_file',
+  'delete_repo_file',
+  'batch_edit_repo_files',
+]);
 
 function getAssistantParts(message?: ChatMessageLike | null) {
   return Array.isArray(message?.parts) ? message.parts : [];
@@ -63,12 +80,19 @@ function getMessageScrollDigest(message?: ChatMessageLike | null) {
     .map((part) => {
       if (part?.type === 'text') return `text:${part.text ?? ''}`;
       if (part?.type === 'reasoning') return `reasoning:${part.reasoning ?? ''}`;
-      if (part?.type === 'tool-invocation') return `tool:${part.toolInvocation?.toolName ?? ''}`;
+      if (part?.type === 'tool-invocation') {
+        const inv = part.toolInvocation;
+        return `tool:${inv?.toolName ?? ''}:${inv?.state ?? ''}`;
+      }
       return part?.type ?? '';
     })
     .join('|');
 
-  return `${message.id}:${message.content}:${partsDigest}:${message.toolInvocations?.length ?? 0}`;
+  const invocationsDigest = Array.isArray(message.toolInvocations)
+    ? message.toolInvocations.map((t) => `${t.toolName}:${t.state ?? ''}`).join(',')
+    : '0';
+
+  return `${message.id}:${message.content}:${partsDigest}:${invocationsDigest}`;
 }
 
 function getToolActivityDigest(toolActivity: ToolActivityEvent[] = []) {
@@ -107,9 +131,28 @@ function countUniqueToolInvocations(invocations: ProposalToolInvocationLike[] = 
   return keys.size;
 }
 
-function getVisibleAssistantToolCount(message?: ChatMessageLike | null, toolActivity: ToolActivityEvent[] = []) {
+function countUniqueToolActivity(toolActivity: ToolActivityEvent[] = []) {
+  const keys = new Set<string>();
+
+  toolActivity.forEach((event, index) => {
+    keys.add(`${event.tool}:${event.input}:${index}`);
+  });
+
+  return keys.size;
+}
+
+function getVisibleAssistantToolCount(
+  message?: ChatMessageLike | null,
+  toolActivity: ToolActivityEvent[] = [],
+  pseudoWritesAllowed = true,
+) {
+  const activityCount = countUniqueToolActivity(toolActivity);
+  if (activityCount > 0) {
+    return activityCount;
+  }
+
   if (!message || message.role !== 'assistant') {
-    return 0;
+    return activityCount;
   }
 
   const parts = getAssistantParts(message);
@@ -131,21 +174,100 @@ function getVisibleAssistantToolCount(message?: ChatMessageLike | null, toolActi
     content: message.content,
     parts: parts.map((part) => ({ type: part.type, text: part.text })),
   });
-  const pseudoCount = extractPseudoToolInvocations(pseudoSource).length;
+  const pseudoCount = extractPseudoToolInvocations(pseudoSource)
+    .filter((invocation) => pseudoWritesAllowed || !REPO_WRITE_TOOL_NAMES.has(invocation.toolName))
+    .length;
   if (pseudoCount > 0) {
     return pseudoCount;
   }
 
-  const textEditCount = extractTextFileEdits(pseudoSource).length;
+  const textEditCount = pseudoWritesAllowed ? extractTextFileEdits(pseudoSource).length : 0;
   if (textEditCount > 0) {
     return textEditCount;
   }
 
-  return toolActivity.length;
+  return activityCount;
+}
+
+function allowPseudoRepoWritesForAssistant(messages: ChatMessageLike[], assistantIndex: number): boolean {
+  if (assistantIndex <= 0) {
+    return false;
+  }
+
+  const previousUserMessage = messages.slice(0, assistantIndex).findLast((message) =>
+    message.role === 'user' && typeof message.content === 'string' && message.content.trim().length > 0,
+  );
+
+  return previousUserMessage ? isRepoWriteMessage(previousUserMessage.content) : false;
 }
 
 function isNearBottom(element: HTMLDivElement, threshold = 100) {
   return element.scrollHeight - element.scrollTop - element.clientHeight < threshold;
+}
+
+function IssueNextStepCallout({
+  issueNumber,
+  issueTitle,
+  onUpdateIssue,
+  onFix,
+  disabled,
+}: {
+  issueNumber: number;
+  issueTitle: string;
+  onUpdateIssue: () => void;
+  onFix: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="mt-4 rounded-xl border border-primary/20 bg-background p-6 shadow-[0_18px_60px_-28px_hsl(var(--foreground)/0.25)]">
+      {/* Header row: icon + label on left, buttons on right */}
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-primary/10 text-primary">
+            <Settings className="h-5 w-5" />
+          </div>
+          <div className="flex flex-col leading-none">
+            <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-primary">Issue</span>
+            <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-primary">Analysis</span>
+            <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-primary">Complete</span>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={onUpdateIssue}
+            disabled={disabled}
+            className="inline-flex items-center justify-center gap-2 rounded-lg border border-primary/30 bg-transparent px-4 py-2 text-[13px] font-medium text-primary transition hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <MessageSquare className="h-3.5 w-3.5" />
+            <span>Draft issue update</span>
+          </button>
+          <button
+            type="button"
+            onClick={onFix}
+            disabled={disabled}
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-[13px] font-medium text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <Wrench className="h-3.5 w-3.5" />
+            <span>Fix issue in chat</span>
+            <ArrowRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+      {/* Issue details below header */}
+      <div className="mt-4">
+        <p className="text-[15px] font-bold text-foreground">
+          {`Issue #${issueNumber}`}
+        </p>
+        <p className="mt-2 text-sm leading-6 text-foreground/90">
+          {issueTitle}
+        </p>
+        <p className="mt-3 text-[13px] leading-6 text-muted-foreground">
+          Choose the next step in this same repo context: draft a GitHub issue update or move straight into the fix.
+        </p>
+      </div>
+    </div>
+  );
 }
 
 interface ChatAreaProps {
@@ -167,6 +289,7 @@ interface ChatAreaProps {
   activeProvider: string;
   activeModel: string;
   toolActivityMap?: Record<string, ToolActivityEvent[]>;
+  agentStatus?: AgentStatusEvent | null;
   conversationAutoApproveEnabled?: boolean;
   setConversationAutoApprove?: (value: boolean) => void;
 }
@@ -190,10 +313,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   activeProvider,
   activeModel,
   toolActivityMap,
+  agentStatus,
   conversationAutoApproveEnabled = false,
   setConversationAutoApprove,
 }) => {
   const panelId = usePanelId();
+  const scopeId = useChatScopeId();
   const scrollRef = useRef<HTMLDivElement>(null);
   const isAutoScroll = useRef(true);
   const touchStartYRef = useRef<number | null>(null);
@@ -205,13 +330,15 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [dismissedError, setDismissedError] = useState<string | null>(null);
   const [acceptingProposalId, setAcceptingProposalId] = useState<string | null>(null);
   const [approvalModalOpen, setApprovalModalOpen] = useState(false);
+  const [showScrollButton, setShowScrollButton] = useState(false);
   const notifiedProposalKeyRef = useRef<string | null>(null);
 
   const updateProviderConfig = useSettingsStore((state) => state.updateProviderConfig);
   const setPanelUsage = useContextUsageStore((state) => state.setPanelUsage);
   const clearPanelUsage = useContextUsageStore((state) => state.clearPanelUsage);
   const setSettingsOpen = useUIStore((state) => state.setSettingsOpen);
-  const changeset = useChangesetStore((state) => state.getChangeset(panelId));
+  const queuePanelPrompt = useUIStore((state) => state.queuePanelPrompt);
+  const changeset = useChangesetStore((state) => state.getChangeset(scopeId));
   const repoComposerLocked = changeset.isRepoMode && changeset.repoFileTreeStatus === 'loading';
   const disabledPlaceholder = repoComposerLocked
     ? `Loading ${changeset.activeRepo?.fullName || 'repository'} files...`
@@ -221,8 +348,19 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const errorMessage = error ? getErrorMessage(error) : null;
   const showError = errorMessage && errorMessage !== dismissedError;
   const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
-  const lastAssistantMessage = [...messages].reverse().find((msg) => msg.role === 'assistant');
-  const lastUserMessageId = [...messages].reverse().find((msg) => msg.role === 'user')?.id ?? null;
+  const lastAssistantMessage = messages.findLast((msg) => msg.role === 'assistant');
+  const lastUserMessage = messages.findLast((msg) => msg.role === 'user') ?? null;
+  const lastUserMessageId = lastUserMessage?.id ?? null;
+  const issueContext = changeset.activeRepo?.issue ?? null;
+  const lastMessageIsAssistant = lastMessage?.role === 'assistant';
+  const showIssueNextStepCallout = Boolean(
+    issueContext &&
+    lastMessageIsAssistant &&
+    !isStreaming &&
+    Object.keys(changeset.changes).length === 0 &&
+    lastUserMessage &&
+    isIssueExplainPrompt(lastUserMessage.content),
+  );
   const showFooterActivity = isStreaming && !hasInlineAssistantActivity(lastAssistantMessage);
   const proposalDigest = getProposalDigest(messages);
   if (pendingProposalCacheRef.current.digest !== proposalDigest) {
@@ -240,19 +378,33 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     conversationId &&
     pendingProposal &&
     !proposalHasContinuation &&
+    !isStreaming &&
     !conversationAutoApproveEnabled,
   );
   const showInlineApprovalBanner = canShowProposalApproval && approvalModalOpen && !!pendingProposal;
   const activeToolActivity = (() => {
-    if (!lastMessage || !toolActivityMap) return [];
-    return toolActivityMap[lastMessage.id] || toolActivityMap.current || [];
+    if (!toolActivityMap) return [];
+    if (lastMessage && toolActivityMap[lastMessage.id]) {
+      return toolActivityMap[lastMessage.id] || [];
+    }
+    return toolActivityMap.current || [];
   })();
   const lastMessageDigest = getMessageScrollDigest(lastMessage);
   const toolActivityDigest = getToolActivityDigest(activeToolActivity);
+  const lastAssistantIndex = lastAssistantMessage
+    ? messages.findIndex((message) => message.id === lastAssistantMessage.id)
+    : -1;
+  const lastAssistantAllowsPseudoRepoWrites = lastAssistantIndex >= 0
+    ? allowPseudoRepoWritesForAssistant(messages, lastAssistantIndex)
+    : false;
 
   const toolCallCount = useMemo(
-    () => getVisibleAssistantToolCount(lastAssistantMessage, activeToolActivity),
-    [activeToolActivity, lastAssistantMessage],
+    () => getVisibleAssistantToolCount(
+      lastAssistantMessage,
+      activeToolActivity,
+      lastAssistantAllowsPseudoRepoWrites,
+    ),
+    [activeToolActivity, lastAssistantAllowsPseudoRepoWrites, lastAssistantMessage],
   );
 
   useEffect(() => {
@@ -308,12 +460,19 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    isAutoScroll.current = isNearBottom(el);
+    const near = isNearBottom(el);
+    isAutoScroll.current = near;
+    // Only update state when it actually changes to avoid re-renders during auto-scroll
+    setShowScrollButton((prev) => {
+      const next = !near;
+      return prev === next ? prev : next;
+    });
   }, []);
 
   const handleWheelCapture = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
     if (event.deltaY < 0) {
       isAutoScroll.current = false;
+      setShowScrollButton(true);
     }
   }, []);
 
@@ -329,12 +488,28 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
     if (touchStartYRef.current !== null && touch.clientY > touchStartYRef.current) {
       isAutoScroll.current = false;
+      setShowScrollButton(true);
     }
   }, []);
 
   const handleTouchEnd = useCallback(() => {
     touchStartYRef.current = null;
   }, []);
+
+  const scrollToBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+    isAutoScroll.current = true;
+    setShowScrollButton(false);
+  }, []);
+
+  const handleSendWithScroll = useCallback(() => {
+    isAutoScroll.current = true;
+    setShowScrollButton(false);
+    handleSend();
+  }, [handleSend]);
 
   useEffect(() => {
     if (
@@ -346,9 +521,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   }, [acceptingProposalId, isStreaming, pendingProposalId]);
 
   useEffect(() => {
-    const shouldOpen = Boolean(conversationId && pendingProposalId && !proposalHasContinuation);
+    const shouldOpen = canShowProposalApproval;
     setApprovalModalOpen((prev) => prev === shouldOpen ? prev : shouldOpen);
-  }, [conversationId, pendingProposalId, proposalHasContinuation]);
+  }, [canShowProposalApproval]);
 
   useEffect(() => {
     if (!canShowProposalApproval || !pendingProposal || !conversationId) {
@@ -403,6 +578,44 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     setDismissedError(errorMessage);
   }, [activeProvider, errorMessage, updateProviderConfig]);
 
+  const handleIssueFix = useCallback(() => {
+    const activeRepo = useChangesetStore.getState().getChangeset(scopeId).activeRepo;
+    if (!activeRepo?.issue) {
+      return;
+    }
+
+    isAutoScroll.current = true;
+    setShowScrollButton(false);
+    queuePanelPrompt(panelId, {
+      content: buildIssueFixFollowUpPrompt({
+        fullName: activeRepo.fullName,
+        baseFullName: activeRepo.baseFullName,
+        issue: activeRepo.issue,
+      }),
+      autoSend: true,
+      repoEditIntentOverride: true,
+    });
+  }, [panelId, queuePanelPrompt, scopeId]);
+
+  const handleIssueUpdate = useCallback(() => {
+    const activeRepo = useChangesetStore.getState().getChangeset(scopeId).activeRepo;
+    if (!activeRepo?.issue) {
+      return;
+    }
+
+    isAutoScroll.current = true;
+    setShowScrollButton(false);
+    queuePanelPrompt(panelId, {
+      content: buildIssueUpdateFollowUpPrompt({
+        fullName: activeRepo.fullName,
+        baseFullName: activeRepo.baseFullName,
+        issue: activeRepo.issue,
+      }),
+      autoSend: true,
+      repoEditIntentOverride: false,
+    });
+  }, [panelId, queuePanelPrompt, scopeId]);
+
   const modal = (
     <ApiKeyModal
       open={apiKeyModalOpen}
@@ -436,10 +649,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         }} disableRepoActions={repoComposerLocked} />
         <div className="w-full max-w-[720px] mx-auto mt-6">
           {errorBanner}
+          <VerificationGhostOverlay />
           <ActivityIndicator
             isStreaming={isStreaming}
             messages={messages}
             toolActivity={toolActivityMap?.current}
+            statusLabel={agentStatus?.label}
           />
           <ChatInput
             value={input}
@@ -453,6 +668,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             messages={messages}
             activeProvider={activeProvider}
             activeModel={activeModel}
+            agentStatusLabel={agentStatus?.label}
             queuedMessages={queuedMessages}
             onRemoveQueuedMessage={handleRemoveQueuedMessage}
             onSteerQueuedMessage={handleSteerQueuedMessage}
@@ -476,10 +692,13 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         onTouchCancel={handleTouchEnd}
         className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden"
       >
-        <div className="max-w-[720px] mx-auto px-4 py-6">
+        <div className="max-w-[720px] mx-auto px-20 py-6">
           {messages.map((msg, i) => {
             const isLastAssistantStreaming =
               isStreaming && msg.role === 'assistant' && i === messages.length - 1;
+            const allowPseudoRepoWrites = msg.role === 'assistant'
+              ? allowPseudoRepoWritesForAssistant(messages, i)
+              : false;
             const parts = getAssistantParts(msg);
 
             // Extract reasoning from message parts
@@ -502,9 +721,15 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             // Reasoning is streaming if we're streaming, have reasoning content, but no text content yet (or still accumulating)
             const isReasoningStreaming = isLastAssistantStreaming && !!reasoning && !msg.content;
 
+            // Only the currently-streaming assistant message should receive
+            // 'current' tool activity. Other messages use their migrated
+            // message-specific activity (keyed by msg.id) or nothing.
+            const messageToolActivity = toolActivityMap?.[msg.id]
+              || (isLastAssistantStreaming ? toolActivityMap?.['current'] : undefined);
+
             return (
               <MessageBubble
-                key={`${msg.id}-${i}`}
+                key={msg.id}
                 message={{
                   id: msg.id,
                   conversationId: conversationId || '',
@@ -518,7 +743,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 reasoning={reasoning}
                 isReasoningStreaming={isReasoningStreaming}
                 toolInvocations={toolInvocations}
-                toolActivity={toolActivityMap?.[msg.id] || toolActivityMap?.['current']}
+                toolActivity={messageToolActivity}
+                allowPseudoRepoWrites={allowPseudoRepoWrites}
                 onRegenerate={
                   msg.role === 'assistant' && i === messages.length - 1 && !isStreaming
                     ? handleRegenerate
@@ -537,8 +763,29 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               disabled={!handleQuickSend || isStreaming || acceptingProposalId === pendingProposal.messageId}
             />
           )}
+          {showIssueNextStepCallout && issueContext && (
+            <IssueNextStepCallout
+              issueNumber={issueContext.number}
+              issueTitle={issueContext.title}
+              onUpdateIssue={handleIssueUpdate}
+              onFix={handleIssueFix}
+              disabled={repoComposerLocked}
+            />
+          )}
         </div>
       </div>
+      {showScrollButton && isStreaming && (
+        <div className="flex justify-center py-1">
+          <button
+            type="button"
+            onClick={scrollToBottom}
+            className="flex h-8 w-8 items-center justify-center rounded-full border border-border/60 bg-background/90 text-muted-foreground shadow-md backdrop-blur-sm transition-opacity hover:text-foreground"
+            aria-label="Scroll to bottom"
+          >
+            <ArrowDown className="h-4 w-4" />
+          </button>
+        </div>
+      )}
       <div className="px-4">
         {errorBanner}
       </div>
@@ -547,12 +794,24 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           isStreaming={isStreaming}
           messages={messages}
           toolActivity={toolActivityMap?.current}
+          statusLabel={agentStatus?.label}
         />
       )}
+      <ContextualSuggestions
+        messages={messages}
+        isStreaming={isStreaming}
+        onSend={(prompt) => {
+          if (handleQuickSend) {
+            handleQuickSend(prompt);
+          } else {
+            setInput(prompt);
+          }
+        }}
+      />
       <ChatInput
         value={input}
         onChange={setInput}
-        onSend={handleSend}
+        onSend={handleSendWithScroll}
         onStop={handleStop}
         isStreaming={isStreaming}
         toolCallCount={toolCallCount}
@@ -561,6 +820,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         messages={messages}
         activeProvider={activeProvider}
         activeModel={activeModel}
+        agentStatusLabel={agentStatus?.label}
         queuedMessages={queuedMessages}
         onRemoveQueuedMessage={handleRemoveQueuedMessage}
         onSteerQueuedMessage={handleSteerQueuedMessage}

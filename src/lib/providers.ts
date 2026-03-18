@@ -12,12 +12,27 @@ export interface ProviderInfo {
   category: ProviderCategory;
   badge?: string;
   supportsOrchestrator?: boolean;
+  iconLetter: string;
+  iconColor: string;
 }
 
 export const HERMES_RECOMMENDED_MODELS = [
+  // Paid — best budget-to-performance
+  'google/gemini-3.1-flash-lite-preview-20260303',
+  'deepseek/deepseek-v3.2-20251201',
   'meta-llama/llama-4-maverick',
   'openai/gpt-4.1-mini',
   'google/gemini-2.5-flash',
+  'deepseek/deepseek-chat-v3.1',
+  'meta-llama/llama-4-scout',
+  // Free
+  'nvidia/llama-3.1-nemotron-70b-instruct:free',
+  'deepseek/deepseek-r1-0528:free',
+  'google/gemini-2.0-flash-001',
+  'nousresearch/hermes-3-llama-3.1-405b:free',
+  'meta-llama/llama-3.3-70b-instruct:free',
+  'qwen/qwen3-next-80b-a3b-instruct:free',
+  'mistralai/mistral-small-3.1-24b-instruct:free',
 ] as const;
 
 export const REASONING_EFFORTS: readonly ReasoningEffort[] = ['low', 'medium', 'high'];
@@ -35,6 +50,8 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     description: 'GPT-5, Codex, and smaller GPT-5 variants',
     needsApiKey: true,
     category: 'featured',
+    iconLetter: 'O',
+    iconColor: '#10A37F',
     models: [
       'gpt-5.4',
       'gpt-5.2',
@@ -42,7 +59,7 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
       'gpt-5-mini',
       'gpt-5-nano',
     ],
-    defaultModel: 'gpt-5.2',
+    defaultModel: 'gpt-5.4',
   },
   anthropic: {
     id: 'anthropic',
@@ -50,6 +67,8 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     description: 'Claude 4.6, 4.5, and 4-family models',
     needsApiKey: true,
     category: 'featured',
+    iconLetter: 'A',
+    iconColor: '#D97757',
     models: [
       'claude-opus-4-6-20260210',
       'claude-sonnet-4-5-20250929',
@@ -64,6 +83,8 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     description: 'Gemini 2.5 Pro, Flash, and Flash-Lite',
     needsApiKey: true,
     category: 'featured',
+    iconLetter: 'G',
+    iconColor: '#4285F4',
     models: [
       'gemini-2.5-pro',
       'gemini-2.5-flash',
@@ -78,6 +99,8 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     description: 'Grok 4, fast reasoning, and coding models',
     needsApiKey: true,
     category: 'featured',
+    iconLetter: 'X',
+    iconColor: '#1D1D1F',
     models: [
       'grok-4',
       'grok-4-fast-reasoning',
@@ -93,6 +116,8 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     needsApiKey: true,
     category: 'open-source',
     badge: 'Fast',
+    iconLetter: 'G',
+    iconColor: '#F55036',
     models: [
       'llama-3.3-70b-versatile',
       'llama-3.1-8b-instant',
@@ -107,6 +132,8 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     description: 'V3 & R1 reasoning',
     needsApiKey: true,
     category: 'open-source',
+    iconLetter: 'D',
+    iconColor: '#4D6BFE',
     models: [
       'deepseek-chat',
       'deepseek-reasoner',
@@ -119,6 +146,8 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     description: 'Large, Medium & Small',
     needsApiKey: true,
     category: 'open-source',
+    iconLetter: 'M',
+    iconColor: '#FF7000',
     models: [
       'mistral-large-latest',
       'mistral-medium-latest',
@@ -133,6 +162,8 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     description: 'Hosted open-source models',
     needsApiKey: true,
     category: 'open-source',
+    iconLetter: 'T',
+    iconColor: '#0F6FFF',
     models: [
       'meta-llama/Llama-3.3-70B-Instruct-Turbo',
       'Qwen/Qwen2.5-72B-Instruct-Turbo',
@@ -148,6 +179,8 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     needsApiKey: true,
     category: 'specialized',
     badge: 'Coding',
+    iconLetter: 'M',
+    iconColor: '#6C5CE7',
     models: [
       'MiniMax-M2.5',
       'MiniMax-M2.5-highspeed',
@@ -163,6 +196,8 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     description: 'Pay-as-you-go — OpenAI-compatible API',
     needsApiKey: true,
     category: 'specialized',
+    iconLetter: 'M',
+    iconColor: '#6C5CE7',
     models: [
       'MiniMax-M2.5',
       'MiniMax-M2.5-highspeed',
@@ -178,6 +213,8 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     description: 'Moonshot long-context and reasoning models',
     needsApiKey: true,
     category: 'specialized',
+    iconLetter: 'K',
+    iconColor: '#000000',
     models: [
       'kimi-thinking-preview',
       'moonshot-v1-128k',
@@ -193,6 +230,8 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     needsApiKey: true,
     category: 'specialized',
     badge: 'Coding',
+    iconLetter: 'K',
+    iconColor: '#000000',
     models: [
       'kimi-for-coding',
     ],
@@ -204,6 +243,8 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     description: 'OpenClaw agent runtime using your configured default model',
     needsApiKey: false,
     category: 'specialized',
+    iconLetter: 'C',
+    iconColor: '#FF6B2B',
     models: [
       'default',
     ],
@@ -217,6 +258,8 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     needsApiKey: true,
     category: 'open-source',
     badge: 'Free',
+    iconLetter: 'C',
+    iconColor: '#FF4500',
     models: [
       'llama-3.3-70b',
       'qwen-3-32b',
@@ -232,13 +275,16 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     needsApiKey: true,
     category: 'open-source',
     badge: 'Free',
+    iconLetter: 'R',
+    iconColor: '#6366F1',
     models: [
+      'nvidia/llama-3.1-nemotron-70b-instruct:free',
       'openai/gpt-oss-120b:free',
       'meta-llama/llama-3.3-70b-instruct:free',
       'qwen/qwen3-coder:free',
       'google/gemma-3-27b-it:free',
     ],
-    defaultModel: 'openai/gpt-oss-120b:free',
+    defaultModel: 'nvidia/llama-3.1-nemotron-70b-instruct:free',
   },
   sambanova: {
     id: 'sambanova',
@@ -247,6 +293,8 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     needsApiKey: true,
     category: 'open-source',
     badge: 'Free',
+    iconLetter: 'S',
+    iconColor: '#FF6600',
     models: [
       'Meta-Llama-3.3-70B-Instruct',
       'Qwen2.5-72B-Instruct',
@@ -261,8 +309,10 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     needsApiKey: true,
     category: 'specialized',
     badge: 'Agent',
+    iconLetter: 'H',
+    iconColor: '#8B5CF6',
     models: [...HERMES_RECOMMENDED_MODELS],
-    defaultModel: 'meta-llama/llama-4-maverick',
+    defaultModel: 'google/gemini-3.1-flash-lite-preview-20260303',
   },
 };
 

@@ -5,7 +5,8 @@ import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import { generateObject, generateText } from 'ai';
 import { z } from 'zod';
-import { createProviderModel } from './provider-config';
+import { createProviderModel, resolveReviewCapableProvider, VALIDATION_MODELS } from './provider-config';
+import type { ReviewProviderResolution } from './provider-config';
 
 export interface VerificationFileChange {
   path: string;
@@ -56,6 +57,7 @@ export interface VerifyRepoChangesInput {
   model?: string;
   apiKey?: string;
   origin?: string;
+  allProviders?: Record<string, { apiKey: string; model: string }>;
 }
 
 interface PackageScriptMap {
@@ -421,18 +423,25 @@ export function selectPackageJsonPath(filePaths: string[], packageJsonPaths: str
 }
 
 async function runProviderReview(input: VerifyRepoChangesInput): Promise<VerificationResult['review']> {
-  const { provider, model, apiKey, origin, files } = input;
+  const { provider, model, apiKey, origin, files, allProviders } = input;
 
-  if (!provider || !model || !apiKey) {
+  const resolution = resolveReviewCapableProvider(
+    provider || '',
+    model || VALIDATION_MODELS[provider || ''] || '',
+    apiKey || '',
+    allProviders,
+  );
+
+  if (!resolution) {
     return {
       status: 'skipped',
-      summary: 'Provider-backed review was skipped because no provider credentials were available.',
+      summary: 'No provider available for AI review. Configure a provider API key in Settings.',
       findings: [],
     };
   }
 
   try {
-    const reviewModel = createProviderModel(provider, model, apiKey, { origin });
+    const reviewModel = createProviderModel(resolution.provider, resolution.model, resolution.apiKey, { origin });
     let parsed: { summary: string; findings: VerificationReviewFinding[] };
 
     try {
@@ -464,9 +473,14 @@ async function runProviderReview(input: VerifyRepoChangesInput): Promise<Verific
       parsed = parseReviewResponse(response.text);
     }
 
+    const usedDifferentProvider = resolution.provider !== provider;
+    const summaryPrefix = usedDifferentProvider
+      ? `[Reviewed via ${resolution.provider}] `
+      : '';
+
     return {
       status: parsed.findings.length > 0 ? 'warning' : 'passed',
-      summary: parsed.summary,
+      summary: `${summaryPrefix}${parsed.summary}`,
       findings: parsed.findings,
     };
   } catch (error) {
@@ -480,13 +494,14 @@ async function runProviderReview(input: VerifyRepoChangesInput): Promise<Verific
 
 export async function verifyRepoChanges(input: VerifyRepoChangesInput): Promise<VerificationResult> {
   const dir = await mkdtemp(join(tmpdir(), 'cloudchat-verify-'));
-  const cloneUrl = `https://x-access-token:${input.pat}@github.com/${input.owner}/${input.repo}.git`;
+  const cloneUrl = `https://github.com/${input.owner}/${input.repo}.git`;
+  const authHeader = `Authorization: Basic ${Buffer.from(`x-access-token:${input.pat}`).toString('base64')}`;
   const cloneSpec: ValidationCommandSpec = {
     name: 'clone',
     command: 'git',
-    args: ['clone', '--depth', '1', '--branch', input.baseBranch, cloneUrl, '.'],
-    displayCommand: `git clone --depth 1 --branch ${input.baseBranch} https://x-access-token:***@github.com/${input.owner}/${input.repo}.git .`,
-    redactions: [input.pat],
+    args: ['clone', '-c', `http.extraHeader=${authHeader}`, '--depth', '1', '--branch', input.baseBranch, cloneUrl, '.'],
+    displayCommand: `git clone --depth 1 --branch ${input.baseBranch} https://github.com/${input.owner}/${input.repo}.git .`,
+    redactions: [input.pat, authHeader],
   };
 
   try {
@@ -576,5 +591,95 @@ export async function verifyRepoChanges(input: VerifyRepoChangesInput): Promise<
     };
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+}
+
+export interface GeneratePrMetadataInput {
+  files: VerificationFileChange[];
+  provider?: string;
+  model?: string;
+  apiKey?: string;
+  allProviders?: Record<string, { apiKey: string; model: string }>;
+  origin?: string;
+  owner?: string;
+  repo?: string;
+}
+
+const prMetadataSchema = z.object({
+  title: z.string(),
+  body: z.string(),
+});
+
+function buildPrMetadataPrompt(files: VerificationFileChange[], owner?: string, repo?: string): string {
+  const changedFiles = files.map((file) => {
+    const action = file.action || 'edit';
+    const before = truncateOutput(file.originalContent || '', FILE_CONTENT_LIMIT);
+    const after = truncateOutput(file.content || '', FILE_CONTENT_LIMIT);
+    return [
+      `=== ${file.path} (${action}) ===`,
+      'BEFORE:',
+      before || '[empty]',
+      'AFTER:',
+      action === 'delete' ? '[deleted]' : after || '[empty]',
+    ].join('\n');
+  });
+
+  const repoContext = owner && repo ? ` for ${owner}/${repo}` : '';
+
+  return [
+    `Generate a concise pull request title and description${repoContext}.`,
+    'Return strict JSON: {"title":"<conventional commit style, max 72 chars>","body":"<markdown summary with ## Summary section>"}',
+    'Title should follow conventional commits (feat:, fix:, refactor:, docs:, chore:, etc.).',
+    'Body should have a ## Summary section with 1-3 bullet points describing the key changes.',
+    '',
+    changedFiles.join('\n\n'),
+  ].join('\n');
+}
+
+export async function generatePrMetadata(input: GeneratePrMetadataInput): Promise<{ title: string; body: string }> {
+  const resolution = resolveReviewCapableProvider(
+    input.provider || '',
+    input.model || VALIDATION_MODELS[input.provider || ''] || '',
+    input.apiKey || '',
+    input.allProviders,
+  );
+
+  if (!resolution) {
+    throw new Error('No provider available for AI generation. Configure a provider API key in Settings.');
+  }
+
+  const aiModel = createProviderModel(resolution.provider, resolution.model, resolution.apiKey, { origin: input.origin });
+  const prompt = buildPrMetadataPrompt(input.files, input.owner, input.repo);
+
+  try {
+    const response = await generateObject({
+      model: aiModel,
+      schema: prMetadataSchema,
+      prompt,
+      temperature: 0,
+      maxOutputTokens: 1000,
+    });
+    return { title: response.object.title, body: response.object.body };
+  } catch {
+    // Fallback to generateText + JSON parsing
+    const response = await generateText({
+      model: aiModel,
+      prompt,
+      temperature: 0,
+      maxOutputTokens: 1000,
+    });
+
+    try {
+      const payload = extractJsonPayload(response.text);
+      const parsed = JSON.parse(payload || response.text) as { title?: string; body?: string };
+      if (typeof parsed.title !== 'string' || typeof parsed.body !== 'string') {
+        throw new Error('AI response did not include title and body fields');
+      }
+      return { title: parsed.title, body: parsed.body };
+    } catch (parseError) {
+      throw new Error(
+        `Failed to parse AI response: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
+      );
+    }
   }
 }

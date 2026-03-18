@@ -1,5 +1,12 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
+import { createCerebras } from '@ai-sdk/cerebras';
+import { createDeepSeek } from '@ai-sdk/deepseek';
+import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { createGroq } from '@ai-sdk/groq';
+import { createMistral } from '@ai-sdk/mistral';
 import { createOpenAI } from '@ai-sdk/openai';
+import { createTogetherAI } from '@ai-sdk/togetherai';
+import { createXai } from '@ai-sdk/xai';
 import { Agent } from 'undici';
 
 type ReasoningEffort = 'low' | 'medium' | 'high';
@@ -154,15 +161,91 @@ export const OPENAI_COMPATIBLE: Record<string, string> = {
   cerebras: 'https://api.cerebras.ai/v1',
   openrouter: 'https://openrouter.ai/api/v1',
   sambanova: 'https://api.sambanova.ai/v1',
-  hermes: process.env.HERMES_BRIDGE_URL || 'http://localhost:3002/v1',
+  hermes: process.env.HERMES_BRIDGE_URL || 'http://localhost:3003/v1',
 };
 
 export const ANTHROPIC_COMPATIBLE: Record<string, string> = {
   anthropic: 'https://api.anthropic.com/v1',
 };
 
+const FIRST_PARTY_PROVIDER_IDS = [
+  'google',
+  'xai',
+  'groq',
+  'deepseek',
+  'mistral',
+  'together',
+  'cerebras',
+] as const;
+
+type FirstPartyProviderId = (typeof FIRST_PARTY_PROVIDER_IDS)[number];
+
+const FIRST_PARTY_PROVIDER_SET = new Set<string>(FIRST_PARTY_PROVIDER_IDS);
+
+type FirstPartyProviderFactory = (options: {
+  apiKey: string;
+  headers: Record<string, string>;
+  fetch: typeof globalThis.fetch;
+}) => (model: string) => unknown;
+
+const FIRST_PARTY_PROVIDER_FACTORIES: Record<FirstPartyProviderId, FirstPartyProviderFactory> = {
+  google: ({ apiKey, headers, fetch }) => createGoogleGenerativeAI({
+    apiKey,
+    headers,
+    fetch,
+  }),
+  xai: ({ apiKey, headers, fetch }) => createXai({
+    apiKey,
+    headers,
+    fetch,
+  }),
+  groq: ({ apiKey, headers, fetch }) => createGroq({
+    apiKey,
+    headers,
+    fetch,
+  }),
+  deepseek: ({ apiKey, headers, fetch }) => createDeepSeek({
+    apiKey,
+    headers,
+    fetch,
+  }),
+  mistral: ({ apiKey, headers, fetch }) => createMistral({
+    apiKey,
+    headers,
+    fetch,
+  }),
+  together: ({ apiKey, headers, fetch }) => createTogetherAI({
+    apiKey,
+    headers,
+    fetch,
+  }),
+  cerebras: ({ apiKey, headers, fetch }) => createCerebras({
+    apiKey,
+    headers,
+    fetch,
+  }),
+};
+
+export const MODEL_DISCOVERY_URLS: Partial<Record<string, string>> = {
+  openai: OPENAI_COMPATIBLE.openai,
+  google: OPENAI_COMPATIBLE.google,
+  xai: OPENAI_COMPATIBLE.xai,
+  groq: OPENAI_COMPATIBLE.groq,
+  deepseek: OPENAI_COMPATIBLE.deepseek,
+  mistral: OPENAI_COMPATIBLE.mistral,
+  together: OPENAI_COMPATIBLE.together,
+  minimax: OPENAI_COMPATIBLE.minimax,
+  'minimax-payg': OPENAI_COMPATIBLE['minimax-payg'],
+  kimi: OPENAI_COMPATIBLE.kimi,
+  'kimi-coding': OPENAI_COMPATIBLE['kimi-coding'],
+  cerebras: OPENAI_COMPATIBLE.cerebras,
+  openrouter: OPENAI_COMPATIBLE.openrouter,
+  sambanova: OPENAI_COMPATIBLE.sambanova,
+  hermes: OPENAI_COMPATIBLE.hermes,
+};
+
 export const VALIDATION_MODELS: Record<string, string> = {
-  openai: 'gpt-5.2',
+  openai: 'gpt-5.4',
   anthropic: 'claude-sonnet-4-5-20250929',
   google: 'gemini-2.5-flash',
   xai: 'grok-4-fast-reasoning',
@@ -175,16 +258,34 @@ export const VALIDATION_MODELS: Record<string, string> = {
   kimi: 'moonshot-v1-32k',
   'kimi-coding': 'kimi-for-coding',
   cerebras: 'llama-3.3-70b',
-  openrouter: 'openai/gpt-oss-120b:free',
+  openrouter: 'nvidia/llama-3.1-nemotron-70b-instruct:free',
   sambanova: 'Meta-Llama-3.3-70B-Instruct',
   hermes: HERMES_TOOL_CAPABLE_MODELS[0],
 };
+
+export type HermesExecutionMode = 'passthrough' | 'agent-loop';
+
+export function resolveHermesExecutionMode(_options?: {
+  activeRepo?: unknown;
+  githubPAT?: string;
+}): HermesExecutionMode {
+  // Always use agent-loop: the Hermes bridge handles its own tool execution,
+  // stall recovery, and repo system prompts. Passthrough mode bypassed all of
+  // that, causing the agent to stop without doing anything when a repo was
+  // active (finish_reason mapped to 'unknown', no tool activity to trigger
+  // auto-continue on the client side).
+  return 'agent-loop';
+}
 
 export function resolveRuntimeProvider(
   provider: string,
   options?: { activeRepo?: unknown }
 ): string {
   return provider;
+}
+
+export function usesFirstPartyProviderSdk(provider: string): boolean {
+  return FIRST_PARTY_PROVIDER_SET.has(provider);
 }
 
 export function getProviderHeaders(provider: string, origin?: string, extra?: Record<string, string>): Record<string, string> {
@@ -202,6 +303,26 @@ export function getProviderHeaders(provider: string, origin?: string, extra?: Re
   return headers;
 }
 
+export function getModelDiscoveryHeaders(
+  provider: string,
+  apiKey: string,
+  origin?: string,
+): Record<string, string> {
+  const headers = getProviderHeaders(provider, origin);
+
+  if (provider === 'google') {
+    return {
+      ...headers,
+      'x-goog-api-key': apiKey,
+    };
+  }
+
+  return {
+    Authorization: `Bearer ${apiKey}`,
+    ...headers,
+  };
+}
+
 export function createProviderModel(
   provider: string,
   model: string,
@@ -214,6 +335,15 @@ export function createProviderModel(
       apiKey,
     });
     return anthropic(model);
+  }
+
+  if (usesFirstPartyProviderSdk(provider)) {
+    const factory = FIRST_PARTY_PROVIDER_FACTORIES[provider as FirstPartyProviderId];
+    return factory({
+      apiKey,
+      headers: getProviderHeaders(provider, options?.origin, options?.extraHeaders),
+      fetch: createProviderFetch(provider),
+    })(model);
   }
 
   const baseURL = OPENAI_COMPATIBLE[provider];
@@ -230,6 +360,65 @@ export function createProviderModel(
   });
 
   return openai(model);
+}
+
+export interface ReviewProviderResolution {
+  provider: string;
+  model: string;
+  apiKey: string;
+}
+
+const REVIEW_PROVIDER_RANK = [
+  'anthropic', 'openai', 'google', 'deepseek', 'groq', 'mistral', 'together', 'xai',
+  'cerebras', 'openrouter', 'sambanova', 'kimi', 'kimi-coding', 'minimax', 'minimax-payg',
+] as const;
+
+export function resolveReviewCapableProvider(
+  activeProvider: string,
+  activeModel: string,
+  activeApiKey: string,
+  allProviders?: Record<string, { apiKey: string; model: string }>,
+): ReviewProviderResolution | null {
+  // 1. Active provider is NOT hermes — use it directly
+  if (activeProvider !== 'hermes' && activeApiKey) {
+    return { provider: activeProvider, model: activeModel, apiKey: activeApiKey };
+  }
+
+  // 2. Active provider IS hermes — the Hermes key is an OpenRouter key
+  if (activeProvider === 'hermes' && activeApiKey) {
+    return {
+      provider: 'openrouter',
+      model: VALIDATION_MODELS['openrouter'],
+      apiKey: activeApiKey,
+    };
+  }
+
+  // 3. Scan allProviders for first provider with a key (ranked)
+  if (allProviders) {
+    for (const candidate of REVIEW_PROVIDER_RANK) {
+      const config = allProviders[candidate];
+      if (config?.apiKey) {
+        return {
+          provider: candidate,
+          model: config.model || VALIDATION_MODELS[candidate],
+          apiKey: config.apiKey,
+        };
+      }
+    }
+    // Check any remaining providers not in the rank list (skip hermes — it can't do generateObject)
+    for (const [key, config] of Object.entries(allProviders)) {
+      if (config?.apiKey && key !== 'hermes' && !REVIEW_PROVIDER_RANK.includes(key as (typeof REVIEW_PROVIDER_RANK)[number])) {
+        return {
+          provider: key,
+          model: config.model || VALIDATION_MODELS[key],
+          apiKey: config.apiKey,
+        };
+      }
+    }
+  }
+
+  // 4. Nothing works
+  return null;
 }
 
 export function supportsReasoningEffort(provider: string, model?: string): boolean {

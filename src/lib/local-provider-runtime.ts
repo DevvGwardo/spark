@@ -11,7 +11,7 @@ export interface LocalProviderRuntimeDetails {
   locationValue: string;
 }
 
-const HERMES_BRIDGE_URL = import.meta.env.VITE_HERMES_BRIDGE_URL || 'http://localhost:3002/v1';
+const HERMES_BRIDGE_URL = import.meta.env.VITE_HERMES_BRIDGE_URL || 'http://localhost:3003/v1';
 const OPENCLAW_BIN = import.meta.env.VITE_OPENCLAW_BIN || '~/.openclaw/bin/openclaw';
 
 export function getLocalProviderRuntimeDetails(

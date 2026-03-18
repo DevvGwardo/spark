@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { isColorThemeId, type ColorThemeId } from '@/lib/themes';
 
 export type Provider =
   | 'openai' | 'anthropic' | 'google' | 'xai'
@@ -29,29 +30,48 @@ type PersistedSettingsState = Partial<SettingsState> & {
   };
 };
 
+export type Language = 'en' | 'es' | 'fr' | 'de' | 'ja' | 'zh' | 'ko' | 'pt';
+
 interface SettingsState {
   activeProvider: Provider;
   providers: Record<Provider, ProviderConfig>;
   availableModels: Partial<Record<Provider, string[]>>;
   theme: ThemeMode;
+  colorTheme: string;
+  accentColor: string;
   fontSize: FontSize;
   fontFamily: FontFamily;
   defaultSystemPrompt: string;
   isSetupComplete: boolean;
   githubPAT: string;
   autoApproveRepoChanges: boolean;
+  language: Language;
+  autoSave: boolean;
+  streamResponses: boolean;
+  soundNotifications: boolean;
+  analytics: boolean;
 
   setActiveProvider: (p: Provider) => void;
   updateProviderConfig: (p: Provider, config: Partial<ProviderConfig>) => void;
   setAvailableModels: (p: Provider, models: string[]) => void;
   setTheme: (t: ThemeMode) => void;
+  setColorTheme: (id: string) => void;
+  setAccentColor: (hsl: string) => void;
   setFontSize: (f: FontSize) => void;
   setFontFamily: (f: FontFamily) => void;
   setDefaultSystemPrompt: (s: string) => void;
   completeSetup: () => void;
   setGithubPAT: (pat: string) => void;
   setAutoApproveRepoChanges: (enabled: boolean) => void;
+  setLanguage: (l: Language) => void;
+  setAutoSave: (enabled: boolean) => void;
+  setStreamResponses: (enabled: boolean) => void;
+  setSoundNotifications: (enabled: boolean) => void;
+  setAnalytics: (enabled: boolean) => void;
 }
+
+const DEFAULT_PROVIDER_MAX_TOKENS = 32_768;
+const DEFAULT_OPENAI_MODEL = 'gpt-5.4';
 
 function makeDefault(model: string): ProviderConfig {
   return {
@@ -59,7 +79,7 @@ function makeDefault(model: string): ProviderConfig {
     model,
     temperature: 0.7,
     topP: 0.9,
-    maxTokens: 16384,
+    maxTokens: DEFAULT_PROVIDER_MAX_TOKENS,
     reasoningEffort: 'high',
   };
 }
@@ -73,7 +93,7 @@ const LEGACY_HERMES_MODELS = new Set([
 ]);
 
 const defaultProviders: Record<Provider, ProviderConfig> = {
-  openai: makeDefault('gpt-5.2'),
+  openai: makeDefault(DEFAULT_OPENAI_MODEL),
   anthropic: makeDefault('claude-sonnet-4-5-20250929'),
   google: makeDefault('gemini-2.5-flash'),
   xai: makeDefault('grok-4-fast-reasoning'),
@@ -87,7 +107,7 @@ const defaultProviders: Record<Provider, ProviderConfig> = {
   'kimi-coding': makeDefault('kimi-for-coding'),
   openclaw: makeDefault('default'),
   cerebras: makeDefault('llama-3.3-70b'),
-  openrouter: makeDefault('openai/gpt-oss-120b:free'),
+  openrouter: makeDefault('nvidia/llama-3.1-nemotron-70b-instruct:free'),
   sambanova: makeDefault('Meta-Llama-3.3-70B-Instruct'),
   hermes: makeDefault(HERMES_DEFAULT_MODEL),
 };
@@ -179,12 +199,19 @@ export function normalizePersistedSettingsState(
   'updateProviderConfig' |
   'setAvailableModels' |
   'setTheme' |
+  'setColorTheme' |
+  'setAccentColor' |
   'setFontSize' |
   'setFontFamily' |
   'setDefaultSystemPrompt' |
   'completeSetup' |
   'setGithubPAT' |
-  'setAutoApproveRepoChanges'
+  'setAutoApproveRepoChanges' |
+  'setLanguage' |
+  'setAutoSave' |
+  'setStreamResponses' |
+  'setSoundNotifications' |
+  'setAnalytics'
 > {
   const providers = cloneDefaultProviders();
 
@@ -197,6 +224,8 @@ export function normalizePersistedSettingsState(
     providers,
     availableModels: normalizeAvailableModels(persisted?.availableModels),
     theme: isThemeMode(persisted?.theme) ? persisted.theme : 'system',
+    colorTheme: isColorThemeId(persisted?.colorTheme) ? persisted.colorTheme : 'default',
+    accentColor: typeof persisted?.accentColor === 'string' && persisted.accentColor.trim().length > 0 ? persisted.accentColor : '31 100% 50%',
     fontSize: isFontSize(persisted?.fontSize) ? persisted.fontSize : 'medium',
     fontFamily: isFontFamily(persisted?.fontFamily) ? persisted.fontFamily : 'inter',
     defaultSystemPrompt:
@@ -207,6 +236,11 @@ export function normalizePersistedSettingsState(
     githubPAT: typeof persisted?.githubPAT === 'string' ? persisted.githubPAT : '',
     autoApproveRepoChanges:
       typeof persisted?.autoApproveRepoChanges === 'boolean' ? persisted.autoApproveRepoChanges : false,
+    language: (persisted?.language === 'en' || persisted?.language === 'es' || persisted?.language === 'fr' || persisted?.language === 'de' || persisted?.language === 'ja' || persisted?.language === 'zh' || persisted?.language === 'ko' || persisted?.language === 'pt') ? persisted.language : 'en',
+    autoSave: typeof persisted?.autoSave === 'boolean' ? persisted.autoSave : true,
+    streamResponses: typeof persisted?.streamResponses === 'boolean' ? persisted.streamResponses : true,
+    soundNotifications: typeof persisted?.soundNotifications === 'boolean' ? persisted.soundNotifications : false,
+    analytics: typeof persisted?.analytics === 'boolean' ? persisted.analytics : false,
   };
 }
 
@@ -241,16 +275,23 @@ export const useSettingsStore = create<SettingsState>()(
           };
         }),
       setTheme: (t) => set({ theme: t }),
+      setColorTheme: (id) => set({ colorTheme: id }),
+      setAccentColor: (hsl) => set({ accentColor: hsl }),
       setFontSize: (f) => set({ fontSize: f }),
       setFontFamily: (f) => set({ fontFamily: f }),
       setDefaultSystemPrompt: (s) => set({ defaultSystemPrompt: s }),
       completeSetup: () => set({ isSetupComplete: true }),
       setGithubPAT: (pat) => set({ githubPAT: pat }),
       setAutoApproveRepoChanges: (enabled) => set({ autoApproveRepoChanges: enabled }),
+      setLanguage: (l) => set({ language: l }),
+      setAutoSave: (enabled) => set({ autoSave: enabled }),
+      setStreamResponses: (enabled) => set({ streamResponses: enabled }),
+      setSoundNotifications: (enabled) => set({ soundNotifications: enabled }),
+      setAnalytics: (enabled) => set({ analytics: enabled }),
     }),
     {
       name: 'cloudchat-settings',
-      version: 15,
+      version: 19,
       migrate: (persisted: unknown, version: number) => {
         const state = (persisted ?? {}) as PersistedSettingsState;
         if (version < 3) {
@@ -288,7 +329,7 @@ export const useSettingsStore = create<SettingsState>()(
             }
           };
 
-          replaceIfLegacy('openai', ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'o1', 'o1-mini', 'o3-mini'], 'gpt-5.2');
+          replaceIfLegacy('openai', ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'o1', 'o1-mini', 'o3-mini'], DEFAULT_OPENAI_MODEL);
           replaceIfLegacy('google', ['gemini-2.5-pro-preview-06-05', 'gemini-2.5-flash-preview-05-20', 'gemini-1.5-pro'], 'gemini-2.5-flash');
           replaceIfLegacy('xai', ['grok-3-mini', 'grok-2'], 'grok-4-fast-reasoning');
           replaceIfLegacy('groq', ['mixtral-8x7b-32768', 'gemma2-9b-it'], 'llama-3.3-70b-versatile');
@@ -345,6 +386,43 @@ export const useSettingsStore = create<SettingsState>()(
         }
         if (version < 15 && state.availableModels) {
           delete state.availableModels.hermes;
+        }
+        if (version < 16 && state.providers) {
+          for (const provider of Object.keys(defaultProviders) as Provider[]) {
+            const current = state.providers[provider];
+            if (!current) {
+              continue;
+            }
+
+            if (!Number.isFinite(current.maxTokens) || current.maxTokens === 16384) {
+              current.maxTokens = DEFAULT_PROVIDER_MAX_TOKENS;
+            }
+          }
+
+          const currentOpenAiModel = state.providers.openai?.model;
+          if (!currentOpenAiModel || currentOpenAiModel === 'gpt-5.2') {
+            state.providers.openai = {
+              ...(state.providers.openai ?? makeDefault(DEFAULT_OPENAI_MODEL)),
+              model: DEFAULT_OPENAI_MODEL,
+            };
+          }
+        }
+        if (version < 17) {
+          state.language = state.language || 'en';
+          state.autoSave = state.autoSave ?? true;
+          state.streamResponses = state.streamResponses ?? true;
+          state.soundNotifications = state.soundNotifications ?? false;
+          state.analytics = state.analytics ?? false;
+        }
+        if (version < 18) {
+          state.colorTheme = state.colorTheme || 'default';
+          state.accentColor = state.accentColor || '31 100% 50%';
+        }
+        if (version < 19 && state?.providers?.openrouter) {
+          const cur = state.providers.openrouter.model;
+          if (cur === 'openai/gpt-oss-120b:free' || cur === 'deepseek/deepseek-r1:free') {
+            state.providers.openrouter.model = 'nvidia/llama-3.1-nemotron-70b-instruct:free';
+          }
         }
         return normalizePersistedSettingsState(state);
       },

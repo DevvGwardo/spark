@@ -122,11 +122,11 @@ describe('ChatErrorBanner', () => {
   });
 
   it('tells the user to start Hermes bridge when the Hermes runtime is unavailable', () => {
-    renderChatArea(new Error('Hermes bridge is not reachable at http://localhost:3002/v1. Start hermes-bridge/main.py and try again.'));
+    renderChatArea(new Error('Hermes bridge is not reachable at http://localhost:3003/v1. Start hermes-bridge/main.py and try again.'));
 
     expect(screen.getByText(/start the hermes bridge/i)).toBeInTheDocument();
     expect(screen.getByText(/cd hermes-bridge && python main.py/i)).toBeInTheDocument();
-    expect(screen.getByText('http://localhost:3002/v1')).toBeInTheDocument();
+    expect(screen.getByText('http://localhost:3003/v1')).toBeInTheDocument();
   });
 
   it('re-shows the same connectivity error after a new user message is sent', () => {

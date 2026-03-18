@@ -1,33 +1,98 @@
 import express from 'express';
 import cors from 'cors';
-import { formatDataStreamPart, generateText, streamText, tool } from 'ai';
+import { formatDataStreamPart, generateText, streamText, tool, type DataStreamWriter } from 'ai';
+import { buildServerRepoTools, SERVER_AGENT_MAX_STEPS, type ServerToolEvent } from './agent-loop';
 import { z } from 'zod';
 import { createOrchestrateHandler } from './orchestrator';
 import {
+  ANTHROPIC_COMPATIBLE,
   createProviderModel,
+  getModelDiscoveryHeaders,
   getReasoningProviderOptions,
   getProviderHeaders,
   HERMES_TOOL_CAPABLE_MODELS,
+  MODEL_DISCOVERY_URLS,
   OPENAI_COMPATIBLE,
+  resolveHermesExecutionMode,
   resolveRuntimeProvider,
+  sanitizeCompatibleSseLine,
   VALIDATION_MODELS,
 } from './provider-config';
 import { getOpenClawModels, runOpenClawTurn } from './openclaw';
-import { verifyRepoChanges, type VerificationFileChange } from './repo-verifier';
+import { verifyRepoChanges, generatePrMetadata, type VerificationFileChange } from './repo-verifier';
 import { ensureRepoClone, forkRepository, getManagedRepoClone } from './repo-clone-manager';
 import { getRepoTurnIntentInstruction } from '../src/lib/repo-intent';
 import { registerChatStoreRoutes } from './chat-store';
+import { bindClientDisconnect } from './http-disconnect';
+import { normalizeChatMessages } from './message-normalization';
+import {
+  isAbortLikeError,
+  proxySseToDataStream,
+  type NormalizedProxyEvent,
+  type ProxyFinishReason,
+  type ProxyUsage,
+} from './direct-sse-proxy';
 
 // ─── Shared helpers ──────────────────────────────────────────────────────────
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers':
-    'authorization, content-type',
-};
+const ALLOWED_ORIGINS = new Set([
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:3000',
+  'app://.',  // Electron custom protocol
+]);
+
+function getCorsOrigin(requestOrigin: string | undefined): string {
+  if (requestOrigin && ALLOWED_ORIGINS.has(requestOrigin)) {
+    return requestOrigin;
+  }
+  // For Electron file:// or same-origin requests
+  return 'http://localhost:5173';
+}
+
+function buildCorsHeaders(requestOrigin: string | undefined) {
+  return {
+    'Access-Control-Allow-Origin': getCorsOrigin(requestOrigin),
+    'Access-Control-Allow-Headers': 'authorization, content-type',
+  };
+}
 
 function sendJson(res: express.Response, status: number, body: unknown) {
   res.status(status).json(body);
+}
+
+// ─── Rate Limiter ────────────────────────────────────────────────────────────
+
+class RateLimiter {
+  private requests = new Map<string, number[]>();
+
+  constructor(private windowMs: number, private maxRequests: number) {}
+
+  isAllowed(key: string): boolean {
+    const now = Date.now();
+    const timestamps = this.requests.get(key) || [];
+    const filtered = timestamps.filter(t => now - t < this.windowMs);
+    if (filtered.length >= this.maxRequests) return false;
+    filtered.push(now);
+    this.requests.set(key, filtered);
+    return true;
+  }
+}
+
+const chatRateLimiter = new RateLimiter(60_000, 30);       // 30 requests per minute
+const validateKeyRateLimiter = new RateLimiter(60_000, 10); // 10 requests per minute
+
+function getClientIp(req: express.Request): string {
+  return (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || 'unknown';
+}
+
+// ─── GitHub PAT Validation ───────────────────────────────────────────────────
+
+function isValidGitHubPAT(pat: unknown): pat is string {
+  if (typeof pat !== 'string') return false;
+  // GitHub PATs: ghp_, github_pat_, gho_, ghs_, ghr_ prefixes
+  return /^(ghp_|github_pat_|gho_|ghs_|ghr_)[a-zA-Z0-9_]{1,255}$/.test(pat);
 }
 
 interface GitHubRepoPayload {
@@ -48,6 +113,9 @@ interface GitHubRepoPayload {
     push?: boolean;
     admin?: boolean;
   };
+  stargazers_count?: number;
+  forks_count?: number;
+  language?: string | null;
   localClone: {
     exists: boolean;
     path: string | null;
@@ -80,6 +148,33 @@ function getUnknownErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function encodeGitHubContentPath(path: string): string {
+  return path
+    .split('/')
+    .filter((segment) => segment.length > 0)
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+}
+
+function buildGitHubContentsUrl(
+  owner: string,
+  repo: string,
+  path = '',
+  ref?: string,
+): string {
+  const suffix = (() => {
+    const encodedPath = encodeGitHubContentPath(path);
+    return encodedPath ? `/${encodedPath}` : '';
+  })();
+  const url = new URL(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents${suffix}`,
+  );
+  if (ref) {
+    url.searchParams.set('ref', ref);
+  }
+  return url.toString();
+}
+
 async function withLocalClone(repo: {
   id?: number;
   name?: string;
@@ -91,6 +186,9 @@ async function withLocalClone(repo: {
   fork?: boolean;
   owner?: { login?: string; avatar_url?: string | null };
   permissions?: { pull?: boolean; push?: boolean; admin?: boolean };
+  stargazers_count?: number;
+  forks_count?: number;
+  language?: string | null;
 }): Promise<GitHubRepoPayload> {
   const owner = repo.owner?.login || repo.full_name?.split('/')[0] || '';
   const name = repo.name || repo.full_name?.split('/')[1] || '';
@@ -112,6 +210,9 @@ async function withLocalClone(repo: {
       avatar_url: repo.owner?.avatar_url || null,
     },
     permissions: repo.permissions,
+    stargazers_count: typeof repo.stargazers_count === 'number' ? repo.stargazers_count : undefined,
+    forks_count: typeof repo.forks_count === 'number' ? repo.forks_count : undefined,
+    language: repo.language ?? null,
     localClone,
   };
 }
@@ -157,7 +258,10 @@ function toGitHubIssue(issue: {
 function normalizeLocalProviderError(provider: string | undefined, message: string) {
   const lower = message.toLowerCase();
 
-  if (provider === 'hermes' && lower.includes('cannot connect to api')) {
+  if (
+    provider === 'hermes'
+    && (lower.includes('cannot connect to api') || lower.includes('hermes bridge is not reachable'))
+  ) {
     return {
       status: 503,
       error:
@@ -175,6 +279,129 @@ function normalizeLocalProviderError(provider: string | undefined, message: stri
   }
 
   return null;
+}
+
+const REPO_ACTIVITY_DAYS = 30;
+const REPO_ACTIVITY_COMMITS_PER_PAGE = 100;
+const REPO_ACTIVITY_MAX_PAGES = 20;
+
+function formatUtcDateKey(value: Date): string {
+  return value.toISOString().slice(0, 10);
+}
+
+function hasGitHubNextPage(linkHeader: string | null): boolean {
+  return typeof linkHeader === 'string' && /rel="next"/.test(linkHeader);
+}
+
+async function fetchRecentRepoActivity(
+  owner: string,
+  repo: string,
+  headers: Record<string, string>,
+): Promise<{ days: number[]; totalCommits: number; commitsCapped: boolean; openedIssues: number; openedPullRequests: number }> {
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+
+  const bucketDates = Array.from({ length: REPO_ACTIVITY_DAYS }, (_, index) => {
+    const date = new Date(today);
+    date.setUTCDate(today.getUTCDate() - (REPO_ACTIVITY_DAYS - 1 - index));
+    return date;
+  });
+  const bucketKeys = bucketDates.map(formatUtcDateKey);
+  const dayCounts = new Map(bucketKeys.map((key) => [key, 0]));
+  const since = new Date(bucketDates[0] ?? today);
+  const until = new Date(today);
+  until.setUTCHours(23, 59, 59, 999);
+  const createdSince = formatUtcDateKey(since);
+
+  const safeFetchCount = async (query: string): Promise<number> => {
+    try {
+      return await fetchGitHubSearchTotalCount(query, headers);
+    } catch {
+      return 0;
+    }
+  };
+
+  // Fetch commits (paginated) and search counts in parallel so that
+  // the search API calls aren't blocked behind 20 pages of commit requests
+  const commitsFetcher = async () => {
+    let capped = false;
+    for (let page = 1; page <= REPO_ACTIVITY_MAX_PAGES; page += 1) {
+      const commitsUrl = new URL(
+        `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits`,
+      );
+      commitsUrl.searchParams.set('since', since.toISOString());
+      commitsUrl.searchParams.set('until', until.toISOString());
+      commitsUrl.searchParams.set('per_page', String(REPO_ACTIVITY_COMMITS_PER_PAGE));
+      commitsUrl.searchParams.set('page', String(page));
+
+      const commitsResponse = await fetch(commitsUrl.toString(), { headers });
+
+      if (commitsResponse.status === 409) {
+        return { capped: false };
+      }
+
+      if (!commitsResponse.ok) {
+        const error = await commitsResponse.text();
+        throw new Error(`GitHub API error: ${error}`);
+      }
+
+      const commits = (await commitsResponse.json()) as Array<{
+        commit?: { committer?: { date?: string | null } | null; author?: { date?: string | null } | null } | null;
+      }>;
+
+      for (const entry of commits) {
+        const rawDate = entry.commit?.committer?.date || entry.commit?.author?.date;
+        if (!rawDate) {
+          continue;
+        }
+        const date = new Date(rawDate);
+        if (Number.isNaN(date.getTime())) {
+          continue;
+        }
+        const key = formatUtcDateKey(date);
+        if (dayCounts.has(key)) {
+          dayCounts.set(key, (dayCounts.get(key) ?? 0) + 1);
+        }
+      }
+
+      if (commits.length < REPO_ACTIVITY_COMMITS_PER_PAGE || !hasGitHubNextPage(commitsResponse.headers.get('link'))) {
+        break;
+      }
+      if (page === REPO_ACTIVITY_MAX_PAGES) {
+        capped = true;
+      }
+    }
+    return { capped };
+  };
+
+  const [commitsResult, openedIssues, openedPullRequests] = await Promise.all([
+    commitsFetcher(),
+    safeFetchCount(`repo:${owner}/${repo} is:issue created:>=${createdSince}`),
+    safeFetchCount(`repo:${owner}/${repo} is:pr created:>=${createdSince}`),
+  ]);
+
+  const days = bucketKeys.map((key) => dayCounts.get(key) ?? 0);
+  const totalCommits = days.reduce((sum, count) => sum + count, 0);
+
+  return { days, totalCommits, commitsCapped: commitsResult.capped, openedIssues, openedPullRequests };
+}
+
+async function fetchGitHubSearchTotalCount(
+  query: string,
+  headers: Record<string, string>,
+): Promise<number> {
+  const url = new URL('https://api.github.com/search/issues');
+  url.searchParams.set('q', query);
+  url.searchParams.set('per_page', '1');
+
+  const response = await fetch(url.toString(), { headers });
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`GitHub API error: ${error}`);
+  }
+
+  const result = await response.json() as { total_count?: number };
+  return typeof result.total_count === 'number' ? result.total_count : 0;
 }
 
 async function fetchGitHubRepoTree(
@@ -256,46 +483,377 @@ function createSingleMessageDataStream(text: string, usage?: { input?: number; o
   });
 }
 
-// ─── /functions/v1/chat ──────────────────────────────────────────────────────
+const DIRECT_COMPAT_PROXY_PROVIDERS = new Set([
+  'minimax',
+  'minimax-payg',
+  'kimi',
+  'kimi-coding',
+]);
 
-// Filter out problematic stream lines (e.g. empty error entries from some providers)
-function createFilteredStream(
-  original: ReadableStream<Uint8Array>
-): ReadableStream<Uint8Array> {
-  const encoder = new TextEncoder();
-  const decoder = new TextDecoder();
-  let buffer = '';
+export function shouldDirectProxyCompatibleProvider(provider: string, hasServerRepoContext: boolean): boolean {
+  return DIRECT_COMPAT_PROXY_PROVIDERS.has(provider) && !hasServerRepoContext;
+}
 
-  return new ReadableStream({
-    async start(controller) {
-      const reader = original.getReader();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) {
-            if (buffer.trim()) {
-              controller.enqueue(encoder.encode(buffer));
-            }
-            controller.close();
-            break;
-          }
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-          for (const line of lines) {
-            if (line.trim() === '3:""' || line.trim() === "3:''") {
-              continue;
-            }
-            controller.enqueue(encoder.encode(line + '\n'));
-          }
-        }
-      } catch (e) {
-        controller.error(e);
+function getCompatibleProviderChatUrl(provider: string): string {
+  if (provider === 'kimi') {
+    return 'https://api.moonshot.cn/v1/chat/completions';
+  }
+
+  if (provider === 'kimi-coding') {
+    return 'https://api.kimi.com/coding/v1/chat/completions';
+  }
+
+  return `${OPENAI_COMPATIBLE[provider]}/chat/completions`;
+}
+
+function normalizeHermesTextPart(part: unknown): string {
+  if (typeof part === 'string') {
+    return part;
+  }
+
+  if (!part || typeof part !== 'object') {
+    return '';
+  }
+
+  const record = part as {
+    text?: unknown;
+    content?: unknown;
+    value?: unknown;
+  };
+
+  if (typeof record.text === 'string') {
+    return record.text;
+  }
+
+  if (record.text && typeof record.text === 'object') {
+    const nestedText = (record.text as { value?: unknown }).value;
+    if (typeof nestedText === 'string') {
+      return nestedText;
+    }
+  }
+
+  if (typeof record.content === 'string') {
+    return record.content;
+  }
+
+  if (typeof record.value === 'string') {
+    return record.value;
+  }
+
+  return '';
+}
+
+function extractHermesDeltaText(content: unknown): string {
+  if (typeof content === 'string') {
+    return content;
+  }
+
+  if (Array.isArray(content)) {
+    return content.map((part) => normalizeHermesTextPart(part)).join('');
+  }
+
+  return normalizeHermesTextPart(content);
+}
+
+function normalizeHermesFinishReason(reason: unknown): ProxyFinishReason {
+  if (reason === 'tool_calls') {
+    return 'tool-calls';
+  }
+
+  if (reason === 'stop' || reason === 'length' || reason === 'tool-calls') {
+    return reason;
+  }
+
+  // Some OpenRouter models (e.g. Llama, Mistral) return non-standard values
+  // like 'end_turn' or 'eos' instead of 'stop'. Map them so the client-side
+  // auto-continue logic sees a clean 'stop' instead of 'unknown'.
+  if (reason === 'end_turn' || reason === 'eos' || reason === 'max_tokens') {
+    return reason === 'max_tokens' ? 'length' : 'stop';
+  }
+
+  return 'unknown';
+}
+
+function normalizeHermesUsage(usage: unknown): ProxyUsage {
+  const record = usage && typeof usage === 'object'
+    ? usage as {
+        prompt_tokens?: unknown;
+        completion_tokens?: unknown;
+        total_tokens?: unknown;
       }
+    : {};
+
+  const promptTokens = typeof record.prompt_tokens === 'number' ? record.prompt_tokens : 0;
+  const completionTokens = typeof record.completion_tokens === 'number' ? record.completion_tokens : 0;
+  const totalTokens = typeof record.total_tokens === 'number'
+    ? record.total_tokens
+    : promptTokens + completionTokens;
+
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens,
+  };
+}
+
+function extractHermesChoiceText(choice: {
+  delta?: { content?: unknown };
+  message?: { content?: unknown };
+}): string {
+  const deltaText = extractHermesDeltaText(choice.delta?.content);
+  if (deltaText) {
+    return deltaText;
+  }
+  return extractHermesDeltaText(choice.message?.content);
+}
+
+function normalizeHermesAgentLoopPayload(payload: string): NormalizedProxyEvent | null {
+  const parsed = JSON.parse(payload) as {
+    usage?: unknown;
+    tool_activity?: unknown;
+    server_tool_event?: unknown;
+    agent_status?: unknown;
+    choices?: Array<{
+      finish_reason?: unknown;
+      delta?: {
+        content?: unknown;
+        tool_activity?: unknown;
+        server_tool_event?: unknown;
+        agent_status?: unknown;
+      };
+      message?: {
+        content?: unknown;
+      };
+    }>;
+  };
+
+  const choice = Array.isArray(parsed.choices) ? parsed.choices[0] : undefined;
+  const data: Record<string, unknown>[] = [];
+
+  if (choice?.delta?.tool_activity && typeof choice.delta.tool_activity === 'object') {
+    data.push({ type: 'hermes_tool_activity', activity: choice.delta.tool_activity as Record<string, unknown> });
+  }
+  if (choice?.delta?.server_tool_event && typeof choice.delta.server_tool_event === 'object') {
+    data.push(choice.delta.server_tool_event as Record<string, unknown>);
+  }
+  if (choice?.delta?.agent_status && typeof choice.delta.agent_status === 'object') {
+    data.push({ type: 'agent_status', status: choice.delta.agent_status as Record<string, unknown> });
+  }
+  if (parsed.tool_activity && typeof parsed.tool_activity === 'object') {
+    data.push({ type: 'hermes_tool_activity', activity: parsed.tool_activity as Record<string, unknown> });
+  }
+  if (parsed.server_tool_event && typeof parsed.server_tool_event === 'object') {
+    data.push(parsed.server_tool_event as Record<string, unknown>);
+  }
+  if (parsed.agent_status && typeof parsed.agent_status === 'object') {
+    data.push({ type: 'agent_status', status: parsed.agent_status as Record<string, unknown> });
+  }
+
+  return {
+    usage: normalizeHermesUsage(parsed.usage),
+    finishReason: choice?.finish_reason !== undefined && choice?.finish_reason !== null
+      ? normalizeHermesFinishReason(choice.finish_reason)
+      : undefined,
+    text: choice ? extractHermesChoiceText(choice) : '',
+    data,
+  };
+}
+
+function normalizeCompatibleProviderPayload(provider: string, payload: string): NormalizedProxyEvent | null {
+  const sanitizedPayload = sanitizeCompatibleSseLine(provider, `data: ${payload}`).slice(6).trim();
+  const parsed = JSON.parse(sanitizedPayload) as {
+    error?: { message?: string };
+    base_resp?: { status_code?: number; status_msg?: string };
+    usage?: unknown;
+    choices?: Array<{
+      finish_reason?: unknown;
+      delta?: { content?: unknown };
+      message?: { content?: unknown };
+    }>;
+  };
+
+  if (parsed.base_resp?.status_code && parsed.base_resp.status_code !== 0) {
+    throw new Error(parsed.base_resp.status_msg || `${provider} API error`);
+  }
+
+  if (parsed.error?.message) {
+    throw new Error(parsed.error.message);
+  }
+
+  const choice = Array.isArray(parsed.choices) ? parsed.choices[0] : undefined;
+  if (!choice) {
+    return {
+      usage: normalizeHermesUsage(parsed.usage),
+    };
+  }
+
+  return {
+    usage: normalizeHermesUsage(parsed.usage),
+    finishReason: choice.finish_reason !== undefined && choice.finish_reason !== null
+      ? normalizeHermesFinishReason(choice.finish_reason)
+      : undefined,
+    text: extractHermesChoiceText(choice),
+  };
+}
+
+async function proxyHermesAgentLoopToDataStream(input: {
+  req: express.Request;
+  res: express.Response;
+  apiKey: string;
+  model: string;
+  messages: unknown[];
+  temperature?: number;
+  topP?: number;
+  maxTokens?: number;
+  hermesToolsets?: string | null;
+  repoEditIntent?: boolean;
+  activeRepo?: { owner?: string; name?: string } | null;
+  githubPAT?: string;
+}) {
+  const bridgeUrl = `${OPENAI_COMPATIBLE.hermes}/chat/completions`;
+  const abortController = new AbortController();
+  const startedAt = Date.now();
+  const repoLabel = input.activeRepo?.owner && input.activeRepo?.name
+    ? `${input.activeRepo.owner}/${input.activeRepo.name}`
+    : '-';
+  let firstEventLogged = false;
+
+  const disconnect = bindClientDisconnect(input.req, input.res, () => {
+    abortController.abort();
+  });
+
+  let bridgeResponse: Response;
+  try {
+    console.log(
+      `[chat] Hermes agent-loop bridge fetch start. model=${input.model} repo=${repoLabel} toolsets=${input.hermesToolsets || '-'} t=${startedAt}`,
+    );
+    bridgeResponse = await fetch(bridgeUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${input.apiKey}`,
+        'Content-Type': 'application/json',
+        ...(input.hermesToolsets ? { 'X-Hermes-Toolsets': input.hermesToolsets } : {}),
+        'X-Hermes-Execution-Mode': 'agent-loop',
+        ...(input.activeRepo?.owner && input.activeRepo?.name
+          ? {
+              'X-Hermes-Repo-Owner': input.activeRepo.owner,
+              'X-Hermes-Repo-Name': input.activeRepo.name,
+              'X-Hermes-Repo-Edit-Intent': input.repoEditIntent ? '1' : '0',
+            }
+          : {}),
+        ...(input.githubPAT ? { 'X-Hermes-Github-PAT': input.githubPAT } : {}),
+      },
+      body: JSON.stringify({
+        model: input.model,
+        messages: input.messages,
+        temperature: input.temperature ?? 0.7,
+        top_p: input.topP ?? 0.9,
+        max_tokens: input.maxTokens ?? 32768,
+        stream: true,
+      }),
+      signal: abortController.signal,
+    });
+    console.log(
+      `[chat] Hermes agent-loop bridge headers received in ${Date.now() - startedAt}ms. status=${bridgeResponse.status} model=${input.model} repo=${repoLabel}`,
+    );
+  } catch (error) {
+    if (disconnect.isDisconnected() && isAbortLikeError(error)) {
+      return;
+    }
+    throw new Error(
+      `Hermes bridge is not reachable at ${OPENAI_COMPATIBLE.hermes}. ` +
+      'Start hermes-bridge/main.py and try again.',
+    );
+  }
+
+  if (!bridgeResponse.ok) {
+    const errorText = await bridgeResponse.text().catch(() => '');
+    throw new Error(errorText || `Hermes bridge error (${bridgeResponse.status})`);
+  }
+
+  await proxySseToDataStream({
+    req: input.req,
+    res: input.res,
+    upstreamResponse: bridgeResponse,
+    corsHeaders: buildCorsHeaders(input.req.headers.origin),
+    normalizePayload: normalizeHermesAgentLoopPayload,
+    onFirstEvent: (kind) => {
+      if (firstEventLogged) {
+        return;
+      }
+      firstEventLogged = true;
+      console.log(
+        `[chat] Hermes agent-loop first ${kind} event emitted in ${Date.now() - startedAt}ms. model=${input.model} repo=${repoLabel}`,
+      );
     },
+    emptyTextFallback:
+      'Hermes returned an empty response for this turn. Retry the request. If this keeps happening, inspect the Hermes bridge logs.',
   });
 }
 
+async function proxyCompatibleProviderToDataStream(input: {
+  req: express.Request;
+  res: express.Response;
+  provider: string;
+  apiKey: string;
+  model: string;
+  messages: unknown[];
+  temperature?: number;
+  topP?: number;
+  maxTokens?: number;
+}) {
+  const abortController = new AbortController();
+  const disconnect = bindClientDisconnect(input.req, input.res, () => {
+    abortController.abort();
+  });
+
+  let upstreamResponse: Response;
+  try {
+    upstreamResponse = await fetch(getCompatibleProviderChatUrl(input.provider), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${input.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: input.model,
+        messages: input.messages,
+        temperature: input.temperature ?? 0.7,
+        top_p: input.topP ?? 0.9,
+        max_tokens: input.maxTokens ?? 4096,
+        stream: true,
+      }),
+      signal: abortController.signal,
+    });
+  } catch (error) {
+    if (disconnect.isDisconnected() && isAbortLikeError(error)) {
+      return;
+    }
+    throw error;
+  }
+
+  if (!upstreamResponse.ok) {
+    const errorText = await upstreamResponse.text().catch(() => '');
+    throw new Error(`${input.provider} API error (${upstreamResponse.status}): ${errorText}`);
+  }
+
+  if (!upstreamResponse.body) {
+    throw new Error(`${input.provider} returned no response body.`);
+  }
+
+  await proxySseToDataStream({
+    req: input.req,
+    res: input.res,
+    upstreamResponse,
+    corsHeaders: buildCorsHeaders(input.req.headers.origin),
+    normalizePayload: (payload) => normalizeCompatibleProviderPayload(input.provider, payload),
+    throwOnEmpty: `${input.provider} returned an empty response stream.`,
+  });
+}
+
+// ─── /functions/v1/chat ──────────────────────────────────────────────────────
+
+// Filter out problematic stream lines (e.g. empty error entries from some providers)
 export function createApp() {
   const app = express();
   app.use(cors());
@@ -303,6 +861,20 @@ export function createApp() {
   registerChatStoreRoutes(app);
 
 app.post('/functions/v1/chat', async (req, res) => {
+  if (!chatRateLimiter.isAllowed(getClientIp(req))) {
+    return sendJson(res, 429, { error: 'Too many requests. Please try again later.' });
+  }
+
+  let requestTimeout: ReturnType<typeof setTimeout> | null = null;
+  const abortController = new AbortController();
+  const disconnect = bindClientDisconnect(req, res, () => {
+    abortController.abort();
+    if (requestTimeout) {
+      clearTimeout(requestTimeout);
+      requestTimeout = null;
+    }
+  });
+
   try {
     const {
       provider = 'lovable',
@@ -315,7 +887,6 @@ app.post('/functions/v1/chat', async (req, res) => {
       system_prompt,
       activeRepo,
       repo_edit_intent,
-      continuing_approved_proposal,
       reasoning_effort,
       conversation_id,
       hermes_toolsets,
@@ -345,25 +916,22 @@ app.post('/functions/v1/chat', async (req, res) => {
       const repoFileTree = Array.isArray(repo_file_tree)
         ? repo_file_tree.filter((path): path is string => typeof path === 'string' && path.trim().length > 0)
         : [];
-      const repoEditIntent = !!repo_edit_intent || !!continuing_approved_proposal;
+      const repoEditIntent = !!repo_edit_intent;
       const repoContext = `You are working on the GitHub repository ${activeRepo.owner}/${activeRepo.name}. You have tools to read, edit, create, and delete files in this repo.
 
 First determine whether the current user turn is asking for read-only repository help or for actual code changes.
 - If the user is asking what the repo is, how it works, where something lives, or for analysis/review, stay read-only: inspect files as needed and answer directly.
-- Only enter the proposal-and-edit workflow when the user explicitly asks you to modify the repository.
+- Only enter the edit workflow when the user explicitly asks you to modify the repository.
 - Never treat repo selection by itself as permission to edit.
 
-WORKFLOW — FOR CHANGE REQUESTS ONLY:
-1. For a NEW change request that does not already have an approved plan, FIRST use propose_changes to present a plan of ALL files you intend to modify. Wait for user approval before proceeding.
-2. If the latest user message is approving your most recent proposal, do NOT call propose_changes again. Continue executing the already approved plan.
-3. After the user approves, use read_repo_file to read the files you need to modify.
-4. Then use batch_edit_repo_files to apply ALL changes at once (preferred for multiple files), or edit_repo_file / create_repo_file individually.
-5. Do NOT ask the user which file to edit or to share files with you — explore the repo yourself.
-6. Do NOT ask clarifying questions. Use your judgment, explore the repo to understand the codebase, and propose changes directly. If the request is ambiguous, make reasonable assumptions and explain them in your proposal.
-7. When the user asks you to update multiple things, make sure you update ALL of them, not just one.
-8. Never print pseudo-tool syntax like propose_changes(...) or batch_edit_repo_files(...) in visible text. Use the actual tool calls instead.
-9. IMPORTANT: If you need to edit many large files, split batch_edit_repo_files into multiple calls (max 3-4 files per batch) to avoid output truncation. For very large files, use individual edit_repo_file calls instead.
-10. Never conclude that the repository is empty or inaccessible just because a guessed file path failed to read. If a read fails, choose another path from the loaded repo tree and continue exploring.
+WORKFLOW — FOR CHANGE REQUESTS:
+1. Use read_repo_file to explore and understand the relevant files.
+2. Then use batch_edit_repo_files to apply ALL changes at once (preferred for multiple files), or edit_repo_file / create_repo_file individually.
+3. Do NOT ask the user which file to edit or to share files with you — explore the repo yourself.
+4. Do NOT ask clarifying questions. Use your judgment, explore the repo to understand the codebase, and make changes directly. If the request is ambiguous, make reasonable assumptions and explain them.
+5. When the user asks you to update multiple things, make sure you update ALL of them, not just one.
+6. IMPORTANT: If you need to edit many large files, split batch_edit_repo_files into multiple calls (max 3-4 files per batch) to avoid output truncation.
+7. Never conclude that the repository is empty or inaccessible just because a guessed file path failed to read.
 
 ${repoFileTree.length > 0
   ? `The selected repository file tree is already available below. Use it to identify candidate files, and do NOT ask the user to provide file paths.
@@ -380,10 +948,6 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
       effectiveSystemPrompt = effectiveSystemPrompt
         ? `${effectiveSystemPrompt}\n\n${repoContext}`
         : repoContext;
-      if (continuing_approved_proposal) {
-        effectiveSystemPrompt = `${effectiveSystemPrompt}\n\nThe latest user message is an approval of the most recent proposal. Do not call propose_changes again for that accepted scope. Continue directly with read_repo_file and repo edit tools, and do not restate the plan unless the user changes scope.`;
-      }
-
       // Inject cached file contents so the model doesn't need to re-read them
       if (repo_file_cache && typeof repo_file_cache === 'object') {
         const paths = Object.keys(repo_file_cache);
@@ -397,10 +961,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
       }
     }
 
-    // Prepend system prompt
-    const allMessages = effectiveSystemPrompt
-      ? [{ role: 'system' as const, content: effectiveSystemPrompt }, ...messages]
-      : messages;
+    const normalizedChatInput = normalizeChatMessages(messages, effectiveSystemPrompt);
 
     if (provider === 'openclaw') {
       const latestUserMessage = [...(Array.isArray(messages) ? messages : [])]
@@ -425,7 +986,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
       const response = new Response(createSingleMessageDataStream(result.text, result.usage), {
         status: 200,
         headers: {
-          ...corsHeaders,
+          ...buildCorsHeaders(req.headers.origin),
           'Content-Type': 'text/plain; charset=utf-8',
           'x-vercel-ai-data-stream': 'v1',
         },
@@ -443,7 +1004,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
 
       const reader = response.body.getReader();
 
-      req.on('close', () => {
+      bindClientDisconnect(req, res, () => {
         reader.cancel().catch(() => {});
       });
 
@@ -505,86 +1066,80 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
       }),
     };
 
-    // Repo tools — always included so the model doesn't error on conversations
-    // that previously used repo tools. Client-side onToolCall handles the case
-    // where activeRepo is missing by returning a graceful error.
-    const repoTools = {
-          ...(continuing_approved_proposal
-            ? {}
-            : {
-                propose_changes: tool({
-                  description:
-                    'Present a plan of proposed changes to the user BEFORE making any edits. Always call this first when the user asks for changes. The user will review and approve the plan before you proceed.',
-                  parameters: z.object({
-                    summary: z.string().describe('A brief summary of the overall change'),
-                    plan: z.array(
-                      z.object({
-                        path: z.string().describe('The file path'),
-                        action: z.string().describe('The type of change: "create", "edit", or "delete"'),
-                        description: z.string().describe('What will be changed in this file and why'),
-                      })
-                    ).describe('The list of all files that will be modified'),
-                  }),
-                }),
-              }),
-          read_repo_file: tool({
-            description:
-              'Read a file from the active GitHub repository. Returns the file content.',
-            parameters: z.object({
-              path: z.string().describe('The path to the file within the repository'),
-            }),
-          }),
-
-          edit_repo_file: tool({
-            description:
-              'Edit an existing file in the active GitHub repository. The change will be staged for a PR.',
-            parameters: z.object({
-              path: z.string().describe('The path to the file to edit'),
-              content: z.string().describe('The new full content of the file'),
-              description: z.string().describe('A description of what was changed and why'),
-            }),
-          }),
-
-          create_repo_file: tool({
-            description:
-              'Create a new file in the active GitHub repository. The file will be staged for a PR.',
-            parameters: z.object({
-              path: z.string().describe('The path for the new file'),
-              content: z.string().describe('The content of the new file'),
-              description: z.string().describe('A description of the file and its purpose'),
-            }),
-          }),
-
-          delete_repo_file: tool({
-            description:
-              'Delete a file from the active GitHub repository. The deletion will be staged for a PR.',
-            parameters: z.object({
-              path: z.string().describe('The path to the file to delete'),
-              reason: z.string().describe('The reason for deleting this file'),
-            }),
-          }),
-
-          batch_edit_repo_files: tool({
-            description:
-              'Apply multiple file changes at once. Use this when you need to create, edit, or delete multiple files. Preferred over calling edit_repo_file multiple times.',
-            parameters: z.object({
-              changes: z.array(
-                z.object({
-                  path: z.string().describe('The file path'),
-                  action: z.string().describe('The type of change: "create", "edit", or "delete"'),
-                  content: z.string().describe('The new file content (empty string for deletions)'),
-                  description: z.string().describe('Description of this change'),
-                })
-              ).describe('Array of file changes to apply'),
-            }),
-          }),
-        };
-
+    const rawGithubPAT = req.body.github_pat;
+    const githubPAT = isValidGitHubPAT(rawGithubPAT) ? rawGithubPAT : undefined;
+    const hasServerRepoContext = !!(activeRepo && githubPAT);
     const runtimeProvider = resolveRuntimeProvider(provider, { activeRepo });
-    console.log(`[chat] provider=${provider} runtime=${runtimeProvider} model=${model} activeRepo=${activeRepo?.owner}/${activeRepo?.name || '-'} continuing_approved=${!!continuing_approved_proposal} msgs=${messages?.length}`);
-    if (activeRepo && !req.body.github_pat && (provider === 'hermes' || runtimeProvider === 'hermes')) {
+    const hermesExecutionMode =
+      provider === 'hermes' && runtimeProvider === 'hermes'
+        ? resolveHermesExecutionMode({ activeRepo, githubPAT })
+        : null;
+
+    // Collect server tool events to inject into the data stream
+    const serverToolEvents: ServerToolEvent[] = [];
+    const emitToolEvent = (event: ServerToolEvent) => {
+      serverToolEvents.push(event);
+    };
+
+    const repoTools = hasServerRepoContext
+      ? buildServerRepoTools(
+          {
+            owner: activeRepo.owner,
+            name: activeRepo.name,
+            defaultBranch: activeRepo.default_branch || 'main',
+            githubPAT,
+            repoFileTree: Array.isArray(repo_file_tree)
+              ? repo_file_tree.filter((p: unknown): p is string => typeof p === 'string' && (p as string).trim().length > 0)
+              : [],
+            repoFileCache: repo_file_cache && typeof repo_file_cache === 'object' ? repo_file_cache : {},
+            repoEditIntent: !!repo_edit_intent,
+          },
+          emitToolEvent,
+        )
+      : {};
+
+    console.log(
+      `[chat] provider=${provider} runtime=${runtimeProvider} model=${model} activeRepo=${activeRepo?.owner}/${activeRepo?.name || '-'} serverRepoTools=${hasServerRepoContext} hermesExecutionMode=${hermesExecutionMode ?? '-'} msgs=${messages?.length}`,
+    );
+    if (activeRepo && !githubPAT && (provider === 'hermes' || runtimeProvider === 'hermes')) {
         console.warn(`[chat] WARNING: activeRepo set (${activeRepo.owner}/${activeRepo.name}) but no github_pat in request body — Hermes won't be able to read repo files`);
     }
+
+    if (provider === 'hermes' && runtimeProvider === 'hermes' && hermesExecutionMode === 'agent-loop') {
+      console.log(`[chat] Proxying Hermes agent-loop directly to AI SDK data stream. model=${model}`);
+      await proxyHermesAgentLoopToDataStream({
+        req,
+        res,
+        apiKey,
+        model,
+        messages: normalizedChatInput.messages,
+        temperature,
+        topP: top_p,
+        maxTokens: max_tokens,
+        hermesToolsets: hermes_toolsets,
+        repoEditIntent: !!repo_edit_intent,
+        activeRepo,
+        githubPAT,
+      });
+      return;
+    }
+
+    if (shouldDirectProxyCompatibleProvider(provider, hasServerRepoContext)) {
+      console.log(`[chat] Proxying ${provider} directly to AI SDK data stream. model=${model}`);
+      await proxyCompatibleProviderToDataStream({
+        req,
+        res,
+        provider,
+        apiKey,
+        model,
+        messages: normalizedChatInput.messages,
+        temperature,
+        topP: top_p,
+        maxTokens: max_tokens,
+      });
+      return;
+    }
+
     let aiModel;
     try {
       aiModel = createProviderModel(runtimeProvider, model, apiKey, {
@@ -592,12 +1147,16 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
         extraHeaders: provider === 'hermes' && runtimeProvider === 'hermes'
           ? {
               ...(hermes_toolsets ? { 'X-Hermes-Toolsets': hermes_toolsets } : {}),
-              ...(continuing_approved_proposal ? { 'X-Hermes-Continuing-Approved': '1' } : {}),
-              ...(activeRepo ? { 'X-Hermes-Repo-Edit-Intent': repo_edit_intent || continuing_approved_proposal ? '1' : '0' } : {}),
-              ...(activeRepo && req.body.github_pat ? {
+              ...(hermesExecutionMode ? { 'X-Hermes-Execution-Mode': hermesExecutionMode } : {}),
+              ...(hermesExecutionMode === 'agent-loop' && activeRepo && githubPAT
+                ? { 'X-Hermes-Repo-Edit-Intent': repo_edit_intent ? '1' : '0' }
+                : {}),
+              ...(hermesExecutionMode === 'agent-loop' && activeRepo && githubPAT ? {
                 'X-Hermes-Repo-Owner': activeRepo.owner,
                 'X-Hermes-Repo-Name': activeRepo.name,
-                'X-Hermes-Github-PAT': req.body.github_pat,
+              } : {}),
+              ...(hermesExecutionMode === 'agent-loop' && activeRepo && githubPAT ? {
+                'X-Hermes-Github-PAT': githubPAT,
               } : {}),
             }
           : undefined,
@@ -611,81 +1170,72 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
       );
     }
 
-    // Use a higher token limit when repo tools are active to avoid truncated tool calls
-    const defaultMaxTokens = activeRepo ? 64000 : 16384;
+    // Cap output tokens — 64k causes hangs when models generate full file contents
+    // as tool call arguments. 16k is enough for meaningful edits without stalling.
+    const defaultMaxTokens = activeRepo ? 16384 : 32768;
     const providerOptions = getReasoningProviderOptions(provider, model, reasoning_effort);
 
-    console.log(`[chat] Starting streamText. maxTokens=${max_tokens ?? defaultMaxTokens} tools=${Object.keys({ ...fileTools, ...repoTools }).join(',')}`);
-    const result = await streamText({
+    // Per-request timeout: abort if the entire streamText run exceeds 5 minutes.
+    // This prevents indefinite hangs when a model step generates extremely slowly.
+    requestTimeout = setTimeout(() => {
+      if (!disconnect.isDisconnected()) {
+        console.warn('[chat] Request timeout — aborting after 5 minutes');
+        abortController.abort();
+      }
+    }, 5 * 60 * 1000);
+
+    const allTools = { ...fileTools, ...repoTools };
+    const useServerAgentLoop = hasServerRepoContext;
+    console.log(`[chat] Starting streamText. maxTokens=${max_tokens ?? defaultMaxTokens} maxSteps=${useServerAgentLoop ? SERVER_AGENT_MAX_STEPS : 1} tools=${Object.keys(allTools).join(',')}`);
+    const result = streamText({
       model: aiModel,
-      messages: allMessages,
+      messages: normalizedChatInput.messages,
       temperature: temperature ?? 0.7,
       topP: top_p ?? 0.9,
       maxOutputTokens: max_tokens ?? defaultMaxTokens,
+      abortSignal: abortController.signal,
       ...(providerOptions ? { providerOptions } : {}),
-      tools: { ...fileTools, ...repoTools },
+      tools: allTools,
       toolCallStreaming: true,
+      // When server-side execute handlers are present, maxSteps drives the
+      // agentic loop. Without execute handlers, set to 1 so the SDK streams
+      // tool calls to the client for execution.
+      ...(useServerAgentLoop ? { maxSteps: SERVER_AGENT_MAX_STEPS } : {}),
+      // Inject server tool events into the data stream so the client can
+      // update its changeset store, file cache, and activity stats.
+      onFinish: () => {
+        if (requestTimeout) {
+          clearTimeout(requestTimeout);
+        }
+        // Events are emitted synchronously from execute handlers during
+        // the stream, so by the time onFinish fires all events are collected.
+      },
     });
 
-    const response = result.toDataStreamResponse({
-      headers: corsHeaders,
+    // Use pipeDataStreamToResponse for proper Node.js streaming.
+    // This avoids issues with toDataStreamResponse where the finish
+    // message can be emitted before content for some providers.
+    result.pipeDataStreamToResponse(res, {
+      headers: buildCorsHeaders(req.headers.origin),
       sendReasoning: true,
+      data: serverToolEvents.length > 0
+        ? serverToolEvents.map((event) => event as unknown as Record<string, unknown>)
+        : undefined,
       getErrorMessage: (error: unknown) => {
         const msg = error instanceof Error ? error.message : String(error);
         console.error(`[chat] Stream error: ${msg}`);
         return msg;
       },
     });
+  } catch (err: unknown) {
+    if (requestTimeout) {
+      clearTimeout(requestTimeout);
+    }
 
-    // Set response headers
-    response.headers.forEach((value, key) => {
-      res.setHeader(key, value);
-    });
-    res.status(response.status);
-
-    if (!response.body) {
-      res.end();
+    if ((disconnect.isDisconnected() || abortController.signal.aborted) && isAbortLikeError(err)) {
       return;
     }
 
-    // For providers that may emit problematic stream entries, filter them
-    let body: ReadableStream<Uint8Array> = response.body;
-    if (provider === 'minimax' || provider === 'minimax-payg') {
-      body = createFilteredStream(body);
-    }
-
-    // Pipe the web ReadableStream to the Node.js response
-    const reader = body.getReader();
-    const pump = async () => {
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) {
-            res.end();
-            break;
-          }
-          const ok = res.write(Buffer.from(value));
-          if (!ok) {
-            await new Promise<void>((resolve) => res.once('drain', resolve));
-          }
-        }
-      } catch (err) {
-        console.error('Stream pipe error:', err);
-        if (!res.headersSent) {
-          res.status(500).json({ error: 'Stream error' });
-        } else {
-          res.end();
-        }
-      }
-    };
-
-    // Handle client disconnect
-    req.on('close', () => {
-      reader.cancel().catch(() => {});
-    });
-
-    await pump();
-  } catch (err: unknown) {
     console.error('chat error:', err);
 
     let status = 500;
@@ -949,7 +1499,7 @@ async function fetchRepoContents(
   path: string,
   headers: Record<string, string>
 ): Promise<Array<{ path: string; type: 'dir'; children: [] } | { path: string; type: 'file'; size: number; sha: string }>> {
-  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
+  const url = buildGitHubContentsUrl(owner, repo, path);
   const response = await fetch(url, { headers });
 
   if (!response.ok) {
@@ -995,8 +1545,8 @@ app.post('/functions/v1/github-integration', async (req, res) => {
   try {
     const { action, pat, ...params } = req.body;
 
-    if (!pat) {
-      return sendJson(res, 400, { error: 'GitHub PAT is required' });
+    if (!pat || !isValidGitHubPAT(pat)) {
+      return sendJson(res, 400, { error: 'A valid GitHub PAT is required' });
     }
 
     const headers = {
@@ -1060,6 +1610,7 @@ app.post('/functions/v1/github-integration', async (req, res) => {
           direction = 'desc',
           state = 'open',
           query = '',
+          labels = [],
         } = params as {
           owner?: string;
           repo?: string;
@@ -1068,6 +1619,7 @@ app.post('/functions/v1/github-integration', async (req, res) => {
           direction?: 'asc' | 'desc';
           state?: 'open' | 'closed' | 'all';
           query?: string;
+          labels?: string[];
         };
 
         if (!owner || !repo) {
@@ -1078,6 +1630,7 @@ app.post('/functions/v1/github-integration', async (req, res) => {
           `repo:${owner}/${repo}`,
           'is:issue',
           state !== 'all' ? `state:${state}` : '',
+          ...(Array.isArray(labels) ? labels.map((l) => `label:"${String(l).replace(/"/g, '')}"`) : []),
           typeof query === 'string' ? query.trim() : '',
         ].filter(Boolean).join(' ');
 
@@ -1108,6 +1661,58 @@ app.post('/functions/v1/github-integration', async (req, res) => {
           totalPages,
           hasPreviousPage: currentPage > 1,
           hasNextPage: currentPage < totalPages,
+        });
+      }
+
+      case 'repo-activity': {
+        const { owner, repo } = params as { owner?: string; repo?: string };
+        if (!owner || !repo) {
+          return sendJson(res, 400, { error: 'owner and repo are required' });
+        }
+
+        try {
+          const activity = await fetchRecentRepoActivity(owner, repo, headers);
+          return sendJson(res, 200, activity);
+        } catch (error) {
+          return sendJson(res, 502, { error: getUnknownErrorMessage(error) });
+        }
+      }
+
+      case 'create-issue': {
+        const { owner, repo, title, body } = params as {
+          owner?: string;
+          repo?: string;
+          title?: string;
+          body?: string;
+        };
+
+        if (!owner || !repo) {
+          return sendJson(res, 400, { error: 'owner and repo are required' });
+        }
+
+        if (typeof title !== 'string' || title.trim().length === 0) {
+          return sendJson(res, 400, { error: 'title is required' });
+        }
+
+        const issueResponse = await fetch(
+          `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues`,
+          {
+            method: 'POST',
+            headers: { ...headers, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              title: title.trim(),
+              ...(typeof body === 'string' && body.trim().length > 0 ? { body: body.trim() } : {}),
+            }),
+          },
+        );
+        if (!issueResponse.ok) {
+          const error = await issueResponse.text();
+          return sendJson(res, issueResponse.status, { error: `GitHub API error: ${error}` });
+        }
+
+        const issue = await issueResponse.json() as Parameters<typeof toGitHubIssue>[0];
+        return sendJson(res, 200, {
+          issue: toGitHubIssue(issue),
         });
       }
 
@@ -1153,6 +1758,204 @@ app.post('/functions/v1/github-integration', async (req, res) => {
         });
       }
 
+      case 'list-issue-comments': {
+        const { owner, repo, issueNumber } = params as { owner?: string; repo?: string; issueNumber?: number };
+        if (!owner || !repo || !issueNumber) {
+          return sendJson(res, 400, { error: 'owner, repo, and issueNumber are required' });
+        }
+
+        const response = await fetch(
+          `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${Number(issueNumber)}/comments?per_page=50`,
+          { headers: { ...headers, Accept: 'application/vnd.github.squirrel-girl-preview+json' } },
+        );
+        if (!response.ok) {
+          const error = await response.text();
+          return sendJson(res, response.status, { error: `GitHub API error: ${error}` });
+        }
+
+        const rawComments = await response.json() as Array<{
+          id?: number;
+          user?: { login?: string; avatar_url?: string | null };
+          body?: string;
+          created_at?: string;
+          updated_at?: string;
+          reactions?: Record<string, number>;
+        }>;
+
+        return sendJson(res, 200, {
+          comments: (rawComments || []).map((c) => ({
+            id: c.id || 0,
+            user: { login: c.user?.login || 'unknown', avatar_url: c.user?.avatar_url || null },
+            body: c.body || '',
+            created_at: c.created_at || new Date(0).toISOString(),
+            updated_at: c.updated_at || new Date(0).toISOString(),
+            reactions: {
+              '+1': c.reactions?.['+1'] || 0,
+              '-1': c.reactions?.['-1'] || 0,
+              laugh: c.reactions?.laugh || 0,
+              hooray: c.reactions?.hooray || 0,
+              confused: c.reactions?.confused || 0,
+              heart: c.reactions?.heart || 0,
+              rocket: c.reactions?.rocket || 0,
+              eyes: c.reactions?.eyes || 0,
+            },
+          })),
+        });
+      }
+
+      case 'add-comment-reaction': {
+        const { owner, repo, commentId, reaction } = params as {
+          owner?: string; repo?: string; commentId?: number; reaction?: string;
+        };
+        if (!owner || !repo || !commentId || !reaction) {
+          return sendJson(res, 400, { error: 'owner, repo, commentId, and reaction are required' });
+        }
+
+        const validReactions = ['+1', '-1', 'laugh', 'hooray', 'confused', 'heart', 'rocket', 'eyes'];
+        if (!validReactions.includes(reaction)) {
+          return sendJson(res, 400, { error: `Invalid reaction. Must be one of: ${validReactions.join(', ')}` });
+        }
+
+        const reactionResponse = await fetch(
+          `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/comments/${Number(commentId)}/reactions`,
+          {
+            method: 'POST',
+            headers: { ...headers, 'Content-Type': 'application/json', Accept: 'application/vnd.github.squirrel-girl-preview+json' },
+            body: JSON.stringify({ content: reaction }),
+          },
+        );
+        if (!reactionResponse.ok) {
+          const error = await reactionResponse.text();
+          return sendJson(res, reactionResponse.status, { error: `GitHub API error: ${error}` });
+        }
+
+        const reactionData = await reactionResponse.json() as { id?: number; content?: string };
+        return sendJson(res, 200, { reaction: { id: reactionData.id || 0, content: reactionData.content || reaction } });
+      }
+
+      case 'create-issue-comment': {
+        const { owner, repo, issueNumber, body: commentBody } = params as {
+          owner?: string; repo?: string; issueNumber?: number; body?: string;
+        };
+        if (!owner || !repo || !issueNumber || !commentBody) {
+          return sendJson(res, 400, { error: 'owner, repo, issueNumber, and body are required' });
+        }
+
+        const commentResponse = await fetch(
+          `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${Number(issueNumber)}/comments`,
+          {
+            method: 'POST',
+            headers: { ...headers, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ body: commentBody }),
+          },
+        );
+        if (!commentResponse.ok) {
+          const error = await commentResponse.text();
+          return sendJson(res, commentResponse.status, { error: `GitHub API error: ${error}` });
+        }
+
+        const rawComment = await commentResponse.json() as {
+          id?: number;
+          user?: { login?: string; avatar_url?: string | null };
+          body?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+
+        return sendJson(res, 200, {
+          comment: {
+            id: rawComment.id || 0,
+            user: { login: rawComment.user?.login || 'unknown', avatar_url: rawComment.user?.avatar_url || null },
+            body: rawComment.body || '',
+            created_at: rawComment.created_at || new Date(0).toISOString(),
+            updated_at: rawComment.updated_at || new Date(0).toISOString(),
+          },
+        });
+      }
+
+      case 'create-branch': {
+        const { owner, repo, baseBranch, newBranchName } = params as {
+          owner?: string; repo?: string; baseBranch?: string; newBranchName?: string;
+        };
+        if (!owner || !repo || !baseBranch || !newBranchName) {
+          return sendJson(res, 400, { error: 'owner, repo, baseBranch, and newBranchName are required' });
+        }
+
+        // Get the SHA of the base branch
+        const refResponse = await fetch(
+          `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/ref/heads/${encodeURIComponent(baseBranch)}`,
+          { headers },
+        );
+        if (!refResponse.ok) {
+          const error = await refResponse.text();
+          return sendJson(res, refResponse.status, { error: `Failed to resolve base branch: ${error}` });
+        }
+        const refData = await refResponse.json() as { object?: { sha?: string } };
+        const sha = refData.object?.sha;
+        if (!sha) {
+          return sendJson(res, 500, { error: 'Could not resolve base branch SHA' });
+        }
+
+        // Create the new branch
+        const createResponse = await fetch(
+          `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/refs`,
+          {
+            method: 'POST',
+            headers: { ...headers, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ref: `refs/heads/${newBranchName}`, sha }),
+          },
+        );
+
+        if (!createResponse.ok) {
+          if (createResponse.status === 422) {
+            return sendJson(res, 200, { branch: newBranchName, sha, created: false });
+          }
+          const error = await createResponse.text();
+          return sendJson(res, createResponse.status, { error: `Failed to create branch: ${error}` });
+        }
+
+        return sendJson(res, 200, { branch: newBranchName, sha, created: true });
+      }
+
+      case 'list-linked-prs': {
+        const { owner, repo, issueNumber } = params as { owner?: string; repo?: string; issueNumber?: number };
+        if (!owner || !repo || !issueNumber) {
+          return sendJson(res, 400, { error: 'owner, repo, and issueNumber are required' });
+        }
+
+        const q = `repo:${owner}/${repo} is:pr is:open ${issueNumber} in:body`;
+        const response = await fetch(
+          `https://api.github.com/search/issues?q=${encodeURIComponent(q)}&per_page=10`,
+          { headers },
+        );
+        if (!response.ok) {
+          const error = await response.text();
+          return sendJson(res, response.status, { error: `GitHub API error: ${error}` });
+        }
+
+        const result = await response.json() as {
+          items?: Array<{
+            number?: number;
+            title?: string;
+            html_url?: string;
+            state?: string;
+            user?: { login?: string };
+            created_at?: string;
+          }>;
+        };
+
+        return sendJson(res, 200, {
+          prs: (result.items || []).map((pr) => ({
+            number: pr.number || 0,
+            title: pr.title || '',
+            html_url: pr.html_url || '',
+            state: pr.state || 'open',
+            user: { login: pr.user?.login || 'unknown' },
+            created_at: pr.created_at || new Date(0).toISOString(),
+          })),
+        });
+      }
+
       case 'read-repo': {
         const { owner, repo, path = '' } = params;
         if (!owner || !repo) {
@@ -1181,7 +1984,7 @@ app.post('/functions/v1/github-integration', async (req, res) => {
         }
 
         const response = await fetch(
-          `https://api.github.com/repos/${owner}/${repo}/contents/${path}${typeof ref === 'string' && ref ? `?ref=${encodeURIComponent(ref)}` : ''}`,
+          buildGitHubContentsUrl(owner, repo, path, typeof ref === 'string' && ref ? ref : undefined),
           { headers }
         );
 
@@ -1205,7 +2008,7 @@ app.post('/functions/v1/github-integration', async (req, res) => {
       }
 
       case 'create-pr': {
-        const { owner, repo, title, body, branch, baseBranch, baseOwner, baseRepo, files } = params as {
+        const { owner, repo, title, body, branch, baseBranch, baseOwner, baseRepo, draft, files } = params as {
           owner: string;
           repo: string;
           title: string;
@@ -1214,6 +2017,7 @@ app.post('/functions/v1/github-integration', async (req, res) => {
           baseBranch: string;
           baseOwner?: string;
           baseRepo?: string;
+          draft?: boolean;
           files: FileChange[];
         };
 
@@ -1264,7 +2068,7 @@ app.post('/functions/v1/github-integration', async (req, res) => {
         for (const file of files) {
           let fileSha: string | undefined;
           const existingFileRes = await fetch(
-            `https://api.github.com/repos/${headOwner}/${headRepo}/contents/${file.path}?ref=${branch}`,
+            buildGitHubContentsUrl(headOwner, headRepo, file.path, branch),
             { headers }
           );
           if (existingFileRes.ok) {
@@ -1276,7 +2080,7 @@ app.post('/functions/v1/github-integration', async (req, res) => {
             // Only delete if the file actually exists in the repo
             if (!fileSha) continue;
             const deleteRes = await fetch(
-              `https://api.github.com/repos/${headOwner}/${headRepo}/contents/${file.path}`,
+              buildGitHubContentsUrl(headOwner, headRepo, file.path),
               {
                 method: 'DELETE',
                 headers: { ...headers, 'Content-Type': 'application/json' },
@@ -1294,7 +2098,7 @@ app.post('/functions/v1/github-integration', async (req, res) => {
             }
           } else {
             const updateRes = await fetch(
-              `https://api.github.com/repos/${headOwner}/${headRepo}/contents/${file.path}`,
+              buildGitHubContentsUrl(headOwner, headRepo, file.path),
               {
                 method: 'PUT',
                 headers: { ...headers, 'Content-Type': 'application/json' },
@@ -1328,6 +2132,7 @@ app.post('/functions/v1/github-integration', async (req, res) => {
                 ? branch
                 : `${headOwner}:${branch}`,
               base: baseBranch,
+              ...(draft ? { draft: true } : {}),
             }),
           }
         );
@@ -1364,6 +2169,7 @@ app.post('/functions/v1/github-integration', async (req, res) => {
           provider,
           model,
           apiKey,
+          allProviders,
         } = params as {
           owner: string;
           repo: string;
@@ -1372,6 +2178,7 @@ app.post('/functions/v1/github-integration', async (req, res) => {
           provider?: string;
           model?: string;
           apiKey?: string;
+          allProviders?: Record<string, { apiKey: string; model: string }>;
         };
 
         if (!owner || !repo || !baseBranch || !Array.isArray(files) || files.length === 0) {
@@ -1390,9 +2197,52 @@ app.post('/functions/v1/github-integration', async (req, res) => {
           model,
           apiKey,
           origin: req.headers.origin as string | undefined,
+          allProviders,
         });
 
         return sendJson(res, 200, verification);
+      }
+
+      case 'generate-pr-metadata': {
+        const {
+          files,
+          provider,
+          model,
+          apiKey,
+          allProviders,
+          owner,
+          repo,
+        } = params as {
+          files: VerificationFileChange[];
+          provider?: string;
+          model?: string;
+          apiKey?: string;
+          allProviders?: Record<string, { apiKey: string; model: string }>;
+          owner?: string;
+          repo?: string;
+        };
+
+        if (!Array.isArray(files) || files.length === 0) {
+          return sendJson(res, 400, { error: 'files are required' });
+        }
+
+        try {
+          const metadata = await generatePrMetadata({
+            files,
+            provider,
+            model,
+            apiKey,
+            allProviders,
+            origin: req.headers.origin as string | undefined,
+            owner,
+            repo,
+          });
+          return sendJson(res, 200, metadata);
+        } catch (error) {
+          return sendJson(res, 500, {
+            error: error instanceof Error ? error.message : 'Failed to generate PR metadata',
+          });
+        }
       }
 
       case 'get-pr-status': {
@@ -1527,7 +2377,7 @@ async function fetchAnalyzerRepoFiles(
   };
 
   async function fetchContentsRecursive(path = ''): Promise<FileContent[]> {
-    const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
+    const url = buildGitHubContentsUrl(owner, repo, path);
     const response = await fetch(url, { headers });
 
     if (!response.ok) {
@@ -1624,6 +2474,11 @@ Be specific about file names and line numbers when possible. Provide actionable 
 `;
 
   try {
+    const analysisMessages = normalizeChatMessages(
+      [{ role: 'user', content: analysisPrompt }],
+      'You are an expert code reviewer specializing in finding bugs, security issues, and improvement opportunities. Always respond with valid JSON.',
+    ).messages;
+
     const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -1632,17 +2487,7 @@ Be specific about file names and line numbers when possible. Provide actionable 
       },
       body: JSON.stringify({
         model: 'google/gemini-3-flash-preview',
-        messages: [
-          {
-            role: 'system',
-            content:
-              'You are an expert code reviewer specializing in finding bugs, security issues, and improvement opportunities. Always respond with valid JSON.',
-          },
-          {
-            role: 'user',
-            content: analysisPrompt,
-          },
-        ],
+        messages: analysisMessages,
         temperature: 0.3,
         max_tokens: 4000,
       }),
@@ -1680,18 +2525,18 @@ app.post('/functions/v1/github-analyzer', async (req, res) => {
   try {
     const { owner, repo, pat } = req.body;
 
-    if (!owner || !repo || !pat) {
-      return sendJson(res, 400, { error: 'owner, repo, and PAT are required' });
+    if (!owner || !repo || !isValidGitHubPAT(pat)) {
+      return sendJson(res, 400, { error: 'owner, repo, and a valid GitHub PAT are required' });
     }
 
-    console.log(`Fetching files for ${owner}/${repo}...`);
+    // Fetch repository files for analysis
     const files = await fetchAnalyzerRepoFiles(owner, repo, pat);
 
     if (files.length === 0) {
       return sendJson(res, 400, { error: 'No code files found in repository' });
     }
 
-    console.log(`Analyzing ${files.length} files...`);
+    // Analyze fetched files
     const analysis = await analyzeCode(files);
 
     return sendJson(res, 200, {
@@ -1708,6 +2553,10 @@ app.post('/functions/v1/github-analyzer', async (req, res) => {
 // ─── /functions/v1/validate-key ──────────────────────────────────────────────
 
 app.post('/functions/v1/validate-key', async (req, res) => {
+  if (!validateKeyRateLimiter.isAllowed(getClientIp(req))) {
+    return sendJson(res, 429, { error: 'Too many requests. Please try again later.' });
+  }
+
   try {
     const { provider, api_key } = req.body;
 
@@ -1726,18 +2575,14 @@ app.post('/functions/v1/validate-key', async (req, res) => {
     }
 
     const origin = req.headers.origin as string | undefined;
-    const listModelsUrl = OPENAI_COMPATIBLE[provider]
-      ? `${OPENAI_COMPATIBLE[provider]}/models`
-      : null;
+    const discoveryBaseUrl = MODEL_DISCOVERY_URLS[provider];
+    const listModelsUrl = discoveryBaseUrl ? `${discoveryBaseUrl}/models` : null;
 
     if (listModelsUrl) {
       let modelListResponse: Response;
       try {
         modelListResponse = await fetch(listModelsUrl, {
-          headers: {
-            Authorization: `Bearer ${api_key}`,
-            ...getProviderHeaders(provider, origin),
-          },
+          headers: getModelDiscoveryHeaders(provider, api_key, origin),
         });
       } catch (error) {
         if (provider === 'hermes') {
@@ -1810,9 +2655,7 @@ const KIMI_API_URL = 'https://api.moonshot.cn/v1/chat/completions';
 const KIMI_CODING_API_URL = 'https://api.kimi.com/coding/v1/chat/completions';
 
 async function proxyMiniMax(body: ChatProxyRequest): Promise<Response> {
-  const messages = body.system_prompt
-    ? [{ role: 'system', content: body.system_prompt }, ...body.messages]
-    : body.messages;
+  const messages = normalizeChatMessages(body.messages, body.system_prompt).messages;
 
   const payload = {
     model: body.model,
@@ -1841,9 +2684,7 @@ async function proxyMiniMax(body: ChatProxyRequest): Promise<Response> {
 }
 
 async function proxyKimi(body: ChatProxyRequest): Promise<Response> {
-  const messages = body.system_prompt
-    ? [{ role: 'system', content: body.system_prompt }, ...body.messages]
-    : body.messages;
+  const messages = normalizeChatMessages(body.messages, body.system_prompt).messages;
 
   const payload = {
     model: body.model,
@@ -1872,9 +2713,7 @@ async function proxyKimi(body: ChatProxyRequest): Promise<Response> {
 }
 
 async function proxyKimiCoding(body: ChatProxyRequest): Promise<Response> {
-  const messages = body.system_prompt
-    ? [{ role: 'system', content: body.system_prompt }, ...body.messages]
-    : body.messages;
+  const messages = normalizeChatMessages(body.messages, body.system_prompt).messages;
 
   const payload = {
     model: body.model,
@@ -1925,11 +2764,9 @@ app.post('/functions/v1/chat-proxy', async (req, res) => {
       upstreamResponse = await proxyKimi(body);
     }
 
-    console.log('Upstream status:', upstreamResponse.status);
-
     if (!upstreamResponse.body) {
       const text = await upstreamResponse.text();
-      console.log('Upstream body (no stream):', text);
+      console.warn('[chat-proxy] No response body from provider:', text);
       return sendJson(res, 502, {
         error: 'No response body from provider',
         details: text,
@@ -1940,7 +2777,7 @@ app.post('/functions/v1/chat-proxy', async (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Origin', getCorsOrigin(req.headers.origin));
 
     // Parse and re-emit SSE stream
     const reader = upstreamResponse.body.getReader();
@@ -1955,7 +2792,7 @@ app.post('/functions/v1/chat-proxy', async (req, res) => {
           const { done, value } = await reader.read();
           if (done) {
             if (!receivedAnyContent && rawAccumulator.trim()) {
-              console.log('No SSE content received. Raw response:', rawAccumulator);
+              console.warn('[chat-proxy] No SSE content received. Raw response:', rawAccumulator);
               try {
                 const errorJson = JSON.parse(rawAccumulator);
                 const errorMsg =
@@ -1997,7 +2834,7 @@ app.post('/functions/v1/chat-proxy', async (req, res) => {
 
               if (json.base_resp?.status_code && json.base_resp.status_code !== 0) {
                 const errorMsg = json.base_resp.status_msg || 'API error';
-                console.log('MiniMax inline error:', errorMsg);
+                console.warn('[chat-proxy] MiniMax inline error:', errorMsg);
                 res.write(`data: ${JSON.stringify({ error: errorMsg })}\n\n`);
                 receivedAnyContent = true;
                 continue;
@@ -2025,7 +2862,7 @@ app.post('/functions/v1/chat-proxy', async (req, res) => {
       }
     };
 
-    req.on('close', () => {
+    bindClientDisconnect(req, res, () => {
       reader.cancel().catch(() => {});
     });
 
@@ -2047,10 +2884,149 @@ app.post(
   createOrchestrateHandler()
 );
 
+// ─── /functions/v1/translate ───────────────────────────────────────────────────
+
+app.post('/functions/v1/translate', async (req, res) => {
+  try {
+    const {
+      text,
+      targetLanguage = 'English',
+      provider,
+      api_key,
+      model,
+    } = req.body as {
+      text?: string;
+      targetLanguage?: string;
+      provider?: string;
+      api_key?: string;
+      model?: string;
+    };
+
+    if (!text) {
+      return sendJson(res, 400, { error: 'text is required' });
+    }
+    if (!provider) {
+      return sendJson(res, 400, { error: 'provider is required' });
+    }
+    if (!model) {
+      return sendJson(res, 400, { error: 'model is required' });
+    }
+
+    const systemMessage = `Translate the following text to ${targetLanguage}. Output ONLY the direct translation. Do not explain, narrate, or add commentary. Do not include phrases like "Here is the translation" or "This translates to". Just output the translated text exactly as it would read in ${targetLanguage}.`;
+    const translatedMessages = normalizeChatMessages(
+      [{ role: 'user', content: text }],
+      systemMessage,
+    ).messages;
+
+    // ── Anthropic uses its own messages format ────────────────────────────
+    if (provider === 'anthropic') {
+      const baseUrl = ANTHROPIC_COMPATIBLE.anthropic;
+      const response = await fetch(`${baseUrl}/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': api_key,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 4096,
+          temperature: 0.3,
+          messages: translatedMessages,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.text();
+        return sendJson(res, response.status, {
+          error: `Anthropic API error: ${errorBody}`,
+        });
+      }
+
+      const data = (await response.json()) as {
+        content?: Array<{ type?: string; text?: string }>;
+      };
+      const translated =
+        data.content?.find((c) => c.type === 'text')?.text || '';
+      return sendJson(res, 200, { translated });
+    }
+
+    // ── All other providers: OpenAI-compatible format ─────────────────────
+    const baseUrl = OPENAI_COMPATIBLE[provider];
+    if (!baseUrl) {
+      return sendJson(res, 400, {
+        error: `Unsupported provider: ${provider}`,
+      });
+    }
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(api_key ? { Authorization: `Bearer ${api_key}` } : {}),
+      ...getProviderHeaders(provider),
+    };
+
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model,
+        stream: false,
+        temperature: 0.3,
+        max_tokens: 4096,
+        messages: translatedMessages,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      return sendJson(res, response.status, {
+        error: `Provider API error: ${errorBody}`,
+      });
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    const responseText = await response.text();
+
+    // Some providers (e.g. Hermes bridge) ignore stream:false and return SSE
+    const trimmedText = responseText.trimStart();
+    if (contentType.includes('text/event-stream') || trimmedText.startsWith('data: ')) {
+      let translated = '';
+      for (const line of responseText.split('\n')) {
+        if (!line.startsWith('data: ') || line.trim() === 'data: [DONE]') continue;
+        try {
+          const chunk = JSON.parse(line.slice(6)) as {
+            choices?: Array<{ delta?: { content?: string } }>;
+          };
+          const token = chunk.choices?.[0]?.delta?.content;
+          if (token) translated += token;
+        } catch {
+          // skip unparseable lines
+        }
+      }
+      return sendJson(res, 200, { translated: translated.trim() });
+    }
+
+    // Standard JSON response
+    let data: { choices?: Array<{ message?: { content?: string } }> };
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      return sendJson(res, 502, {
+        error: 'Provider returned unparseable response',
+      });
+    }
+    const translated = data.choices?.[0]?.message?.content?.trim() || '';
+    return sendJson(res, 200, { translated });
+  } catch (err: unknown) {
+    const message = getUnknownErrorMessage(err) || 'Translation failed';
+    return sendJson(res, 500, { error: message });
+  }
+});
+
 // ─── Health check ──────────────────────────────────────────────────────────
 
 app.get('/functions/v1/health', (_req, res) => {
-  sendJson(res, 200, { ok: true, routes: ['/functions/v1/chat', '/functions/v1/github-integration', '/functions/v1/github-analyzer', '/functions/v1/validate-key', '/functions/v1/chat-proxy', '/functions/v1/orchestrate'] });
+  sendJson(res, 200, { ok: true, routes: ['/functions/v1/chat', '/functions/v1/github-integration', '/functions/v1/github-analyzer', '/functions/v1/validate-key', '/functions/v1/chat-proxy', '/functions/v1/orchestrate', '/functions/v1/translate'] });
 });
 
 // ─── 404 catch-all (debug unmatched routes) ─────────────────────────────────
