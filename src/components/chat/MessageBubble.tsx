@@ -575,7 +575,7 @@ function FileEditPreview({ filePath }: { filePath: string }) {
           style={{ maxHeight: expanded ? `${contentRef.current?.scrollHeight || 2000}px` : `${COLLAPSED_HEIGHT}px` }}
         >
           <div className="chat-code-block__editor">
-            <pre aria-hidden="true" className="chat-code-block__gutter">
+            <pre aria-hidden="true" className="chat-code-block__gutter text-[12px] leading-[1.65] text-right pr-3 pl-2 font-mono text-gray-600">
               {lineNumbers}
             </pre>
             <div className="chat-code-block__viewport">

@@ -302,6 +302,23 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     ],
     defaultModel: 'Meta-Llama-3.3-70B-Instruct',
   },
+  'z-ai': {
+    id: 'z-ai',
+    label: 'z.ai (Zhipu)',
+    description: 'GLM-5 coding plan — Zhipu AI',
+    needsApiKey: true,
+    category: 'specialized',
+    badge: 'Coding',
+    iconLetter: 'Z',
+    iconColor: '#3B82F6',
+    models: [
+      'glm-5-plus',
+      'glm-5',
+      'glm-4-plus',
+      'glm-4-flash',
+    ],
+    defaultModel: 'glm-5-plus',
+  },
   hermes: {
     id: 'hermes',
     label: 'Hermes Agent',
@@ -320,7 +337,7 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
 export const PROVIDER_ORDER: Provider[] = [
   'openai', 'anthropic', 'google', 'xai',
   'groq', 'cerebras', 'openrouter', 'sambanova',
-  'deepseek', 'mistral', 'together', 'minimax', 'minimax-payg', 'kimi', 'kimi-coding', 'openclaw',
+  'deepseek', 'mistral', 'together', 'minimax', 'minimax-payg', 'kimi', 'kimi-coding', 'z-ai', 'openclaw',
   'hermes',
 ];
 

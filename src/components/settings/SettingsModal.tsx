@@ -29,6 +29,7 @@ const PROVIDER_COLORS: Partial<Record<Provider, string>> = {
   'minimax-payg': '#FF6B6B',
   kimi: '#7C3AED',
   'kimi-coding': '#7C3AED',
+  'z-ai': '#3B82F6',
   openclaw: '#F59E0B',
   hermes: '#EC4899',
 };

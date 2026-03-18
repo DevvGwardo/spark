@@ -6,7 +6,7 @@ export type Provider =
   | 'openai' | 'anthropic' | 'google' | 'xai'
   | 'groq' | 'deepseek' | 'mistral' | 'together'
   | 'minimax' | 'minimax-payg' | 'kimi' | 'kimi-coding' | 'openclaw'
-  | 'cerebras' | 'openrouter' | 'sambanova' | 'hermes';
+  | 'cerebras' | 'openrouter' | 'sambanova' | 'z-ai' | 'hermes';
 
 export type ReasoningEffort = 'low' | 'medium' | 'high';
 export type ThemeMode = 'light' | 'dark' | 'system';

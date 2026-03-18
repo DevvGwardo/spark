@@ -161,6 +161,7 @@ export const OPENAI_COMPATIBLE: Record<string, string> = {
   cerebras: 'https://api.cerebras.ai/v1',
   openrouter: 'https://openrouter.ai/api/v1',
   sambanova: 'https://api.sambanova.ai/v1',
+  'z-ai': 'https://open.bigmodel.cn/api/paas/v4',
   hermes: process.env.HERMES_BRIDGE_URL || 'http://localhost:3003/v1',
 };
 
@@ -241,6 +242,7 @@ export const MODEL_DISCOVERY_URLS: Partial<Record<string, string>> = {
   cerebras: OPENAI_COMPATIBLE.cerebras,
   openrouter: OPENAI_COMPATIBLE.openrouter,
   sambanova: OPENAI_COMPATIBLE.sambanova,
+  'z-ai': OPENAI_COMPATIBLE['z-ai'],
   hermes: OPENAI_COMPATIBLE.hermes,
 };
 
@@ -260,6 +262,7 @@ export const VALIDATION_MODELS: Record<string, string> = {
   cerebras: 'llama-3.3-70b',
   openrouter: 'nvidia/llama-3.1-nemotron-70b-instruct:free',
   sambanova: 'Meta-Llama-3.3-70B-Instruct',
+  'z-ai': 'glm-5-plus',
   hermes: HERMES_TOOL_CAPABLE_MODELS[0],
 };
 
@@ -370,7 +373,7 @@ export interface ReviewProviderResolution {
 
 const REVIEW_PROVIDER_RANK = [
   'anthropic', 'openai', 'google', 'deepseek', 'groq', 'mistral', 'together', 'xai',
-  'cerebras', 'openrouter', 'sambanova', 'kimi', 'kimi-coding', 'minimax', 'minimax-payg',
+  'cerebras', 'openrouter', 'sambanova', 'z-ai', 'kimi', 'kimi-coding', 'minimax', 'minimax-payg',
 ] as const;
 
 export function resolveReviewCapableProvider(
