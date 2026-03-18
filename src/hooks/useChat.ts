@@ -1099,8 +1099,35 @@ When the user asks you to make changes:
           proposalKey: getPendingProposalKey(pendingProposalRef.current),
         };
       }
+      // Detect partial/incomplete tool calls left by a dropped stream (common
+      // with Minimax and other providers that may terminate mid-tool-call).
+      const hasPartialToolCalls = (message.parts as Array<{ type?: string; toolInvocation?: { state?: string } }> | undefined)?.some(
+        (p) => p.type === 'tool-invocation' && (p.toolInvocation?.state === 'partial-call' || p.toolInvocation?.state === 'call'),
+      ) || (message.toolInvocations as Array<{ state?: string }> | undefined)?.some(
+        (inv) => inv.state === 'partial-call' || inv.state === 'call',
+      );
+
       if (finishReason !== 'tool-calls') {
         if (
+          // Auto-continue when tool calls were interrupted mid-stream. The
+          // sanitizePartialToolCalls helper will patch them with error results
+          // before re-sending, so the model sees the failure and can retry.
+          hasPartialToolCalls &&
+          activeRepo &&
+          unknownFinishRetryRef.current < MAX_UNKNOWN_FINISH_RETRIES
+        ) {
+          unknownFinishRetryRef.current += 1;
+          scheduleAutoContinue({
+            conversationId: convId,
+            content: continuingApprovedProposal
+              ? 'Your tool call was interrupted mid-execution. Continue the accepted plan — retry the tool call and complete the remaining work.'
+              : repoEditIntentRef.current
+                ? 'Your tool call was interrupted mid-execution. Retry the tool call and continue where you left off.'
+                : 'Your tool call was interrupted mid-execution. Retry the tool call and continue your analysis.',
+            continuingApprovedProposal,
+            forceRepoEditIntent: continuingApprovedProposal || repoEditIntentRef.current,
+          });
+        } else if (
           // Auto-continue when the model is interrupted mid-work with an unknown
           // finish reason (common with OpenRouter/Gemini hitting token limits or
           // returning non-standard finish reasons). Recover when the turn was
