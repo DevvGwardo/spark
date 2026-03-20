@@ -284,6 +284,7 @@ When the user asks you to make changes:
   const chatSessionId = `${conversationId ?? `draft-${draftEpochRef.current}`}:${panelId}`;
   const stableChatSessionIdRef = useRef(chatSessionId);
   const isStreamingRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const isSendingRef = useRef(false);
   const autoSendingQueuedRef = useRef<string | null>(null);
   // Track consecutive 'unknown' finish reasons during active repo work to auto-continue
@@ -312,7 +313,12 @@ When the user asks you to make changes:
   }, [loadConversations]);
 
   const hermesStreamFetch = useCallback(async (url: string, init?: RequestInit) => {
-    const response = await fetch(url, init);
+    // Cancel any previous streaming request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+    const response = await fetch(url, { ...init, signal: abortControllerRef.current.signal });
     if (!response.ok) {
       const text = await response.clone().text().catch(() => '');
       console.error(`[useChat:fetch] Error response body:`, text.slice(0, 500));
@@ -462,7 +468,17 @@ When the user asks you to make changes:
 
     const stream = new ReadableStream({
       async pull(controller) {
-        const { done, value } = await reader.read();
+        let readResult;
+        try {
+          readResult = await reader.read();
+        } catch (e) {
+          if (e instanceof DOMException && e.name === 'AbortError') {
+            controller.close();
+            return;
+          }
+          throw e;
+        }
+        const { done, value } = readResult;
         if (done) {
           controller.close();
           return;
@@ -658,7 +674,7 @@ When the user asks you to make changes:
     messages,
     append,
     status,
-    stop,
+    stop: sdkStop,
     reload,
     setMessages,
     error,
@@ -1124,6 +1140,13 @@ When the user asks you to make changes:
       }
     },
   });
+
+  // Wrap SDK stop to also abort the in-flight fetch
+  const stop = useCallback(() => {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    sdkStop();
+  }, [sdkStop]);
 
   // Keep messagesRef in sync for use in callbacks without adding messages to deps
   messagesRef.current = messages;
@@ -1895,6 +1918,14 @@ When the user asks you to make changes:
     activeRequestBodyRef.current = buildRequestBody();
     reload();
   }, [activeRepo, buildRequestBody, isRepoMode, reload]);
+
+  // Abort in-flight fetch on unmount
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+      abortControllerRef.current = null;
+    };
+  }, []);
 
   return {
     messages,
