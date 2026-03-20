@@ -887,7 +887,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                         </div>
                       )}
                       <div className="flex flex-wrap items-center gap-2">
-                        <GhostBtn onClick={() => { createIssueOpen ? resetCreateIssueDraft() : openCreateIssueDraft(); }} disabled={createIssueSubmitting}>
+                        <GhostBtn onClick={() => { if (createIssueOpen) { resetCreateIssueDraft(); } else { openCreateIssueDraft(); } }} disabled={createIssueSubmitting}>
                           {createIssueSubmitting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
                           {createIssueOpen ? 'Cancel draft' : 'New issue'}
                         </GhostBtn>
@@ -1377,7 +1377,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                             className="w-full resize-none bg-transparent text-[13px] leading-relaxed outline-none placeholder:text-[#4A4A50]"
                             style={{ color: V4.textPrimary }}
                             onKeyDown={(e) => {
-                              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { replyingTo ? void handleSubmitReply() : void handleSubmitComment(); }
+                              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { if (replyingTo) { void handleSubmitReply(); } else { void handleSubmitComment(); } }
                               if (e.key === 'Escape' && replyingTo) setReplyingTo(null);
                             }}
                           />
@@ -1389,7 +1389,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                             <Code2 className="h-3.5 w-3.5" style={{ color: V4.textTertiary }} />
                           </div>
                           <button
-                            onClick={() => { replyingTo ? void handleSubmitReply() : void handleSubmitComment(); }}
+                            onClick={() => { if (replyingTo) { void handleSubmitReply(); } else { void handleSubmitComment(); } }}
                             disabled={(commentSubmitting || replySubmitting) || !commentText.trim()}
                             className="inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
                             style={{ background: commentText.trim() ? V4.accentAmber : V4.bgElevated, color: commentText.trim() ? V4.bgPage : V4.textTertiary }}

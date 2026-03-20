@@ -41,3 +41,13 @@ __pycache__/
 
 # Local task scheduler lock
 .claude/scheduled_tasks.lock
+
+# Backup files
+*.bak
+*.backup
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Bundle analysis
+stats.html

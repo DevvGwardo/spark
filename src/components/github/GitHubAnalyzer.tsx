@@ -30,7 +30,7 @@ interface RepoInfo {
 
 const parseGitHubUrl = (url: string): RepoInfo | null => {
   try {
-    const regex = /github\.com\/([^\/]+)\/([^\/]+)/;
+    const regex = /github\.com\/([^/]+)\/([^/]+)/;
     const match = url.match(regex);
     if (!match) return null;
     
@@ -44,13 +44,15 @@ const parseGitHubUrl = (url: string): RepoInfo | null => {
   }
 };
 
-const severityConfig = {
+type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline';
+
+const severityConfig: Record<string, { color: BadgeVariant; icon: typeof AlertTriangle }> = {
   high: { color: 'destructive', icon: AlertTriangle },
   medium: { color: 'default', icon: Info },
   low: { color: 'secondary', icon: CheckCircle }
 };
 
-const typeConfig = {
+const typeConfig: Record<string, { color: BadgeVariant; icon: typeof Bug; label: string }> = {
   bug: { color: 'destructive', icon: Bug, label: 'Bug' },
   improvement: { color: 'default', icon: Zap, label: 'Improvement' },
   security: { color: 'destructive', icon: AlertTriangle, label: 'Security' },
@@ -194,10 +196,10 @@ export const GitHubAnalyzer: React.FC = () => {
                           <h4 className="font-semibold">{result.title}</h4>
                         </div>
                         <div className="flex items-center gap-2">
-                          <Badge variant={typeConfig[result.type].color as any}>
+                          <Badge variant={typeConfig[result.type].color}>
                             {typeConfig[result.type].label}
                           </Badge>
-                          <Badge variant={severityConfig[result.severity].color as any}>
+                          <Badge variant={severityConfig[result.severity].color}>
                             <SeverityIcon className="h-3 w-3 mr-1" />
                             {result.severity}
                           </Badge>

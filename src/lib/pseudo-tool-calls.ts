@@ -43,7 +43,7 @@ const TOOL_CALL_PATTERN = /\[?(propose_changes|batch_edit_repo_files|edit_repo_f
 const FENCED_CODE_BLOCK_PATTERN = /```([A-Za-z0-9_+-]+)?\n([\s\S]*?)```/g;
 const PATH_CANDIDATE_PATTERN = /[A-Za-z0-9_./-]+\.[A-Za-z0-9]{1,8}/g;
 const HTML_PARAGRAPH_PATTERN = /<p>[\s\S]*?<\/p>/gi;
-const JSON_BLOCK_START_PATTERN = /(^|\n)([ \t]*)([\[{])/g;
+const JSON_BLOCK_START_PATTERN = /(^|\n)([ \t]*)([{[])/g;
 const HTML_ENTITY_REPLACEMENTS: Array<[RegExp, string]> = [
   [/&lt;/gi, '<'],
   [/&gt;/gi, '>'],
@@ -775,7 +775,7 @@ export function stripPseudoToolInvocations(content: string, isStreaming = false)
   // Strip orphaned JSON array brackets that remain after tool-call code blocks
   // are removed. These appear as standalone [ or ] on their own line when the
   // model wraps tool parameters in JSON arrays around fenced code blocks.
-  cleaned = cleaned.replace(/^\s*[\[\]]\s*$/gm, '');
+  cleaned = cleaned.replace(/^\s*[[\]]\s*$/gm, '');
 
   cleaned = cleaned.replace(HTML_PARAGRAPH_PATTERN, (paragraph) => (
     looksLikeLeakedRepoPayload(paragraph) ? '' : paragraph

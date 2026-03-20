@@ -143,12 +143,6 @@ export const ActivityIndicator: React.FC<ActivityIndicatorProps> = ({ isStreamin
     [toolActivity],
   );
 
-  if (!isStreaming) return null;
-
-  const config = ACTIVITY_CONFIG[activity];
-  const Icon = config.Icon;
-  const label = statusLabel || config.label;
-
   // Combine active files from tool activity + staged changes
   const allFiles = useMemo(() => {
     const set = new Set(activeFiles);
@@ -159,6 +153,12 @@ export const ActivityIndicator: React.FC<ActivityIndicatorProps> = ({ isStreamin
     }
     return [...set];
   }, [activeFiles, stagedPaths]);
+
+  if (!isStreaming) return null;
+
+  const config = ACTIVITY_CONFIG[activity];
+  const Icon = config.Icon;
+  const label = statusLabel || config.label;
 
   return (
     <div className="flex flex-col items-center gap-1.5 py-2 animate-in fade-in duration-200">

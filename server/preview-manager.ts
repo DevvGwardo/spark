@@ -1,6 +1,6 @@
 import { spawn, ChildProcess } from 'child_process';
 import { mkdtemp, rm, writeFile, mkdir } from 'fs/promises';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { tmpdir } from 'os';
 
@@ -70,7 +70,7 @@ function startDevServer(
 
   if (hasPackageJson) {
     try {
-      const pkg = require(join(cwd, 'package.json'));
+      const pkg = JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf-8'));
       const scripts = pkg.scripts || {};
 
       if (scripts.dev) {
@@ -228,9 +228,9 @@ export async function startPreview(
 
     preview.status = 'running';
     return { id, port, url: `http://localhost:${port}` };
-  } catch (err: any) {
+  } catch (err: unknown) {
     preview.status = 'error';
-    preview.error = err.message;
+    preview.error = err instanceof Error ? err.message : String(err);
     // Clean up on error
     if (preview.process) {
       preview.process.kill('SIGTERM');

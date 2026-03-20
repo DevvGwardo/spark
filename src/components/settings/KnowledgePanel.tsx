@@ -22,8 +22,8 @@ export const KnowledgePanel: React.FC = () => {
       setNewContent('');
       setIsAdding(false);
       setError('');
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -46,8 +46,8 @@ export const KnowledgePanel: React.FC = () => {
         enabled: true,
       });
       setError('');
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
     }
 
     if (fileRef.current) fileRef.current.value = '';
