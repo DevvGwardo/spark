@@ -1,0 +1,28 @@
+{
+  "id": "add-error-handling",
+  "description": "Add try/catch error handling to an async function",
+  "prompt": "Add proper error handling to the fetchUsers function in api.ts. It should catch errors, log them, and return an empty array instead of throwing.",
+  "repo": {
+    "owner": "test-org",
+    "name": "test-repo",
+    "defaultBranch": "main",
+    "fileTree": ["src/api.ts", "src/types.ts", "package.json"],
+    "files": {
+      "src/api.ts": "import { User } from './types';\n\nexport async function fetchUsers(): Promise<User[]> {\n  const response = await fetch('/api/users');\n  const data = await response.json();\n  return data.users;\n}\n\nexport async function fetchUser(id: number): Promise<User> {\n  const response = await fetch(`/api/users/${id}`);\n  return response.json();\n}\n",
+      "src/types.ts": "export interface User {\n  id: number;\n  name: string;\n  email: string;\n}\n",
+      "package.json": "{\"name\": \"test-repo\", \"version\": \"1.0.0\"}"
+    }
+  },
+  "expected": {
+    "files_read": ["src/api.ts"],
+    "changes": [
+      {
+        "path": "src/api.ts",
+        "action": "edit",
+        "mustContain": ["try", "catch", "console", "return []"],
+        "mustNotContain": []
+      }
+    ],
+    "unchanged": ["src/types.ts", "package.json"]
+  }
+}

@@ -3,7 +3,6 @@ import { X, Eye, EyeOff, Search, Check, Zap, ChevronDown, ChevronRight, ArrowLef
 import { useSettingsStore, type Provider, type Language } from '@/stores/settings-store';
 import { COLOR_THEMES, ACCENT_COLORS } from '@/lib/themes';
 import { useHermesStore, type HermesToolsets } from '@/stores/hermes-store';
-import { useOrchestratorStore } from '@/stores/orchestrator-store';
 import { useKnowledgeStore } from '@/stores/knowledge-store';
 import { useUIStore } from '@/stores/ui-store';
 import { PROVIDERS, PROVIDER_ORDER, CATEGORY_LABELS, getVisibleModelOptions, type ProviderCategory } from '@/lib/providers';

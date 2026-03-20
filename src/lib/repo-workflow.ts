@@ -3,7 +3,6 @@ import { getChatScopeId } from '@/lib/chat-scope';
 import { usePanelStore } from '@/stores/panel-store';
 import type { ActiveRepo } from '@/stores/changeset-store';
 import { useChangesetStore } from '@/stores/changeset-store';
-import { useOrchestratorStore } from '@/stores/orchestrator-store';
 import { usePreviewStore } from '@/stores/preview-store';
 import { useUIStore } from '@/stores/ui-store';
 
@@ -88,14 +87,8 @@ export async function startRepoChatInNewThread({
   openPreview = false,
   repoEditIntentOverride,
 }: StartRepoChatInNewThreadInput): Promise<boolean> {
-  const orchestratorStore = useOrchestratorStore.getState();
-  const wasOrchestratorEnabled = orchestratorStore.enabled;
   const panel = usePanelStore.getState().panels.find((entry) => entry.id === panelId);
   const shouldPreservePanelRepo = !!panel?.conversationId;
-
-  if (wasOrchestratorEnabled) {
-    orchestratorStore.setEnabled(false);
-  }
 
   try {
     if (shouldPreservePanelRepo) {
@@ -115,9 +108,6 @@ export async function startRepoChatInNewThread({
       if (shouldPreservePanelRepo) {
         useUIStore.getState().clearPanelRepoHandoff(panelId);
       }
-      if (wasOrchestratorEnabled) {
-        useOrchestratorStore.getState().setEnabled(true);
-      }
       return false;
     }
 
@@ -131,9 +121,6 @@ export async function startRepoChatInNewThread({
   } catch (error) {
     if (shouldPreservePanelRepo) {
       useUIStore.getState().clearPanelRepoHandoff(panelId);
-    }
-    if (wasOrchestratorEnabled) {
-      useOrchestratorStore.getState().setEnabled(true);
     }
     throw error;
   }

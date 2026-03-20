@@ -84,7 +84,7 @@ export const ChatSidebar: React.FC = () => {
   const { panels, focusedPanelId, setConversationForPanel, openPanel } = usePanelStore();
   const { activeTab, setActiveTab, setSettingsOpen, setRepoBrowserOpen, sidebarWidth } = useUIStore();
   const activities = useActivityStore((s) => s.activities);
-  const getPendingLineStats = useActivityStore((s) => s.getPendingLineStats);
+  const getLineTotals = useChangesetStore((s) => s.getLineTotals);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
@@ -326,10 +326,10 @@ export const ChatSidebar: React.FC = () => {
                   const isFocused = activeTab === 'chat' && focusedConvId === conv.id;
                   const isInAnotherPanel = !isFocused && panels.some((p) => p.conversationId === conv.id);
                   const activity = activities[conv.id];
-                  const pendingLineStats = getPendingLineStats(conv.id);
                   const isProcessing = activity?.streaming;
-                  const totalAdded = (conv.linesAdded ?? 0) + pendingLineStats.added;
-                  const totalRemoved = (conv.linesRemoved ?? 0) + pendingLineStats.removed;
+                  const convLineTotals = getLineTotals(conv.id);
+                  const totalAdded = convLineTotals.added;
+                  const totalRemoved = convLineTotals.removed;
                   const hasLineStats = totalAdded > 0 || totalRemoved > 0;
                   const showPinned = !!conv.pinned;
 

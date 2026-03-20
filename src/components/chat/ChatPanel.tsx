@@ -3,8 +3,6 @@ import { X, MoreHorizontal, Pin, Pencil, Archive, Copy, PanelRight, GitPullReque
 import { useShallow } from 'zustand/shallow';
 import { ChatArea } from './ChatArea';
 import { useChat } from '@/hooks/useChat';
-import { useOrchestrator } from '@/hooks/useOrchestrator';
-import { useOrchestratorStore } from '@/stores/orchestrator-store';
 import { usePanelStore } from '@/stores/panel-store';
 import { useChatStore } from '@/stores/chat-store';
 import { useChangesetStore } from '@/stores/changeset-store';
@@ -24,7 +22,7 @@ interface ChatPanelProps {
   onOpenPR?: (panelId: string, mode?: 'create' | 'review') => void;
 }
 
-type ChatRuntime = ReturnType<typeof useChat> | ReturnType<typeof useOrchestrator>;
+type ChatRuntime = ReturnType<typeof useChat>;
 
 function ChatRuntimeArea({
   conversationId,
@@ -87,17 +85,6 @@ function BackgroundStandardChatRuntime({
   return null;
 }
 
-function OrchestratorChatRuntime({
-  conversationId,
-  onConversationCreated,
-}: {
-  conversationId: string | null;
-  onConversationCreated: (id: string) => void;
-}) {
-  const chat = useOrchestrator(conversationId, onConversationCreated);
-  return <ChatRuntimeArea conversationId={conversationId} chat={chat} />;
-}
-
 export const ChatPanel: React.FC<ChatPanelProps> = ({
   panelId,
   conversationId,
@@ -115,11 +102,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const getChangeCount = useChangesetStore((s) => s.getChangeCount);
   const getChangeset = useChangesetStore((s) => s.getChangeset);
   const getStagedCount = useChangesetStore((s) => s.getStagedCount);
+  const getLineTotals = useChangesetStore((s) => s.getLineTotals);
   const scopeId = getChatScopeId(panelId, conversationId);
   const preview = usePreviewStore(useShallow((s) => s.getPreview(scopeId)));
   const setPreviewOpen = usePreviewStore((s) => s.setOpen);
   const setPreviewView = usePreviewStore((s) => s.setView);
-  const orchestratorEnabled = useOrchestratorStore((s) => s.enabled);
   const [menuOpen, setMenuOpen] = useState(false);
   const [backgroundConversationIds, setBackgroundConversationIds] = useState<string[]>([]);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -129,13 +116,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const changeCount = getChangeCount(scopeId);
   const stagedCount = getStagedCount(scopeId);
   const { activeRepo, pullRequest } = getChangeset(scopeId);
-  const getPendingLineStats = useActivityStore((s) => s.getPendingLineStats);
   const currentConv = conversations.find((c) => c.id === conversationId);
-  const pendingStats = conversationId ? getPendingLineStats(conversationId) : { added: 0, removed: 0 };
-  const lineTotals = {
-    added: (currentConv?.linesAdded ?? 0) + pendingStats.added,
-    removed: (currentConv?.linesRemoved ?? 0) + pendingStats.removed,
-  };
+  const lineTotals = getLineTotals(scopeId);
 
   // Close menu on outside click
   useEffect(() => {
@@ -199,7 +181,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         )}
         onClick={onFocus}
       >
-        {!orchestratorEnabled && backgroundConversationIds.map((backgroundConversationId) => (
+        {backgroundConversationIds.map((backgroundConversationId) => (
           <BackgroundStandardChatRuntime
             key={`background:${backgroundConversationId}`}
             panelId={panelId}
@@ -364,19 +346,12 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           </div>
         )}
         <div className="flex-1 overflow-hidden">
-          {orchestratorEnabled ? (
-            <OrchestratorChatRuntime
-              conversationId={conversationId}
-              onConversationCreated={handleConversationCreated}
-            />
-          ) : (
-            <StandardChatRuntime
-              panelId={panelId}
-              conversationId={conversationId}
-              onConversationCreated={handleConversationCreated}
-              onOpenPR={onOpenPR}
-            />
-          )}
+          <StandardChatRuntime
+            panelId={panelId}
+            conversationId={conversationId}
+            onConversationCreated={handleConversationCreated}
+            onOpenPR={onOpenPR}
+          />
         </div>
       </div>
     </PanelProvider>

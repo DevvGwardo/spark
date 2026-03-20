@@ -29,8 +29,6 @@ type EmitEvent = (event: ServerToolEvent) => void;
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-/** Max tool-call iterations the AI SDK will run server-side. */
-export const SERVER_AGENT_MAX_STEPS = 50;
 
 const GITHUB_API_BASE = 'https://api.github.com';
 

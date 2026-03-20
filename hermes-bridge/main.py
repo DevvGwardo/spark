@@ -13,8 +13,13 @@ app = FastAPI(title="Hermes Bridge")
 
 HERMES_PORT = int(os.environ.get("HERMES_PORT", "3003"))
 OPENROUTER_KEY = os.environ.get("HERMES_OPENROUTER_KEY", "")
+MINIMAX_KEY = os.environ.get("HERMES_MINIMAX_KEY", "")
 DEFAULT_TOOLSETS = os.environ.get("HERMES_TOOLSETS", "web,browser")
 DEFAULT_MODEL = os.environ.get("HERMES_DEFAULT_MODEL", "meta-llama/llama-4-maverick")
+
+# MiniMax direct routing — models matching this prefix bypass OpenRouter
+MINIMAX_BASE_URL = "https://api.minimax.io/v1"
+MINIMAX_MODEL_PREFIX = "MiniMax-"
 
 
 def _read_positive_int_env(name: str, fallback: int) -> int:
@@ -37,6 +42,8 @@ AGENT_MODELS = [
     # Paid models
     {"id": "anthropic/claude-sonnet-4", "object": "model", "owned_by": "anthropic"},
     {"id": "openai/gpt-4.1-mini", "object": "model", "owned_by": "openai"},
+    {"id": "MiniMax-M2.7", "object": "model", "owned_by": "minimax"},
+    {"id": "MiniMax-M2.7-highspeed", "object": "model", "owned_by": "minimax"},
     {"id": "google/gemini-3.1-flash-lite-preview-20260303", "object": "model", "owned_by": "google"},
     {"id": "google/gemini-2.5-flash", "object": "model", "owned_by": "google"},
     {"id": "deepseek/deepseek-v3.2-20251201", "object": "model", "owned_by": "deepseek"},
@@ -335,15 +342,35 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
     if auth_header.startswith("Bearer "):
         api_key = auth_header[7:]
 
-    if not api_key:
-        return JSONResponse(status_code=401, content={"error": {"message": "No API key provided. Set HERMES_OPENROUTER_KEY or pass Authorization header."}})
+    # MiniMax direct routing: when model starts with "MiniMax-", route to
+    # the MiniMax API instead of OpenRouter.  Key priority:
+    #   1. X-Hermes-Minimax-Key header (forwarded from user's settings)
+    #   2. HERMES_MINIMAX_KEY env var
+    is_minimax_model = body.model.startswith(MINIMAX_MODEL_PREFIX)
+    if is_minimax_model:
+        minimax_key = (
+            request.headers.get("x-hermes-minimax-key", "").strip()
+            or MINIMAX_KEY
+        )
+        if not minimax_key:
+            return JSONResponse(
+                status_code=401,
+                content={"error": {"message": "MiniMax API key required. Set HERMES_MINIMAX_KEY or configure a MiniMax key in Settings."}},
+            )
+        agent_base_url = MINIMAX_BASE_URL
+        agent_api_key = minimax_key
+    else:
+        if not api_key:
+            return JSONResponse(status_code=401, content={"error": {"message": "No API key provided. Set HERMES_OPENROUTER_KEY or pass Authorization header."}})
+        agent_base_url = "https://openrouter.ai/api/v1"
+        agent_api_key = api_key
 
     if execution_mode == "passthrough":
         print(
             f"[hermes-bridge] Passthrough mode. model={body.model} msgs={len(body.messages)} extra_keys={list((body.model_extra or {}).keys())}",
             flush=True,
         )
-        return await _passthrough_chat_completions(body, api_key)
+        return await _passthrough_chat_completions(body, agent_api_key if is_minimax_model else api_key)
 
     from run_agent import AIAgent
 
@@ -381,8 +408,8 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
             if has_repo_tools and not github_pat:
                 print(f"[hermes-bridge] WARNING: repo_mode is active but no GitHub PAT provided — read_repo_file will fail", flush=True)
             agent = AIAgent(
-                base_url="https://openrouter.ai/api/v1",
-                api_key=api_key,
+                base_url=agent_base_url,
+                api_key=agent_api_key,
                 model=body.model,
                 max_iterations=MAX_AGENT_ITERATIONS,
                 enabled_toolsets=enabled_toolsets,

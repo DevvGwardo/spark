@@ -1,0 +1,30 @@
+{
+  "id": "create-test-file",
+  "description": "Create a new test file for an existing module",
+  "prompt": "Create a test file for the math utils in src/utils/math.ts. Use vitest and test the add, subtract, and multiply functions.",
+  "repo": {
+    "owner": "test-org",
+    "name": "test-repo",
+    "defaultBranch": "main",
+    "fileTree": ["src/utils/math.ts", "src/index.ts", "vitest.config.ts", "package.json"],
+    "files": {
+      "src/utils/math.ts": "export function add(a: number, b: number): number {\n  return a + b;\n}\n\nexport function subtract(a: number, b: number): number {\n  return a - b;\n}\n\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n",
+      "src/index.ts": "export * from './utils/math';\n",
+      "vitest.config.ts": "import { defineConfig } from 'vitest/config';\nexport default defineConfig({ test: { globals: true } });\n",
+      "package.json": "{\"name\": \"test-repo\", \"version\": \"1.0.0\", \"devDependencies\": {\"vitest\": \"^1.0.0\"}}"
+    }
+  },
+  "expected": {
+    "files_read": ["src/utils/math.ts"],
+    "changes": [
+      {
+        "path": "src/utils/math.test.ts",
+        "action": "create",
+        "mustContain": ["import", "describe", "add", "subtract", "multiply", "expect"],
+        "mustNotContain": [],
+        "pathPattern": ".*math.*test.*\\.ts$"
+      }
+    ],
+    "unchanged": ["src/utils/math.ts", "src/index.ts", "vitest.config.ts", "package.json"]
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "id": "similar-patterns",
+  "description": "Edit the correct occurrence among many similar function names",
+  "prompt": "The `processUserOrder` function in orders.ts has a bug — it doesn't validate that the quantity is positive before processing. Add a check that throws an error if quantity <= 0. Don't change the other process functions.",
+  "repo": {
+    "owner": "test-org",
+    "name": "test-repo",
+    "defaultBranch": "main",
+    "fileTree": ["src/orders.ts", "src/types.ts"],
+    "files": {
+      "src/orders.ts": "import { Order, User, Product } from './types';\n\nexport function processAdminOrder(order: Order, admin: User): string {\n  if (!admin.isAdmin) throw new Error('Not an admin');\n  return `Admin order ${order.id} processed by ${admin.name}`;\n}\n\nexport function processUserOrder(order: Order, user: User): string {\n  const total = order.items.reduce((sum, item) => sum + item.price * item.quantity, 0);\n  return `Order ${order.id} for ${user.name}: $${total.toFixed(2)}`;\n}\n\nexport function processGuestOrder(order: Order): string {\n  const total = order.items.reduce((sum, item) => sum + item.price * item.quantity, 0);\n  if (total > 100) throw new Error('Guest orders limited to $100');\n  return `Guest order ${order.id}: $${total.toFixed(2)}`;\n}\n\nexport function processBulkOrders(orders: Order[], user: User): string[] {\n  return orders.map(order => processUserOrder(order, user));\n}\n",
+      "src/types.ts": "export interface User {\n  id: string;\n  name: string;\n  isAdmin: boolean;\n}\n\nexport interface OrderItem {\n  productId: string;\n  price: number;\n  quantity: number;\n}\n\nexport interface Order {\n  id: string;\n  items: OrderItem[];\n}\n\nexport interface Product {\n  id: string;\n  name: string;\n  price: number;\n}\n"
+    }
+  },
+  "expected": {
+    "files_read": ["src/orders.ts"],
+    "changes": [
+      {
+        "path": "src/orders.ts",
+        "action": "edit",
+        "mustContain": ["quantity", "processUserOrder", "processAdminOrder", "processGuestOrder", "processBulkOrders"],
+        "mustNotContain": []
+      }
+    ],
+    "unchanged": ["src/types.ts"]
+  }
+}

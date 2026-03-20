@@ -14,7 +14,7 @@ describe('getApiBaseUrl', () => {
     expect(getApiPortFromUrl('http://localhost:5173/')).toBeNull();
   });
 
-  it('prefers the URL query param over the preload-exposed Electron API port', () => {
+  it('prefers the preload-exposed Electron API port over URL query param', () => {
     window.electronAPI = {
       apiPort: 3555,
       platform: 'darwin',
@@ -26,11 +26,17 @@ describe('getApiBaseUrl', () => {
     };
     window.history.replaceState({}, '', '/?apiPort=4312');
 
-    // URL param wins — Electron main process sets it on every launch
+    // electronAPI wins — persists across HMR reloads unlike URL params
+    expect(getApiBaseUrl()).toBe('http://localhost:3555');
+  });
+
+  it('falls back to URL query param when preload is unavailable', () => {
+    window.history.replaceState({}, '', '/?apiPort=4312');
+
     expect(getApiBaseUrl()).toBe('http://localhost:4312');
   });
 
-  it('falls back to the preload-exposed Electron API port when no URL param', () => {
+  it('uses the Electron API port even without URL params', () => {
     window.electronAPI = {
       apiPort: 3555,
       platform: 'darwin',
@@ -42,12 +48,6 @@ describe('getApiBaseUrl', () => {
     };
 
     expect(getApiBaseUrl()).toBe('http://localhost:3555');
-  });
-
-  it('falls back to the renderer URL query param when preload is unavailable', () => {
-    window.history.replaceState({}, '', '/?apiPort=4312#/chat');
-
-    expect(getApiBaseUrl()).toBe('http://localhost:4312');
   });
 
   it('reuses the cached API port when preload and query params are unavailable', () => {

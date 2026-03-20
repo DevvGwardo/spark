@@ -1,0 +1,663 @@
+[
+  {
+    "fixture_id": "add-error-handling",
+    "passed": true,
+    "score": 1.0,
+    "duration_ms": 7134,
+    "iterations": 4,
+    "files_read": [
+      "api.ts",
+      "src/api.ts"
+    ],
+    "checks": [
+      {
+        "name": "read:src/api.ts",
+        "passed": true,
+        "detail": "Read: src/api.ts"
+      },
+      {
+        "name": "action:src/api.ts",
+        "passed": true,
+        "detail": "Action: expected=edit, got=edit"
+      },
+      {
+        "name": "contains:src/api.ts:try",
+        "passed": true,
+        "detail": "Found: 'try'"
+      },
+      {
+        "name": "contains:src/api.ts:catch",
+        "passed": true,
+        "detail": "Found: 'catch'"
+      },
+      {
+        "name": "contains:src/api.ts:console",
+        "passed": true,
+        "detail": "Found: 'console'"
+      },
+      {
+        "name": "contains:src/api.ts:return []",
+        "passed": true,
+        "detail": "Found: 'return []'"
+      },
+      {
+        "name": "unchanged:src/types.ts",
+        "passed": true,
+        "detail": "Correctly unchanged: src/types.ts"
+      },
+      {
+        "name": "unchanged:package.json",
+        "passed": true,
+        "detail": "Correctly unchanged: package.json"
+      },
+      {
+        "name": "no_crash",
+        "passed": true,
+        "detail": "Agent loop completed without exceptions"
+      }
+    ],
+    "error": null
+  },
+  {
+    "fixture_id": "ambiguous-refactor",
+    "passed": true,
+    "score": 1.0,
+    "duration_ms": 10281,
+    "iterations": 6,
+    "files_read": [
+      "config.js",
+      "config.json",
+      "package.json",
+      "src/config.ts"
+    ],
+    "checks": [
+      {
+        "name": "read:src/config.ts",
+        "passed": true,
+        "detail": "Read: src/config.ts"
+      },
+      {
+        "name": "action:src/config.ts",
+        "passed": true,
+        "detail": "Action: expected=edit, got=edit"
+      },
+      {
+        "name": "contains:src/config.ts:interface",
+        "passed": true,
+        "detail": "Found: 'interface'"
+      },
+      {
+        "name": "contains:src/config.ts:Config",
+        "passed": true,
+        "detail": "Found: 'Config'"
+      },
+      {
+        "name": "unchanged:package.json",
+        "passed": true,
+        "detail": "Correctly unchanged: package.json"
+      },
+      {
+        "name": "no_crash",
+        "passed": true,
+        "detail": "Agent loop completed without exceptions"
+      }
+    ],
+    "error": null
+  },
+  {
+    "fixture_id": "create-test-file",
+    "passed": true,
+    "score": 1.0,
+    "duration_ms": 7165,
+    "iterations": 3,
+    "files_read": [
+      "src/utils/math.ts"
+    ],
+    "checks": [
+      {
+        "name": "read:src/utils/math.ts",
+        "passed": true,
+        "detail": "Read: src/utils/math.ts"
+      },
+      {
+        "name": "action:src/utils/math.test.ts",
+        "passed": true,
+        "detail": "Action: expected=create, got=create"
+      },
+      {
+        "name": "contains:src/utils/math.test.ts:import",
+        "passed": true,
+        "detail": "Found: 'import'"
+      },
+      {
+        "name": "contains:src/utils/math.test.ts:describe",
+        "passed": true,
+        "detail": "Found: 'describe'"
+      },
+      {
+        "name": "contains:src/utils/math.test.ts:add",
+        "passed": true,
+        "detail": "Found: 'add'"
+      },
+      {
+        "name": "contains:src/utils/math.test.ts:subtract",
+        "passed": true,
+        "detail": "Found: 'subtract'"
+      },
+      {
+        "name": "contains:src/utils/math.test.ts:multiply",
+        "passed": true,
+        "detail": "Found: 'multiply'"
+      },
+      {
+        "name": "contains:src/utils/math.test.ts:expect",
+        "passed": true,
+        "detail": "Found: 'expect'"
+      },
+      {
+        "name": "unchanged:src/utils/math.ts",
+        "passed": true,
+        "detail": "Correctly unchanged: src/utils/math.ts"
+      },
+      {
+        "name": "unchanged:src/index.ts",
+        "passed": true,
+        "detail": "Correctly unchanged: src/index.ts"
+      },
+      {
+        "name": "unchanged:vitest.config.ts",
+        "passed": true,
+        "detail": "Correctly unchanged: vitest.config.ts"
+      },
+      {
+        "name": "unchanged:package.json",
+        "passed": true,
+        "detail": "Correctly unchanged: package.json"
+      },
+      {
+        "name": "no_crash",
+        "passed": true,
+        "detail": "Agent loop completed without exceptions"
+      }
+    ],
+    "error": null
+  },
+  {
+    "fixture_id": "deep-dependency-chain",
+    "passed": false,
+    "score": 0.09090909090909091,
+    "duration_ms": 30473,
+    "iterations": 20,
+    "files_read": [
+      "src",
+      "README.md",
+      "package.json",
+      "src/index.ts",
+      ".",
+      ".",
+      "src",
+      "UserResponse",
+      "UserResponse",
+      ".",
+      "README.md",
+      "./",
+      "test-org"
+    ],
+    "checks": [
+      {
+        "name": "read:src/types.ts",
+        "passed": false,
+        "detail": "NOT read: src/types.ts"
+      },
+      {
+        "name": "read:src/api/client.ts",
+        "passed": false,
+        "detail": "NOT read: src/api/client.ts"
+      },
+      {
+        "name": "read:src/api/transform.ts",
+        "passed": false,
+        "detail": "NOT read: src/api/transform.ts"
+      },
+      {
+        "name": "read:src/components/UserList.tsx",
+        "passed": false,
+        "detail": "NOT read: src/components/UserList.tsx"
+      },
+      {
+        "name": "read:src/hooks/useUsers.ts",
+        "passed": false,
+        "detail": "NOT read: src/hooks/useUsers.ts"
+      },
+      {
+        "name": "change:src/types.ts",
+        "passed": false,
+        "detail": "Expected edit on src/types.ts \u2014 no matching change found"
+      },
+      {
+        "name": "change:src/api/client.ts",
+        "passed": false,
+        "detail": "Expected edit on src/api/client.ts \u2014 no matching change found"
+      },
+      {
+        "name": "change:src/api/transform.ts",
+        "passed": false,
+        "detail": "Expected edit on src/api/transform.ts \u2014 no matching change found"
+      },
+      {
+        "name": "change:src/components/UserList.tsx",
+        "passed": false,
+        "detail": "Expected edit on src/components/UserList.tsx \u2014 no matching change found"
+      },
+      {
+        "name": "change:src/hooks/useUsers.ts",
+        "passed": false,
+        "detail": "Expected edit on src/hooks/useUsers.ts \u2014 no matching change found"
+      },
+      {
+        "name": "no_crash",
+        "passed": true,
+        "detail": "Agent loop completed without exceptions"
+      }
+    ],
+    "error": null
+  },
+  {
+    "fixture_id": "edge-case-empty-file",
+    "passed": false,
+    "score": 0.8333333333333334,
+    "duration_ms": 27730,
+    "iterations": 20,
+    "files_read": [
+      "src/utils/index.ts",
+      "src/utils",
+      "utils",
+      "index.ts",
+      "src/index.ts",
+      "README.md",
+      "index.ts",
+      "utils/index.ts",
+      "src/utils/index.ts",
+      "package.json",
+      "src/utils/index.ts",
+      "utils",
+      "src/index.ts",
+      "lib/utils/index.ts",
+      "utils/index.ts",
+      "index.ts"
+    ],
+    "checks": [
+      {
+        "name": "read:src/utils/index.ts",
+        "passed": true,
+        "detail": "Read: src/utils/index.ts"
+      },
+      {
+        "name": "change:src/utils/index.ts",
+        "passed": false,
+        "detail": "Expected edit on src/utils/index.ts \u2014 no matching change found"
+      },
+      {
+        "name": "unchanged:src/utils/string.ts",
+        "passed": true,
+        "detail": "Correctly unchanged: src/utils/string.ts"
+      },
+      {
+        "name": "unchanged:src/utils/number.ts",
+        "passed": true,
+        "detail": "Correctly unchanged: src/utils/number.ts"
+      },
+      {
+        "name": "unchanged:src/utils/date.ts",
+        "passed": true,
+        "detail": "Correctly unchanged: src/utils/date.ts"
+      },
+      {
+        "name": "no_crash",
+        "passed": true,
+        "detail": "Agent loop completed without exceptions"
+      }
+    ],
+    "error": null
+  },
+  {
+    "fixture_id": "fix-bug-off-by-one",
+    "passed": true,
+    "score": 1.0,
+    "duration_ms": 6396,
+    "iterations": 3,
+    "files_read": [
+      "src/pagination.ts"
+    ],
+    "checks": [
+      {
+        "name": "read:src/pagination.ts",
+        "passed": true,
+        "detail": "Read: src/pagination.ts"
+      },
+      {
+        "name": "action:src/pagination.ts",
+        "passed": true,
+        "detail": "Action: expected=edit, got=edit"
+      },
+      {
+        "name": "contains:src/pagination.ts:(page - 1)",
+        "passed": true,
+        "detail": "Found: '(page - 1)'"
+      },
+      {
+        "name": "unchanged:src/types.ts",
+        "passed": true,
+        "detail": "Correctly unchanged: src/types.ts"
+      },
+      {
+        "name": "no_crash",
+        "passed": true,
+        "detail": "Agent loop completed without exceptions"
+      }
+    ],
+    "error": null
+  },
+  {
+    "fixture_id": "large-file-surgical-edit",
+    "passed": true,
+    "score": 1.0,
+    "duration_ms": 16358,
+    "iterations": 4,
+    "files_read": [
+      "server.ts",
+      "src/server.ts"
+    ],
+    "checks": [
+      {
+        "name": "read:src/server.ts",
+        "passed": true,
+        "detail": "Read: src/server.ts"
+      },
+      {
+        "name": "action:src/server.ts",
+        "passed": true,
+        "detail": "Action: expected=edit, got=edit"
+      },
+      {
+        "name": "contains:src/server.ts:windowMs: 30000",
+        "passed": true,
+        "detail": "Found: 'windowMs: 30000'"
+      },
+      {
+        "name": "contains:src/server.ts:maxRequests: 50",
+        "passed": true,
+        "detail": "Found: 'maxRequests: 50'"
+      },
+      {
+        "name": "contains:src/server.ts:import express",
+        "passed": true,
+        "detail": "Found: 'import express'"
+      },
+      {
+        "name": "contains:src/server.ts:app.use(helmet())",
+        "passed": true,
+        "detail": "Found: 'app.use(helmet())'"
+      },
+      {
+        "name": "contains:src/server.ts:SIGTERM",
+        "passed": true,
+        "detail": "Found: 'SIGTERM'"
+      },
+      {
+        "name": "contains:src/server.ts:process.exit(0)",
+        "passed": true,
+        "detail": "Found: 'process.exit(0)'"
+      },
+      {
+        "name": "excludes:src/server.ts:windowMs: 60000",
+        "passed": true,
+        "detail": "Absent (good): 'windowMs: 60000'"
+      },
+      {
+        "name": "excludes:src/server.ts:maxRequests: 100",
+        "passed": true,
+        "detail": "Absent (good): 'maxRequests: 100'"
+      },
+      {
+        "name": "unchanged:src/middleware.ts",
+        "passed": true,
+        "detail": "Correctly unchanged: src/middleware.ts"
+      },
+      {
+        "name": "unchanged:src/routes.ts",
+        "passed": true,
+        "detail": "Correctly unchanged: src/routes.ts"
+      },
+      {
+        "name": "no_crash",
+        "passed": true,
+        "detail": "Agent loop completed without exceptions"
+      }
+    ],
+    "error": null
+  },
+  {
+    "fixture_id": "multi-step-migration",
+    "passed": true,
+    "score": 1.0,
+    "duration_ms": 15352,
+    "iterations": 5,
+    "files_read": [
+      "service.ts",
+      "src/service.ts",
+      "src/handler.ts"
+    ],
+    "checks": [
+      {
+        "name": "read:src/service.ts",
+        "passed": true,
+        "detail": "Read: src/service.ts"
+      },
+      {
+        "name": "read:src/handler.ts",
+        "passed": true,
+        "detail": "Read: src/handler.ts"
+      },
+      {
+        "name": "action:src/service.ts",
+        "passed": true,
+        "detail": "Action: expected=edit, got=edit"
+      },
+      {
+        "name": "contains:src/service.ts:async",
+        "passed": true,
+        "detail": "Found: 'async'"
+      },
+      {
+        "name": "contains:src/service.ts:Promise",
+        "passed": true,
+        "detail": "Found: 'Promise'"
+      },
+      {
+        "name": "excludes:src/service.ts:callback",
+        "passed": true,
+        "detail": "Absent (good): 'callback'"
+      },
+      {
+        "name": "excludes:src/service.ts:Callback",
+        "passed": true,
+        "detail": "Absent (good): 'Callback'"
+      },
+      {
+        "name": "action:src/handler.ts",
+        "passed": true,
+        "detail": "Action: expected=edit, got=edit"
+      },
+      {
+        "name": "contains:src/handler.ts:await",
+        "passed": true,
+        "detail": "Found: 'await'"
+      },
+      {
+        "name": "contains:src/handler.ts:async",
+        "passed": true,
+        "detail": "Found: 'async'"
+      },
+      {
+        "name": "excludes:src/handler.ts:callback",
+        "passed": true,
+        "detail": "Absent (good): 'callback'"
+      },
+      {
+        "name": "excludes:src/handler.ts:(err,",
+        "passed": true,
+        "detail": "Absent (good): '(err,'"
+      },
+      {
+        "name": "excludes:src/handler.ts:(err, data)",
+        "passed": true,
+        "detail": "Absent (good): '(err, data)'"
+      },
+      {
+        "name": "excludes:src/handler.ts:(err, record)",
+        "passed": true,
+        "detail": "Absent (good): '(err, record)'"
+      },
+      {
+        "name": "unchanged:src/types.ts",
+        "passed": true,
+        "detail": "Correctly unchanged: src/types.ts"
+      },
+      {
+        "name": "no_crash",
+        "passed": true,
+        "detail": "Agent loop completed without exceptions"
+      }
+    ],
+    "error": null
+  },
+  {
+    "fixture_id": "rename-function",
+    "passed": true,
+    "score": 1.0,
+    "duration_ms": 6130,
+    "iterations": 3,
+    "files_read": [
+      "utils.py",
+      "main.py"
+    ],
+    "checks": [
+      {
+        "name": "read:utils.py",
+        "passed": true,
+        "detail": "Read: utils.py"
+      },
+      {
+        "name": "read:main.py",
+        "passed": true,
+        "detail": "Read: main.py"
+      },
+      {
+        "name": "action:utils.py",
+        "passed": true,
+        "detail": "Action: expected=edit, got=edit"
+      },
+      {
+        "name": "contains:utils.py:def get_user_data(user_id: int)",
+        "passed": true,
+        "detail": "Found: 'def get_user_data(user_id: int)'"
+      },
+      {
+        "name": "excludes:utils.py:def getUserData(",
+        "passed": true,
+        "detail": "Absent (good): 'def getUserData('"
+      },
+      {
+        "name": "action:main.py",
+        "passed": true,
+        "detail": "Action: expected=edit, got=edit"
+      },
+      {
+        "name": "contains:main.py:from utils import get_user_data",
+        "passed": true,
+        "detail": "Found: 'from utils import get_user_data'"
+      },
+      {
+        "name": "contains:main.py:get_user_data(42)",
+        "passed": true,
+        "detail": "Found: 'get_user_data(42)'"
+      },
+      {
+        "name": "excludes:main.py:getUserData",
+        "passed": true,
+        "detail": "Absent (good): 'getUserData'"
+      },
+      {
+        "name": "unchanged:README.md",
+        "passed": true,
+        "detail": "Correctly unchanged: README.md"
+      },
+      {
+        "name": "no_crash",
+        "passed": true,
+        "detail": "Agent loop completed without exceptions"
+      }
+    ],
+    "error": null
+  },
+  {
+    "fixture_id": "similar-patterns",
+    "passed": true,
+    "score": 1.0,
+    "duration_ms": 8892,
+    "iterations": 4,
+    "files_read": [
+      "orders.ts",
+      "src/orders.ts"
+    ],
+    "checks": [
+      {
+        "name": "read:src/orders.ts",
+        "passed": true,
+        "detail": "Read: src/orders.ts"
+      },
+      {
+        "name": "action:src/orders.ts",
+        "passed": true,
+        "detail": "Action: expected=edit, got=edit"
+      },
+      {
+        "name": "contains:src/orders.ts:quantity",
+        "passed": true,
+        "detail": "Found: 'quantity'"
+      },
+      {
+        "name": "contains:src/orders.ts:processUserOrder",
+        "passed": true,
+        "detail": "Found: 'processUserOrder'"
+      },
+      {
+        "name": "contains:src/orders.ts:processAdminOrder",
+        "passed": true,
+        "detail": "Found: 'processAdminOrder'"
+      },
+      {
+        "name": "contains:src/orders.ts:processGuestOrder",
+        "passed": true,
+        "detail": "Found: 'processGuestOrder'"
+      },
+      {
+        "name": "contains:src/orders.ts:processBulkOrders",
+        "passed": true,
+        "detail": "Found: 'processBulkOrders'"
+      },
+      {
+        "name": "unchanged:src/types.ts",
+        "passed": true,
+        "detail": "Correctly unchanged: src/types.ts"
+      },
+      {
+        "name": "no_crash",
+        "passed": true,
+        "detail": "Agent loop completed without exceptions"
+      }
+    ],
+    "error": null
+  }
+]

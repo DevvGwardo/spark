@@ -1,0 +1,34 @@
+{
+  "id": "rename-function",
+  "description": "Rename a function from camelCase to snake_case in a Python file",
+  "prompt": "Rename the function `getUserData` to `get_user_data` in utils.py, and update all references in main.py",
+  "repo": {
+    "owner": "test-org",
+    "name": "test-repo",
+    "defaultBranch": "main",
+    "fileTree": ["utils.py", "main.py", "README.md"],
+    "files": {
+      "utils.py": "import json\n\ndef getUserData(user_id: int) -> dict:\n    \"\"\"Fetch user data by ID.\"\"\"\n    return {\"id\": user_id, \"name\": \"Alice\"}\n\ndef format_output(data: dict) -> str:\n    return json.dumps(data, indent=2)\n",
+      "main.py": "from utils import getUserData, format_output\n\ndef main():\n    data = getUserData(42)\n    print(format_output(data))\n\nif __name__ == \"__main__\":\n    main()\n",
+      "README.md": "# Test Repo\nA sample project."
+    }
+  },
+  "expected": {
+    "files_read": ["utils.py", "main.py"],
+    "changes": [
+      {
+        "path": "utils.py",
+        "action": "edit",
+        "mustContain": ["def get_user_data(user_id: int)"],
+        "mustNotContain": ["def getUserData("]
+      },
+      {
+        "path": "main.py",
+        "action": "edit",
+        "mustContain": ["from utils import get_user_data", "get_user_data(42)"],
+        "mustNotContain": ["getUserData"]
+      }
+    ],
+    "unchanged": ["README.md"]
+  }
+}

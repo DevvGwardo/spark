@@ -1,0 +1,34 @@
+{
+  "id": "multi-step-migration",
+  "description": "Migrate from callbacks to async/await across service and caller",
+  "prompt": "Refactor the DataService in service.ts from callback-based to async/await, and update handler.ts to use the new async API",
+  "repo": {
+    "owner": "test-org",
+    "name": "test-repo",
+    "defaultBranch": "main",
+    "fileTree": ["src/service.ts", "src/handler.ts", "src/types.ts"],
+    "files": {
+      "src/service.ts": "import { DataRecord, Callback } from './types';\n\nexport class DataService {\n  private data: DataRecord[] = [];\n\n  getAll(callback: Callback<DataRecord[]>): void {\n    try {\n      callback(null, [...this.data]);\n    } catch (err) {\n      callback(err as Error, null);\n    }\n  }\n\n  getById(id: string, callback: Callback<DataRecord | null>): void {\n    try {\n      const record = this.data.find(r => r.id === id) || null;\n      callback(null, record);\n    } catch (err) {\n      callback(err as Error, null);\n    }\n  }\n\n  create(record: Omit<DataRecord, 'id'>, callback: Callback<DataRecord>): void {\n    try {\n      const newRecord = { ...record, id: String(Date.now()) };\n      this.data.push(newRecord);\n      callback(null, newRecord);\n    } catch (err) {\n      callback(err as Error, null);\n    }\n  }\n\n  delete(id: string, callback: Callback<boolean>): void {\n    try {\n      const index = this.data.findIndex(r => r.id === id);\n      if (index === -1) {\n        callback(null, false);\n        return;\n      }\n      this.data.splice(index, 1);\n      callback(null, true);\n    } catch (err) {\n      callback(err as Error, null);\n    }\n  }\n}\n",
+      "src/handler.ts": "import { DataService } from './service';\n\nconst service = new DataService();\n\nexport function handleGetAll(req: any, res: any) {\n  service.getAll((err, data) => {\n    if (err) {\n      res.status(500).json({ error: err.message });\n      return;\n    }\n    res.json(data);\n  });\n}\n\nexport function handleGetById(req: any, res: any) {\n  service.getById(req.params.id, (err, record) => {\n    if (err) {\n      res.status(500).json({ error: err.message });\n      return;\n    }\n    if (!record) {\n      res.status(404).json({ error: 'Not found' });\n      return;\n    }\n    res.json(record);\n  });\n}\n\nexport function handleCreate(req: any, res: any) {\n  service.create(req.body, (err, record) => {\n    if (err) {\n      res.status(500).json({ error: err.message });\n      return;\n    }\n    res.status(201).json(record);\n  });\n}\n\nexport function handleDelete(req: any, res: any) {\n  service.delete(req.params.id, (err, deleted) => {\n    if (err) {\n      res.status(500).json({ error: err.message });\n      return;\n    }\n    if (!deleted) {\n      res.status(404).json({ error: 'Not found' });\n      return;\n    }\n    res.status(204).end();\n  });\n}\n",
+      "src/types.ts": "export interface DataRecord {\n  id: string;\n  name: string;\n  value: number;\n}\n\nexport type Callback<T> = (error: Error | null, result: T | null) => void;\n"
+    }
+  },
+  "expected": {
+    "files_read": ["src/service.ts", "src/handler.ts"],
+    "changes": [
+      {
+        "path": "src/service.ts",
+        "action": "edit",
+        "mustContain": ["async", "Promise"],
+        "mustNotContain": ["callback", "Callback"]
+      },
+      {
+        "path": "src/handler.ts",
+        "action": "edit",
+        "mustContain": ["await", "async"],
+        "mustNotContain": ["callback", "(err,", "(err, data)", "(err, record)"]
+      }
+    ],
+    "unchanged": ["src/types.ts"]
+  }
+}

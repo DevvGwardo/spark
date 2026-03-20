@@ -1,0 +1,54 @@
+{
+  "id": "deep-dependency-chain",
+  "description": "Rename a type that's used across 4 files in a dependency chain",
+  "prompt": "Rename the `UserResponse` type to `UserDTO` everywhere in the codebase",
+  "repo": {
+    "owner": "test-org",
+    "name": "test-repo",
+    "defaultBranch": "main",
+    "fileTree": ["src/types.ts", "src/api/client.ts", "src/api/transform.ts", "src/components/UserList.tsx", "src/hooks/useUsers.ts"],
+    "files": {
+      "src/types.ts": "export interface UserResponse {\n  id: number;\n  first_name: string;\n  last_name: string;\n  email: string;\n  avatar_url: string;\n}\n\nexport interface ApiResponse<T> {\n  data: T;\n  meta: { total: number; page: number };\n}\n\nexport type UsersApiResponse = ApiResponse<UserResponse[]>;\n",
+      "src/api/client.ts": "import { UserResponse, UsersApiResponse } from '../types';\n\nexport async function fetchUsers(): Promise<UserResponse[]> {\n  const response = await fetch('/api/users');\n  const json: UsersApiResponse = await response.json();\n  return json.data;\n}\n\nexport async function fetchUser(id: number): Promise<UserResponse> {\n  const response = await fetch(`/api/users/${id}`);\n  const json: { data: UserResponse } = await response.json();\n  return json.data;\n}\n",
+      "src/api/transform.ts": "import { UserResponse } from '../types';\n\nexport function toDisplayName(user: UserResponse): string {\n  return `${user.first_name} ${user.last_name}`;\n}\n\nexport function toUserMap(users: UserResponse[]): Map<number, UserResponse> {\n  return new Map(users.map(u => [u.id, u]));\n}\n",
+      "src/components/UserList.tsx": "import React from 'react';\nimport { UserResponse } from '../types';\nimport { toDisplayName } from '../api/transform';\n\ninterface UserListProps {\n  users: UserResponse[];\n  onSelect: (user: UserResponse) => void;\n}\n\nexport const UserList: React.FC<UserListProps> = ({ users, onSelect }) => (\n  <ul>\n    {users.map((user: UserResponse) => (\n      <li key={user.id} onClick={() => onSelect(user)}>\n        {toDisplayName(user)}\n      </li>\n    ))}\n  </ul>\n);\n",
+      "src/hooks/useUsers.ts": "import { useState, useEffect } from 'react';\nimport { UserResponse } from '../types';\nimport { fetchUsers } from '../api/client';\n\nexport function useUsers(): { users: UserResponse[]; loading: boolean } {\n  const [users, setUsers] = useState<UserResponse[]>([]);\n  const [loading, setLoading] = useState(true);\n\n  useEffect(() => {\n    fetchUsers().then((data: UserResponse[]) => {\n      setUsers(data);\n      setLoading(false);\n    });\n  }, []);\n\n  return { users, loading };\n}\n"
+    }
+  },
+  "expected": {
+    "files_read": ["src/types.ts", "src/api/client.ts", "src/api/transform.ts", "src/components/UserList.tsx", "src/hooks/useUsers.ts"],
+    "changes": [
+      {
+        "path": "src/types.ts",
+        "action": "edit",
+        "mustContain": ["UserDTO"],
+        "mustNotContain": ["UserResponse"]
+      },
+      {
+        "path": "src/api/client.ts",
+        "action": "edit",
+        "mustContain": ["UserDTO"],
+        "mustNotContain": ["UserResponse"]
+      },
+      {
+        "path": "src/api/transform.ts",
+        "action": "edit",
+        "mustContain": ["UserDTO"],
+        "mustNotContain": ["UserResponse"]
+      },
+      {
+        "path": "src/components/UserList.tsx",
+        "action": "edit",
+        "mustContain": ["UserDTO"],
+        "mustNotContain": ["UserResponse"]
+      },
+      {
+        "path": "src/hooks/useUsers.ts",
+        "action": "edit",
+        "mustContain": ["UserDTO"],
+        "mustNotContain": ["UserResponse"]
+      }
+    ],
+    "unchanged": []
+  }
+}

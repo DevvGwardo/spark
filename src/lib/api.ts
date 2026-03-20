@@ -133,18 +133,19 @@ export function getStoredApiPort(): number | null {
  * Returns the base URL for the local API server.
  */
 export function getApiBaseUrl(): string {
-  // URL param is the most reliable source — Electron main process sets it
-  // on every launch with the current port, so check it first.
+  // Electron preload-injected port — most authoritative source in Electron.
+  // Check before URL params because HMR reloads can strip query params
+  // while the preload's contextBridge value persists.
+  if (window.electronAPI?.apiPort) {
+    storeApiPort(window.electronAPI.apiPort);
+    return `http://localhost:${window.electronAPI.apiPort}`;
+  }
+
+  // URL param — Electron main process sets this on initial load.
   const apiPort = getApiPortFromUrl(window.location.href);
   if (apiPort) {
     storeApiPort(apiPort);
     return `http://localhost:${apiPort}`;
-  }
-
-  // Electron preload-injected port
-  if (window.electronAPI?.apiPort) {
-    storeApiPort(window.electronAPI.apiPort);
-    return `http://localhost:${window.electronAPI.apiPort}`;
   }
 
   // Web-only: use stored port from a previous page load in this session

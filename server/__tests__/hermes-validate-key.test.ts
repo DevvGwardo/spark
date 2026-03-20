@@ -78,6 +78,7 @@ describe('Hermes validate-key route', () => {
         defaultModel: 'meta-llama/llama-4-maverick',
         models: [
           'meta-llama/llama-4-maverick',
+          'MiniMax-M2.7',
           'openai/gpt-4.1-mini',
           'google/gemini-2.5-flash',
         ],

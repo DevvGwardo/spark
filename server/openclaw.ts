@@ -1,12 +1,45 @@
-import { execFile } from 'child_process'
+import { execFile, execFileSync } from 'child_process'
 import { existsSync } from 'fs'
 import os from 'os'
 import { join } from 'path'
 import { promisify } from 'util'
 
 const execFileAsync = promisify(execFile)
-const OPENCLAW_BIN = process.env.OPENCLAW_BIN || join(os.homedir(), '.openclaw', 'bin', 'openclaw')
 const DEFAULT_OPENCLAW_TIMEOUT_SECONDS = 90 * 60
+
+function resolveOpenClawBin(): string {
+  // 1. Explicit env var
+  if (process.env.OPENCLAW_BIN) {
+    return process.env.OPENCLAW_BIN
+  }
+
+  // 2. Standard install location
+  const standardPath = join(os.homedir(), '.openclaw', 'bin', 'openclaw')
+  if (existsSync(standardPath)) {
+    return standardPath
+  }
+
+  // 3. Resolve from PATH (npm global installs, homebrew, etc.)
+  try {
+    const resolved = execFileSync('which', ['openclaw'], { encoding: 'utf-8' }).trim()
+    if (resolved) {
+      return resolved
+    }
+  } catch {
+    // which failed — not on PATH
+  }
+
+  // Fall back to the standard path (will fail with a clear error in ensureOpenClawInstalled)
+  return standardPath
+}
+
+let _resolvedBin: string | null = null
+function getOpenClawBin(): string {
+  if (!_resolvedBin) {
+    _resolvedBin = resolveOpenClawBin()
+  }
+  return _resolvedBin
+}
 
 function readPositiveIntEnv(name: string, fallback: number): number {
   const rawValue = process.env[name]
@@ -43,13 +76,16 @@ interface OpenClawModelsStatusResponse {
 async function getOpenClawModelStatus(): Promise<OpenClawModelsStatusResponse> {
   ensureOpenClawInstalled()
 
-  const { stdout } = await execFileAsync(OPENCLAW_BIN, ['models', 'status', '--json'])
+  const { stdout } = await execFileAsync(getOpenClawBin(), ['models', 'status', '--json'])
   return JSON.parse(stdout) as OpenClawModelsStatusResponse
 }
 
 function ensureOpenClawInstalled() {
-  if (!existsSync(OPENCLAW_BIN)) {
-    throw new Error(`OpenClaw CLI not found at ${OPENCLAW_BIN}`)
+  const bin = getOpenClawBin()
+  if (!existsSync(bin)) {
+    // Clear cache so next attempt re-resolves (e.g. after user installs openclaw)
+    _resolvedBin = null
+    throw new Error(`OpenClaw CLI not found at ${bin}`)
   }
 }
 
@@ -75,7 +111,7 @@ export async function getOpenClawModels(): Promise<{ defaultModel: string; model
   ensureOpenClawInstalled()
 
   const [{ stdout: modelsStdout }, statusData] = await Promise.all([
-    execFileAsync(OPENCLAW_BIN, ['models', 'list', '--json']),
+    execFileAsync(getOpenClawBin(), ['models', 'list', '--json']),
     getOpenClawModelStatus(),
   ])
 
@@ -108,7 +144,7 @@ export async function setOpenClawModel(model: string): Promise<void> {
     return
   }
 
-  await execFileAsync(OPENCLAW_BIN, ['models', 'set', trimmedModel], {
+  await execFileAsync(getOpenClawBin(), ['models', 'set', trimmedModel], {
     maxBuffer: 10 * 1024 * 1024,
   })
 }
@@ -137,7 +173,7 @@ export async function runOpenClawTurn(params: {
     '--timeout', String(params.timeoutSeconds ?? readPositiveIntEnv('OPENCLAW_TURN_TIMEOUT_SECONDS', DEFAULT_OPENCLAW_TIMEOUT_SECONDS)),
   ]
 
-  const { stdout } = await execFileAsync(OPENCLAW_BIN, args, {
+  const { stdout } = await execFileAsync(getOpenClawBin(), args, {
     maxBuffer: 10 * 1024 * 1024,
   })
 

@@ -47,6 +47,7 @@ KNOWN_UNSUPPORTED_TOOL_MODELS = {
 
 SUGGESTED_TOOL_MODELS = (
     "google/gemini-3.1-flash-lite-preview-20260303",
+    "MiniMax-M2.7",
     "deepseek/deepseek-v3.2-20251201",
     "meta-llama/llama-4-maverick",
     "openai/gpt-4.1-mini",

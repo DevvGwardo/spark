@@ -1,0 +1,30 @@
+{
+  "id": "edge-case-empty-file",
+  "description": "Handle request to add exports to an empty barrel file",
+  "prompt": "The index.ts barrel file is empty. Add re-exports for all the modules in the utils/ directory.",
+  "repo": {
+    "owner": "test-org",
+    "name": "test-repo",
+    "defaultBranch": "main",
+    "fileTree": ["src/utils/index.ts", "src/utils/string.ts", "src/utils/number.ts", "src/utils/date.ts"],
+    "files": {
+      "src/utils/index.ts": "",
+      "src/utils/string.ts": "export function capitalize(str: string): string {\n  return str.charAt(0).toUpperCase() + str.slice(1);\n}\n\nexport function truncate(str: string, len: number): string {\n  return str.length > len ? str.slice(0, len) + '...' : str;\n}\n",
+      "src/utils/number.ts": "export function clamp(value: number, min: number, max: number): number {\n  return Math.min(Math.max(value, min), max);\n}\n\nexport function round(value: number, decimals: number): number {\n  const factor = Math.pow(10, decimals);\n  return Math.round(value * factor) / factor;\n}\n",
+      "src/utils/date.ts": "export function formatDate(date: Date): string {\n  return date.toISOString().split('T')[0];\n}\n\nexport function isWeekend(date: Date): boolean {\n  const day = date.getDay();\n  return day === 0 || day === 6;\n}\n"
+    }
+  },
+  "expected": {
+    "files_read": ["src/utils/index.ts"],
+    "changes": [
+      {
+        "path": "src/utils/index.ts",
+        "action": "edit",
+        "mustContain": ["string", "number", "date", "export"],
+        "mustNotContain": [],
+        "pathPattern": "src/utils/index\\.ts$"
+      }
+    ],
+    "unchanged": ["src/utils/string.ts", "src/utils/number.ts", "src/utils/date.ts"]
+  }
+}

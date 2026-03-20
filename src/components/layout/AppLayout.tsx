@@ -20,7 +20,6 @@ import { PROVIDERS } from '@/lib/providers';
 import { getChatScopeId } from '@/lib/chat-scope';
 import { PanelLeft, GitPullRequest, MoreHorizontal, Circle, Pin, Pencil, Archive, Copy, PanelRight, Plus, FileCode2, MessageSquare, TerminalSquare } from 'lucide-react';
 import { TerminalPanel } from '@/components/terminal/TerminalPanel';
-import { useActivityStore } from '@/stores/activity-store';
 import { SlotNumber } from '@/components/ui/SlotNumber';
 import { cn } from '@/lib/utils';
 
@@ -43,7 +42,7 @@ export const AppLayout: React.FC = () => {
   const { isSetupComplete, activeProvider, providers } = useSettingsStore(
     useShallow((s) => ({ isSetupComplete: s.isSetupComplete, activeProvider: s.activeProvider, providers: s.providers })),
   );
-  const { getChangeset, getChangeCount, clearChanges, getStagedCount, getStagedChanges, setPullRequest } = useChangesetStore();
+  const { getChangeset, getChangeCount, clearChanges, getStagedCount, getStagedChanges, setPullRequest, getLineTotals } = useChangesetStore();
   const { conversations, deleteConversation, renameConversation, pinConversation } = useChatStore();
   const { panels, focusedPanelId, openPanel, setConversationForPanel, focusPanel } = usePanelStore();
   const footerUsage = useContextUsageStore((state) => state.panelUsage[focusedPanelId]);
@@ -67,12 +66,7 @@ export const AppLayout: React.FC = () => {
   const stagedCount = getStagedCount(focusedScopeId);
   const focusedConvId = focusedPanel?.conversationId ?? null;
   const focusedConv = useChatStore((s) => s.conversations.find((c) => c.id === focusedConvId));
-  const getPendingLineStats = useActivityStore((s) => s.getPendingLineStats);
-  const pendingStats = focusedConvId ? getPendingLineStats(focusedConvId) : { added: 0, removed: 0 };
-  const lineTotals = {
-    added: (focusedConv?.linesAdded ?? 0) + pendingStats.added,
-    removed: (focusedConv?.linesRemoved ?? 0) + pendingStats.removed,
-  };
+  const lineTotals = getLineTotals(focusedScopeId);
 
   // For the PR modal, use the panel that triggered it (or focused panel in single-panel mode)
   const prTargetPanelId = prPanelId || focusedPanelId;

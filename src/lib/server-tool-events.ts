@@ -1,6 +1,4 @@
 import { useChangesetStore } from '@/stores/changeset-store';
-import { useActivityStore } from '@/stores/activity-store';
-import { countContentLines, getChangeLineDelta } from '@/lib/change-diff';
 
 // ─── Event type constants ────────────────────────────────────────────────────
 
@@ -133,14 +131,6 @@ export function handleServerToolEvent(
         originalContent: event.originalContent,
         staged: true,
       });
-      if (opts.conversationId) {
-        const delta = getChangeLineDelta({
-          action: 'edit',
-          content: event.content,
-          originalContent: event.originalContent,
-        });
-        useActivityStore.getState().addLineStats(opts.conversationId, delta.added, delta.removed);
-      }
       break;
     }
 
@@ -151,13 +141,6 @@ export function handleServerToolEvent(
         content: event.content,
         staged: true,
       });
-      if (opts.conversationId) {
-        useActivityStore.getState().addLineStats(
-          opts.conversationId,
-          countContentLines(event.content),
-          0,
-        );
-      }
       break;
     }
 
@@ -170,20 +153,10 @@ export function handleServerToolEvent(
         originalContent: event.originalContent,
         staged: true,
       });
-      if (opts.conversationId) {
-        useActivityStore.getState().addLineStats(
-          opts.conversationId,
-          0,
-          countContentLines(event.originalContent),
-        );
-      }
       break;
     }
 
     case REPO_BATCH_EDIT: {
-      let totalAdded = 0;
-      let totalRemoved = 0;
-
       // Cache original content for all files first
       for (const change of event.changes) {
         if (change.action !== 'create') {
@@ -210,19 +183,6 @@ export function handleServerToolEvent(
         }
       }
 
-      for (const change of event.changes) {
-        const delta = getChangeLineDelta({
-          action: change.action,
-          content: change.content,
-          originalContent: change.originalContent,
-        });
-        totalAdded += delta.added;
-        totalRemoved += delta.removed;
-      }
-
-      if (opts.conversationId && (totalAdded > 0 || totalRemoved > 0)) {
-        useActivityStore.getState().addLineStats(opts.conversationId, totalAdded, totalRemoved);
-      }
       break;
     }
 

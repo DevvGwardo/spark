@@ -1,15 +1,9 @@
 import { afterEach, describe, it, expect, beforeEach, vi } from 'vitest';
-import { SERVER_AGENT_MAX_STEPS, buildServerRepoTools, RepoContext } from '../agent-loop';
+import { buildServerRepoTools, RepoContext } from '../agent-loop';
 
 describe('agent-loop', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
-  });
-
-  describe('SERVER_AGENT_MAX_STEPS', () => {
-    it('should equal 50', () => {
-      expect(SERVER_AGENT_MAX_STEPS).toBe(50);
-    });
   });
 
   describe('buildServerRepoTools', () => {

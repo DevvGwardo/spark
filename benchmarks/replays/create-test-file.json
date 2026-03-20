@@ -1,0 +1,159 @@
+[
+  {
+    "id": "gen-1773624406-JpyaH4VTaVSbqUD3FU25",
+    "object": "chat.completion",
+    "created": 1773624406,
+    "model": "openai/gpt-4.1-mini-2025-04-14",
+    "provider": "OpenAI",
+    "system_fingerprint": null,
+    "choices": [
+      {
+        "index": 0,
+        "logprobs": null,
+        "finish_reason": "tool_calls",
+        "native_finish_reason": "completed",
+        "message": {
+          "role": "assistant",
+          "content": null,
+          "refusal": null,
+          "reasoning": null,
+          "tool_calls": [
+            {
+              "type": "function",
+              "index": 0,
+              "id": "call_rV24nW8SVjqUZ8G3w5FLtpXo",
+              "function": {
+                "name": "read_repo_file",
+                "arguments": "{\"path\":\"src/utils/math.ts\"}"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 740,
+      "completion_tokens": 19,
+      "total_tokens": 759,
+      "cost": 0.0003264,
+      "is_byok": false,
+      "prompt_tokens_details": {
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "audio_tokens": 0,
+        "video_tokens": 0
+      },
+      "cost_details": {
+        "upstream_inference_cost": 0.0003264,
+        "upstream_inference_prompt_cost": 0.000296,
+        "upstream_inference_completions_cost": 3.04e-05
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 0,
+        "image_tokens": 0,
+        "audio_tokens": 0
+      }
+    }
+  },
+  {
+    "id": "gen-1773624407-nOdMTqX9JRKU9oBQIu15",
+    "object": "chat.completion",
+    "created": 1773624407,
+    "model": "openai/gpt-4.1-mini-2025-04-14",
+    "provider": "OpenAI",
+    "system_fingerprint": null,
+    "choices": [
+      {
+        "index": 0,
+        "logprobs": null,
+        "finish_reason": "tool_calls",
+        "native_finish_reason": "completed",
+        "message": {
+          "role": "assistant",
+          "content": null,
+          "refusal": null,
+          "reasoning": null,
+          "tool_calls": [
+            {
+              "type": "function",
+              "index": 0,
+              "id": "call_xkZqpMrldsU3dFofVQVvmvXH",
+              "function": {
+                "name": "create_repo_file",
+                "arguments": "{\"path\":\"src/utils/math.test.ts\",\"content\":\"import { describe, it, expect } from 'vitest';\\nimport { add, subtract, multiply } from './math';\\n\\ndescribe('math utils', () => {\\n  it('adds two numbers correctly', () => {\\n    expect(add(1, 2)).toBe(3);\\n    expect(add(-1, -1)).toBe(-2);\\n    expect(add(-1, 1)).toBe(0);\\n  });\\n\\n  it('subtracts two numbers correctly', () => {\\n    expect(subtract(5, 3)).toBe(2);\\n    expect(subtract(0, 0)).toBe(0);\\n    expect(subtract(-1, -1)).toBe(0);\\n  });\\n\\n  it('multiplies two numbers correctly', () => {\\n    expect(multiply(3, 4)).toBe(12);\\n    expect(multiply(-1, 5)).toBe(-5);\\n    expect(multiply(0, 10)).toBe(0);\\n  });\\n});\\n\",\"description\":\"Create a test file for math utils testing add, subtract, and multiply functions using vitest\"}"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 825,
+      "completion_tokens": 282,
+      "total_tokens": 1107,
+      "cost": 0.0007812,
+      "is_byok": false,
+      "prompt_tokens_details": {
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "audio_tokens": 0,
+        "video_tokens": 0
+      },
+      "cost_details": {
+        "upstream_inference_cost": 0.0007812,
+        "upstream_inference_prompt_cost": 0.00033,
+        "upstream_inference_completions_cost": 0.0004512
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 0,
+        "image_tokens": 0,
+        "audio_tokens": 0
+      }
+    }
+  },
+  {
+    "id": "gen-1773624410-31O6TfjbANj7tX8S9uQ8",
+    "object": "chat.completion",
+    "created": 1773624410,
+    "model": "openai/gpt-4.1-mini-2025-04-14",
+    "provider": "OpenAI",
+    "system_fingerprint": null,
+    "choices": [
+      {
+        "index": 0,
+        "logprobs": null,
+        "finish_reason": "stop",
+        "native_finish_reason": "completed",
+        "message": {
+          "role": "assistant",
+          "content": "I created a new test file at src/utils/math.test.ts. This file uses Vitest to test the add, subtract, and multiply functions from src/utils/math.ts. The tests cover basic cases for each function.\n\nThere are no syntax errors, missing imports, or broken references in the new test file. No other files needed updating for consistency.\n\nThe request is fully addressed.",
+          "refusal": null,
+          "reasoning": null
+        }
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 1208,
+      "completion_tokens": 77,
+      "total_tokens": 1285,
+      "cost": 0.0006064,
+      "is_byok": false,
+      "prompt_tokens_details": {
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "audio_tokens": 0,
+        "video_tokens": 0
+      },
+      "cost_details": {
+        "upstream_inference_cost": 0.0006064,
+        "upstream_inference_prompt_cost": 0.0004832,
+        "upstream_inference_completions_cost": 0.0001232
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 0,
+        "image_tokens": 0,
+        "audio_tokens": 0
+      }
+    }
+  }
+]

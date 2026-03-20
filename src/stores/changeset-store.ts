@@ -261,8 +261,8 @@ export const useChangesetStore = create<ChangesetState>()((set, get) => ({
 
   batchAddChanges: (panelId, changes: FileChange[]) =>
     set((state) => {
-      let changeset = getOrDefault(state, panelId);
-      let updatedChanges = { ...changeset.changes };
+      const changeset = getOrDefault(state, panelId);
+      const updatedChanges = { ...changeset.changes };
       for (const change of changes) {
         const prev = updatedChanges[change.path];
         if (change.action === 'delete' && prev?.action === 'create') {

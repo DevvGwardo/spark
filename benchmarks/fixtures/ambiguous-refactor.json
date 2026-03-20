@@ -1,0 +1,30 @@
+{
+  "id": "ambiguous-refactor",
+  "description": "Ambiguous instruction — refactor 'the config' when multiple config files exist",
+  "prompt": "The config is a mess, clean it up and add proper types",
+  "repo": {
+    "owner": "test-org",
+    "name": "test-repo",
+    "defaultBranch": "main",
+    "fileTree": ["src/config.ts", "src/db-config.ts", "src/api-config.ts", "src/types.ts", "package.json"],
+    "files": {
+      "src/config.ts": "export const config = {\n  port: 3000,\n  host: 'localhost',\n  debug: true,\n  dbUrl: 'postgres://localhost:5432/mydb',\n  apiKey: 'sk-test-123',\n  maxRetries: 3,\n  timeout: 5000,\n  logLevel: 'info',\n  cors: {\n    origin: '*',\n    methods: ['GET', 'POST'],\n  },\n}\n",
+      "src/db-config.ts": "const dbConfig = {\n  host: 'localhost',\n  port: 5432,\n  database: 'mydb',\n  user: 'admin',\n  password: 'secret',\n  pool: { min: 2, max: 10 },\n  ssl: false\n}\nexport default dbConfig\n",
+      "src/api-config.ts": "export const API_BASE = 'https://api.example.com'\nexport const API_TIMEOUT = 30000\nexport const RETRY_COUNT = 3\nexport const HEADERS = { 'Content-Type': 'application/json' }\n",
+      "src/types.ts": "export type ID = string | number;\n",
+      "package.json": "{\"name\": \"test-repo\", \"version\": \"1.0.0\"}"
+    }
+  },
+  "expected": {
+    "files_read": ["src/config.ts"],
+    "changes": [
+      {
+        "path": "src/config.ts",
+        "action": "edit",
+        "mustContain": ["interface", "Config"],
+        "mustNotContain": []
+      }
+    ],
+    "unchanged": ["package.json"]
+  }
+}

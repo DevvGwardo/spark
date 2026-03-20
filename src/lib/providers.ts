@@ -19,6 +19,8 @@ export interface ProviderInfo {
 export const HERMES_RECOMMENDED_MODELS = [
   // Paid — best budget-to-performance
   'google/gemini-3.1-flash-lite-preview-20260303',
+  'MiniMax-M2.7',
+  'MiniMax-M2.7-highspeed',
   'deepseek/deepseek-v3.2-20251201',
   'meta-llama/llama-4-maverick',
   'openai/gpt-4.1-mini',
@@ -182,13 +184,12 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     iconLetter: 'M',
     iconColor: '#6C5CE7',
     models: [
-      'MiniMax-M2.7',
-      'MiniMax-M2.7-highspeed',
       'MiniMax-M2.5',
       'MiniMax-M2.5-highspeed',
       'MiniMax-M2.1',
+      'MiniMax-M2.1-highspeed',
     ],
-    defaultModel: 'MiniMax-M2.7',
+    defaultModel: 'MiniMax-M2.5',
   },
   'minimax-payg': {
     id: 'minimax-payg',
@@ -199,13 +200,12 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     iconLetter: 'M',
     iconColor: '#6C5CE7',
     models: [
-      'MiniMax-M2.7',
-      'MiniMax-M2.7-highspeed',
       'MiniMax-M2.5',
       'MiniMax-M2.5-highspeed',
       'MiniMax-M2.1',
+      'MiniMax-M2.1-highspeed',
     ],
-    defaultModel: 'MiniMax-M2.7',
+    defaultModel: 'MiniMax-M2.5',
   },
   kimi: {
     id: 'kimi',

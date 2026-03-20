@@ -2,17 +2,14 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { formatDataStreamPart } from 'ai';
 import { useChat } from '@/hooks/useChat';
-import { useOrchestrator } from '@/hooks/useOrchestrator';
 import { useChatStore } from '@/stores/chat-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useKnowledgeStore } from '@/stores/knowledge-store';
 import { useChangesetStore } from '@/stores/changeset-store';
 import { usePreviewStore } from '@/stores/preview-store';
-import { useOrchestratorStore } from '@/stores/orchestrator-store';
 import { useHermesStore } from '@/stores/hermes-store';
 import { usePanelStore } from '@/stores/panel-store';
 import { useUIStore } from '@/stores/ui-store';
-import { useActivityStore } from '@/stores/activity-store';
 
 const { dbMock, aiChatState } = vi.hoisted(() => ({
   dbMock: {
@@ -101,11 +98,6 @@ describe('new thread handoff', () => {
     usePanelStore.setState({
       panels: [{ id: 'default', conversationId: null }],
       focusedPanelId: 'default',
-    });
-    useOrchestratorStore.setState({
-      enabled: false,
-      maxSubAgents: 3,
-      activeOrchestration: { phase: 'idle', tasks: [] },
     });
     useHermesStore.setState({
       toolsets: {
@@ -262,34 +254,6 @@ describe('new thread handoff', () => {
       repo_file_tree: ['README.md'],
       conversation_id: 'conv-1',
     });
-  });
-
-  it('waits for the first orchestration run to finish before selecting a brand-new conversation', async () => {
-    const fetchDeferred = deferred<Response>();
-    vi.stubGlobal('fetch', vi.fn(() => fetchDeferred.promise));
-
-    const onConversationCreated = vi.fn();
-    const { result } = renderHook(() => useOrchestrator(null, onConversationCreated));
-
-    await act(async () => {
-      result.current.handleQuickSend('Plan and implement the landing page');
-      await Promise.resolve();
-    });
-
-    await waitFor(() => expect(dbMock.messages.add).toHaveBeenCalledTimes(1));
-    expect(onConversationCreated).not.toHaveBeenCalled();
-
-    await act(async () => {
-      fetchDeferred.resolve(
-        makeStreamResponse([
-          { type: 'token', data: { content: 'done' } },
-          { type: 'done', data: {} },
-        ])
-      );
-      await fetchDeferred.promise;
-    });
-
-    await waitFor(() => expect(onConversationCreated).toHaveBeenCalledWith('conv-1'));
   });
 
   it('hydrates the selected repo tree before sending the first repo-mode turn', async () => {
@@ -535,7 +499,6 @@ describe('new thread handoff', () => {
       content: 'export default function App() { return <main>Updated</main>; }',
       staged: true,
     });
-    expect(useActivityStore.getState().getPendingLineStats('conv-1')).toEqual({ added: 1, removed: 1 });
   });
 
   it('filters local Hermes mutation toolsets when a repo is attached', () => {

@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { attachRepoToPanel, getPanelChatScopeId, startRepoChatInNewThread } from '@/lib/repo-workflow';
 import { useChangesetStore } from '@/stores/changeset-store';
-import { useOrchestratorStore } from '@/stores/orchestrator-store';
 import { usePanelStore } from '@/stores/panel-store';
 import { usePreviewStore } from '@/stores/preview-store';
 import { useUIStore } from '@/stores/ui-store';
@@ -44,11 +43,6 @@ describe('repo workflow', () => {
     usePreviewStore.setState({
       panelPreviews: {},
     });
-
-    useOrchestratorStore.setState((state) => ({
-      ...state,
-      enabled: true,
-    }));
 
     useUIStore.setState({
       sidebarOpen: false,
@@ -110,6 +104,5 @@ describe('repo workflow', () => {
       autoSend: true,
       repoEditIntentOverride: false,
     });
-    expect(useOrchestratorStore.getState().enabled).toBe(false);
   });
 });

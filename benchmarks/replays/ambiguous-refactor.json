@@ -1,0 +1,215 @@
+[
+  {
+    "id": "gen-1773624399-IQ1UACnwV3Y3Je0GMaYU",
+    "object": "chat.completion",
+    "created": 1773624399,
+    "model": "openai/gpt-4.1-mini-2025-04-14",
+    "provider": "OpenAI",
+    "system_fingerprint": null,
+    "choices": [
+      {
+        "index": 0,
+        "logprobs": null,
+        "finish_reason": "tool_calls",
+        "native_finish_reason": "completed",
+        "message": {
+          "role": "assistant",
+          "content": null,
+          "refusal": null,
+          "reasoning": null,
+          "tool_calls": [
+            {
+              "type": "function",
+              "index": 0,
+              "id": "call_dposMDdIijM6KoJsHbdRKffH",
+              "function": {
+                "name": "read_repo_file",
+                "arguments": "{\"path\":\"src/config.ts\"}"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 729,
+      "completion_tokens": 18,
+      "total_tokens": 747,
+      "cost": 0.0003204,
+      "is_byok": false,
+      "prompt_tokens_details": {
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "audio_tokens": 0,
+        "video_tokens": 0
+      },
+      "cost_details": {
+        "upstream_inference_cost": 0.0003204,
+        "upstream_inference_prompt_cost": 0.0002916,
+        "upstream_inference_completions_cost": 2.88e-05
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 0,
+        "image_tokens": 0,
+        "audio_tokens": 0
+      }
+    }
+  },
+  {
+    "id": "gen-1773624400-Dj1V7ZkMlQMGNUsO5Tbo",
+    "object": "chat.completion",
+    "created": 1773624400,
+    "model": "openai/gpt-4.1-mini-2025-04-14",
+    "provider": "OpenAI",
+    "system_fingerprint": null,
+    "choices": [
+      {
+        "index": 0,
+        "logprobs": null,
+        "finish_reason": "tool_calls",
+        "native_finish_reason": "completed",
+        "message": {
+          "role": "assistant",
+          "content": null,
+          "refusal": null,
+          "reasoning": null,
+          "tool_calls": [
+            {
+              "type": "function",
+              "index": 0,
+              "id": "call_1Dyxl6CEt0U6M5dOHwjRfMIa",
+              "function": {
+                "name": "read_repo_file",
+                "arguments": "{\"path\":\"src/types.ts\"}"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 842,
+      "completion_tokens": 18,
+      "total_tokens": 860,
+      "cost": 0.0003656,
+      "is_byok": false,
+      "prompt_tokens_details": {
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "audio_tokens": 0,
+        "video_tokens": 0
+      },
+      "cost_details": {
+        "upstream_inference_cost": 0.0003656,
+        "upstream_inference_prompt_cost": 0.0003368,
+        "upstream_inference_completions_cost": 2.88e-05
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 0,
+        "image_tokens": 0,
+        "audio_tokens": 0
+      }
+    }
+  },
+  {
+    "id": "gen-1773624400-LPnPyYNEG9Op1M1MAPUi",
+    "object": "chat.completion",
+    "created": 1773624400,
+    "model": "openai/gpt-4.1-mini-2025-04-14",
+    "provider": "OpenAI",
+    "system_fingerprint": null,
+    "choices": [
+      {
+        "index": 0,
+        "logprobs": null,
+        "finish_reason": "tool_calls",
+        "native_finish_reason": "completed",
+        "message": {
+          "role": "assistant",
+          "content": null,
+          "refusal": null,
+          "reasoning": null,
+          "tool_calls": [
+            {
+              "type": "function",
+              "index": 0,
+              "id": "call_TarLKdKhjFI3HzEpypYPxco3",
+              "function": {
+                "name": "edit_repo_file",
+                "arguments": "{\"path\":\"src/config.ts\",\"content\":\"export interface CorsConfig {\\n  origin: string;\\n  methods: string[];\\n}\\n\\nexport interface Config {\\n  port: number;\\n  host: string;\\n  debug: boolean;\\n  dbUrl: string;\\n  apiKey: string;\\n  maxRetries: number;\\n  timeout: number;\\n  logLevel: 'error' | 'warn' | 'info' | 'debug';\\n  cors: CorsConfig;\\n}\\n\\nexport const config: Config = {\\n  port: 3000,\\n  host: 'localhost',\\n  debug: true,\\n  dbUrl: 'postgres://localhost:5432/mydb',\\n  apiKey: 'sk-test-123',\\n  maxRetries: 3,\\n  timeout: 5000,\\n  logLevel: 'info',\\n  cors: {\\n    origin: '*',\\n    methods: ['GET', 'POST'],\\n  },\\n}\\n\",\"description\":\"Refactor config.ts to add proper types and clean up the config object\"}"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 874,
+      "completion_tokens": 253,
+      "total_tokens": 1127,
+      "cost": 0.0007544,
+      "is_byok": false,
+      "prompt_tokens_details": {
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "audio_tokens": 0,
+        "video_tokens": 0
+      },
+      "cost_details": {
+        "upstream_inference_cost": 0.0007544,
+        "upstream_inference_prompt_cost": 0.0003496,
+        "upstream_inference_completions_cost": 0.0004048
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 0,
+        "image_tokens": 0,
+        "audio_tokens": 0
+      }
+    }
+  },
+  {
+    "id": "gen-1773624404-0FhaOjwut4V38FYcJw9k",
+    "object": "chat.completion",
+    "created": 1773624404,
+    "model": "openai/gpt-4.1-mini-2025-04-14",
+    "provider": "OpenAI",
+    "system_fingerprint": null,
+    "choices": [
+      {
+        "index": 0,
+        "logprobs": null,
+        "finish_reason": "stop",
+        "native_finish_reason": "completed",
+        "message": {
+          "role": "assistant",
+          "content": "I have addressed all parts of the user's request by cleaning up the config file and adding proper TypeScript types. The config object is now typed with interfaces defining the shape of the configuration, including nested types for CORS settings. There are no syntax errors or missing imports since the file is self-contained. The change does not impact related files directly as it only involves typing and structuring the existing config.\n\nSummary:\n- Added `CorsConfig` and `Config` interfaces for type safety.\n- Typed the `config` constant with the `Config` interface.\n- Cleaned and structured the config object accordingly.\n\nThe change is complete and consistent.",
+          "refusal": null,
+          "reasoning": null
+        }
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 1226,
+      "completion_tokens": 130,
+      "total_tokens": 1356,
+      "cost": 0.0006984,
+      "is_byok": false,
+      "prompt_tokens_details": {
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "audio_tokens": 0,
+        "video_tokens": 0
+      },
+      "cost_details": {
+        "upstream_inference_cost": 0.0006984,
+        "upstream_inference_prompt_cost": 0.0004904,
+        "upstream_inference_completions_cost": 0.000208
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 0,
+        "image_tokens": 0,
+        "audio_tokens": 0
+      }
+    }
+  }
+]

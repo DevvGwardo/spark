@@ -13,6 +13,7 @@ type ReasoningEffort = 'low' | 'medium' | 'high';
 
 export const HERMES_TOOL_CAPABLE_MODELS = [
   'meta-llama/llama-4-maverick',
+  'MiniMax-M2.7',
   'openai/gpt-4.1-mini',
   'google/gemini-2.5-flash',
 ] as const;
@@ -255,8 +256,8 @@ export const VALIDATION_MODELS: Record<string, string> = {
   deepseek: 'deepseek-chat',
   mistral: 'mistral-large-latest',
   together: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
-  minimax: 'MiniMax-M2.7',
-  'minimax-payg': 'MiniMax-M2.7',
+  minimax: 'MiniMax-M2.5',
+  'minimax-payg': 'MiniMax-M2.5',
   kimi: 'moonshot-v1-32k',
   'kimi-coding': 'kimi-for-coding',
   cerebras: 'llama-3.3-70b',

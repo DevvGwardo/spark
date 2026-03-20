@@ -2,21 +2,11 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 // Mock the stores before importing the module under test
 const mockCacheRepoFile = vi.fn();
-const mockAddLineStats = vi.fn();
 
 vi.mock('@/stores/changeset-store', () => ({
   useChangesetStore: {
     getState: () => ({
       cacheRepoFile: mockCacheRepoFile,
-    }),
-    setState: vi.fn(),
-  },
-}));
-
-vi.mock('@/stores/activity-store', () => ({
-  useActivityStore: {
-    getState: () => ({
-      addLineStats: mockAddLineStats,
     }),
     setState: vi.fn(),
   },
@@ -46,7 +36,6 @@ import type {
 describe('server-tool-events', () => {
   beforeEach(() => {
     mockCacheRepoFile.mockClear();
-    mockAddLineStats.mockClear();
   });
 
   describe('constants', () => {
@@ -107,23 +96,10 @@ describe('server-tool-events', () => {
         expect(mockCacheRepoFile).toHaveBeenCalledWith(scopeId, 'src/app.ts', 'console.log("hello");');
         expect(opts.addChange).not.toHaveBeenCalled();
       });
-
-      it('does not call addLineStats even with conversationId', () => {
-        const opts = createMockOpts();
-        const event: RepoFileReadEvent = {
-          type: REPO_FILE_READ,
-          path: 'src/app.ts',
-          content: 'console.log("hello");',
-        };
-
-        handleServerToolEvent(event, scopeId, opts);
-
-        expect(mockAddLineStats).not.toHaveBeenCalled();
-      });
     });
 
     describe('repo_file_edit', () => {
-      it('caches originalContent, calls addChange with action=edit and staged=true, calls addLineStats', () => {
+      it('caches originalContent and calls addChange with action=edit and staged=true', () => {
         const opts = createMockOpts();
         const event: RepoFileEditEvent = {
           type: REPO_FILE_EDIT,
@@ -146,12 +122,9 @@ describe('server-tool-events', () => {
           originalContent: 'console.log("hello");',
           staged: true,
         });
-
-        expect(mockAddLineStats).toHaveBeenCalledTimes(1);
-        expect(mockAddLineStats).toHaveBeenCalledWith(conversationId, 1, 1);
       });
 
-      it('does not call addLineStats when conversationId is null', () => {
+      it('calls addChange even when conversationId is null', () => {
         const opts = createMockOpts({ conversationId: null });
         const event: RepoFileEditEvent = {
           type: REPO_FILE_EDIT,
@@ -164,12 +137,11 @@ describe('server-tool-events', () => {
         handleServerToolEvent(event, scopeId, opts);
 
         expect(opts.addChange).toHaveBeenCalledTimes(1);
-        expect(mockAddLineStats).not.toHaveBeenCalled();
       });
     });
 
     describe('repo_file_create', () => {
-      it('calls addChange with action=create and staged=true, calls addLineStats with (lineCount, 0)', () => {
+      it('calls addChange with action=create and staged=true', () => {
         const opts = createMockOpts();
         const event: RepoFileCreateEvent = {
           type: REPO_FILE_CREATE,
@@ -187,12 +159,9 @@ describe('server-tool-events', () => {
           content: 'export const foo = 1;\nexport const bar = 2;',
           staged: true,
         });
-
-        expect(mockAddLineStats).toHaveBeenCalledTimes(1);
-        expect(mockAddLineStats).toHaveBeenCalledWith(conversationId, 2, 0);
       });
 
-      it('does not call addLineStats when conversationId is null', () => {
+      it('calls addChange even when conversationId is null', () => {
         const opts = createMockOpts({ conversationId: null });
         const event: RepoFileCreateEvent = {
           type: REPO_FILE_CREATE,
@@ -204,12 +173,11 @@ describe('server-tool-events', () => {
         handleServerToolEvent(event, scopeId, opts);
 
         expect(opts.addChange).toHaveBeenCalledTimes(1);
-        expect(mockAddLineStats).not.toHaveBeenCalled();
       });
     });
 
     describe('repo_file_delete', () => {
-      it('caches originalContent, calls addChange with action=delete, content="", staged=true, calls addLineStats with (0, lineCount)', () => {
+      it('caches originalContent and calls addChange with action=delete, content="", staged=true', () => {
         const opts = createMockOpts();
         const event: RepoFileDeleteEvent = {
           type: REPO_FILE_DELETE,
@@ -231,12 +199,9 @@ describe('server-tool-events', () => {
           originalContent: 'line1\nline2\nline3',
           staged: true,
         });
-
-        expect(mockAddLineStats).toHaveBeenCalledTimes(1);
-        expect(mockAddLineStats).toHaveBeenCalledWith(conversationId, 0, 3);
       });
 
-      it('does not call addLineStats when conversationId is null', () => {
+      it('calls addChange even when conversationId is null', () => {
         const opts = createMockOpts({ conversationId: null });
         const event: RepoFileDeleteEvent = {
           type: REPO_FILE_DELETE,
@@ -248,12 +213,11 @@ describe('server-tool-events', () => {
         handleServerToolEvent(event, scopeId, opts);
 
         expect(opts.addChange).toHaveBeenCalledTimes(1);
-        expect(mockAddLineStats).not.toHaveBeenCalled();
       });
     });
 
     describe('repo_batch_edit', () => {
-      it('processes multiple changes, caches non-create originals, calls addChange for each, calls addLineStats once with totals', () => {
+      it('processes multiple changes, caches non-create originals, calls addChange for each', () => {
         const opts = createMockOpts();
         const event: RepoBatchEditEvent = {
           type: REPO_BATCH_EDIT,
@@ -311,13 +275,9 @@ describe('server-tool-events', () => {
           originalContent: 'delete line 1\ndelete line 2\ndelete line 3',
           staged: true,
         });
-
-        // addLineStats is called once with totals (2 added from create, 1 added 2 removed from edit, 3 removed from delete)
-        expect(mockAddLineStats).toHaveBeenCalledTimes(1);
-        expect(mockAddLineStats).toHaveBeenCalledWith(conversationId, 3, 5);
       });
 
-      it('does not call addLineStats when conversationId is null', () => {
+      it('calls addChange even when conversationId is null', () => {
         const opts = createMockOpts({ conversationId: null });
         const event: RepoBatchEditEvent = {
           type: REPO_BATCH_EDIT,
@@ -335,10 +295,9 @@ describe('server-tool-events', () => {
         handleServerToolEvent(event, scopeId, opts);
 
         expect(opts.addChange).toHaveBeenCalledTimes(1);
-        expect(mockAddLineStats).not.toHaveBeenCalled();
       });
 
-      it('does not call addLineStats when there are no line changes', () => {
+      it('does not call addChange when there are no changes', () => {
         const opts = createMockOpts();
         const event: RepoBatchEditEvent = {
           type: REPO_BATCH_EDIT,
@@ -348,12 +307,11 @@ describe('server-tool-events', () => {
         handleServerToolEvent(event, scopeId, opts);
 
         expect(opts.addChange).toHaveBeenCalledTimes(0);
-        expect(mockAddLineStats).not.toHaveBeenCalled();
       });
     });
 
     describe('repo_proposal', () => {
-      it('does nothing (no-op) - verify no addChange or addLineStats calls', () => {
+      it('does nothing (no-op) - verify no addChange or cacheRepoFile calls', () => {
         const opts = createMockOpts();
         const event: RepoProposalEvent = {
           type: REPO_PROPOSAL,
@@ -367,7 +325,6 @@ describe('server-tool-events', () => {
         handleServerToolEvent(event, scopeId, opts);
 
         expect(opts.addChange).not.toHaveBeenCalled();
-        expect(mockAddLineStats).not.toHaveBeenCalled();
         expect(mockCacheRepoFile).not.toHaveBeenCalled();
       });
     });

@@ -1,0 +1,27 @@
+{
+  "id": "fix-bug-off-by-one",
+  "description": "Fix an off-by-one error in a pagination function",
+  "prompt": "There's an off-by-one bug in the paginate function in src/pagination.ts. When requesting page 1, it skips the first item. Fix it.",
+  "repo": {
+    "owner": "test-org",
+    "name": "test-repo",
+    "defaultBranch": "main",
+    "fileTree": ["src/pagination.ts", "src/types.ts"],
+    "files": {
+      "src/pagination.ts": "export interface PaginationResult<T> {\n  items: T[];\n  page: number;\n  totalPages: number;\n}\n\nexport function paginate<T>(items: T[], page: number, pageSize: number): PaginationResult<T> {\n  const totalPages = Math.ceil(items.length / pageSize);\n  const start = page * pageSize;\n  const end = start + pageSize;\n  return {\n    items: items.slice(start, end),\n    page,\n    totalPages,\n  };\n}\n",
+      "src/types.ts": "export type ID = string | number;\n"
+    }
+  },
+  "expected": {
+    "files_read": ["src/pagination.ts"],
+    "changes": [
+      {
+        "path": "src/pagination.ts",
+        "action": "edit",
+        "mustContain": ["(page - 1)"],
+        "mustNotContain": []
+      }
+    ],
+    "unchanged": ["src/types.ts"]
+  }
+}
