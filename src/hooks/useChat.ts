@@ -114,6 +114,15 @@ export function useChat(
     ),
     [hermesToolsets, isRepoMode],
   );
+  // Local execution toolsets (terminal, files, code_execution) sent to all non-Hermes providers
+  const agentToolsets = useMemo(
+    () =>
+      Object.entries(hermesToolsetConfig)
+        .filter(([key, enabled]) => enabled && (key === 'terminal' || key === 'files' || key === 'code_execution'))
+        .map(([key]) => key)
+        .join(','),
+    [hermesToolsetConfig],
+  );
   const addChange = useCallback((change: Parameters<typeof addChangeForPanel>[1]) => addChangeForPanel(scopeId, change), [addChangeForPanel, scopeId]);
 
   // Determine effective provider/model (supports overrides)
@@ -637,6 +646,7 @@ When the user asks you to make changes:
         : {}),
       ...(currentIsRepoMode && currentActiveRepo ? { repo_edit_intent: repoEditIntentForRequest } : {}),
       ...(effectiveProvider === 'hermes' ? { hermes_toolsets: effectiveHermesToolsets.join(',') } : {}),
+      ...(effectiveProvider !== 'hermes' && effectiveProvider !== 'openclaw' && agentToolsets ? { agent_toolsets: agentToolsets } : {}),
       ...(effectiveProvider === 'hermes' && effectiveModel.startsWith('MiniMax-')
         ? { hermes_minimax_key: useSettingsStore.getState().providers.minimax?.apiKey || useSettingsStore.getState().providers['minimax-payg']?.apiKey || '' }
         : {}),
@@ -649,6 +659,7 @@ When the user asks you to make changes:
       ...(continuingApprovedProposal ? { continuing_approved_proposal: true } : {}),
     };
   }, [
+    agentToolsets,
     buildRepoSystemPrompt,
     config.apiKey,
     config.maxTokens,

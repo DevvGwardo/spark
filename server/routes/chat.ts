@@ -26,6 +26,7 @@ import {
   proxyHermesAgentLoopToDataStream,
   shouldDirectProxyCompatibleProvider,
 } from '../lib/hermes';
+import { buildLocalExecutionTools, parseAgentToolsets, getLocalToolsSystemPromptFragment } from '../local-tools';
 
 // ─── /functions/v1/chat ──────────────────────────────────────────────────────
 
@@ -65,6 +66,7 @@ app.post('/functions/v1/chat', async (req, res) => {
       hermes_minimax_key,
       repo_file_cache,
       repo_file_tree,
+      agent_toolsets,
     } = req.body;
 
     // Resolve API key
@@ -254,6 +256,21 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
       serverToolEvents.push(event);
     };
 
+    // Build local execution tools (terminal, files, code_execution) for any provider
+    const localToolsets = parseAgentToolsets(agent_toolsets);
+    const localTools = buildLocalExecutionTools(localToolsets);
+    const hasLocalTools = Object.keys(localTools).length > 0;
+
+    // Append local tools context to system prompt
+    if (hasLocalTools) {
+      const localToolsFragment = getLocalToolsSystemPromptFragment(localToolsets);
+      if (localToolsFragment) {
+        effectiveSystemPrompt = effectiveSystemPrompt
+          ? effectiveSystemPrompt + localToolsFragment
+          : localToolsFragment.trim();
+      }
+    }
+
     const repoTools = hasServerRepoContext
       ? buildServerRepoTools(
           {
@@ -298,7 +315,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
       return;
     }
 
-    if (shouldDirectProxyCompatibleProvider(provider, hasServerRepoContext)) {
+    if (shouldDirectProxyCompatibleProvider(provider, hasServerRepoContext) && !hasLocalTools) {
       console.log(`[chat] Proxying ${provider} directly to AI SDK data stream. model=${model}`);
       await proxyCompatibleProviderToDataStream({
         req,
@@ -363,16 +380,18 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
     // some (especially free/small ones) reject requests with tool_choice,
     // causing a 404. First-party SDK providers (Google, xAI, Groq, etc.)
     // always support tools. For compatible providers, only include tools
-    // when there's an active server repo context (agentic mode), since
-    // those are explicitly opted-in by the user connecting a repo.
+    // when there's an active server repo context (agentic mode) or local
+    // tools are enabled, since those are explicitly opted-in by the user.
     const isToolSafeProvider = usesFirstPartyProviderSdk(provider);
-    const includeTools = hasServerRepoContext
-      ? true  // Always include repo tools when user explicitly connected a repo
-      : isToolSafeProvider;  // Only include file tools for providers known to support them
-    const allTools = includeTools ? { ...fileTools, ...repoTools } : {};
-    const useServerAgentLoop = hasServerRepoContext;
+    const includeBaseTools = hasServerRepoContext || isToolSafeProvider || hasLocalTools;
+    const allTools = {
+      ...(includeBaseTools ? fileTools : {}),
+      ...repoTools,
+      ...localTools,
+    };
+    const useServerAgentLoop = hasServerRepoContext || hasLocalTools;
     const hasTools = Object.keys(allTools).length > 0;
-    console.log(`[chat] Starting streamText. maxTokens=${max_tokens ?? defaultMaxTokens} maxSteps=${useServerAgentLoop ? 'unlimited' : 1} tools=${hasTools ? Object.keys(allTools).join(',') : '(none)'} toolSafe=${isToolSafeProvider}`);
+    console.log(`[chat] Starting streamText. maxTokens=${max_tokens ?? defaultMaxTokens} maxSteps=${useServerAgentLoop ? 'unlimited' : 1} tools=${hasTools ? Object.keys(allTools).join(',') : '(none)'} toolSafe=${isToolSafeProvider} localTools=${hasLocalTools}`);
     const result = streamText({
       model: aiModel,
       messages: normalizedChatInput.messages,

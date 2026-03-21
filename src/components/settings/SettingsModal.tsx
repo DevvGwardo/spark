@@ -944,7 +944,7 @@ export const SettingsModal: React.FC = () => {
                     {activeProvider === 'hermes' && (
                       <div className={cn(settingsCardClass, 'space-y-3 px-5 py-5')}>
                         <div>
-                          <p className={fieldLabelClass}>Agent Tools</p>
+                          <p className={fieldLabelClass}>Hermes Agent Tools</p>
                           <p className="mt-1 text-xs text-muted-foreground">
                             Choose which tools the Hermes agent can use during conversations.
                           </p>
@@ -957,6 +957,47 @@ export const SettingsModal: React.FC = () => {
                             { key: 'terminal' as const, label: 'Terminal Access', desc: 'Allows shell command execution on your machine', warn: true },
                             { key: 'files' as const, label: 'File Operations', desc: 'Allows reading and writing files on your machine', warn: true },
                             { key: 'code_execution' as const, label: 'Code Execution', desc: 'Allows running arbitrary code on your machine', warn: true },
+                          ] as const).map(({ key, label, desc, warn }) => (
+                            <div key={key} className="flex items-center justify-between">
+                              <div>
+                                <div className="text-sm text-foreground">{label}</div>
+                                <div className={`text-xs ${warn ? 'text-amber-500' : 'text-muted-foreground'}`}>
+                                  {desc}
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => setHermesToolset(key, !hermesToolsets[key])}
+                                className={cn(
+                                  toggleTrackClass,
+                                  hermesToolsets[key] ? 'bg-primary' : 'bg-border'
+                                )}
+                              >
+                                <span
+                                  className={cn(
+                                    toggleThumbClass,
+                                    hermesToolsets[key] ? 'translate-x-[20px]' : 'translate-x-[3px]'
+                                  )}
+                                />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {activeProvider !== 'hermes' && activeProvider !== 'openclaw' && (
+                      <div className={cn(settingsCardClass, 'space-y-3 px-5 py-5')}>
+                        <div>
+                          <p className={fieldLabelClass}>Agent Tools</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Enable local execution tools. Requires a model that supports tool calling.
+                          </p>
+                        </div>
+                        <div className="space-y-3">
+                          {([
+                            { key: 'terminal' as const, label: 'Terminal Access', desc: 'Execute shell commands on your machine', warn: true },
+                            { key: 'files' as const, label: 'File Operations', desc: 'Read and write files on your machine', warn: true },
+                            { key: 'code_execution' as const, label: 'Code Execution', desc: 'Run Python code on your machine', warn: true },
                           ] as const).map(({ key, label, desc, warn }) => (
                             <div key={key} className="flex items-center justify-between">
                               <div>

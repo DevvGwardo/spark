@@ -293,6 +293,8 @@ const TOOL_LABELS: Record<string, { label: string; icon: React.ElementType }> = 
   run_command: { label: 'Running command', icon: Wrench },
   terminal: { label: 'Running command', icon: Wrench },
   execute_python: { label: 'Running Python', icon: Wrench },
+  read_file: { label: 'Reading file', icon: FileSearch },
+  write_file: { label: 'Writing file', icon: FilePlus },
   create_html_file: { label: 'Created HTML file', icon: FilePlus },
   create_css_file: { label: 'Created CSS file', icon: FilePlus },
   create_js_file: { label: 'Created JS file', icon: FilePlus },
@@ -658,7 +660,13 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
   const isInProgress = invocation.state === 'call' || invocation.state === 'partial-call';
   const errorMessage = getToolErrorMessage(invocation.result);
   const hasError = !!errorMessage;
-  const progressLabel = invocation.toolName === 'read_repo_file' ? 'Reading...' : 'In progress';
+  const isExecTool = invocation.toolName === 'run_command' || invocation.toolName === 'terminal' || invocation.toolName === 'execute_python';
+  const hasOutput = isComplete && !hasError && isExecTool && typeof invocation.result === 'string' && invocation.result !== '(no output)';
+  const progressLabel = invocation.toolName === 'read_repo_file' || invocation.toolName === 'read_file' ? 'Reading...'
+    : invocation.toolName === 'run_command' || invocation.toolName === 'terminal' ? 'Running...'
+    : invocation.toolName === 'execute_python' ? 'Executing...'
+    : invocation.toolName === 'write_file' ? 'Writing...'
+    : 'In progress';
   const panelChanges = useChangesetStore((s) => s.getChangeset(scopeId).changes);
 
   // Extract file info from args
@@ -835,6 +843,24 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
       {hasError && (
         <div className="pl-5 text-[12px] text-amber-400/90 whitespace-pre-wrap">
           {errorMessage}
+        </div>
+      )}
+
+      {/* Command/execution output */}
+      {hasOutput && (
+        <div className="pl-5 mt-1">
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ChevronDown className={cn('h-3 w-3 transition-transform', expanded && 'rotate-180')} />
+            Output
+          </button>
+          {expanded && (
+            <pre className="mt-1 text-[11px] font-mono text-foreground/80 bg-muted/30 rounded-md px-2.5 py-2 max-h-[200px] overflow-auto whitespace-pre-wrap break-all">
+              {invocation.result as string}
+            </pre>
+          )}
         </div>
       )}
 
