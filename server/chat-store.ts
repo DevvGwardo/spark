@@ -173,6 +173,10 @@ const SQL = {
     SELECT id, title, provider, model, system_prompt, created_at, updated_at, pinned, lines_added, lines_removed
     FROM conversations
     ORDER BY pinned DESC, updated_at DESC
+    LIMIT :limit OFFSET :offset
+  `,
+  countConversations: `
+    SELECT COUNT(*) as total FROM conversations
   `,
   insertConversation: `
     INSERT INTO conversations (
@@ -315,10 +319,18 @@ function createChatStore(dbPath = resolveDbPath()) {
     const cols = db.prepare("PRAGMA table_info(conversations)").all() as Array<{ name: string }>;
     const colNames = new Set(cols.map((c) => c.name));
     if (!colNames.has('lines_added')) {
-      db.exec('ALTER TABLE conversations ADD COLUMN lines_added INTEGER NOT NULL DEFAULT 0');
+      try {
+        db.exec('ALTER TABLE conversations ADD COLUMN lines_added INTEGER NOT NULL DEFAULT 0');
+      } catch (error) {
+        console.warn('[chat-store] Failed to add lines_added column:', error instanceof Error ? error.message : String(error));
+      }
     }
     if (!colNames.has('lines_removed')) {
-      db.exec('ALTER TABLE conversations ADD COLUMN lines_removed INTEGER NOT NULL DEFAULT 0');
+      try {
+        db.exec('ALTER TABLE conversations ADD COLUMN lines_removed INTEGER NOT NULL DEFAULT 0');
+      } catch (error) {
+        console.warn('[chat-store] Failed to add lines_removed column:', error instanceof Error ? error.message : String(error));
+      }
     }
   }
 
@@ -352,8 +364,15 @@ function createChatStore(dbPath = resolveDbPath()) {
   openDb();
 
   return {
-    listConversations(): Conversation[] {
-      return run(() => (stmt('listConversations').all() as ConversationRow[]).map(toConversation));
+    listConversations(limit = 50, offset = 0): { conversations: Conversation[]; total: number } {
+      return run(() => {
+        const rows = stmt('listConversations').all({ limit, offset }) as unknown as ConversationRow[];
+        const countRow = stmt('countConversations').get() as unknown as { total: number };
+        return {
+          conversations: rows.map(toConversation),
+          total: countRow.total,
+        };
+      });
     },
 
     addConversation(conversation: Conversation) {
@@ -371,30 +390,39 @@ function createChatStore(dbPath = resolveDbPath()) {
       }));
     },
 
-    updateConversation(id: string, fields: Partial<Conversation>) {
-      run(() => {
-        const existing = stmt('getConversation').get({ id }) as ConversationRow | undefined;
-        if (!existing) {
-          return;
+    updateConversation(id: string, fields: Partial<Conversation>): boolean {
+      return run(() => {
+        db.exec('BEGIN');
+        try {
+          const existing = stmt('getConversation').get({ id }) as unknown as ConversationRow | undefined;
+          if (!existing) {
+            db.exec('COMMIT');
+            return false;
+          }
+
+          const next = {
+            ...toConversation(existing),
+            ...fields,
+          };
+
+          stmt('updateConversation').run({
+            id,
+            title: next.title,
+            provider: next.provider,
+            model: next.model,
+            systemPrompt: next.systemPrompt,
+            createdAt: next.createdAt,
+            updatedAt: next.updatedAt,
+            pinned: next.pinned ? 1 : 0,
+            linesAdded: next.linesAdded ?? 0,
+            linesRemoved: next.linesRemoved ?? 0,
+          });
+          db.exec('COMMIT');
+          return true;
+        } catch (error) {
+          db.exec('ROLLBACK');
+          throw error;
         }
-
-        const next = {
-          ...toConversation(existing),
-          ...fields,
-        };
-
-        stmt('updateConversation').run({
-          id,
-          title: next.title,
-          provider: next.provider,
-          model: next.model,
-          systemPrompt: next.systemPrompt,
-          createdAt: next.createdAt,
-          updatedAt: next.updatedAt,
-          pinned: next.pinned ? 1 : 0,
-          linesAdded: next.linesAdded ?? 0,
-          linesRemoved: next.linesRemoved ?? 0,
-        });
       });
     },
 
@@ -403,53 +431,69 @@ function createChatStore(dbPath = resolveDbPath()) {
     },
 
     listMessages(conversationId: string): Message[] {
-      return run(() => (stmt('listMessages').all({ conversationId }) as MessageRow[]).map(toMessage));
+      return run(() => (stmt('listMessages').all({ conversationId }) as unknown as MessageRow[]).map(toMessage));
     },
 
     addMessage(message: Message) {
       run(() => {
-        const existingConversation = stmt('getConversation').get({ id: message.conversationId }) as ConversationRow | undefined;
-        if (!existingConversation) {
-          throw new Error(`Conversation ${message.conversationId} not found`);
-        }
+        db.exec('BEGIN');
+        try {
+          const existingConversation = stmt('getConversation').get({ id: message.conversationId }) as unknown as ConversationRow | undefined;
+          if (!existingConversation) {
+            throw new Error(`Conversation ${message.conversationId} not found`);
+          }
 
-        stmt('saveMessage').run({
-          id: message.id,
-          conversationId: message.conversationId,
-          role: message.role,
-          content: message.content,
-          timestamp: message.timestamp,
-          tokenCount: typeof message.tokenCount === 'number' ? message.tokenCount : null,
-          error: message.error ?? null,
-          partsJson: message.parts ? JSON.stringify(message.parts) : null,
-          toolInvocationsJson: message.toolInvocations ? JSON.stringify(message.toolInvocations) : null,
-        });
+          stmt('saveMessage').run({
+            id: message.id,
+            conversationId: message.conversationId,
+            role: message.role,
+            content: message.content,
+            timestamp: message.timestamp,
+            tokenCount: typeof message.tokenCount === 'number' ? message.tokenCount : null,
+            error: message.error ?? null,
+            partsJson: message.parts ? JSON.stringify(message.parts) : null,
+            toolInvocationsJson: message.toolInvocations ? JSON.stringify(message.toolInvocations) : null,
+          });
+          db.exec('COMMIT');
+        } catch (error) {
+          db.exec('ROLLBACK');
+          throw error;
+        }
       });
     },
 
-    updateMessage(id: string, fields: Partial<Message>) {
-      run(() => {
-        const existing = stmt('getMessage').get({ id }) as MessageRow | undefined;
-        if (!existing) {
-          return;
+    updateMessage(id: string, fields: Partial<Message>): boolean {
+      return run(() => {
+        db.exec('BEGIN');
+        try {
+          const existing = stmt('getMessage').get({ id }) as unknown as MessageRow | undefined;
+          if (!existing) {
+            db.exec('COMMIT');
+            return false;
+          }
+
+          const next = {
+            ...toMessage(existing),
+            ...fields,
+          };
+
+          stmt('updateMessage').run({
+            id,
+            conversationId: next.conversationId,
+            role: next.role,
+            content: next.content,
+            timestamp: next.timestamp,
+            tokenCount: typeof next.tokenCount === 'number' ? next.tokenCount : null,
+            error: next.error ?? null,
+            partsJson: next.parts ? JSON.stringify(next.parts) : null,
+            toolInvocationsJson: next.toolInvocations ? JSON.stringify(next.toolInvocations) : null,
+          });
+          db.exec('COMMIT');
+          return true;
+        } catch (error) {
+          db.exec('ROLLBACK');
+          throw error;
         }
-
-        const next = {
-          ...toMessage(existing),
-          ...fields,
-        };
-
-        stmt('updateMessage').run({
-          id,
-          conversationId: next.conversationId,
-          role: next.role,
-          content: next.content,
-          timestamp: next.timestamp,
-          tokenCount: typeof next.tokenCount === 'number' ? next.tokenCount : null,
-          error: next.error ?? null,
-          partsJson: next.parts ? JSON.stringify(next.parts) : null,
-          toolInvocationsJson: next.toolInvocations ? JSON.stringify(next.toolInvocations) : null,
-        });
       });
     },
 
@@ -459,7 +503,7 @@ function createChatStore(dbPath = resolveDbPath()) {
 
     getConversationFiles(conversationId: string): ConversationFiles | undefined {
       return run(() => {
-        const row = stmt('getConversationFiles').get({ conversationId }) as ConversationFilesRow | undefined;
+        const row = stmt('getConversationFiles').get({ conversationId }) as unknown as ConversationFilesRow | undefined;
         if (!row) {
           return undefined;
         }
@@ -470,30 +514,61 @@ function createChatStore(dbPath = resolveDbPath()) {
 
     saveConversationFiles(data: ConversationFiles) {
       run(() => {
-        const existing = stmt('getConversation').get({ id: data.conversationId }) as ConversationRow | undefined;
-        if (!existing) {
-          throw new Error(`Conversation ${data.conversationId} not found`);
-        }
+        db.exec('BEGIN');
+        try {
+          const existing = stmt('getConversation').get({ id: data.conversationId }) as unknown as ConversationRow | undefined;
+          if (!existing) {
+            throw new Error(`Conversation ${data.conversationId} not found`);
+          }
 
-        stmt('saveConversationFiles').run({
-          conversationId: data.conversationId,
-          dataJson: JSON.stringify(data),
-        });
+          stmt('saveConversationFiles').run({
+            conversationId: data.conversationId,
+            dataJson: JSON.stringify(data),
+          });
+          db.exec('COMMIT');
+        } catch (error) {
+          db.exec('ROLLBACK');
+          throw error;
+        }
       });
     },
 
     deleteConversationFiles(conversationId: string) {
       run(() => stmt('deleteConversationFiles').run({ conversationId }));
     },
+
+    close() {
+      try {
+        db.close();
+      } catch (error) {
+        console.warn('[chat-store] Error closing database:', error instanceof Error ? error.message : String(error));
+      }
+    },
   };
+}
+
+export type ChatStore = ReturnType<typeof createChatStore>;
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
 }
 
 export function registerChatStoreRoutes(app: express.Express) {
   const chatStore = createChatStore();
 
-  app.get('/functions/v1/chat-store/conversations', (_req, res) => {
+  const shutdown = () => {
+    console.log('[chat-store] Closing database connection');
+    chatStore.close();
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+
+  app.get('/functions/v1/chat-store/conversations', (req, res) => {
     try {
-      res.json({ conversations: chatStore.listConversations() });
+      const limit = Math.max(1, Math.min(200, Number(req.query.limit) || 50));
+      const offset = Math.max(0, Number(req.query.offset) || 0);
+      const result = chatStore.listConversations(limit, offset);
+      res.json({ conversations: result.conversations, total: result.total });
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
     }
@@ -501,7 +576,17 @@ export function registerChatStoreRoutes(app: express.Express) {
 
   app.post('/functions/v1/chat-store/conversations', (req, res) => {
     try {
-      chatStore.addConversation(req.body as Conversation);
+      const body = req.body as Conversation;
+      if (!isNonEmptyString(body?.id)) {
+        res.status(400).json({ error: 'Missing or empty conversation id' });
+        return;
+      }
+      if (!isNonEmptyString(body?.title)) {
+        res.status(400).json({ error: 'Missing or empty conversation title' });
+        return;
+      }
+
+      chatStore.addConversation(body);
       res.status(201).json({ ok: true });
     } catch (error) {
       if (isConstraintError(error)) {
@@ -515,8 +600,17 @@ export function registerChatStoreRoutes(app: express.Express) {
 
   app.patch('/functions/v1/chat-store/conversations/:id', (req, res) => {
     try {
-      chatStore.updateConversation(req.params.id, req.body as Partial<Conversation>);
-      res.status(204).end();
+      if (!isNonEmptyString(req.params.id)) {
+        res.status(400).json({ error: 'Missing or empty conversation id' });
+        return;
+      }
+
+      const found = chatStore.updateConversation(req.params.id, req.body as Partial<Conversation>);
+      if (!found) {
+        res.status(404).json({ error: 'Conversation not found' });
+        return;
+      }
+      res.status(200).json({ ok: true });
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
     }
@@ -524,6 +618,11 @@ export function registerChatStoreRoutes(app: express.Express) {
 
   app.delete('/functions/v1/chat-store/conversations/:id', (req, res) => {
     try {
+      if (!isNonEmptyString(req.params.id)) {
+        res.status(400).json({ error: 'Missing or empty conversation id' });
+        return;
+      }
+
       chatStore.deleteConversation(req.params.id);
       res.status(204).end();
     } catch (error) {
@@ -533,6 +632,11 @@ export function registerChatStoreRoutes(app: express.Express) {
 
   app.get('/functions/v1/chat-store/conversations/:id/messages', (req, res) => {
     try {
+      if (!isNonEmptyString(req.params.id)) {
+        res.status(400).json({ error: 'Missing or empty conversation id' });
+        return;
+      }
+
       res.json({ messages: chatStore.listMessages(req.params.id) });
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
@@ -541,7 +645,21 @@ export function registerChatStoreRoutes(app: express.Express) {
 
   app.post('/functions/v1/chat-store/messages', (req, res) => {
     try {
-      chatStore.addMessage(req.body as Message);
+      const body = req.body as Message;
+      if (!isNonEmptyString(body?.id)) {
+        res.status(400).json({ error: 'Missing or empty message id' });
+        return;
+      }
+      if (!isNonEmptyString(body?.conversationId)) {
+        res.status(400).json({ error: 'Missing or empty conversationId' });
+        return;
+      }
+      if (!isNonEmptyString(body?.role)) {
+        res.status(400).json({ error: 'Missing or empty message role' });
+        return;
+      }
+
+      chatStore.addMessage(body);
       res.status(201).json({ ok: true });
     } catch (error) {
       if (isConstraintError(error)) {
@@ -560,8 +678,17 @@ export function registerChatStoreRoutes(app: express.Express) {
 
   app.patch('/functions/v1/chat-store/messages/:id', (req, res) => {
     try {
-      chatStore.updateMessage(req.params.id, req.body as Partial<Message>);
-      res.status(204).end();
+      if (!isNonEmptyString(req.params.id)) {
+        res.status(400).json({ error: 'Missing or empty message id' });
+        return;
+      }
+
+      const found = chatStore.updateMessage(req.params.id, req.body as Partial<Message>);
+      if (!found) {
+        res.status(404).json({ error: 'Message not found' });
+        return;
+      }
+      res.status(200).json({ ok: true });
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
     }
@@ -569,6 +696,11 @@ export function registerChatStoreRoutes(app: express.Express) {
 
   app.delete('/functions/v1/chat-store/conversations/:id/messages', (req, res) => {
     try {
+      if (!isNonEmptyString(req.params.id)) {
+        res.status(400).json({ error: 'Missing or empty conversation id' });
+        return;
+      }
+
       chatStore.deleteMessagesByConversation(req.params.id);
       res.status(204).end();
     } catch (error) {
@@ -578,6 +710,11 @@ export function registerChatStoreRoutes(app: express.Express) {
 
   app.get('/functions/v1/chat-store/conversations/:id/files', (req, res) => {
     try {
+      if (!isNonEmptyString(req.params.id)) {
+        res.status(400).json({ error: 'Missing or empty conversation id' });
+        return;
+      }
+
       const files = chatStore.getConversationFiles(req.params.id);
       res.json({ conversationFiles: files ?? null });
     } catch (error) {
@@ -587,6 +724,11 @@ export function registerChatStoreRoutes(app: express.Express) {
 
   app.put('/functions/v1/chat-store/conversations/:id/files', (req, res) => {
     try {
+      if (!isNonEmptyString(req.params.id)) {
+        res.status(400).json({ error: 'Missing or empty conversation id' });
+        return;
+      }
+
       const payload = req.body as ConversationFiles;
       chatStore.saveConversationFiles({
         ...payload,
@@ -605,6 +747,11 @@ export function registerChatStoreRoutes(app: express.Express) {
 
   app.delete('/functions/v1/chat-store/conversations/:id/files', (req, res) => {
     try {
+      if (!isNonEmptyString(req.params.id)) {
+        res.status(400).json({ error: 'Missing or empty conversation id' });
+        return;
+      }
+
       chatStore.deleteConversationFiles(req.params.id);
       res.status(204).end();
     } catch (error) {

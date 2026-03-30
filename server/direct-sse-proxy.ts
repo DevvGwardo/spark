@@ -1,5 +1,5 @@
 import express from 'express';
-import { formatDataStreamPart } from 'ai';
+import { formatDataStreamPart, type JSONValue } from 'ai';
 import { bindClientDisconnect } from './http-disconnect';
 
 export type ProxyFinishReason = 'stop' | 'length' | 'tool-calls' | 'unknown';
@@ -12,6 +12,7 @@ export interface ProxyUsage {
 
 export interface NormalizedProxyEvent {
   text?: string;
+  reasoning?: string;
   data?: Record<string, unknown>[];
   finishReason?: ProxyFinishReason;
   usage?: ProxyUsage;
@@ -27,6 +28,12 @@ interface ProxySseToDataStreamInput {
   throwOnEmpty?: string;
   onFirstEvent?: (kind: 'text' | 'data') => void;
 }
+
+/** Maximum size for the SSE buffer before forcibly flushing (1 MB). */
+const MAX_BUFFER_SIZE = 1_048_576;
+
+/** If no data arrives from upstream within this window, abort the stream. */
+const STREAM_ACTIVITY_TIMEOUT_MS = 30_000;
 
 const EMPTY_USAGE: ProxyUsage = {
   promptTokens: 0,
@@ -127,7 +134,13 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
       return;
     }
 
-    const normalized = input.normalizePayload(payload);
+    let normalized: NormalizedProxyEvent | null;
+    try {
+      normalized = input.normalizePayload(payload);
+    } catch (err) {
+      console.error(`[sse-proxy] Failed to normalize payload: ${err instanceof Error ? err.message : err}`);
+      return;
+    }
     if (!normalized) {
       return;
     }
@@ -138,6 +151,10 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
 
     if (normalized.finishReason) {
       finishReason = normalized.finishReason;
+    }
+
+    if (normalized.reasoning) {
+      await writeDataStreamChunk(input.res, formatDataStreamPart('reasoning', normalized.reasoning));
     }
 
     if (normalized.text) {
@@ -153,18 +170,45 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
         input.onFirstEvent?.('data');
       }
       sawDataEvent = true;
-      await writeDataStreamChunk(input.res, formatDataStreamPart('data', normalized.data));
+      await writeDataStreamChunk(input.res, formatDataStreamPart('data', normalized.data as unknown as JSONValue[]));
     }
   };
 
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      // Activity timeout: abort if upstream sends nothing for too long.
+      let activityTimer: ReturnType<typeof setTimeout> | undefined;
+      const readResult = await Promise.race([
+        reader.read(),
+        new Promise<never>((_, reject) => {
+          activityTimer = setTimeout(
+            () => reject(new Error('Upstream activity timeout')),
+            STREAM_ACTIVITY_TIMEOUT_MS,
+          );
+        }),
+      ]).finally(() => {
+        clearTimeout(activityTimer);
+      });
+
+      const { done, value } = readResult;
       if (done) {
         break;
       }
 
       buffer += decoder.decode(value, { stream: true });
+
+      // Guard against unbounded buffer growth.
+      if (buffer.length > MAX_BUFFER_SIZE) {
+        console.warn(
+          `[sse-proxy] Buffer exceeded ${MAX_BUFFER_SIZE} bytes (${buffer.length}). Flushing and resetting.`,
+        );
+        buffer = '';
+        await writeDataStreamChunk(
+          input.res,
+          formatDataStreamPart('error', 'Stream buffer overflow — some data may have been lost.'),
+        );
+      }
+
       const eventBlocks = buffer.split(/\r?\n\r?\n/);
       buffer = eventBlocks.pop() ?? '';
 
@@ -180,9 +224,29 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
     if (disconnect.isDisconnected() && isAbortLikeError(error)) {
       return;
     }
+
+    // Surface activity-timeout errors to the client before re-throwing.
+    if (error instanceof Error && error.message === 'Upstream activity timeout') {
+      try {
+        await writeDataStreamChunk(
+          input.res,
+          formatDataStreamPart('error', 'Upstream provider stopped sending data (activity timeout).'),
+        );
+        input.res.end();
+      } catch {
+        // Response may already be closed.
+      }
+      return;
+    }
+
     throw error;
   } finally {
     reader.releaseLock();
+  }
+
+  // Guard against writing to a response that was closed mid-stream (client disconnect)
+  if (input.res.writableEnded || disconnect.isDisconnected()) {
+    return;
   }
 
   if (!sawVisibleOutput && !sawDataEvent && input.emptyTextFallback) {
@@ -194,12 +258,14 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
     throw new Error(input.throwOnEmpty);
   }
 
-  await writeDataStreamChunk(
-    input.res,
-    formatDataStreamPart('finish_message', {
-      finishReason: finishReason === 'unknown' && (sawVisibleOutput || sawDataEvent) ? 'stop' : finishReason,
-      usage,
-    }),
-  );
-  input.res.end();
+  if (!input.res.writableEnded) {
+    await writeDataStreamChunk(
+      input.res,
+      formatDataStreamPart('finish_message', {
+        finishReason: finishReason === 'unknown' && (sawVisibleOutput || sawDataEvent) ? 'stop' : finishReason,
+        usage,
+      }),
+    );
+    input.res.end();
+  }
 }

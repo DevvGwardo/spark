@@ -2,12 +2,43 @@ import { formatDataStreamPart } from 'ai';
 import { getManagedRepoClone } from '../repo-clone-manager';
 import { OPENAI_COMPATIBLE } from '../provider-config';
 
+// ─── Input Validation ───────────────────────────────────────────────────────
+
+const GITHUB_IDENTIFIER_RE = /^[a-zA-Z0-9._-]+$/;
+
+export function validateGitHubIdentifier(name: string, label: string): void {
+  if (!name || !GITHUB_IDENTIFIER_RE.test(name)) {
+    throw new Error(`Invalid GitHub ${label}: "${name}". Must match ${GITHUB_IDENTIFIER_RE.source}`);
+  }
+}
+
+const GITHUB_API_BASE = 'https://api.github.com/';
+
+function assertGitHubApiUrl(url: string): void {
+  if (!url.startsWith(GITHUB_API_BASE)) {
+    throw new Error(`Refusing to fetch non-GitHub API URL: ${url}`);
+  }
+}
+
+function checkRateLimitResponse(response: Response): void {
+  if (response.status === 403) {
+    const remaining = response.headers.get('x-ratelimit-remaining');
+    if (remaining === '0') {
+      const resetEpoch = response.headers.get('x-ratelimit-reset');
+      const resetTime = resetEpoch
+        ? new Date(Number(resetEpoch) * 1000).toISOString()
+        : 'unknown';
+      throw new Error(`GitHub API rate limit exceeded. Resets at ${resetTime}.`);
+    }
+  }
+}
+
 // ─── GitHub PAT Validation ───────────────────────────────────────────────────
 
 export function isValidGitHubPAT(pat: unknown): pat is string {
   if (typeof pat !== 'string') return false;
   // GitHub PATs: ghp_, github_pat_, gho_, ghs_, ghr_ prefixes
-  return /^(ghp_|github_pat_|gho_|ghs_|ghr_)[a-zA-Z0-9_]{1,255}$/.test(pat);
+  return /^(ghp_|github_pat_|gho_|ghs_|ghr_)[a-zA-Z0-9_]{1,255}$/.test(pat.trim());
 }
 
 export interface GitHubRepoPayload {
@@ -77,6 +108,8 @@ export function buildGitHubContentsUrl(
   path = '',
   ref?: string,
 ): string {
+  validateGitHubIdentifier(owner, 'owner');
+  validateGitHubIdentifier(repo, 'repo');
   const suffix = (() => {
     const encodedPath = encodeGitHubContentPath(path);
     return encodedPath ? `/${encodedPath}` : '';
@@ -213,6 +246,8 @@ export async function fetchRecentRepoActivity(
   repo: string,
   headers: Record<string, string>,
 ): Promise<{ days: number[]; totalCommits: number; commitsCapped: boolean; openedIssues: number; openedPullRequests: number }> {
+  validateGitHubIdentifier(owner, 'owner');
+  validateGitHubIdentifier(repo, 'repo');
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);
 
@@ -249,11 +284,15 @@ export async function fetchRecentRepoActivity(
       commitsUrl.searchParams.set('per_page', String(REPO_ACTIVITY_COMMITS_PER_PAGE));
       commitsUrl.searchParams.set('page', String(page));
 
-      const commitsResponse = await fetch(commitsUrl.toString(), { headers });
+      const commitsUrlStr = commitsUrl.toString();
+      assertGitHubApiUrl(commitsUrlStr);
+      const commitsResponse = await fetch(commitsUrlStr, { headers });
 
       if (commitsResponse.status === 409) {
         return { capped: false };
       }
+
+      checkRateLimitResponse(commitsResponse);
 
       if (!commitsResponse.ok) {
         const error = await commitsResponse.text();
@@ -309,7 +348,10 @@ export async function fetchGitHubSearchTotalCount(
   url.searchParams.set('q', query);
   url.searchParams.set('per_page', '1');
 
-  const response = await fetch(url.toString(), { headers });
+  const urlStr = url.toString();
+  assertGitHubApiUrl(urlStr);
+  const response = await fetch(urlStr, { headers });
+  checkRateLimitResponse(response);
   if (!response.ok) {
     const error = await response.text();
     throw new Error(`GitHub API error: ${error}`);
@@ -325,11 +367,13 @@ export async function fetchGitHubRepoTree(
   branch: string,
   headers: Record<string, string>,
 ) {
+  validateGitHubIdentifier(owner, 'owner');
+  validateGitHubIdentifier(repo, 'repo');
   const encodedBranch = encodeURIComponent(branch);
-  const branchResponse = await fetch(
-    `https://api.github.com/repos/${owner}/${repo}/branches/${encodedBranch}`,
-    { headers },
-  );
+  const branchUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/branches/${encodedBranch}`;
+  assertGitHubApiUrl(branchUrl);
+  const branchResponse = await fetch(branchUrl, { headers });
+  checkRateLimitResponse(branchResponse);
 
   let treeSha: string | null = null;
   if (branchResponse.ok) {
@@ -340,10 +384,10 @@ export async function fetchGitHubRepoTree(
   }
 
   const treeTarget = treeSha ?? encodedBranch;
-  const treeResponse = await fetch(
-    `https://api.github.com/repos/${owner}/${repo}/git/trees/${treeTarget}?recursive=1`,
-    { headers },
-  );
+  const treeUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/trees/${treeTarget}?recursive=1`;
+  assertGitHubApiUrl(treeUrl);
+  const treeResponse = await fetch(treeUrl, { headers });
+  checkRateLimitResponse(treeResponse);
 
   if (!treeResponse.ok) {
     const error = await treeResponse.text();
@@ -388,7 +432,6 @@ export function createSingleMessageDataStream(text: string, usage?: { input?: nu
             usage: {
               promptTokens: usage?.input ?? 0,
               completionTokens: usage?.output ?? 0,
-              totalTokens: usage?.total ?? (usage?.input ?? 0) + (usage?.output ?? 0),
             },
           }),
         ),

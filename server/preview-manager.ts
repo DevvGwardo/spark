@@ -17,7 +17,21 @@ interface ActivePreview {
 }
 
 const activePreview: Map<string, ActivePreview> = new Map();
-let nextPort = 3100;
+const START_PORT = 3100;
+const MAX_PORT = 65535;
+const MAX_CONCURRENT_PREVIEWS = 5;
+let nextPort = START_PORT;
+
+function allocatePort(): number {
+  const port = nextPort++;
+  if (nextPort > MAX_PORT) {
+    nextPort = START_PORT;
+  }
+  if (port < 1 || port > MAX_PORT) {
+    throw new Error(`Port ${port} is out of valid range (1-65535)`);
+  }
+  return port;
+}
 
 function getPreviewId(owner: string, repo: string): string {
   return `${owner}/${repo}`;
@@ -135,6 +149,7 @@ function startDevServer(
 
 async function waitForServer(port: number, timeoutMs = 60000): Promise<boolean> {
   const start = Date.now();
+  let delay = 100; // Start at 100ms, double each iteration, cap at 2s
   while (Date.now() - start < timeoutMs) {
     try {
       const res = await fetch(`http://localhost:${port}`, { signal: AbortSignal.timeout(2000) });
@@ -142,7 +157,8 @@ async function waitForServer(port: number, timeoutMs = 60000): Promise<boolean> 
     } catch {
       // Not ready yet
     }
-    await new Promise((r) => setTimeout(r, 1000));
+    await new Promise((r) => setTimeout(r, delay));
+    delay = Math.min(delay * 2, 2000);
   }
   return false;
 }
@@ -161,7 +177,14 @@ export async function startPreview(
     await stopPreview(owner, repo);
   }
 
-  const port = nextPort++;
+  // Enforce concurrent preview limit
+  if (activePreview.size >= MAX_CONCURRENT_PREVIEWS) {
+    throw new Error(
+      `Maximum concurrent previews (${MAX_CONCURRENT_PREVIEWS}) reached. Stop an existing preview before starting a new one.`
+    );
+  }
+
+  const port = allocatePort();
   const dir = await mkdtemp(join(tmpdir(), `cloudchat-preview-`));
 
   const preview: ActivePreview = {
@@ -330,15 +353,26 @@ export function getAllPreviews() {
 }
 
 // Cleanup all previews on process exit
+// Note: 'exit' handler must be synchronous — kill processes and schedule temp dir removal
 process.on('exit', () => {
   for (const preview of activePreview.values()) {
-    if (preview.process) {
+    if (preview.process && !preview.process.killed) {
       preview.process.kill('SIGKILL');
     }
+    // Best-effort sync cleanup: schedule async removal (won't block exit)
+    rm(preview.dir, { recursive: true, force: true }).catch(() => {});
   }
+  activePreview.clear();
 });
 
 process.on('SIGINT', async () => {
+  for (const [, preview] of activePreview) {
+    await stopPreview(preview.owner, preview.repo);
+  }
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
   for (const [, preview] of activePreview) {
     await stopPreview(preview.owner, preview.repo);
   }

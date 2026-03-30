@@ -1,4 +1,8 @@
+// @vitest-environment node
 import type { AddressInfo } from 'net'
+import { mkdtempSync, mkdirSync, rmSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const aiMocks = vi.hoisted(() => ({
@@ -58,6 +62,7 @@ async function createTestServer() {
 
 describe('Hermes chat route', () => {
   const actualFetch = global.fetch
+  const tempDirs: string[] = []
 
   beforeEach(() => {
     providerConfigMocks.createProviderModel.mockReturnValue({ id: 'hermes-model' })
@@ -79,7 +84,15 @@ describe('Hermes chat route', () => {
   afterEach(() => {
     vi.clearAllMocks()
     vi.unstubAllGlobals()
+    tempDirs.splice(0).forEach((dir) => rmSync(dir, { recursive: true, force: true }))
   })
+
+  function createLocalRepoClone() {
+    const repoDir = mkdtempSync(join(tmpdir(), 'cloudchat-hermes-'))
+    mkdirSync(join(repoDir, '.git'))
+    tempDirs.push(repoDir)
+    return repoDir
+  }
 
   it('uses agent-loop mode for Hermes repo turns — the bridge handles tools directly', async () => {
     // Stub fetch so the agent-loop proxy can reach a fake hermes bridge
@@ -95,6 +108,10 @@ describe('Hermes chat route', () => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as { url: string }).url
       if (url.includes('/functions/v1/chat')) {
         return actualFetchLocal(input, init)
+      }
+
+      if (url.includes('api.github.com/repos/')) {
+        return new Response(null, { status: 200 })
       }
 
       // Verify the agent-loop proxy sends repo headers
@@ -216,6 +233,98 @@ describe('Hermes chat route', () => {
     }
   })
 
+  it('falls back to a verified local clone for Hermes when GitHub access is unavailable', async () => {
+    const repoDir = createLocalRepoClone()
+    const bridgeStream = [
+      'data: {"id":"chatcmpl-hermes-local","choices":[{"index":0,"delta":{"role":"assistant"}}]}\n\n',
+      'data: {"id":"chatcmpl-hermes-local","choices":[{"index":0,"delta":{"content":"Inspecting the local checkout"}}]}\n\n',
+      'data: {"id":"chatcmpl-hermes-local","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":8,"completion_tokens":4,"total_tokens":12}}\n\n',
+      'data: [DONE]\n\n',
+    ].join('')
+
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as { url: string }).url
+      if (url.includes('/functions/v1/chat')) {
+        return actualFetch(input, init)
+      }
+
+      const headers = init?.headers as Record<string, string> ?? {}
+      expect(headers['X-Hermes-Execution-Mode']).toBe('agent-loop')
+      expect(headers['X-Hermes-Repo-Owner']).toBeUndefined()
+      expect(headers['X-Hermes-Repo-Name']).toBeUndefined()
+      expect(headers['X-Hermes-Github-PAT']).toBeUndefined()
+
+      return new Response(bridgeStream, {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      })
+    }))
+
+    const server = await createTestServer()
+
+    try {
+      const response = await actualFetch(`${server.url}/functions/v1/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: 'hermes',
+          model: 'meta-llama/llama-4-maverick',
+          api_key: 'or-key',
+          hermes_toolsets: 'files,terminal',
+          activeRepo: {
+            owner: 'octo',
+            name: 'cloudchat',
+            localPath: repoDir,
+          },
+          messages: [
+            { role: 'user', content: 'Analyze the codebase' },
+          ],
+        }),
+      })
+
+      const body = await response.text()
+
+      expect(response.ok).toBe(true)
+      expect(body).toContain('Inspecting the local checkout')
+      expect(providerConfigMocks.createProviderModel).not.toHaveBeenCalled()
+      expect(aiMocks.streamText).not.toHaveBeenCalled()
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('returns 422 when Hermes repo mode has neither GitHub access nor a verified local clone', async () => {
+    const server = await createTestServer()
+
+    try {
+      const response = await actualFetch(`${server.url}/functions/v1/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          provider: 'hermes',
+          model: 'meta-llama/llama-4-maverick',
+          api_key: 'or-key',
+          activeRepo: {
+            owner: 'octo',
+            name: 'cloudchat',
+          },
+          messages: [
+            { role: 'user', content: 'Analyze the codebase' },
+          ],
+        }),
+      })
+
+      expect(response.status).toBe(422)
+      await expect(response.json()).resolves.toEqual({
+        error: expect.stringContaining('Hermes needs either a GitHub token'),
+      })
+    } finally {
+      await server.close()
+    }
+  })
+
   it('returns a friendly 503 when the Hermes bridge is unreachable', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
@@ -246,7 +355,7 @@ describe('Hermes chat route', () => {
 
       expect(response.status).toBe(503)
       await expect(response.json()).resolves.toEqual({
-        error: 'Hermes bridge is not reachable at http://localhost:3003/v1. Start hermes-bridge/main.py and try again.',
+        error: 'Hermes bridge is not reachable at http://localhost:3002/v1. Start hermes-bridge/main.py and try again.',
       })
     } finally {
       await server.close()

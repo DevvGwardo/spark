@@ -1,5 +1,8 @@
 import { afterEach, describe, it, expect, beforeEach, vi } from 'vitest';
+import type { ToolExecutionOptions } from 'ai';
 import { buildServerRepoTools, RepoContext } from '../agent-loop';
+
+const toolOpts: ToolExecutionOptions = { toolCallId: 'test', messages: [] };
 
 describe('agent-loop', () => {
   afterEach(() => {
@@ -65,7 +68,7 @@ describe('agent-loop', () => {
               },
             ],
           },
-          {},
+          toolOpts,
         );
 
         expect(result).toBe('Proposal ready for review. Pause for approval before editing repo files.');
@@ -114,7 +117,7 @@ describe('agent-loop', () => {
         const tools = buildServerRepoTools(baseRepo, mockEmit);
         const result = await tools.read_repo_file.execute!(
           { path: 'src/app.ts' },
-          {}
+          toolOpts,
         );
 
         expect(result).toBe('console.log("hello");');
@@ -130,7 +133,7 @@ describe('agent-loop', () => {
         const tools = buildServerRepoTools(baseRepo, mockEmit);
         const result = await tools.read_repo_file.execute!(
           { path: './src/app.ts' },
-          {}
+          toolOpts,
         );
 
         expect(result).toBe('console.log("hello");');
@@ -145,7 +148,7 @@ describe('agent-loop', () => {
         const tools = buildServerRepoTools(baseRepo, mockEmit);
         const result = await tools.read_repo_file.execute!(
           { path: '.' },
-          {}
+          toolOpts,
         );
 
         expect(result).toBe(
@@ -158,7 +161,7 @@ describe('agent-loop', () => {
         const tools = buildServerRepoTools(baseRepo, mockEmit);
         const result = await tools.read_repo_file.execute!(
           { path: 'app.ts' },
-          {}
+          toolOpts,
         );
 
         expect(result).toContain('Error: `app.ts` is not present in the selected repository');
@@ -167,9 +170,36 @@ describe('agent-loop', () => {
         expect(mockEmit).not.toHaveBeenCalled();
       });
 
+      it('suggests exact nested files from the same top-level area when a nearby server path is guessed', async () => {
+        const tools = buildServerRepoTools(
+          {
+            ...baseRepo,
+            repoFileTree: [
+              'README.md',
+              'server/src/index.ts',
+              'server/src/routes/cards.ts',
+              'server/src/routes/metrics.ts',
+            ],
+            repoFileCache: {},
+          },
+          mockEmit,
+        );
+
+        const result = await tools.read_repo_file.execute!(
+          { path: 'server/routes' },
+          toolOpts,
+        );
+
+        expect(result).toContain('Possible matches:');
+        expect(result).toContain('server/src/routes/cards.ts');
+        expect(result).not.toContain('README.md');
+        expect(mockEmit).not.toHaveBeenCalled();
+      });
+
       it('should fetch uncached nested files using slash-preserving GitHub contents paths', async () => {
         vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
           ok: true,
+          headers: { get: () => null },
           text: vi.fn().mockResolvedValue('export const nested = true;'),
         }));
 
@@ -184,7 +214,7 @@ describe('agent-loop', () => {
 
         const result = await tools.read_repo_file.execute!(
           { path: 'src/components/Button.tsx' },
-          {},
+          toolOpts,
         );
 
         expect(result).toBe('export const nested = true;');
@@ -213,7 +243,7 @@ describe('agent-loop', () => {
             content: 'console.log("updated");',
             description: 'Update log message',
           },
-          {}
+          toolOpts,
         );
 
         expect(result).toBe('Staged edit to src/app.ts');
@@ -235,7 +265,7 @@ describe('agent-loop', () => {
             content: '# Updated README',
             description: 'Update readme',
           },
-          {}
+          toolOpts,
         );
 
         expect(result).toBe('Staged edit to README.md');
@@ -256,7 +286,7 @@ describe('agent-loop', () => {
             content: 'export const missing = true;',
             description: 'Should not create a new file',
           },
-          {}
+          toolOpts,
         );
 
         expect(result).toContain('can only modify existing repo files');
@@ -273,7 +303,7 @@ describe('agent-loop', () => {
             content: 'export const foo = 1;',
             description: 'Add new utility file',
           },
-          {}
+          toolOpts,
         );
 
         expect(result).toBe('Staged new file src/new-file.ts');
@@ -294,7 +324,7 @@ describe('agent-loop', () => {
             content: '// new file',
             description: 'Create file',
           },
-          {}
+          toolOpts,
         );
 
         expect(result).toBe('Staged new file src/another.ts');
@@ -314,7 +344,7 @@ describe('agent-loop', () => {
             content: 'console.log("updated via create");',
             description: 'Overwrite existing file',
           },
-          {}
+          toolOpts,
         );
 
         expect(result).toBe('Staged edit to src/app.ts');
@@ -336,7 +366,7 @@ describe('agent-loop', () => {
             path: 'src/app.ts',
             reason: 'File no longer needed',
           },
-          {}
+          toolOpts,
         );
 
         expect(result).toBe('Staged deletion of src/app.ts');
@@ -356,7 +386,7 @@ describe('agent-loop', () => {
             path: './README.md',
             reason: 'Remove old docs',
           },
-          {}
+          toolOpts,
         );
 
         expect(result).toBe('Staged deletion of README.md');
@@ -426,7 +456,7 @@ describe('agent-loop', () => {
               },
             ],
           },
-          {}
+          toolOpts,
         );
 
         expect(result).toBe('Staged edit on src/app.ts\nStaged create on src/new.ts');
@@ -456,7 +486,7 @@ describe('agent-loop', () => {
         const tools = buildServerRepoTools(baseRepo, mockEmit);
 
         // First verify the file is in cache by reading it
-        await tools.read_repo_file.execute!({ path: 'src/app.ts' }, {});
+        await tools.read_repo_file.execute!({ path: 'src/app.ts' }, toolOpts);
         mockEmit.mockClear();
 
         // Then delete it via batch
@@ -471,7 +501,7 @@ describe('agent-loop', () => {
               },
             ],
           },
-          {}
+          toolOpts,
         );
 
         expect(result).toBe('Staged delete on src/app.ts');
@@ -508,7 +538,7 @@ describe('agent-loop', () => {
               },
             ],
           },
-          {}
+          toolOpts,
         );
 
         expect(result).toBe('Staged edit on src/app.ts\nStaged create on src/new.ts');
@@ -530,7 +560,7 @@ describe('agent-loop', () => {
               },
             ],
           },
-          {}
+          toolOpts,
         );
 
         expect(result).toBe('Staged edit on src/app.ts');
@@ -561,7 +591,7 @@ describe('agent-loop', () => {
               },
             ],
           },
-          {}
+          toolOpts,
         );
 
         expect(result).toContain('cannot edit missing file');

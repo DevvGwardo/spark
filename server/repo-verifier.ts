@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import { existsSync } from 'fs';
+import { existsSync, rmSync } from 'fs';
 import { mkdir, mkdtemp, readFile, readdir, rm, unlink, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
@@ -47,6 +47,22 @@ export interface VerificationResult {
   commands: VerificationCommandResult[];
 }
 
+export type VerificationStep =
+  | 'cloning'
+  | 'applying_changes'
+  | 'finding_workspace'
+  | 'installing'
+  | 'running_scripts'
+  | 'reviewing';
+
+export interface VerificationProgressEvent {
+  step: VerificationStep;
+  label: string;
+  detail: string;
+}
+
+export type OnVerificationProgress = (event: VerificationProgressEvent) => void;
+
 export interface VerifyRepoChangesInput {
   owner: string;
   repo: string;
@@ -58,6 +74,7 @@ export interface VerifyRepoChangesInput {
   apiKey?: string;
   origin?: string;
   allProviders?: Record<string, { apiKey: string; model: string }>;
+  onProgress?: OnVerificationProgress;
 }
 
 interface PackageScriptMap {
@@ -71,6 +88,22 @@ interface ValidationCommandSpec {
   displayCommand?: string;
   redactions?: string[];
 }
+
+const PROCESS_TIMEOUT_MS = 120_000;
+
+/** Tracks active temp directories for cleanup on unexpected process exit. */
+const activeTempDirs = new Set<string>();
+
+process.on('exit', () => {
+  for (const dir of activeTempDirs) {
+    try {
+      // Synchronous removal — 'exit' handler cannot be async.
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Best-effort cleanup; nothing useful to do if it fails during exit.
+    }
+  }
+});
 
 const reviewFindingSchema = z.object({
   severity: z.enum(['low', 'medium', 'high']).optional(),
@@ -212,6 +245,7 @@ function installCommandFor(packageManager: string, workspaceRelativePath = '.'):
 async function runCommand(
   spec: ValidationCommandSpec,
   cwd: string,
+  extraEnv?: Record<string, string>,
 ): Promise<VerificationCommandResult> {
   return await new Promise((resolve, reject) => {
     const proc = spawn(spec.command, spec.args, {
@@ -219,8 +253,10 @@ async function runCommand(
       env: {
         ...process.env,
         CI: 'true',
+        ...extraEnv,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: PROCESS_TIMEOUT_MS,
     });
 
     let stdout = '';
@@ -450,7 +486,7 @@ async function runProviderReview(input: VerifyRepoChangesInput): Promise<Verific
         schema: reviewResponseSchema,
         prompt: buildReviewPrompt(files),
         temperature: 0,
-        maxOutputTokens: 1800,
+        maxTokens: 1800,
       });
 
       parsed = {
@@ -468,7 +504,7 @@ async function runProviderReview(input: VerifyRepoChangesInput): Promise<Verific
         model: reviewModel,
         prompt: buildReviewPrompt(files),
         temperature: 0,
-        maxOutputTokens: 1800,
+        maxTokens: 1800,
       });
       parsed = parseReviewResponse(response.text);
     }
@@ -484,9 +520,10 @@ async function runProviderReview(input: VerifyRepoChangesInput): Promise<Verific
       findings: parsed.findings,
     };
   } catch (error) {
+    console.error('[repo-verifier] Provider review failed:', error);
     return {
       status: 'skipped',
-      summary: `Provider-backed review was skipped: ${error instanceof Error ? error.message : String(error)}`,
+      summary: 'Provider-backed review was skipped due to an internal error.',
       findings: [],
     };
   }
@@ -494,19 +531,31 @@ async function runProviderReview(input: VerifyRepoChangesInput): Promise<Verific
 
 export async function verifyRepoChanges(input: VerifyRepoChangesInput): Promise<VerificationResult> {
   const dir = await mkdtemp(join(tmpdir(), 'cloudchat-verify-'));
+  activeTempDirs.add(dir);
+
   const cloneUrl = `https://github.com/${input.owner}/${input.repo}.git`;
   const authHeader = `Authorization: Basic ${Buffer.from(`x-access-token:${input.pat}`).toString('base64')}`;
   const cloneSpec: ValidationCommandSpec = {
     name: 'clone',
     command: 'git',
-    args: ['clone', '-c', `http.extraHeader=${authHeader}`, '--depth', '1', '--branch', input.baseBranch, cloneUrl, '.'],
+    args: ['clone', '--depth', '1', '--branch', input.baseBranch, cloneUrl, '.'],
     displayCommand: `git clone --depth 1 --branch ${input.baseBranch} https://github.com/${input.owner}/${input.repo}.git .`,
     redactions: [input.pat, authHeader],
   };
 
+  // Pass auth via environment variables to keep the PAT out of process args.
+  const cloneEnv: Record<string, string> = {
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'http.extraHeader',
+    GIT_CONFIG_VALUE_0: authHeader,
+  };
+
+  const emit = input.onProgress ?? (() => {});
+
   try {
     const commands: VerificationCommandResult[] = [];
-    const cloneResult = await runCommand(cloneSpec, dir);
+    emit({ step: 'cloning', label: 'Cloning repository snapshot', detail: 'Pulling the base branch into a clean workspace.' });
+    const cloneResult = await runCommand(cloneSpec, dir, cloneEnv);
     commands.push(cloneResult);
     if (cloneResult.status === 'failed') {
       return {
@@ -525,8 +574,10 @@ export async function verifyRepoChanges(input: VerifyRepoChangesInput): Promise<
       };
     }
 
+    emit({ step: 'applying_changes', label: 'Applying file changes', detail: 'Writing staged changes into the cloned workspace.' });
     await applyFileChanges(dir, input.files);
 
+    emit({ step: 'finding_workspace', label: 'Finding project workspace', detail: 'Locating the package.json closest to the changed files.' });
     const packageJsonCandidates = await collectPackageJsonPaths(dir);
     const selectedPackageJsonPath = selectPackageJsonPath(
       input.files.map((file) => file.path),
@@ -538,6 +589,7 @@ export async function verifyRepoChanges(input: VerifyRepoChangesInput): Promise<
       const workspaceRelativePath = dirname(selectedPackageJsonPath);
       const workspaceLabel = workspaceRelativePath === '.' ? 'repo root' : workspaceRelativePath;
       const packageManager = detectPackageManager(workspaceDir);
+      emit({ step: 'installing', label: 'Installing dependencies', detail: `Running ${packageManager} install in ${workspaceLabel}.` });
       const installResult = await runCommand(
         installCommandFor(packageManager, workspaceRelativePath),
         workspaceDir,
@@ -548,6 +600,7 @@ export async function verifyRepoChanges(input: VerifyRepoChangesInput): Promise<
         const packageJson = JSON.parse(await readFile(join(dir, selectedPackageJsonPath), 'utf-8')) as { scripts?: PackageScriptMap };
         const validationCommands = selectValidationCommands(packageJson.scripts || {}, packageManager);
 
+        emit({ step: 'running_scripts', label: 'Running validation scripts', detail: 'Checking lint, types, tests, and build scripts when available.' });
         if (validationCommands.length === 0) {
           commands.push({
             name: 'scripts',
@@ -574,6 +627,7 @@ export async function verifyRepoChanges(input: VerifyRepoChangesInput): Promise<
       });
     }
 
+    emit({ step: 'reviewing', label: 'Generating provider review', detail: 'Asking the selected model for a final code review pass.' });
     const review = await runProviderReview(input);
     const commandsFailed = commands.filter((command) => command.status === 'failed').length;
     const status: VerificationResult['summary']['status'] =
@@ -591,6 +645,7 @@ export async function verifyRepoChanges(input: VerifyRepoChangesInput): Promise<
     };
   } finally {
     await rm(dir, { recursive: true, force: true });
+    activeTempDirs.delete(dir);
   }
 }
 
@@ -657,7 +712,7 @@ export async function generatePrMetadata(input: GeneratePrMetadataInput): Promis
       schema: prMetadataSchema,
       prompt,
       temperature: 0,
-      maxOutputTokens: 1000,
+      maxTokens: 1000,
     });
     return { title: response.object.title, body: response.object.body };
   } catch {
@@ -666,7 +721,7 @@ export async function generatePrMetadata(input: GeneratePrMetadataInput): Promis
       model: aiModel,
       prompt,
       temperature: 0,
-      maxOutputTokens: 1000,
+      maxTokens: 1000,
     });
 
     try {
@@ -677,9 +732,8 @@ export async function generatePrMetadata(input: GeneratePrMetadataInput): Promis
       }
       return { title: parsed.title, body: parsed.body };
     } catch (parseError) {
-      throw new Error(
-        `Failed to parse AI response: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
-      );
+      console.error('[repo-verifier] Failed to parse AI response:', parseError);
+      throw new Error('Failed to generate PR metadata: the AI response could not be parsed.');
     }
   }
 }

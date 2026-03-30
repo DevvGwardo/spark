@@ -28,6 +28,17 @@ export interface ForkRepositoryResult {
 }
 
 const MANAGED_REPOS_ROOT = join(homedir(), '.cloudchat', 'repos')
+const CLONE_TIMEOUT_MS = 120_000
+const VALID_NAME_RE = /^[a-zA-Z0-9._-]+$/
+
+function validateRepoName(owner: string, repo: string): void {
+  if (!VALID_NAME_RE.test(owner)) {
+    throw new Error(`Invalid repository owner name: owner must match ${VALID_NAME_RE}`)
+  }
+  if (!VALID_NAME_RE.test(repo)) {
+    throw new Error(`Invalid repository name: repo must match ${VALID_NAME_RE}`)
+  }
+}
 
 function sanitizeSegment(value: string) {
   return value.replace(/[^a-zA-Z0-9._-]/g, '_')
@@ -37,12 +48,13 @@ function getRepoDir(owner: string, repo: string) {
   return join(MANAGED_REPOS_ROOT, sanitizeSegment(owner), sanitizeSegment(repo))
 }
 
-function runGit(args: string[], cwd?: string) {
+function runGit(args: string[], cwd?: string, env?: NodeJS.ProcessEnv) {
   return new Promise<void>((resolve, reject) => {
     const child = spawn('git', args, {
       cwd,
-      env: process.env,
+      env: env ?? process.env,
       stdio: 'pipe',
+      timeout: CLONE_TIMEOUT_MS,
     })
 
     let stderr = ''
@@ -95,6 +107,7 @@ async function waitForRepository(owner: string, repo: string, headers: Record<st
 }
 
 export async function getManagedRepoClone(owner: string, repo: string): Promise<ManagedRepoClone> {
+  validateRepoName(owner, repo)
   const repoDir = getRepoDir(owner, repo)
   try {
     await access(join(repoDir, '.git'))
@@ -105,6 +118,8 @@ export async function getManagedRepoClone(owner: string, repo: string): Promise<
 }
 
 export async function ensureRepoClone({ owner, repo, pat, branch }: EnsureRepoCloneInput): Promise<ManagedRepoClone> {
+  validateRepoName(owner, repo)
+
   const existing = await getManagedRepoClone(owner, repo)
   if (existing.exists) {
     return existing
@@ -113,18 +128,28 @@ export async function ensureRepoClone({ owner, repo, pat, branch }: EnsureRepoCl
   const repoDir = await ensureRepoDirectory(owner, repo)
   const cloneUrl = `https://github.com/${owner}/${repo}.git`
   const authHeader = `Authorization: Basic ${Buffer.from(`x-access-token:${pat}`).toString('base64')}`
-  const cloneArgs = ['clone', '-c', `http.extraHeader=${authHeader}`, '--depth', '1']
+  const cloneArgs = ['clone', '--depth', '1']
   if (branch) {
     cloneArgs.push('--branch', branch)
   }
   cloneArgs.push(cloneUrl, repoDir)
 
-  await runGit(cloneArgs)
+  // Pass auth via environment variables to keep the PAT out of process args.
+  const gitEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'http.extraHeader',
+    GIT_CONFIG_VALUE_0: authHeader,
+  }
+
+  await runGit(cloneArgs, undefined, gitEnv)
 
   return { exists: true, path: repoDir }
 }
 
 export async function forkRepository({ owner, repo, pat, branch }: ForkRepositoryInput): Promise<ForkRepositoryResult> {
+  validateRepoName(owner, repo)
+
   const headers = {
     Authorization: `Bearer ${pat}`,
     Accept: 'application/vnd.github+json',
@@ -140,7 +165,8 @@ export async function forkRepository({ owner, repo, pat, branch }: ForkRepositor
 
   if (!forkResponse.ok && forkResponse.status !== 202) {
     const error = await forkResponse.text()
-    throw new Error(`Failed to fork repository: ${error}`)
+    console.error(`[repo-clone-manager] Fork failed (${forkResponse.status}):`, error)
+    throw new Error(`Failed to fork repository (HTTP ${forkResponse.status})`)
   }
 
   const initialFork = await forkResponse.json() as {

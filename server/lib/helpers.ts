@@ -6,9 +6,11 @@ export const ALLOWED_ORIGINS = new Set([
   'http://localhost:5173',
   'http://localhost:5174',
   'http://localhost:3000',
+  'http://localhost:8080',
   'http://127.0.0.1:5173',
   'http://127.0.0.1:5174',
   'http://127.0.0.1:3000',
+  'http://127.0.0.1:8080',
   'app://.',  // Electron custom protocol
 ]);
 
@@ -16,8 +18,9 @@ export function getCorsOrigin(requestOrigin: string | undefined): string {
   if (requestOrigin && ALLOWED_ORIGINS.has(requestOrigin)) {
     return requestOrigin;
   }
-  // For Electron file:// or same-origin requests
-  return 'http://localhost:5173';
+  // For Electron file:// or same-origin requests, return the first allowed origin.
+  // Configure ALLOWED_ORIGINS with your production domain(s) before deploying.
+  return ALLOWED_ORIGINS.values().next().value!;
 }
 
 export function buildCorsHeaders(requestOrigin: string | undefined) {
@@ -35,23 +38,73 @@ export function sendJson(res: express.Response, status: number, body: unknown) {
 
 export class RateLimiter {
   private requests = new Map<string, number[]>();
+  private cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(private windowMs: number, private maxRequests: number) {}
+  constructor(private windowMs: number, private maxRequests: number) {
+    // Periodic cleanup every 60s to prevent unbounded memory growth
+    this.cleanupTimer = setInterval(() => this.pruneExpired(), 60_000);
+    // Allow the Node process to exit even if the timer is still active
+    if (this.cleanupTimer && typeof this.cleanupTimer === 'object' && 'unref' in this.cleanupTimer) {
+      this.cleanupTimer.unref();
+    }
+  }
+
+  /** Remove all entries whose timestamps have fully expired. */
+  private pruneExpired(): void {
+    const now = Date.now();
+    for (const [k, ts] of this.requests) {
+      const active = ts.filter(t => now - t < this.windowMs);
+      if (active.length === 0) {
+        this.requests.delete(k);
+      } else {
+        this.requests.set(k, active);
+      }
+    }
+  }
 
   isAllowed(key: string): boolean {
     const now = Date.now();
     const timestamps = this.requests.get(key) || [];
     const filtered = timestamps.filter(t => now - t < this.windowMs);
+
+    // Clean up keys with no recent activity
+    if (filtered.length === 0) {
+      this.requests.delete(key);
+    }
+
     if (filtered.length >= this.maxRequests) return false;
     filtered.push(now);
     this.requests.set(key, filtered);
+
+    // Inline safety net: prune if map grows unexpectedly large between intervals
+    if (this.requests.size > 1000) {
+      this.pruneExpired();
+    }
+
     return true;
+  }
+
+  /** Stop the periodic cleanup timer (useful for tests). */
+  destroy(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
   }
 }
 
 export const chatRateLimiter = new RateLimiter(60_000, 30);       // 30 requests per minute
 export const validateKeyRateLimiter = new RateLimiter(60_000, 10); // 10 requests per minute
 
+/**
+ * Extract the client IP address from a request.
+ * Uses req.ip (which respects Express "trust proxy" setting) as the primary source,
+ * falling back to x-forwarded-for and then socket address.
+ * NOTE: Configure `app.set('trust proxy', ...)` in production so req.ip is reliable.
+ */
 export function getClientIp(req: express.Request): string {
-  return (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || 'unknown';
+  return req.ip
+    || (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
+    || req.socket?.remoteAddress
+    || 'unknown';
 }

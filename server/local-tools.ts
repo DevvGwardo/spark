@@ -1,8 +1,8 @@
 import { tool, type CoreTool } from 'ai';
 import { z } from 'zod';
-import { exec } from 'child_process';
+import { exec, execFile } from 'child_process';
 import { readFile, writeFile, mkdir } from 'fs/promises';
-import { dirname } from 'path';
+import { dirname, resolve } from 'path';
 import { existsSync, readdirSync } from 'fs';
 
 // ─── Config ─────────────────────────────────────────────────────────────────
@@ -11,6 +11,95 @@ const RUN_COMMAND_TIMEOUT_MS = 90_000; // 90 seconds
 const EXECUTE_PYTHON_TIMEOUT_MS = 90_000;
 const MAX_OUTPUT_LENGTH = 15_000;
 const MAX_FILE_READ_LENGTH = 20_000;
+
+// ─── Sensitive path blocklist ───────────────────────────────────────────────
+
+const BLOCKED_PATH_PATTERNS = [
+  /(?:^|\/)\.env(?:\.|$)/,      // .env, .env.local, etc.
+  /(?:^|\/)\.ssh\//,             // ~/.ssh/*
+  /(?:^|\/)\.gnupg\//,           // ~/.gnupg/*
+  /(?:^|\/)\.aws\/credentials/,  // AWS credentials
+  /(?:^|\/)\.npmrc$/,            // npm auth tokens
+  /(?:^|\/)\.netrc$/,            // netrc credentials
+  /^\/etc\/shadow$/,
+  /^\/etc\/passwd$/,
+];
+
+function isBlockedPath(normalizedPath: string): boolean {
+  return BLOCKED_PATH_PATTERNS.some((pattern) => pattern.test(normalizedPath));
+}
+
+function resolveSafePath(path: string): { resolved: string; error?: string } {
+  const resolved = resolve(path);
+  if (isBlockedPath(resolved)) {
+    return { resolved, error: `Access denied: '${path}' is a restricted path.` };
+  }
+  return { resolved };
+}
+
+// ─── Shared exec helper ────────────────────────────────────────────────────
+
+interface ExecResult {
+  output: string;
+}
+
+function truncateOutput(output: string): string {
+  if (output.length > MAX_OUTPUT_LENGTH) {
+    return output.slice(0, MAX_OUTPUT_LENGTH) + `\n\n[Output truncated at ${MAX_OUTPUT_LENGTH.toLocaleString()} chars]`;
+  }
+  return output;
+}
+
+function formatExecOutput(stdout: string, stderr: string): string {
+  let output = '';
+  if (stdout) output += stdout;
+  if (stderr) output += (output ? '\n' : '') + stderr;
+  return output;
+}
+
+function execWithTimeout(
+  command: string,
+  args: string[] | null,
+  options: { timeoutMs: number; shell?: string },
+): Promise<ExecResult> {
+  return new Promise<ExecResult>((resolve) => {
+    const execOptions = {
+      timeout: options.timeoutMs,
+      maxBuffer: 1024 * 1024 * 5,
+      ...(options.shell ? { shell: options.shell } : {}),
+    };
+
+    const callback = (error: Error & { killed?: boolean; code?: number } | null, stdout: string, stderr: string) => {
+      if (error?.killed) {
+        resolve({
+          output: `Error: Command timed out after ${options.timeoutMs / 1000} seconds.`,
+        });
+        return;
+      }
+
+      let output = formatExecOutput(stdout, stderr);
+
+      if (error?.code) {
+        output += `\n[Exit code: ${error.code}]`;
+        if (error.code === 127) {
+          output += '\nHint: Command not found. Check if the program is installed and in PATH.';
+        } else if (error.code === 126) {
+          output += '\nHint: Permission denied. The file may not be executable.';
+        }
+      }
+
+      resolve({ output: truncateOutput(output) || '(no output)' });
+    };
+
+    if (args !== null) {
+      // Use execFile (no shell) — safer for passing untrusted arguments
+      execFile(command, args, execOptions, callback);
+    } else {
+      // Use exec (with shell) — needed for pipes, redirects, chained commands
+      exec(command, { ...execOptions, shell: options.shell || '/bin/sh' }, callback);
+    }
+  });
+}
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -39,39 +128,11 @@ export function buildLocalExecutionTools(toolsets: LocalToolsets) {
         command: z.string().describe('The shell command to execute'),
       }),
       execute: async ({ command }) => {
-        return new Promise<string>((resolve) => {
-          exec(command, {
-            timeout: RUN_COMMAND_TIMEOUT_MS,
-            maxBuffer: 1024 * 1024 * 5,
-            shell: '/bin/sh',
-          }, (error, stdout, stderr) => {
-            let output = '';
-            if (stdout) output += stdout;
-            if (stderr) output += (output ? '\n' : '') + stderr;
-
-            if (error && 'killed' in error && error.killed) {
-              resolve(
-                `Error: Command timed out after ${RUN_COMMAND_TIMEOUT_MS / 1000} seconds.\nCommand: ${command}\nTry breaking the command into smaller steps.`,
-              );
-              return;
-            }
-
-            if (error && error.code) {
-              output += `\n[Exit code: ${error.code}]`;
-              if (error.code === 127) {
-                output += '\nHint: Command not found. Check if the program is installed and in PATH.';
-              } else if (error.code === 126) {
-                output += '\nHint: Permission denied. The file may not be executable.';
-              }
-            }
-
-            if (output.length > MAX_OUTPUT_LENGTH) {
-              output = output.slice(0, MAX_OUTPUT_LENGTH) + '\n\n[Output truncated at 15,000 chars]';
-            }
-
-            resolve(output || '(no output)');
-          });
+        const result = await execWithTimeout(command, null, {
+          timeoutMs: RUN_COMMAND_TIMEOUT_MS,
+          shell: '/bin/sh',
         });
+        return result.output;
       },
     });
   }
@@ -84,28 +145,11 @@ export function buildLocalExecutionTools(toolsets: LocalToolsets) {
         code: z.string().describe('The Python code to execute'),
       }),
       execute: async ({ code }) => {
-        return new Promise<string>((resolve) => {
-          exec(`python3 -c ${JSON.stringify(code)}`, {
-            timeout: EXECUTE_PYTHON_TIMEOUT_MS,
-            maxBuffer: 1024 * 1024 * 5,
-            shell: '/bin/sh',
-          }, (error, stdout, stderr) => {
-            let output = '';
-            if (stdout) output += stdout;
-            if (stderr) output += (output ? '\n' : '') + stderr;
-
-            if (error && 'killed' in error && error.killed) {
-              resolve(`Error: Python execution timed out after ${EXECUTE_PYTHON_TIMEOUT_MS / 1000} seconds.`);
-              return;
-            }
-
-            if (output.length > MAX_OUTPUT_LENGTH) {
-              output = output.slice(0, MAX_OUTPUT_LENGTH) + '\n\n[Output truncated at 15,000 chars]';
-            }
-
-            resolve(output || '(no output)');
-          });
+        // Use execFile (no shell) to avoid shell injection via code content
+        const result = await execWithTimeout('python3', ['-c', code], {
+          timeoutMs: EXECUTE_PYTHON_TIMEOUT_MS,
         });
+        return result.output;
       },
     });
   }
@@ -117,8 +161,11 @@ export function buildLocalExecutionTools(toolsets: LocalToolsets) {
         path: z.string().describe('The absolute or relative path to the file to read'),
       }),
       execute: async ({ path }) => {
-        if (!existsSync(path)) {
-          const parent = dirname(path) || '.';
+        const { resolved, error: pathError } = resolveSafePath(path);
+        if (pathError) return pathError;
+
+        if (!existsSync(resolved)) {
+          const parent = dirname(resolved);
           let hint = '';
           if (existsSync(parent)) {
             try {
@@ -134,7 +181,7 @@ export function buildLocalExecutionTools(toolsets: LocalToolsets) {
         }
 
         try {
-          const content = await readFile(path, 'utf-8');
+          const content = await readFile(resolved, 'utf-8');
           if (content.length > MAX_FILE_READ_LENGTH) {
             return content.slice(0, MAX_FILE_READ_LENGTH) + '\n\n[Content truncated at 20,000 chars]';
           }
@@ -159,7 +206,10 @@ export function buildLocalExecutionTools(toolsets: LocalToolsets) {
         content: z.string().describe('The content to write to the file'),
       }),
       execute: async ({ path, content }) => {
-        const dir = dirname(path);
+        const { resolved, error: pathError } = resolveSafePath(path);
+        if (pathError) return pathError;
+
+        const dir = dirname(resolved);
         if (dir && dir !== '.') {
           try {
             await mkdir(dir, { recursive: true });
@@ -171,7 +221,7 @@ export function buildLocalExecutionTools(toolsets: LocalToolsets) {
         }
 
         try {
-          await writeFile(path, content, 'utf-8');
+          await writeFile(resolved, content, 'utf-8');
           return `Written ${content.length} bytes to ${path}`;
         } catch (err) {
           if (err instanceof Error && err.message.includes('EACCES')) {

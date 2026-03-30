@@ -7,6 +7,7 @@ import { registerValidateRoute } from './routes/validate';
 import { registerProxyRoute } from './routes/proxy';
 import { registerTranslateRoute } from './routes/translate';
 import { sendJson } from './lib/helpers';
+import { MAX_BODY_SIZE } from './config';
 
 // Re-export for external consumers
 export { shouldDirectProxyCompatibleProvider } from './lib/hermes';
@@ -14,7 +15,7 @@ export { shouldDirectProxyCompatibleProvider } from './lib/hermes';
 export function createApp() {
   const app = express();
   app.use(cors());
-  app.use(express.json({ limit: '10mb' }));
+  app.use(express.json({ limit: MAX_BODY_SIZE }));
   registerChatStoreRoutes(app);
 
   registerChatRoute(app);
@@ -40,10 +41,16 @@ export function createApp() {
 // ─── Start server ────────────────────────────────────────────────────────────
 
 export function startServer(port?: number) {
-  const resolvedPort = port || process.env.PORT || 3001;
+  const resolvedPort = Number(port || process.env.PORT || 3001);
+
+  if (!Number.isInteger(resolvedPort) || resolvedPort < 1 || resolvedPort > 65535) {
+    console.error(`[server] Invalid port: ${resolvedPort}. Must be an integer between 1 and 65535.`);
+    process.exit(1);
+  }
+
   const app = createApp();
-  return new Promise<{ app: typeof app; port: number }>((resolve) => {
-    app.listen(resolvedPort, () => {
+  return new Promise<{ app: typeof app; port: number }>((resolve, reject) => {
+    const server = app.listen(resolvedPort, () => {
       console.log(`Local API server running on http://localhost:${resolvedPort}`);
       console.log('Routes:');
       console.log('  POST /functions/v1/chat');
@@ -51,7 +58,16 @@ export function startServer(port?: number) {
       console.log('  POST /functions/v1/github-analyzer');
       console.log('  POST /functions/v1/validate-key');
       console.log('  POST /functions/v1/chat-proxy');
-      resolve({ app, port: Number(resolvedPort) });
+      resolve({ app, port: resolvedPort });
+    });
+
+    server.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EADDRINUSE') {
+        console.error(`[server] Port ${resolvedPort} is already in use.`);
+      } else {
+        console.error(`[server] Failed to start: ${err.message}`);
+      }
+      reject(err);
     });
   });
 }

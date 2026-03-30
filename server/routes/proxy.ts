@@ -18,91 +18,57 @@ interface ChatProxyRequest {
   system_prompt?: string;
 }
 
-const KIMI_API_URL = 'https://api.moonshot.cn/v1/chat/completions';
-const KIMI_CODING_API_URL = 'https://api.kimi.com/coding/v1/chat/completions';
+/** Timeout for the initial upstream fetch (60 s). */
+const FETCH_TIMEOUT_MS = 60_000;
 
-async function proxyMiniMax(body: ChatProxyRequest): Promise<Response> {
+/** Maximum size for the raw response accumulator (1 MB). */
+const MAX_RAW_ACCUMULATOR_SIZE = 1_048_576;
+
+const PROVIDER_URLS: Record<string, string> = {
+  kimi: 'https://api.moonshot.cn/v1/chat/completions',
+  'kimi-coding': 'https://api.kimi.com/coding/v1/chat/completions',
+};
+
+const DEFAULT_MAX_TOKENS: Partial<Record<string, number>> = {
+  'kimi-coding': 32768,
+};
+
+const PROVIDER_LABELS: Record<string, string> = {
+  minimax: 'MiniMax',
+  'minimax-payg': 'MiniMax',
+  kimi: 'Kimi',
+  'kimi-coding': 'Kimi Coding',
+};
+
+async function proxyProviderRequest(body: ChatProxyRequest): Promise<Response> {
   const messages = normalizeChatMessages(body.messages, body.system_prompt).messages;
+
+  const url = PROVIDER_URLS[body.provider]
+    ?? `${OPENAI_COMPATIBLE[body.provider]}/chat/completions`;
 
   const payload = {
     model: body.model,
     messages,
     temperature: body.temperature ?? 0.7,
     top_p: body.top_p ?? 0.9,
-    max_tokens: body.max_tokens ?? 4096,
+    max_tokens: body.max_tokens ?? (DEFAULT_MAX_TOKENS[body.provider] || 4096),
     stream: true,
   };
 
-  const response = await fetch(`${OPENAI_COMPATIBLE[body.provider]}/chat/completions`, {
+  const response = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${body.api_key}`,
     },
     body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`MiniMax API error (${response.status}): ${errorText}`);
-  }
-
-  return response;
-}
-
-async function proxyKimi(body: ChatProxyRequest): Promise<Response> {
-  const messages = normalizeChatMessages(body.messages, body.system_prompt).messages;
-
-  const payload = {
-    model: body.model,
-    messages,
-    temperature: body.temperature ?? 0.7,
-    top_p: body.top_p ?? 0.9,
-    max_tokens: body.max_tokens ?? 4096,
-    stream: true,
-  };
-
-  const response = await fetch(KIMI_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${body.api_key}`,
-    },
-    body: JSON.stringify(payload),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Kimi API error (${response.status}): ${errorText}`);
-  }
-
-  return response;
-}
-
-async function proxyKimiCoding(body: ChatProxyRequest): Promise<Response> {
-  const messages = normalizeChatMessages(body.messages, body.system_prompt).messages;
-
-  const payload = {
-    model: body.model,
-    messages,
-    temperature: body.temperature ?? 0.7,
-    top_p: body.top_p ?? 0.9,
-    max_tokens: body.max_tokens ?? 32768,
-    stream: true,
-  };
-
-  const response = await fetch(KIMI_CODING_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${body.api_key}`,
-    },
-    body: JSON.stringify(payload),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Kimi Coding API error (${response.status}): ${errorText}`);
+    const label = PROVIDER_LABELS[body.provider] || body.provider;
+    throw new Error(`${label} API error (${response.status}): ${errorText}`);
   }
 
   return response;
@@ -124,14 +90,7 @@ app.post('/functions/v1/chat-proxy', async (req, res) => {
       });
     }
 
-    let upstreamResponse: Response;
-    if (body.provider === 'minimax' || body.provider === 'minimax-payg') {
-      upstreamResponse = await proxyMiniMax(body);
-    } else if (body.provider === 'kimi-coding') {
-      upstreamResponse = await proxyKimiCoding(body);
-    } else {
-      upstreamResponse = await proxyKimi(body);
-    }
+    const upstreamResponse = await proxyProviderRequest(body);
 
     if (!upstreamResponse.body) {
       const text = await upstreamResponse.text();
@@ -142,7 +101,10 @@ app.post('/functions/v1/chat-proxy', async (req, res) => {
       });
     }
 
-    // Set SSE headers
+    // Set SSE headers (guard against double-send if an earlier path already responded)
+    if (res.headersSent) {
+      return;
+    }
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -182,7 +144,12 @@ app.post('/functions/v1/chat-proxy', async (req, res) => {
           }
 
           const chunk = decoder.decode(value, { stream: true });
-          rawAccumulator += chunk;
+          if (rawAccumulator.length < MAX_RAW_ACCUMULATOR_SIZE) {
+            rawAccumulator += chunk;
+            if (rawAccumulator.length > MAX_RAW_ACCUMULATOR_SIZE) {
+              rawAccumulator = rawAccumulator.slice(0, MAX_RAW_ACCUMULATOR_SIZE);
+            }
+          }
           buffer += chunk;
           const lines = buffer.split('\n');
           buffer = lines.pop() || '';
@@ -209,12 +176,7 @@ app.post('/functions/v1/chat-proxy', async (req, res) => {
                 continue;
               }
 
-              let content = '';
-              if (body.provider === 'minimax' || body.provider === 'minimax-payg') {
-                content = json.choices?.[0]?.delta?.content || '';
-              } else if (body.provider === 'kimi' || body.provider === 'kimi-coding') {
-                content = json.choices?.[0]?.delta?.content || '';
-              }
+              const content = json.choices?.[0]?.delta?.content || '';
 
               if (content) {
                 receivedAnyContent = true;
@@ -231,17 +193,28 @@ app.post('/functions/v1/chat-proxy', async (req, res) => {
       }
     };
 
-    bindClientDisconnect(req, res, () => {
-      reader.cancel().catch(() => {});
+    bindClientDisconnect(req, res, async () => {
+      await reader.cancel().catch(() => {});
     });
 
     await pump();
   } catch (err: unknown) {
+    // Detect fetch timeout (AbortSignal.timeout fires a TimeoutError / AbortError).
+    if (
+      err instanceof DOMException &&
+      (err.name === 'TimeoutError' || err.name === 'AbortError')
+    ) {
+      if (!res.headersSent) {
+        return sendJson(res, 504, { error: 'Upstream provider did not respond in time' });
+      }
+      return;
+    }
+
     const message = getUnknownErrorMessage(err) || 'Internal server error';
     const status = message.includes('401') ? 401 : message.includes('429') ? 429 : 500;
 
     if (!res.headersSent) {
-      sendJson(res, status, { error: message });
+      return sendJson(res, status, { error: message });
     }
   }
 });

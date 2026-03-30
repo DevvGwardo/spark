@@ -1,5 +1,7 @@
 import type { Express } from 'express';
-import { streamText, tool, type DataStreamWriter } from 'ai';
+import { existsSync } from 'fs';
+import { join, isAbsolute } from 'path';
+import { StreamData, streamText, tool, type CoreMessage, type DataStreamWriter, type JSONValue } from 'ai';
 import { z } from 'zod';
 import { buildServerRepoTools, type ServerToolEvent } from '../agent-loop';
 import {
@@ -11,6 +13,7 @@ import {
   usesFirstPartyProviderSdk,
 } from '../provider-config';
 import { runOpenClawTurn } from '../openclaw';
+import { ensureRepoClone } from '../repo-clone-manager';
 import { getRepoTurnIntentInstruction } from '../../src/lib/repo-intent';
 import { bindClientDisconnect } from '../http-disconnect';
 import { normalizeChatMessages } from '../message-normalization';
@@ -27,15 +30,217 @@ import {
   shouldDirectProxyCompatibleProvider,
 } from '../lib/hermes';
 import { buildLocalExecutionTools, parseAgentToolsets, getLocalToolsSystemPromptFragment } from '../local-tools';
+import { MAX_AGENT_STEPS } from '../config';
 
 // ─── /functions/v1/chat ──────────────────────────────────────────────────────
 
 // Filter out problematic stream lines (e.g. empty error entries from some providers)
+const REPO_PROMPT_FILE_TREE_LIMIT = 200;
+const REPO_PROMPT_CACHE_FILE_LIMIT = 6;
+const REPO_PROMPT_CACHE_FILE_CHAR_LIMIT = 4000;
+const REPO_PROMPT_CACHE_TOTAL_CHAR_LIMIT = 16000;
+const HERMES_LOCAL_REPO_TOOLSETS = new Set(['terminal', 'files', 'code_execution']);
+
+function parseToolsetList(raw: unknown): Set<string> {
+  if (typeof raw !== 'string') {
+    return new Set();
+  }
+
+  return new Set(
+    raw
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+  );
+}
+
+function resolveAttachedLocalRepoPath(rawPath: unknown): string | null {
+  if (typeof rawPath !== 'string') {
+    return null;
+  }
+
+  const normalizedPath = rawPath.trim();
+  if (!normalizedPath || !isAbsolute(normalizedPath)) {
+    return null;
+  }
+
+  return existsSync(join(normalizedPath, '.git')) ? normalizedPath : null;
+}
+
+function buildLocalRepoAccessPrompt(params: {
+  provider: string;
+  localRepoPath: string;
+  repoFullName: string;
+}): string {
+  const base = [
+    `A verified local checkout of ${params.repoFullName} is available at: ${params.localRepoPath}`,
+    'Use that checkout as the source of truth for this turn.',
+    'Do not ask the user to clone the repository, provide files, or provide a GitHub token.',
+  ];
+
+  if (params.provider === 'hermes') {
+    return [
+      ...base,
+      'This turn is using a local checkout fallback instead of GitHub repo tools.',
+      'Do not call read_repo_file, edit_repo_file, create_repo_file, or batch_edit_repo_files for this turn.',
+      'Use your local file, terminal, or code-execution tools against the checkout path above.',
+    ].join('\n');
+  }
+
+  return [
+    ...base,
+    'Inspect and modify files directly in that checkout path.',
+  ].join('\n');
+}
+
+function selectRepresentativeRepoPaths(paths: string[], limit: number): string[] {
+  const buckets = new Map<string, string[]>();
+
+  for (const path of paths) {
+    const topLevel = path.split('/')[0] || path;
+    const bucket = buckets.get(topLevel) ?? [];
+    bucket.push(path);
+    buckets.set(topLevel, bucket);
+  }
+
+  const bucketEntries = Array.from(buckets.entries())
+    .map(([topLevel, bucketPaths]) => ({
+      topLevel,
+      paths: [...bucketPaths].sort((left, right) => {
+        const depthDiff = left.split('/').length - right.split('/').length;
+        return depthDiff !== 0 ? depthDiff : left.localeCompare(right);
+      }),
+    }))
+    .sort((left, right) => right.paths.length - left.paths.length || left.topLevel.localeCompare(right.topLevel));
+
+  const selected: string[] = [];
+  const seen = new Set<string>();
+  let cursor = 0;
+
+  while (selected.length < limit) {
+    let addedThisRound = false;
+
+    for (const bucket of bucketEntries) {
+      const candidate = bucket.paths[cursor];
+      if (!candidate || seen.has(candidate)) {
+        continue;
+      }
+
+      seen.add(candidate);
+      selected.push(candidate);
+      addedThisRound = true;
+
+      if (selected.length >= limit) {
+        break;
+      }
+    }
+
+    if (!addedThisRound) {
+      break;
+    }
+
+    cursor += 1;
+  }
+
+  return selected;
+}
+
+function summarizeRepoTreeForPrompt(paths: string[]): string {
+  if (paths.length === 0) {
+    return '';
+  }
+
+  const topLevelCounts = new Map<string, number>();
+  for (const path of paths) {
+    const [topLevel] = path.split('/');
+    if (!topLevel) continue;
+    topLevelCounts.set(topLevel, (topLevelCounts.get(topLevel) ?? 0) + 1);
+  }
+
+  const topLevelSummary = Array.from(topLevelCounts.entries())
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, 12)
+    .map(([entry, count]) => `${entry}${entry.includes('.') ? '' : '/'} (${count})`)
+    .join(', ');
+
+  const visiblePaths = selectRepresentativeRepoPaths(paths, REPO_PROMPT_FILE_TREE_LIMIT);
+  const truncatedCount = Math.max(paths.length - visiblePaths.length, 0);
+
+  return `${[
+    `The selected repository file tree contains ${paths.length} files.`,
+    topLevelSummary ? `Top-level entries by file count: ${topLevelSummary}.` : '',
+    truncatedCount > 0
+      ? `Showing ${visiblePaths.length} representative paths below. The remaining ${truncatedCount} paths are omitted to keep the prompt compact.`
+      : 'The full file tree is listed below.',
+    '',
+    'Representative exact repository paths:',
+    ...visiblePaths,
+  ].filter(Boolean).join('\n')}`;
+}
+
+function formatCachedFilesForPrompt(cache: Record<string, unknown>): string {
+  const entries = Object.entries(cache).filter((entry): entry is [string, string] =>
+    typeof entry[0] === 'string' &&
+    entry[0].trim().length > 0 &&
+    typeof entry[1] === 'string' &&
+    entry[1].length > 0,
+  );
+
+  if (entries.length === 0) {
+    return '';
+  }
+
+  const sections: string[] = [];
+  let totalChars = 0;
+  let includedFiles = 0;
+
+  for (const [path, content] of entries) {
+    if (includedFiles >= REPO_PROMPT_CACHE_FILE_LIMIT || totalChars >= REPO_PROMPT_CACHE_TOTAL_CHAR_LIMIT) {
+      break;
+    }
+
+    const remainingBudget = REPO_PROMPT_CACHE_TOTAL_CHAR_LIMIT - totalChars;
+    const visibleContent = content.slice(0, Math.min(REPO_PROMPT_CACHE_FILE_CHAR_LIMIT, remainingBudget));
+    if (!visibleContent) {
+      break;
+    }
+
+    const truncated = visibleContent.length < content.length;
+    sections.push(`### ${path}\n\`\`\`\n${visibleContent}${truncated ? '\n... [truncated]' : ''}\n\`\`\``);
+    totalChars += visibleContent.length;
+    includedFiles += 1;
+  }
+
+  if (sections.length === 0) {
+    return '';
+  }
+
+  const omittedFiles = Math.max(entries.length - includedFiles, 0);
+  return `${[
+    '--- Previously Read Files (cached) ---',
+    'Use these cached file contents directly unless you have a concrete reason to re-read them.',
+    omittedFiles > 0
+      ? `Showing ${includedFiles} cached files. ${omittedFiles} additional cached files are omitted to control prompt size.`
+      : `Showing ${includedFiles} cached files.`,
+    '',
+    ...sections,
+  ].join('\n\n')}`;
+}
+
 export function registerChatRoute(app: Express) {
 
 app.post('/functions/v1/chat', async (req, res) => {
   if (!chatRateLimiter.isAllowed(getClientIp(req))) {
     return sendJson(res, 429, { error: 'Too many requests. Please try again later.' });
+  }
+
+  // Basic request validation — reject obviously malformed payloads early.
+  const { messages: rawMessages, model: rawModel } = req.body ?? {};
+  if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
+    return sendJson(res, 400, { error: 'messages must be a non-empty array' });
+  }
+  if (typeof rawModel !== 'string' || rawModel.trim().length === 0) {
+    return sendJson(res, 400, { error: 'model must be a non-empty string' });
   }
 
   let requestTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -50,7 +255,7 @@ app.post('/functions/v1/chat', async (req, res) => {
 
   try {
     const {
-      provider = 'lovable',
+      provider,
       model,
       messages,
       temperature,
@@ -69,15 +274,27 @@ app.post('/functions/v1/chat', async (req, res) => {
       agent_toolsets,
     } = req.body;
 
+    const sanitizeFileTree = (tree: unknown): string[] =>
+      Array.isArray(tree)
+        ? tree.filter((path): path is string => typeof path === 'string' && path.trim().length > 0)
+        : [];
+
+    if (!provider) {
+      return sendJson(res, 400, { error: 'provider is required' });
+    }
+
+    if (temperature !== undefined && (typeof temperature !== 'number' || temperature < 0 || temperature > 2)) {
+      return sendJson(res, 400, { error: 'temperature must be a number between 0 and 2' });
+    }
+
+    if (max_tokens !== undefined && (typeof max_tokens !== 'number' || max_tokens < 1 || max_tokens > 200_000)) {
+      return sendJson(res, 400, { error: 'max_tokens must be between 1 and 200,000' });
+    }
+
     // Resolve API key
     let apiKey = '';
     if (provider === 'openclaw') {
       apiKey = '';
-    } else if (provider === 'lovable') {
-      apiKey = process.env.LOVABLE_API_KEY || '';
-      if (!apiKey) {
-        return sendJson(res, 500, { error: 'Lovable AI is not configured' });
-      }
     } else {
       apiKey = api_key;
       if (!apiKey) {
@@ -85,13 +302,93 @@ app.post('/functions/v1/chat', async (req, res) => {
       }
     }
 
+    // Validate repo accessibility before building system prompt.
+    // If the repo doesn't exist or the PAT can't access it, strip repo context
+    // so the AI doesn't waste turns trying to access a phantom repo.
+    const rawGithubPAT = typeof req.body.github_pat === 'string' ? req.body.github_pat.trim() : req.body.github_pat;
+    const githubPAT = isValidGitHubPAT(rawGithubPAT) ? rawGithubPAT : undefined;
+    const requestedLocalRepoPath = resolveAttachedLocalRepoPath(activeRepo?.localPath);
+    const hermesToolsetsRequested = parseToolsetList(hermes_toolsets);
+    const hermesHasLocalRepoTools = Array.from(HERMES_LOCAL_REPO_TOOLSETS).some((toolset) => hermesToolsetsRequested.has(toolset));
+    let resolvedLocalRepoPath = requestedLocalRepoPath;
+    let repoAccessError: string | null = null;
+    if (activeRepo && githubPAT && activeRepo.owner && activeRepo.name) {
+      try {
+        const repoCheckUrl = `https://api.github.com/repos/${encodeURIComponent(activeRepo.owner)}/${encodeURIComponent(activeRepo.name)}`;
+        const validationAbort = new AbortController();
+        const validationTimer = setTimeout(() => validationAbort.abort(), 5000);
+        const repoCheckResp = await fetch(repoCheckUrl, {
+          method: 'HEAD',
+          headers: {
+            Authorization: `Bearer ${githubPAT}`,
+            Accept: 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28',
+            'User-Agent': 'CloudChat',
+          },
+          signal: validationAbort.signal,
+        });
+        clearTimeout(validationTimer);
+        if (repoCheckResp.status === 404) {
+          repoAccessError = `Repository ${activeRepo.owner}/${activeRepo.name} was not found. It may have been renamed, deleted, or your token may lack access. Please re-select the repository.`;
+          console.warn(`[chat] Repo validation failed: ${activeRepo.owner}/${activeRepo.name} returned 404`);
+        } else if (repoCheckResp.status === 401 || repoCheckResp.status === 403) {
+          repoAccessError = `Your GitHub token does not have access to ${activeRepo.owner}/${activeRepo.name}. Check that the token has the 'repo' scope for private repositories.`;
+          console.warn(`[chat] Repo validation failed: ${activeRepo.owner}/${activeRepo.name} returned ${repoCheckResp.status}`);
+        }
+      } catch (err) {
+        // Don't block on validation timeout — let the AI handle it downstream
+        console.warn(`[chat] Repo validation check failed (non-blocking): ${err instanceof Error ? err.message : err}`);
+      }
+    }
+
+    if (provider === 'openclaw' && activeRepo && githubPAT && activeRepo.owner && activeRepo.name) {
+      try {
+        const clone = await ensureRepoClone({
+          owner: activeRepo.owner,
+          repo: activeRepo.name,
+          pat: githubPAT,
+          branch: activeRepo.default_branch || 'main',
+        });
+        resolvedLocalRepoPath = clone.path;
+        repoAccessError = null;
+      } catch (error) {
+        repoAccessError = `CloudChat could not prepare a local checkout for ${activeRepo.owner}/${activeRepo.name}: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    }
+
+    const hermesUsesLocalCloneFallback = provider === 'hermes' && !!activeRepo && !githubPAT && !!resolvedLocalRepoPath;
+
+    if (
+      provider === 'hermes'
+      && activeRepo
+      && !githubPAT
+      && !resolvedLocalRepoPath
+    ) {
+      repoAccessError = `Hermes needs either a GitHub token with access to ${activeRepo.owner}/${activeRepo.name} or a verified local clone path before it can inspect the repository.`;
+    } else if (
+      hermesUsesLocalCloneFallback
+      && !hermesHasLocalRepoTools
+    ) {
+      repoAccessError = 'Hermes found the attached local clone, but Files or Terminal access is disabled. Enable a local Hermes toolset or attach a GitHub token for repo access.';
+    } else if (
+      provider === 'openclaw'
+      && activeRepo
+      && !resolvedLocalRepoPath
+    ) {
+      repoAccessError = `OpenClaw needs either a GitHub token with access to ${activeRepo.owner}/${activeRepo.name} or a verified local clone path before it can inspect the repository.`;
+    }
+
+    // If repo validation failed, return error to client so they can re-select
+    if (repoAccessError) {
+      return sendJson(res, 422, { error: repoAccessError });
+    }
+
     // Build system prompt, appending repo context if activeRepo is present
     let effectiveSystemPrompt = system_prompt || '';
     if (activeRepo) {
-      const repoFileTree = Array.isArray(repo_file_tree)
-        ? repo_file_tree.filter((path): path is string => typeof path === 'string' && path.trim().length > 0)
-        : [];
+      const repoFileTree = sanitizeFileTree(repo_file_tree);
       const repoEditIntent = !!repo_edit_intent;
+      const repoTreeSummary = summarizeRepoTreeForPrompt(repoFileTree);
       const repoContext = `You are working on the GitHub repository ${activeRepo.owner}/${activeRepo.name}. You have tools to read, edit, create, and delete files in this repo.
 
 First determine whether the current user turn is asking for read-only repository help or for actual code changes.
@@ -107,12 +404,12 @@ WORKFLOW — FOR CHANGE REQUESTS:
 5. When the user asks you to update multiple things, make sure you update ALL of them, not just one.
 6. IMPORTANT: If you need to edit many large files, split batch_edit_repo_files into multiple calls (max 3-4 files per batch) to avoid output truncation.
 7. Never conclude that the repository is empty or inaccessible just because a guessed file path failed to read.
+8. Only use exact file paths that appear in the repo tree or that are returned by a read_repo_file error as a possible match. Do not infer unlisted sibling paths or directory names.
 
 ${repoFileTree.length > 0
-  ? `The selected repository file tree is already available below. Use it to identify candidate files, and do NOT ask the user to provide file paths.
+  ? `${repoTreeSummary}
 
-Repository file tree:
-${repoFileTree.join('\n')}
+Use the repository paths above to identify candidate files, and do NOT ask the user to provide file paths.
 
 `
   : `If the repository file tree is missing, do not guess placeholder paths like \`.\`, \`/\`, \`src/main\`, \`server\`, \`client\`, or \`package.json\`. Wait for real repo-tree guidance before reading files.
@@ -125,14 +422,18 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
         : repoContext;
       // Inject cached file contents so the model doesn't need to re-read them
       if (repo_file_cache && typeof repo_file_cache === 'object') {
-        const paths = Object.keys(repo_file_cache);
-        if (paths.length > 0) {
-          const fileSummaries = paths.map((p) => {
-            const content = repo_file_cache[p];
-            return `### ${p}\n\`\`\`\n${content}\n\`\`\``;
-          });
-          effectiveSystemPrompt += `\n\n--- Previously Read Files (cached) ---\nThe following files have already been read in this conversation. You do NOT need to call read_repo_file for these unless you suspect they have changed. Use the content below directly:\n\n${fileSummaries.join('\n\n')}`;
+        const cachedFilesPrompt = formatCachedFilesForPrompt(repo_file_cache as Record<string, unknown>);
+        if (cachedFilesPrompt) {
+          effectiveSystemPrompt += `\n\n${cachedFilesPrompt}`;
         }
+      }
+
+      if (resolvedLocalRepoPath) {
+        effectiveSystemPrompt += `\n\n${buildLocalRepoAccessPrompt({
+          provider,
+          localRepoPath: resolvedLocalRepoPath,
+          repoFullName: `${activeRepo.owner}/${activeRepo.name}`,
+        })}`;
       }
     }
 
@@ -156,6 +457,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
           : `cloudchat-${crypto.randomUUID()}`,
         model: typeof model === 'string' ? model : undefined,
         systemPrompt: effectiveSystemPrompt,
+        cwd: resolvedLocalRepoPath ?? undefined,
       });
 
       const response = new Response(createSingleMessageDataStream(result.text, result.usage), {
@@ -241,9 +543,12 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
       }),
     };
 
-    const rawGithubPAT = req.body.github_pat;
-    const githubPAT = isValidGitHubPAT(rawGithubPAT) ? rawGithubPAT : undefined;
+    // githubPAT was already extracted and validated above (before system prompt building)
+    if (activeRepo && rawGithubPAT && !githubPAT) {
+      console.warn(`[chat] WARNING: github_pat provided but failed validation (prefix=${typeof rawGithubPAT === 'string' ? rawGithubPAT.slice(0, 8) : typeof rawGithubPAT}...) — repo tools will be unavailable`);
+    }
     const hasServerRepoContext = !!(activeRepo && githubPAT);
+    const shouldForwardHermesRepoContext = provider === 'hermes' && !!(activeRepo && githubPAT);
     const runtimeProvider = resolveRuntimeProvider(provider, { activeRepo });
     const hermesExecutionMode =
       provider === 'hermes' && runtimeProvider === 'hermes'
@@ -278,9 +583,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
             name: activeRepo.name,
             defaultBranch: activeRepo.default_branch || 'main',
             githubPAT,
-            repoFileTree: Array.isArray(repo_file_tree)
-              ? repo_file_tree.filter((p: unknown): p is string => typeof p === 'string' && (p as string).trim().length > 0)
-              : [],
+            repoFileTree: sanitizeFileTree(repo_file_tree),
             repoFileCache: repo_file_cache && typeof repo_file_cache === 'object' ? repo_file_cache : {},
             repoEditIntent: !!repo_edit_intent,
           },
@@ -291,7 +594,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
     console.log(
       `[chat] provider=${provider} runtime=${runtimeProvider} model=${model} activeRepo=${activeRepo?.owner}/${activeRepo?.name || '-'} serverRepoTools=${hasServerRepoContext} hermesExecutionMode=${hermesExecutionMode ?? '-'} msgs=${messages?.length}`,
     );
-    if (activeRepo && !githubPAT && (provider === 'hermes' || runtimeProvider === 'hermes')) {
+    if (activeRepo && !githubPAT && !resolvedLocalRepoPath && (provider === 'hermes' || runtimeProvider === 'hermes')) {
         console.warn(`[chat] WARNING: activeRepo set (${activeRepo.owner}/${activeRepo.name}) but no github_pat in request body — Hermes won't be able to read repo files`);
     }
 
@@ -308,9 +611,10 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
         maxTokens: max_tokens,
         hermesToolsets: hermes_toolsets,
         repoEditIntent: !!repo_edit_intent,
-        activeRepo,
-        githubPAT,
+        activeRepo: shouldForwardHermesRepoContext ? activeRepo : undefined,
+        githubPAT: shouldForwardHermesRepoContext ? githubPAT : undefined,
         hermesMiniMaxKey: hermes_minimax_key,
+        repoFileTree: shouldForwardHermesRepoContext ? sanitizeFileTree(repo_file_tree) : undefined,
       });
       return;
     }
@@ -339,13 +643,15 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
           ? {
               ...(hermes_toolsets ? { 'X-Hermes-Toolsets': hermes_toolsets } : {}),
               ...(hermesExecutionMode ? { 'X-Hermes-Execution-Mode': hermesExecutionMode } : {}),
-              ...(hermesExecutionMode === 'agent-loop' && activeRepo && githubPAT
-                ? { 'X-Hermes-Repo-Edit-Intent': repo_edit_intent ? '1' : '0' }
+              // Always send repo owner/name when a repo is active so the
+              // hermes-bridge can provide proper error messages even without a PAT.
+              ...(hermesExecutionMode === 'agent-loop' && activeRepo
+                ? {
+                    'X-Hermes-Repo-Owner': activeRepo.owner,
+                    'X-Hermes-Repo-Name': activeRepo.name,
+                    'X-Hermes-Repo-Edit-Intent': repo_edit_intent ? '1' : '0',
+                  }
                 : {}),
-              ...(hermesExecutionMode === 'agent-loop' && activeRepo && githubPAT ? {
-                'X-Hermes-Repo-Owner': activeRepo.owner,
-                'X-Hermes-Repo-Name': activeRepo.name,
-              } : {}),
               ...(hermesExecutionMode === 'agent-loop' && activeRepo && githubPAT ? {
                 'X-Hermes-Github-PAT': githubPAT,
               } : {}),
@@ -391,18 +697,19 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
     };
     const useServerAgentLoop = hasServerRepoContext || hasLocalTools;
     const hasTools = Object.keys(allTools).length > 0;
-    console.log(`[chat] Starting streamText. maxTokens=${max_tokens ?? defaultMaxTokens} maxSteps=${useServerAgentLoop ? 'unlimited' : 1} tools=${hasTools ? Object.keys(allTools).join(',') : '(none)'} toolSafe=${isToolSafeProvider} localTools=${hasLocalTools}`);
+    console.log(`[chat] Starting streamText. maxTokens=${max_tokens ?? defaultMaxTokens} maxSteps=${useServerAgentLoop ? MAX_AGENT_STEPS : 1} tools=${hasTools ? Object.keys(allTools).join(',') : '(none)'} toolSafe=${isToolSafeProvider} localTools=${hasLocalTools}`);
     const result = streamText({
       model: aiModel,
-      messages: normalizedChatInput.messages,
+      messages: normalizedChatInput.messages as CoreMessage[],
       temperature: temperature ?? 0.7,
       topP: top_p ?? 0.9,
-      maxOutputTokens: max_tokens ?? defaultMaxTokens,
+      maxTokens: max_tokens ?? defaultMaxTokens,
       abortSignal: abortController.signal,
       ...(providerOptions ? { providerOptions } : {}),
       ...(hasTools ? { tools: allTools, toolCallStreaming: true } : {}),
-      // Let the model loop until it stops calling tools (no artificial cap).
-      ...(hasTools && useServerAgentLoop ? { maxSteps: Infinity } : {}),
+      // Bound agent steps to prevent runaway tool-call loops. The cap is
+      // configurable via the MAX_AGENT_STEPS env var (default 50).
+      ...(hasTools && useServerAgentLoop ? { maxSteps: MAX_AGENT_STEPS } : {}),
       onFinish: () => {
         if (requestTimeout) {
           clearTimeout(requestTimeout);
@@ -413,12 +720,18 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
     // Use pipeDataStreamToResponse for proper Node.js streaming.
     // This avoids issues with toDataStreamResponse where the finish
     // message can be emitted before content for some providers.
+    let streamData: StreamData | undefined;
+    if (serverToolEvents.length > 0) {
+      streamData = new StreamData();
+      for (const event of serverToolEvents) {
+        streamData.appendMessageAnnotation(event as unknown as JSONValue);
+      }
+      streamData.close();
+    }
     result.pipeDataStreamToResponse(res, {
       headers: buildCorsHeaders(req.headers.origin),
       sendReasoning: true,
-      data: serverToolEvents.length > 0
-        ? serverToolEvents.map((event) => event as unknown as Record<string, unknown>)
-        : undefined,
+      data: streamData,
       getErrorMessage: (error: unknown) => {
         const msg = error instanceof Error ? error.message : String(error);
         console.error(`[chat] Stream error: ${msg}`);

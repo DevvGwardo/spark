@@ -172,7 +172,7 @@ describe('chat store routes', () => {
           }),
         },
       );
-      expect(updateConversationResponse.status).toBe(204);
+      expect(updateConversationResponse.status).toBe(200);
 
       const updateMessageResponse = await fetch(
         `${server.url}/functions/v1/chat-store/messages/msg-2`,
@@ -187,7 +187,7 @@ describe('chat store routes', () => {
           }),
         },
       );
-      expect(updateMessageResponse.status).toBe(204);
+      expect(updateMessageResponse.status).toBe(200);
 
       const messagesResponse = await fetch(`${server.url}/functions/v1/chat-store/conversations/conv-2/messages`);
       const messagesBody = await messagesResponse.json();

@@ -29,8 +29,20 @@ type EmitEvent = (event: ServerToolEvent) => void;
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
+const MAX_CACHE_ENTRIES = 500;
+const MAX_FILE_SIZE = 1_048_576; // 1 MB
 
 const GITHUB_API_BASE = 'https://api.github.com';
+
+const VALID_REPO_IDENTIFIER = /^[a-zA-Z0-9._-]+$/;
+
+/** Evict the oldest entry from a Record (relies on insertion-order key iteration). */
+function evictOldestEntry(cache: Record<string, string>): void {
+  const keys = Object.keys(cache);
+  if (keys.length > 0) {
+    delete cache[keys[0]];
+  }
+}
 
 function encodeGitHubContentPath(path: string): string {
   return path
@@ -62,7 +74,22 @@ async function readFileFromGitHub(
       const text = await response.text().catch(() => '');
       return { content: null, error: `GitHub returned ${response.status}${text ? ` — ${text.slice(0, 200)}` : ''}` };
     }
+
+    // Check Content-Length header first to avoid downloading oversized files
+    const contentLength = response.headers.get('content-length');
+    if (contentLength && parseInt(contentLength, 10) > MAX_FILE_SIZE) {
+      // Consume body to avoid connection leak
+      await response.text().catch(() => '');
+      return { content: null, error: `File exceeds maximum size of ${MAX_FILE_SIZE} bytes (Content-Length: ${contentLength}). Consider reading a smaller file or a specific section.` };
+    }
+
     const content = await response.text();
+
+    // Also check actual body size (Content-Length may be absent or inaccurate)
+    if (content.length > MAX_FILE_SIZE) {
+      return { content: null, error: `File exceeds maximum size of ${MAX_FILE_SIZE} bytes (actual: ${content.length}). Consider reading a smaller file or a specific section.` };
+    }
+
     return { content, error: null };
   } catch (err) {
     return { content: null, error: `Failed to read file: ${err instanceof Error ? err.message : String(err)}` };
@@ -96,24 +123,46 @@ function isInvalidRepoReadPath(path: string): boolean {
 
 function getRepoPathSuggestions(paths: string[], requestedPath: string, limit = 6): string[] {
   const normalized = normalizeRepoPath(requestedPath).toLowerCase();
-  const basename = normalized.split('/').at(-1) || normalized;
+  const requestedSegments = normalized.split('/').filter(Boolean);
+  const basename = requestedSegments.at(-1) || normalized;
+  const topLevel = requestedSegments[0] || '';
 
   return paths
     .map((candidate) => {
       const candidateLower = candidate.toLowerCase();
-      const candidateBase = candidateLower.split('/').at(-1) || candidateLower;
+      const candidateSegments = candidateLower.split('/').filter(Boolean);
+      const candidateBase = candidateSegments.at(-1) || candidateLower;
       let score = 0;
       if (candidateLower === normalized) score += 100;
       if (candidateBase === basename) score += 60;
       if (basename && candidateBase.includes(basename)) score += 30;
       if (basename && candidateLower.includes(basename)) score += 20;
       if (normalized && candidateLower.includes(normalized)) score += 10;
+      if (topLevel && candidateSegments[0] === topLevel) score += 25;
+
+      const overlap = requestedSegments.filter((segment) => candidateSegments.includes(segment)).length;
+      if (overlap > 0) score += overlap * 12;
+
       return { candidate, score };
     })
     .filter((e) => e.score > 0)
     .sort((a, b) => b.score - a.score || a.candidate.localeCompare(b.candidate))
     .slice(0, limit)
     .map((e) => e.candidate);
+}
+
+function getRepoPathExamples(paths: string[], requestedPath: string, limit = 8): string[] {
+  const normalized = normalizeRepoPath(requestedPath).toLowerCase();
+  const topLevel = normalized.split('/').find(Boolean) || '';
+
+  if (topLevel) {
+    const topLevelMatches = paths.filter((path) => path.toLowerCase().startsWith(`${topLevel}/`));
+    if (topLevelMatches.length > 0) {
+      return topLevelMatches.slice(0, limit);
+    }
+  }
+
+  return paths.slice(0, limit);
 }
 
 // ─── Tool builder ────────────────────────────────────────────────────────────
@@ -126,8 +175,53 @@ function getRepoPathSuggestions(paths: string[], requestedPath: string, limit = 
  * client-side since they write to the preview store.
  */
 export function buildServerRepoTools(repo: RepoContext, emit: EmitEvent) {
-  // Per-session file cache seeded from the request's repo_file_cache
+  // Validate repo identity inputs
+  if (!VALID_REPO_IDENTIFIER.test(repo.owner)) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const errorTools: Record<string, CoreTool<any, any>> = {};
+    errorTools.read_repo_file = tool({
+      description: 'Read a file from the active GitHub repository.',
+      parameters: z.object({ path: z.string() }),
+      execute: async () => `Error: Invalid repository owner "${repo.owner}". Owner must match [a-zA-Z0-9._-]+.`,
+    });
+    return errorTools;
+  }
+  if (!VALID_REPO_IDENTIFIER.test(repo.name)) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const errorTools: Record<string, CoreTool<any, any>> = {};
+    errorTools.read_repo_file = tool({
+      description: 'Read a file from the active GitHub repository.',
+      parameters: z.object({ path: z.string() }),
+      execute: async () => `Error: Invalid repository name "${repo.name}". Name must match [a-zA-Z0-9._-]+.`,
+    });
+    return errorTools;
+  }
+  if (repo.repoFileTree !== undefined && !Array.isArray(repo.repoFileTree)) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const errorTools: Record<string, CoreTool<any, any>> = {};
+    errorTools.read_repo_file = tool({
+      description: 'Read a file from the active GitHub repository.',
+      parameters: z.object({ path: z.string() }),
+      execute: async () => 'Error: repoFileTree must be an array if provided.',
+    });
+    return errorTools;
+  }
+
+  // Per-session file cache seeded from the request's repo_file_cache.
+  // Uses insertion-order eviction (simple LRU approximation) to cap memory.
   const sessionCache: Record<string, string> = { ...repo.repoFileCache };
+
+  /** Write to sessionCache with LRU eviction when at capacity. */
+  function cacheSet(key: string, value: string): void {
+    // If the key already exists, delete-then-reinsert to move it to the end (most-recent)
+    if (key in sessionCache) {
+      delete sessionCache[key];
+    } else if (Object.keys(sessionCache).length >= MAX_CACHE_ENTRIES) {
+      evictOldestEntry(sessionCache);
+    }
+    sessionCache[key] = value;
+  }
+
   const existingPaths = new Set<string>([
     ...repo.repoFileTree,
     ...Object.keys(repo.repoFileCache),
@@ -157,10 +251,10 @@ export function buildServerRepoTools(repo: RepoContext, emit: EmitEvent) {
       if (repo.repoFileTree.length > 0 && !repo.repoFileTree.includes(normalizedPath)) {
         const suggestions = getRepoPathSuggestions(repo.repoFileTree, normalizedPath);
         if (suggestions.length > 0) {
-          return `Error: \`${normalizedPath}\` is not present in the selected repository. Choose a real path from the loaded repo tree instead. Possible matches:\n${suggestions.map((p) => `- ${p}`).join('\n')}`;
+          return `Error: \`${normalizedPath}\` is not present in the selected repository. Retry using one of these exact file paths from the loaded repo tree. Do not guess sibling paths or directory names.\nPossible matches:\n${suggestions.map((p) => `- ${p}`).join('\n')}`;
         }
-        const samplePaths = repo.repoFileTree.slice(0, 8);
-        return `Error: \`${normalizedPath}\` is not present in the selected repository. Choose a real path from the loaded repo tree instead.${samplePaths.length > 0 ? ` Example paths:\n${samplePaths.map((p) => `- ${p}`).join('\n')}` : ''}`;
+        const samplePaths = getRepoPathExamples(repo.repoFileTree, normalizedPath);
+        return `Error: \`${normalizedPath}\` is not present in the selected repository. Retry using an exact file path from the loaded repo tree. Do not guess sibling paths or directory names.${samplePaths.length > 0 ? ` Example paths from the same area:\n${samplePaths.map((p) => `- ${p}`).join('\n')}` : ''}`;
       }
 
       // Return cached content if available
@@ -181,7 +275,7 @@ export function buildServerRepoTools(repo: RepoContext, emit: EmitEvent) {
         return `Error reading file: ${error || 'unknown error'}`;
       }
 
-      sessionCache[normalizedPath] = content;
+      cacheSet(normalizedPath, content);
       emit({ type: 'repo_file_read', path: normalizedPath, content });
       return content;
     },
@@ -228,7 +322,7 @@ export function buildServerRepoTools(repo: RepoContext, emit: EmitEvent) {
         return `Error: edit_repo_file can only modify existing repo files. \`${normalizedPath}\` is not in the indexed repo tree or staged changes.`;
       }
       const originalContent = sessionCache[normalizedPath] || '';
-      sessionCache[normalizedPath] = content;
+      cacheSet(normalizedPath, content);
       emit({
         type: 'repo_file_edit',
         path: normalizedPath,
@@ -256,7 +350,7 @@ export function buildServerRepoTools(repo: RepoContext, emit: EmitEvent) {
       const normalizedPath = normalizeRepoPath(path);
       const action = resolveRepoWriteAction('create', normalizedPath, existingPaths);
       const originalContent = sessionCache[normalizedPath] || '';
-      sessionCache[normalizedPath] = content;
+      cacheSet(normalizedPath, content);
       existingPaths.add(normalizedPath);
       if (action === 'edit') {
         emit({
@@ -291,6 +385,9 @@ export function buildServerRepoTools(repo: RepoContext, emit: EmitEvent) {
     ),
     execute: async ({ path, reason }) => {
       const normalizedPath = normalizeRepoPath(path);
+      if (!existingPaths.has(normalizedPath)) {
+        return `Error: delete_repo_file can only delete existing repo files. \`${normalizedPath}\` is not in the indexed repo tree or staged changes.`;
+      }
       const originalContent = sessionCache[normalizedPath] || '';
       delete sessionCache[normalizedPath];
       existingPaths.delete(normalizedPath);
@@ -337,13 +434,16 @@ export function buildServerRepoTools(repo: RepoContext, emit: EmitEvent) {
         if (action === 'edit' && !existingPaths.has(normalizedPath)) {
           return `Error: batch_edit_repo_files cannot edit missing file \`${normalizedPath}\`. Use create only for genuinely new files and edit only for existing repo paths.`;
         }
+        if (action === 'delete' && !existingPaths.has(normalizedPath)) {
+          return `Error: batch_edit_repo_files cannot delete missing file \`${normalizedPath}\`. Use delete only for paths already present in the repo or staged changes.`;
+        }
         const originalContent = sessionCache[normalizedPath] || '';
 
         if (action === 'delete') {
           delete sessionCache[normalizedPath];
           existingPaths.delete(normalizedPath);
         } else {
-          sessionCache[normalizedPath] = change.content;
+          cacheSet(normalizedPath, change.content);
           existingPaths.add(normalizedPath);
         }
 

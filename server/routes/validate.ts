@@ -76,7 +76,8 @@ app.post('/functions/v1/validate-key', async (req, res) => {
               .filter((modelId: string | undefined): modelId is string => !!modelId)
           : undefined;
 
-        return sendJson(res, 200, { valid: true, models });
+        const defaultModel = validationModel;
+        return sendJson(res, 200, { valid: true, defaultModel, models });
       }
     }
 
@@ -87,11 +88,11 @@ app.post('/functions/v1/validate-key', async (req, res) => {
     await generateText({
       model,
       prompt: 'ping',
-      maxOutputTokens: 1,
+      maxTokens: 1,
       temperature: 0,
     });
 
-    return sendJson(res, 200, { valid: true });
+    return sendJson(res, 200, { valid: true, defaultModel: validationModel, models: undefined });
   } catch (err: unknown) {
     const message = getUnknownErrorMessage(err) || 'Provider validation failed';
     const normalizedProviderError = normalizeLocalProviderError(req.body?.provider, message);

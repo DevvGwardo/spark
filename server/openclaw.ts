@@ -6,6 +6,7 @@ import { promisify } from 'util'
 
 const execFileAsync = promisify(execFile)
 const DEFAULT_OPENCLAW_TIMEOUT_SECONDS = 90 * 60
+const OPENCLAW_TIMEOUT_SECONDS = readPositiveIntEnv('OPENCLAW_TIMEOUT', DEFAULT_OPENCLAW_TIMEOUT_SECONDS)
 
 function resolveOpenClawBin(): string {
   // 1. Explicit env var
@@ -76,8 +77,12 @@ interface OpenClawModelsStatusResponse {
 async function getOpenClawModelStatus(): Promise<OpenClawModelsStatusResponse> {
   ensureOpenClawInstalled()
 
-  const { stdout } = await execFileAsync(getOpenClawBin(), ['models', 'status', '--json'])
-  return JSON.parse(stdout) as OpenClawModelsStatusResponse
+  const { stdout, stderr } = await execFileAsync(getOpenClawBin(), ['models', 'status', '--json'])
+  try {
+    return JSON.parse(stdout) as OpenClawModelsStatusResponse
+  } catch {
+    throw new Error(`Failed to parse OpenClaw model status JSON: ${stdout.slice(0, 200)}${stderr ? `\nstderr: ${stderr.slice(0, 500)}` : ''}`)
+  }
 }
 
 function ensureOpenClawInstalled() {
@@ -110,12 +115,17 @@ function parseOpenClawText(payload: unknown): string {
 export async function getOpenClawModels(): Promise<{ defaultModel: string; models: string[] }> {
   ensureOpenClawInstalled()
 
-  const [{ stdout: modelsStdout }, statusData] = await Promise.all([
+  const [{ stdout: modelsStdout, stderr: modelsStderr }, statusData] = await Promise.all([
     execFileAsync(getOpenClawBin(), ['models', 'list', '--json']),
     getOpenClawModelStatus(),
   ])
 
-  const modelsData = JSON.parse(modelsStdout) as OpenClawModelsListResponse
+  let modelsData: OpenClawModelsListResponse
+  try {
+    modelsData = JSON.parse(modelsStdout) as OpenClawModelsListResponse
+  } catch {
+    throw new Error(`Failed to parse OpenClaw models list JSON: ${modelsStdout.slice(0, 200)}${modelsStderr ? `\nstderr: ${modelsStderr.slice(0, 500)}` : ''}`)
+  }
 
   const defaultModel = statusData.resolvedDefault || statusData.defaultModel || 'default'
   const models = Array.isArray(modelsData.models)
@@ -144,9 +154,12 @@ export async function setOpenClawModel(model: string): Promise<void> {
     return
   }
 
-  await execFileAsync(getOpenClawBin(), ['models', 'set', trimmedModel], {
+  const { stderr: setStderr } = await execFileAsync(getOpenClawBin(), ['models', 'set', trimmedModel], {
     maxBuffer: 10 * 1024 * 1024,
   })
+  if (setStderr) {
+    console.warn(`[openclaw] models set stderr: ${setStderr.slice(0, 500)}`)
+  }
 }
 
 export async function runOpenClawTurn(params: {
@@ -154,6 +167,7 @@ export async function runOpenClawTurn(params: {
   sessionId: string
   model?: string
   systemPrompt?: string
+  cwd?: string
   timeoutSeconds?: number
 }): Promise<OpenClawRunResult> {
   ensureOpenClawInstalled()
@@ -170,14 +184,18 @@ export async function runOpenClawTurn(params: {
     '--session-id', params.sessionId,
     '--message', effectiveMessage,
     '--json',
-    '--timeout', String(params.timeoutSeconds ?? readPositiveIntEnv('OPENCLAW_TURN_TIMEOUT_SECONDS', DEFAULT_OPENCLAW_TIMEOUT_SECONDS)),
+    '--timeout', String(params.timeoutSeconds ?? readPositiveIntEnv('OPENCLAW_TURN_TIMEOUT_SECONDS', OPENCLAW_TIMEOUT_SECONDS)),
   ]
 
-  const { stdout } = await execFileAsync(getOpenClawBin(), args, {
+  const { stdout, stderr } = await execFileAsync(getOpenClawBin(), args, {
     maxBuffer: 10 * 1024 * 1024,
+    ...(params.cwd ? { cwd: params.cwd } : {}),
   })
+  if (stderr) {
+    console.warn(`[openclaw] agent run stderr: ${stderr.slice(0, 500)}`)
+  }
 
-  const parsed = JSON.parse(stdout) as {
+  let parsed: {
     result?: unknown
     meta?: {
       durationMs?: number
@@ -188,6 +206,11 @@ export async function runOpenClawTurn(params: {
         usage?: OpenClawUsage
       }
     }
+  }
+  try {
+    parsed = JSON.parse(stdout)
+  } catch {
+    throw new Error(`Failed to parse OpenClaw agent response JSON: ${stdout.slice(0, 200)}${stderr ? `\nstderr: ${stderr.slice(0, 500)}` : ''}`)
   }
 
   const payload = parsed.result && typeof parsed.result === 'object' ? parsed.result : parsed

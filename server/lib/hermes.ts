@@ -138,7 +138,7 @@ export function extractHermesChoiceText(choice: {
 }
 
 export function normalizeHermesAgentLoopPayload(payload: string): NormalizedProxyEvent | null {
-  const parsed = JSON.parse(payload) as {
+  let parsed: {
     usage?: unknown;
     tool_activity?: unknown;
     server_tool_event?: unknown;
@@ -147,6 +147,7 @@ export function normalizeHermesAgentLoopPayload(payload: string): NormalizedProx
       finish_reason?: unknown;
       delta?: {
         content?: unknown;
+        reasoning?: unknown;
         tool_activity?: unknown;
         server_tool_event?: unknown;
         agent_status?: unknown;
@@ -156,6 +157,12 @@ export function normalizeHermesAgentLoopPayload(payload: string): NormalizedProx
       };
     }>;
   };
+  try {
+    parsed = JSON.parse(payload);
+  } catch {
+    console.error('[hermes] Failed to parse agent-loop SSE payload as JSON');
+    return null;
+  }
 
   const choice = Array.isArray(parsed.choices) ? parsed.choices[0] : undefined;
   const data: Record<string, unknown>[] = [];
@@ -179,19 +186,22 @@ export function normalizeHermesAgentLoopPayload(payload: string): NormalizedProx
     data.push({ type: 'agent_status', status: parsed.agent_status as Record<string, unknown> });
   }
 
+  const reasoning = typeof choice?.delta?.reasoning === 'string' ? choice.delta.reasoning : undefined;
+
   return {
     usage: normalizeHermesUsage(parsed.usage),
     finishReason: choice?.finish_reason !== undefined && choice?.finish_reason !== null
       ? normalizeHermesFinishReason(choice.finish_reason)
       : undefined,
     text: choice ? extractHermesChoiceText(choice) : '',
+    reasoning,
     data,
   };
 }
 
 export function normalizeCompatibleProviderPayload(provider: string, payload: string): NormalizedProxyEvent | null {
   const sanitizedPayload = sanitizeCompatibleSseLine(provider, `data: ${payload}`).slice(6).trim();
-  const parsed = JSON.parse(sanitizedPayload) as {
+  let parsed: {
     error?: { message?: string };
     base_resp?: { status_code?: number; status_msg?: string };
     usage?: unknown;
@@ -201,6 +211,12 @@ export function normalizeCompatibleProviderPayload(provider: string, payload: st
       message?: { content?: unknown };
     }>;
   };
+  try {
+    parsed = JSON.parse(sanitizedPayload);
+  } catch {
+    console.error(`[hermes] Failed to parse ${provider} SSE payload as JSON`);
+    return null;
+  }
 
   if (parsed.base_resp?.status_code && parsed.base_resp.status_code !== 0) {
     throw new Error(parsed.base_resp.status_msg || `${provider} API error`);
@@ -240,9 +256,12 @@ export async function proxyHermesAgentLoopToDataStream(input: {
   activeRepo?: { owner?: string; name?: string } | null;
   githubPAT?: string;
   hermesMiniMaxKey?: string;
+  repoFileTree?: string[];
 }) {
   const bridgeUrl = `${OPENAI_COMPATIBLE.hermes}/chat/completions`;
   const abortController = new AbortController();
+  const timeoutSignal = AbortSignal.timeout(60_000);
+  const combinedSignal = AbortSignal.any([abortController.signal, timeoutSignal]);
   const startedAt = Date.now();
   const repoLabel = input.activeRepo?.owner && input.activeRepo?.name
     ? `${input.activeRepo.owner}/${input.activeRepo.name}`
@@ -282,8 +301,11 @@ export async function proxyHermesAgentLoopToDataStream(input: {
         top_p: input.topP ?? 0.9,
         max_tokens: input.maxTokens ?? 32768,
         stream: true,
+        ...(input.repoFileTree && input.repoFileTree.length > 0
+          ? { repo_file_tree: input.repoFileTree }
+          : {}),
       }),
-      signal: abortController.signal,
+      signal: combinedSignal,
     });
     console.log(
       `[chat] Hermes agent-loop bridge headers received in ${Date.now() - startedAt}ms. status=${bridgeResponse.status} model=${input.model} repo=${repoLabel}`,
@@ -291,6 +313,9 @@ export async function proxyHermesAgentLoopToDataStream(input: {
   } catch (error) {
     if (disconnect.isDisconnected() && isAbortLikeError(error)) {
       return;
+    }
+    if (timeoutSignal.aborted) {
+      throw new Error('Hermes bridge request timed out after 60s. The bridge may be overloaded or unresponsive.');
     }
     throw new Error(
       `Hermes bridge is not reachable at ${OPENAI_COMPATIBLE.hermes}. ` +
