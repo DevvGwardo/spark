@@ -8,10 +8,46 @@ browse URL, etc.), and streams results back via callbacks.
 import json
 import os
 import shlex
+import sys
+import time
+import threading
 import httpx
 import re
 from typing import Optional, Callable
 from urllib.parse import quote, quote_plus
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+
+class _SafeWriter:
+    """Wrapper around sys.stdout/stderr that swallows BrokenPipeError.
+
+    When hermes-bridge runs as a daemon or behind a reverse proxy, the
+    parent process may close the pipe unexpectedly.  Without this wrapper
+    every ``print()`` call becomes a potential crash site.
+    """
+
+    def __init__(self, stream):
+        self._stream = stream
+
+    def write(self, data):
+        try:
+            self._stream.write(data)
+        except (BrokenPipeError, OSError):
+            pass
+
+    def flush(self):
+        try:
+            self._stream.flush()
+        except (BrokenPipeError, OSError):
+            pass
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
+# Install safe writers to prevent daemon crashes on broken pipes
+sys.stdout = _SafeWriter(sys.stdout)
+sys.stderr = _SafeWriter(sys.stderr)
 
 
 def _read_positive_int_env(name: str, fallback: int) -> int:
@@ -46,9 +82,9 @@ KNOWN_UNSUPPORTED_TOOL_MODELS = {
 }
 
 SUGGESTED_TOOL_MODELS = (
-    "google/gemini-3.1-flash-lite-preview-20260303",
+    "google/gemini-3.1-flash-lite-preview",
     "MiniMax-M2.7",
-    "deepseek/deepseek-v3.2-20251201",
+    "deepseek/deepseek-v3.2",
     "meta-llama/llama-4-maverick",
     "openai/gpt-4.1-mini",
     "google/gemini-2.5-flash",
@@ -60,6 +96,53 @@ CONTEXT_COMPACTION_CHAR_THRESHOLD = _read_positive_int_env(
     "HERMES_CONTEXT_COMPACTION_THRESHOLD", 60000
 )
 
+# --- API retry configuration ---
+API_MAX_RETRIES = 3
+API_RETRY_BASE_DELAY = 1.0  # seconds; doubles each retry
+API_RETRY_MAX_DELAY = 16.0
+FINISH_LENGTH_MAX_CONTINUATIONS = 3
+MCP_TOOL_TIMEOUT_SECONDS = 30
+
+# --- Budget / iteration pressure ---
+BUDGET_WARNING_THRESHOLD_LOW = 0.70   # 70% consumed -> soft warning
+BUDGET_WARNING_THRESHOLD_HIGH = 0.90  # 90% consumed -> hard warning
+
+# --- Context reset (harness pattern: resets > compaction for long sessions) ---
+CONTEXT_RESET_ITERATION_RATIO = 0.50  # Reset at 50% of iteration budget
+CONTEXT_RESET_CHAR_THRESHOLD = _read_positive_int_env(
+    "HERMES_CONTEXT_RESET_THRESHOLD", 100000
+)  # Also reset when context exceeds ~25K tokens
+
+# --- Think-block handling (DeepSeek, QwQ, etc.) ---
+_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+
+# --- Parallel tool execution ---
+_PARALLEL_SAFE_TOOLS = frozenset({
+    "web_search",
+    "browse_url",
+    "read_file",
+    "read_repo_file",
+    "list_user_repos",
+})
+_PATH_SCOPED_TOOLS = frozenset({
+    "read_file",
+    "write_file",
+    "read_repo_file",
+    "edit_repo_file",
+    "create_repo_file",
+    "delete_repo_file",
+})
+_MAX_PARALLEL_WORKERS = 6
+
+# --- Destructive command detection ---
+_DESTRUCTIVE_CMD_PATTERNS = re.compile(
+    r"\b(rm\s+-rf|rm\s+-r|rmdir|mkfs|dd\s+if=|format\s+|fdisk|"
+    r"chmod\s+-R\s+000|git\s+reset\s+--hard|git\s+clean\s+-fd|"
+    r"drop\s+table|drop\s+database|truncate\s+table|"
+    r">\s*/dev/sd|shutdown|reboot|init\s+0)\b",
+    re.IGNORECASE,
+)
+
 REPO_MODE_BLOCKED_TOOLSETS = {
     "terminal",
     "files",
@@ -67,6 +150,17 @@ REPO_MODE_BLOCKED_TOOLSETS = {
 }
 
 REPO_TOOL_DEFINITIONS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "list_user_repos",
+            "description": "List all repositories accessible with the current GitHub token. Use this when the active repo cannot be found (404) to discover available repos.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -358,6 +452,40 @@ def _build_tool_aliases():
 
 _build_tool_aliases()
 
+# Models frequently hallucinate tool names from their training data (e.g.
+# Claude's str_replace_editor, Cursor's apply_diff, etc.).  Map these to the
+# closest real tool so the agent can recover without burning an iteration.
+_HALLUCINATED_TOOL_MAP: dict[str, str] = {
+    "str_replace_editor": "edit_repo_file",
+    "str_replace": "edit_repo_file",
+    "file_editor": "edit_repo_file",
+    "apply_diff": "edit_repo_file",
+    "insert_text": "edit_repo_file",
+    "replace_in_file": "edit_repo_file",
+    "file_read": "read_repo_file",
+    "cat_file": "read_repo_file",
+    "view_file": "read_repo_file",
+    "open_file": "read_repo_file",
+    "file_write": "create_repo_file",
+    "create_file": "create_repo_file",
+    "file_create": "create_repo_file",
+    "delete_file": "delete_repo_file",
+    "remove_file": "delete_repo_file",
+    "file_delete": "delete_repo_file",
+    "search": "web_search",
+    "google_search": "web_search",
+    "browser": "browse_url",
+    "fetch_url": "browse_url",
+    "terminal": "run_command",
+    "bash": "run_command",
+    "shell": "run_command",
+    "exec": "run_command",
+    "execute_command": "run_command",
+    "python": "execute_python",
+    "run_python": "execute_python",
+    "list_repos": "list_user_repos",
+}
+
 
 def _normalize_tool_name(name: str) -> str:
     """Resolve a tool name to its canonical snake_case form."""
@@ -370,7 +498,12 @@ def _normalize_tool_name(name: str) -> str:
             all_known.add(t["function"]["name"])
     if name in all_known:
         return name
-    # Check aliases
+    # Check hallucinated names from model training data
+    if name in _HALLUCINATED_TOOL_MAP:
+        return _HALLUCINATED_TOOL_MAP[name]
+    if name.lower() in _HALLUCINATED_TOOL_MAP:
+        return _HALLUCINATED_TOOL_MAP[name.lower()]
+    # Check aliases (PascalCase, camelCase, etc.)
     return _TOOL_NAME_ALIASES.get(name, _TOOL_NAME_ALIASES.get(name.lower(), name))
 
 
@@ -519,6 +652,138 @@ def _cap_tool_response(result: str) -> str:
     )
 
 
+def _extract_think_blocks(content: str) -> tuple[str, str]:
+    """Extract and remove <think>...</think> reasoning blocks.
+
+    Returns (visible_content, reasoning_text).
+    """
+    if not content or "<think>" not in content:
+        return content, ""
+    reasoning_parts = _THINK_BLOCK_RE.findall(content)
+    # findall returns the full match; strip the tags to get inner text
+    reasoning_text = "\n".join(
+        part.removeprefix("<think>").removesuffix("</think>").strip()
+        for part in reasoning_parts
+    ).strip()
+    visible = _THINK_BLOCK_RE.sub("", content).strip()
+    return visible, reasoning_text
+
+
+def _strip_think_blocks(content: str) -> str:
+    """Remove <think>...</think> reasoning blocks (DeepSeek, QwQ, etc.)."""
+    visible, _ = _extract_think_blocks(content)
+    return visible
+
+
+def _has_content_after_think_block(content: Optional[str]) -> bool:
+    """Return True if *content* contains meaningful text outside <think> blocks."""
+    if not content:
+        return False
+    stripped = _strip_think_blocks(content)
+    return bool(stripped and stripped.strip())
+
+
+def _sanitize_api_messages(messages: list[dict]) -> list[dict]:
+    """Fix orphaned tool results that would cause provider API errors.
+
+    A "tool" role message must always follow an assistant message containing
+    the matching tool_calls.  If the assistant message was lost (e.g. after
+    context compaction), we drop the orphan to avoid a 400 error.
+    """
+    if not messages:
+        return messages
+
+    sanitized: list[dict] = []
+    last_had_tool_calls = False
+
+    for msg in messages:
+        role = msg.get("role")
+        if role == "tool":
+            if not last_had_tool_calls:
+                # Orphaned tool result — drop it
+                continue
+            sanitized.append(msg)
+        else:
+            sanitized.append(msg)
+            last_had_tool_calls = bool(msg.get("tool_calls"))
+
+    return sanitized
+
+
+def _deduplicate_tool_calls(tool_calls: list[dict]) -> list[dict]:
+    """Remove duplicate tool calls from a single turn.
+
+    Some models emit identical tool calls when confused.  Keep the first
+    occurrence based on (name, arguments) identity.
+    """
+    seen: set[tuple[str, str]] = set()
+    unique: list[dict] = []
+    for tc in tool_calls:
+        fn = tc.get("function") or {}
+        key = (fn.get("name", ""), fn.get("arguments", ""))
+        if key in seen:
+            print(f"[hermes-agent] Deduplicating tool call: {fn.get('name')}", flush=True)
+            continue
+        seen.add(key)
+        unique.append(tc)
+    return unique
+
+
+def _is_destructive_command(command: str) -> bool:
+    """Heuristic check for potentially destructive shell commands."""
+    return bool(_DESTRUCTIVE_CMD_PATTERNS.search(command))
+
+
+def _should_parallelize_tool_batch(tool_calls: list[dict]) -> bool:
+    """Return True if all tool calls in the batch are safe to run in parallel.
+
+    Only tools in _PARALLEL_SAFE_TOOLS qualify.  Additionally, for
+    path-scoped tools we verify there is no file-path overlap.
+    """
+    if len(tool_calls) < 2:
+        return False
+
+    paths_seen: set[str] = set()
+    for tc in tool_calls:
+        fn = tc.get("function") or {}
+        name = _normalize_tool_name(fn.get("name", ""))
+        if name not in _PARALLEL_SAFE_TOOLS:
+            return False
+        # Check path overlap for path-scoped tools
+        if name in _PATH_SCOPED_TOOLS:
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+            except (json.JSONDecodeError, TypeError):
+                args = {}
+            path = args.get("path", "")
+            if path and path in paths_seen:
+                return False
+            paths_seen.add(path)
+
+    return True
+
+
+def _get_budget_warning(iteration: int, max_iterations: int) -> Optional[str]:
+    """Return a budget pressure warning if the agent is consuming too many iterations."""
+    if max_iterations <= 0:
+        return None
+    ratio = iteration / max_iterations
+    if ratio >= BUDGET_WARNING_THRESHOLD_HIGH:
+        remaining = max_iterations - iteration
+        return (
+            f"[URGENT: You have only {remaining} iteration(s) left out of {max_iterations}. "
+            "Wrap up your work NOW. Provide your final answer or make your last tool call immediately. "
+            "Do not start new exploration.]"
+        )
+    if ratio >= BUDGET_WARNING_THRESHOLD_LOW:
+        remaining = max_iterations - iteration
+        return (
+            f"[Budget notice: {remaining} iteration(s) remaining out of {max_iterations}. "
+            "Start wrapping up — finish your current line of work and prepare a final answer.]"
+        )
+    return None
+
+
 def _execute_tool(name: str, arguments: dict) -> str:
     """Execute a tool and return its result as a string."""
     try:
@@ -527,7 +792,10 @@ def _execute_tool(name: str, arguments: dict) -> str:
         elif name == "browse_url":
             return _cap_tool_response(_tool_browse_url(arguments["url"]))
         elif name == "run_command":
-            return _cap_tool_response(_tool_run_command(arguments["command"]))
+            cmd = arguments["command"]
+            if _is_destructive_command(cmd):
+                print(f"[hermes-agent] WARNING: destructive command detected: {cmd[:80]}", flush=True)
+            return _cap_tool_response(_tool_run_command(cmd))
         elif name == "read_file":
             return _cap_tool_response(_tool_read_file(arguments["path"]))
         elif name == "write_file":
@@ -535,7 +803,17 @@ def _execute_tool(name: str, arguments: dict) -> str:
         elif name == "execute_python":
             return _cap_tool_response(_tool_execute_python(arguments["code"]))
         else:
-            return f"Unknown tool: {name}"
+            # Self-correction: list available tools so the model can retry
+            all_known: list[str] = []
+            for toolset in TOOL_DEFINITIONS.values():
+                for t in toolset:
+                    all_known.append(t["function"]["name"])
+            all_known.extend(REPO_TOOL_NAMES)
+            return (
+                f"Error: Unknown tool '{name}'. "
+                f"Available tools: {', '.join(sorted(all_known))}. "
+                f"Please retry with one of the available tools."
+            )
     except Exception as e:
         return f"Error executing {name}: {str(e)}"
 
@@ -605,6 +883,12 @@ def _tool_run_command(command: str) -> str:
             capture_output=True,
             text=True,
             timeout=RUN_COMMAND_TIMEOUT_SECONDS,
+        )
+    except FileNotFoundError:
+        return (
+            f"[Exit code: 127]\n"
+            f"Hint: Command not found. Check if the program is installed and in PATH.\n"
+            f"Command: {command}"
         )
     except subprocess.TimeoutExpired:
         return (
@@ -685,6 +969,67 @@ def _tool_execute_python(code: str) -> str:
     return output or "(no output)"
 
 
+def _execute_mcp_tool(
+    server_url: str,
+    tool_name: str,
+    arguments: dict,
+    api_key: Optional[str] = None,
+) -> str:
+    """Execute a tool on a remote MCP server via Streamable HTTP transport.
+
+    Sends a JSON-RPC ``tools/call`` request and returns the text content
+    from the response.
+    """
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": tool_name,
+            "arguments": arguments,
+        },
+    }
+
+    try:
+        with httpx.Client(timeout=MCP_TOOL_TIMEOUT_SECONDS) as client:
+            resp = client.post(server_url, json=payload, headers=headers)
+            resp.raise_for_status()
+        data = resp.json()
+
+        # JSON-RPC error
+        if "error" in data:
+            err = data["error"]
+            return f"MCP error ({err.get('code', '?')}): {err.get('message', str(err))}"
+
+        # Extract result content — MCP returns {content: [{type, text}]}
+        result = data.get("result", {})
+        if isinstance(result, dict):
+            content_parts = result.get("content", [])
+            if isinstance(content_parts, list):
+                texts = [
+                    p.get("text", "")
+                    for p in content_parts
+                    if isinstance(p, dict) and p.get("type") == "text"
+                ]
+                if texts:
+                    return "\n".join(texts)
+            # Fallback: if result has a plain text field
+            if isinstance(result.get("text"), str):
+                return result["text"]
+        # Fallback: return raw JSON
+        return json.dumps(result) if result else "(empty MCP result)"
+    except httpx.TimeoutException:
+        return f"Error: MCP server at {server_url} timed out after {MCP_TOOL_TIMEOUT_SECONDS}s"
+    except httpx.HTTPStatusError as exc:
+        return f"Error: MCP server returned HTTP {exc.response.status_code}: {exc.response.text[:300]}"
+    except Exception as e:
+        return f"Error calling MCP tool '{tool_name}': {e}"
+
+
 class AIAgent:
     def __init__(
         self,
@@ -698,6 +1043,8 @@ class AIAgent:
         github_pat: Optional[str] = None,
         github_repo_owner: Optional[str] = None,
         github_repo_name: Optional[str] = None,
+        repo_file_tree: Optional[list[str]] = None,
+        custom_tools: Optional[list[dict]] = None,
         on_tool_start: Optional[Callable] = None,
         on_tool_end: Optional[Callable] = None,
         on_text: Optional[Callable] = None,
@@ -719,11 +1066,13 @@ class AIAgent:
         self.github_pat = github_pat
         self.github_repo_owner = github_repo_owner
         self.github_repo_name = github_repo_name
+        self.repo_file_tree = repo_file_tree or []
         self.on_tool_start = on_tool_start
         self.on_tool_end = on_tool_end
         self.on_text = on_text
         self.on_server_tool_event = on_server_tool_event
         self.on_thinking: Optional[Callable] = None
+        self.on_reasoning: Optional[Callable] = None
         self.session_cache: dict[str, str] = {}
 
         # Build tool list from enabled toolsets
@@ -738,11 +1087,50 @@ class AIAgent:
                 if self.github_pat and self.github_repo_owner and self.github_repo_name:
                     repo_tools = [
                         t for t in REPO_TOOL_DEFINITIONS
-                        if t["function"]["name"] == "read_repo_file"
+                        if t["function"]["name"] in ("read_repo_file", "list_user_repos")
                     ]
             else:
-                repo_tools = REPO_TOOL_DEFINITIONS
+                repo_tools = list(REPO_TOOL_DEFINITIONS)
+            # Always include list_user_repos when PAT is available (for 404 recovery)
+            if self.github_pat and not any(
+                t["function"]["name"] == "list_user_repos" for t in repo_tools
+            ):
+                repo_tools = [
+                    t for t in REPO_TOOL_DEFINITIONS
+                    if t["function"]["name"] == "list_user_repos"
+                ] + repo_tools
             self.tools.extend(repo_tools)
+
+        # Add custom MCP tools from user configuration.
+        # Each entry carries mcp_server_url for execution routing.
+        self._mcp_tool_routes: dict[str, dict] = {}  # tool_name -> {url, api_key}
+        if custom_tools:
+            for ct in custom_tools:
+                fn = ct.get("function", {})
+                name = fn.get("name", "")
+                if not name:
+                    continue
+                # Build OpenAI-compatible tool definition for the LLM
+                tool_def = {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": fn.get("description", ""),
+                        "parameters": fn.get("parameters", {"type": "object", "properties": {}}),
+                    },
+                }
+                self.tools.append(tool_def)
+                # Store routing info for execution
+                self._mcp_tool_routes[name] = {
+                    "url": ct.get("mcp_server_url", ""),
+                    "api_key": ct.get("mcp_server_api_key"),
+                }
+            if self._mcp_tool_routes:
+                print(
+                    f"[hermes-agent] Registered {len(self._mcp_tool_routes)} custom MCP tool(s): "
+                    f"{', '.join(self._mcp_tool_routes.keys())}",
+                    flush=True,
+                )
 
     def _emit_event(self, event: dict) -> None:
         """Safely emit a server tool event, logging but not raising on failure."""
@@ -870,19 +1258,176 @@ class AIAgent:
         )
         return result
 
+    def _should_reset_context(self, messages: list[dict], iteration: int) -> bool:
+        """Determine if a full context reset is warranted.
+
+        Harness pattern: full resets with structured handoffs produce better
+        results than in-place compaction for long-running sessions (per
+        Anthropic's harness design research).
+        """
+        if self.max_iterations <= 0:
+            return False
+        # Don't reset too early — need enough history to summarize
+        if iteration < 4:
+            return False
+        ratio = iteration / self.max_iterations
+        chars = self._estimate_message_chars(messages)
+        return (
+            ratio >= CONTEXT_RESET_ITERATION_RATIO
+            and chars >= CONTEXT_RESET_CHAR_THRESHOLD
+        )
+
+    def _build_context_handoff(self, messages: list[dict], user_message: str, iteration: int) -> list[dict]:
+        """Build a fresh message list from a structured handoff artifact.
+
+        Instead of compacting (summarising in-place), this performs a full
+        context reset: the old conversation is replaced with a concise
+        handoff document that captures what was done, what remains, and the
+        current file state.  The model gets a clean context window.
+        """
+        # Collect state from the full history
+        files_read: list[str] = []
+        files_edited: list[str] = []
+        tool_call_count = 0
+        assistant_conclusions: list[str] = []
+
+        for m in messages:
+            for tc in m.get("tool_calls") or []:
+                tool_call_count += 1
+                fn = tc.get("function") or {}
+                name = fn.get("name", "")
+                try:
+                    args = json.loads(fn.get("arguments") or "{}")
+                except (json.JSONDecodeError, TypeError):
+                    args = {}
+                path = args.get("path", "")
+                if name == "read_repo_file" and path and path not in files_read:
+                    files_read.append(path)
+                elif name in REPO_EDIT_TOOL_NAMES and path and path not in files_edited:
+                    files_edited.append(path)
+
+            role = m.get("role", "")
+            content = (m.get("content") or "").strip()
+            if role == "assistant" and content and not m.get("tool_calls"):
+                # Final-style messages (no tool calls) are conclusions
+                assistant_conclusions.append(content[:300])
+
+        # Build the handoff artifact
+        handoff_parts = [
+            "=== CONTEXT RESET — STRUCTURED HANDOFF ===",
+            f"Iteration {iteration}/{self.max_iterations}. Context was reset to maintain quality.",
+            "",
+            "## Work completed so far",
+        ]
+        if files_read:
+            handoff_parts.append(f"Files read: {', '.join(files_read[:20])}")
+        if files_edited:
+            handoff_parts.append(f"Files edited: {', '.join(files_edited[:20])}")
+        handoff_parts.append(f"Total tool calls: {tool_call_count}")
+
+        if assistant_conclusions:
+            handoff_parts.append("\n## Last assistant summary")
+            handoff_parts.append(assistant_conclusions[-1])
+
+        # Include cached file state so the model knows current contents
+        if self.session_cache:
+            handoff_parts.append(f"\n## Cached file contents ({len(self.session_cache)} files)")
+            for path, content in list(self.session_cache.items())[:10]:
+                preview = content[:200].replace("\n", " ")
+                handoff_parts.append(f"  {path}: {len(content)} chars — {preview}...")
+
+        handoff_parts.append("\n## Your task")
+        handoff_parts.append("Continue working on the user's original request below. "
+                             "Pick up where the previous context left off. "
+                             "Do NOT re-read files you already have cached above.")
+
+        handoff = "\n".join(handoff_parts)
+
+        # Rebuild: system message + handoff + original user message
+        new_messages: list[dict] = []
+
+        # Preserve system message
+        system_msg = next((m for m in messages if m.get("role") == "system"), None)
+        if system_msg:
+            new_messages.append(dict(system_msg))
+
+        # Add the handoff as an assistant message
+        new_messages.append({"role": "assistant", "content": handoff})
+
+        # Re-inject the original user request
+        new_messages.append({"role": "user", "content": user_message})
+
+        old_chars = self._estimate_message_chars(messages)
+        new_chars = self._estimate_message_chars(new_messages)
+        print(
+            f"[hermes-agent] Context RESET: {len(messages)} msgs ({old_chars:,} chars) -> "
+            f"{len(new_messages)} msgs ({new_chars:,} chars). "
+            f"Handoff: {len(files_edited)} edits, {len(files_read)} reads, "
+            f"{len(self.session_cache)} cached files.",
+            flush=True,
+        )
+        return new_messages
+
+    def _list_user_repos(self) -> str:
+        """List all repos accessible with the current GitHub token."""
+        if not self.github_pat:
+            return "Error: No GitHub token configured. Cannot list repositories."
+        try:
+            url = "https://api.github.com/user/repos?sort=updated&per_page=50&affiliation=owner,collaborator,organization_member"
+            headers = {
+                "Authorization": f"Bearer {self.github_pat}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+                "User-Agent": "Hermes-Agent",
+            }
+            with httpx.Client(timeout=15) as client:
+                resp = client.get(url, headers=headers)
+                if resp.status_code == 401:
+                    return "Error: GitHub token is invalid or expired. The user should update their token in Settings."
+                resp.raise_for_status()
+            repos = resp.json()
+            if not isinstance(repos, list) or not repos:
+                return "No repositories found for this GitHub token."
+            lines = []
+            for repo in repos:
+                name = repo.get("full_name", "?")
+                desc = repo.get("description") or ""
+                private = " (private)" if repo.get("private") else ""
+                lines.append(f"- {name}{private}: {desc[:80]}" if desc else f"- {name}{private}")
+            return f"Found {len(repos)} accessible repositories:\n" + "\n".join(lines)
+        except Exception as e:
+            return f"Error listing repositories: {e}"
+
     def _execute_repo_tool(self, tool_name: str, arguments: dict) -> str:
         """Execute a repo tool, emit events, and return the result string."""
+        if tool_name == "list_user_repos":
+            if self.on_tool_start:
+                self.on_tool_start("list_user_repos", "")
+            result = self._list_user_repos()
+            if self.on_tool_end:
+                self.on_tool_end("list_user_repos", "", result[:200])
+            return result
+
         if tool_name == "read_repo_file":
             path = arguments.get("path", "")
             if self.on_tool_start:
                 self.on_tool_start("read_repo_file", path)
-            try:
-                result = self._read_github_file(path)
-            finally:
+            # Return staged/cached content if the file was already edited in
+            # this session.  This prevents the model from seeing the original
+            # (pre-edit) version from GitHub and re-applying the same changes.
+            if path in self.session_cache:
+                result = self.session_cache[path]
                 if self.on_tool_end:
-                    self.on_tool_end("read_repo_file", path, f"Read {len(result) if 'result' in dir() else 0} chars from {path}")
-            if not result.startswith("Error"):
-                self.session_cache[path] = result
+                    self.on_tool_end("read_repo_file", path, f"Read {len(result)} chars from {path} (cached)")
+                print(f"[hermes-agent] Read {path} from session cache: {len(result)} chars", flush=True)
+            else:
+                try:
+                    result = self._read_github_file(path)
+                finally:
+                    if self.on_tool_end:
+                        self.on_tool_end("read_repo_file", path, f"Read {len(result) if 'result' in dir() else 0} chars from {path}")
+                if not result.startswith("Error"):
+                    self.session_cache[path] = result
             result = _cap_tool_response(result)
             if result == "":
                 result = "(empty file)"
@@ -1006,10 +1551,27 @@ class AIAgent:
             with httpx.Client(timeout=15) as client:
                 resp = client.get(url, headers=headers)
                 if resp.status_code == 404:
-                    # Try to list the parent directory to help the agent
+                    # Distinguish file-not-found from repo-level access issues.
+                    # If the path is not the root, probe the root to check repo access.
+                    if path and path != "" and path != "/":
+                        root_url = f"https://api.github.com/repos/{encoded_owner}/{encoded_repo}/contents/"
+                        root_resp = client.get(root_url, headers=headers)
+                        if root_resp.status_code == 404:
+                            return (
+                                f"Error: Repository {self.github_repo_owner}/{self.github_repo_name} "
+                                f"was not found (HTTP 404). The repository may have been renamed or deleted, "
+                                f"or your GitHub token may lack access to it. "
+                                f"Call list_user_repos to see which repositories are actually accessible "
+                                f"with the current token, then inform the user of the correct repo name."
+                            )
                     parent_dir = "/".join(path.split("/")[:-1]) if "/" in path else ""
-                    hint = f" Try read_repo_file on the parent directory '{parent_dir}' to see available files." if parent_dir else ""
+                    hint = f" Try read_repo_file on the parent directory '{parent_dir}' to see available files." if parent_dir else " Try read_repo_file with path '' to list the root directory."
                     return f"Error: File not found at '{path}' in {self.github_repo_owner}/{self.github_repo_name}.{hint}"
+                if resp.status_code == 403:
+                    return (
+                        f"Error: Access denied (HTTP 403) for '{path}' in {self.github_repo_owner}/{self.github_repo_name}. "
+                        f"The GitHub token may lack the required permissions (needs 'repo' scope for private repositories)."
+                    )
                 resp.raise_for_status()
             data = resp.json()
             if isinstance(data, list):
@@ -1052,12 +1614,23 @@ class AIAgent:
             print(f"[hermes-agent] Failed to read {path} from GitHub: {e}", flush=True)
             return f"Error reading file '{path}' from GitHub: {str(e)}"
 
+    @staticmethod
+    def _should_retry_api_error(status_code: int) -> bool:
+        """Return True for transient errors worth retrying."""
+        if status_code == 429:  # rate limit
+            return True
+        if 500 <= status_code < 600:  # server errors
+            return True
+        if status_code == 408:  # request timeout
+            return True
+        return False
+
     def _call_api(
         self,
         messages: list[dict],
         forced_repo_tool_choice: Optional[str] = None,
     ) -> dict:
-        """Make a non-streaming chat completion request to the configured provider."""
+        """Make a non-streaming chat completion request with retry and backoff."""
         if self.tools and self.model in KNOWN_UNSUPPORTED_TOOL_MODELS:
             suggested_models = ", ".join(SUGGESTED_TOOL_MODELS)
             raise RuntimeError(
@@ -1065,15 +1638,18 @@ class AIAgent:
                 f"Choose a tool-capable model like {suggested_models}."
             )
 
+        # Sanitize messages to fix orphaned tool results
+        clean_messages = _sanitize_api_messages(messages)
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
             "HTTP-Referer": "https://cloud-chat-hub.local",
             "X-Title": "Hermes Agent",
         }
-        payload = {
+        payload: dict = {
             "model": self.model,
-            "messages": messages,
+            "messages": clean_messages,
             "temperature": 0.7,
             "max_tokens": 16384 if self.repo_mode else 4096,
         }
@@ -1087,24 +1663,68 @@ class AIAgent:
             payload["tools"] = tools
             payload["tool_choice"] = tool_choice
 
-        with httpx.Client(timeout=PROVIDER_TIMEOUT_SECONDS) as client:
+        # Reasoning config: pass through for models that support it (e.g. DeepSeek, o-series)
+        model_lower = self.model.lower()
+        if any(tag in model_lower for tag in ("deepseek-r1", "o1", "o3", "o4-mini", "qwq")):
+            payload.setdefault("extra_body", {})
+            payload["extra_body"]["reasoning"] = {"effort": "medium"}
+
+        last_error: Optional[Exception] = None
+        for attempt in range(API_MAX_RETRIES + 1):
             try:
-                resp = client.post(
-                    f"{self.base_url}/chat/completions",
-                    headers=headers,
-                    json=payload,
-                )
-                resp.raise_for_status()
+                with httpx.Client(timeout=PROVIDER_TIMEOUT_SECONDS) as client:
+                    resp = client.post(
+                        f"{self.base_url}/chat/completions",
+                        headers=headers,
+                        json=payload,
+                    )
+                    resp.raise_for_status()
+                return resp.json()
             except httpx.HTTPStatusError as exc:
+                last_error = exc
+                status_code = exc.response.status_code
                 error_message = _extract_error_message(exc.response)
+
+                if self._should_retry_api_error(status_code) and attempt < API_MAX_RETRIES:
+                    delay = min(
+                        API_RETRY_BASE_DELAY * (2 ** attempt),
+                        API_RETRY_MAX_DELAY,
+                    )
+                    print(
+                        f"[hermes-agent] API error {status_code} (attempt {attempt + 1}/{API_MAX_RETRIES + 1}), "
+                        f"retrying in {delay:.1f}s: {error_message[:120]}",
+                        flush=True,
+                    )
+                    time.sleep(delay)
+                    continue
+
                 raise RuntimeError(
-                    f"Provider error ({exc.response.status_code}) for model '{self.model}': {error_message}"
+                    f"Provider error ({status_code}) for model '{self.model}': {error_message}"
                 ) from exc
-            except httpx.HTTPError as exc:
+            except (httpx.TimeoutException, httpx.HTTPError) as exc:
+                last_error = exc
+                if attempt < API_MAX_RETRIES:
+                    delay = min(
+                        API_RETRY_BASE_DELAY * (2 ** attempt),
+                        API_RETRY_MAX_DELAY,
+                    )
+                    print(
+                        f"[hermes-agent] Network error (attempt {attempt + 1}/{API_MAX_RETRIES + 1}), "
+                        f"retrying in {delay:.1f}s: {exc}",
+                        flush=True,
+                    )
+                    time.sleep(delay)
+                    continue
+
                 raise RuntimeError(
-                    f"Failed to reach provider endpoint at {self.base_url}: {exc}"
+                    f"Failed to reach provider endpoint at {self.base_url} after "
+                    f"{API_MAX_RETRIES + 1} attempts: {exc}"
                 ) from exc
-            return resp.json()
+
+        # Should not reach here, but just in case
+        raise RuntimeError(
+            f"All {API_MAX_RETRIES + 1} API attempts failed for model '{self.model}'"
+        ) from last_error
 
     def _build_repo_system_prompt(self) -> str:
         """Build a system prompt snippet describing the active repo and available tools."""
@@ -1122,27 +1742,60 @@ class AIAgent:
         repo_access_instruction = ""
         if not self.github_pat:
             repo_access_instruction = (
-                "\nGitHub file access is unavailable for this request because no GitHub token was provided.\n"
-                "Do not call read_repo_file and do not search the web to compensate.\n"
-                "Answer using only the issue text and any supplied context. Mention the limitation once and avoid repeating the issue description at length.\n"
+                "\nIMPORTANT: GitHub file access is unavailable for this request because no GitHub token was provided.\n"
+                "Do NOT call read_repo_file — the tool will fail.\n"
+                "Do NOT ask the user to share files, clone the repo, or provide a token.\n"
+                "Answer using only the repository file tree (if available), issue text, and any other supplied context.\n"
+                "Mention the limitation once briefly and focus on what you CAN answer from available context.\n"
             )
+            return (
+                f"You are working on the GitHub repository {repo_full}.\n"
+                "GitHub API access is not available for this session (no token configured).\n\n"
+                "CRITICAL RULES:\n"
+                "- Do NOT ask the user clarifying questions or to provide files/tokens.\n"
+                "- Do NOT list options and ask the user to choose.\n"
+                "- Answer based on available context (file tree, issue text, conversation history).\n"
+                "- Make reasonable assumptions and explain them.\n"
+                f"{repo_access_instruction}"
+                f"\n{current_turn_instruction}\n"
+            )
+        # Include the file tree if available so the model knows what files exist
+        file_tree_section = ""
+        if self.repo_file_tree:
+            file_tree_section = (
+                "\nThe repository file tree is available below. Use it to identify candidate files "
+                "before calling read_repo_file. Do NOT ask the user to provide file paths.\n\n"
+                "Repository file tree:\n"
+                + "\n".join(self.repo_file_tree)
+                + "\n\n"
+            )
+        elif self.github_pat:
+            file_tree_section = (
+                "\nThe repository file tree was not pre-loaded. Use read_repo_file with path '' "
+                "to list the root directory and discover files.\n\n"
+            )
+
         return (
             f"You are working on the GitHub repository {repo_full}.\n"
             "You have tools to read, edit, create, and delete files in this repo.\n\n"
+            "CRITICAL RULES (apply to ALL requests — read-only AND change requests):\n"
+            "- Do NOT ask the user clarifying questions. Use your judgment and explore the repo yourself.\n"
+            "- Do NOT ask the user which file to look at or edit — use read_repo_file to discover the codebase.\n"
+            "- Do NOT list options and ask the user to choose. Make reasonable assumptions and explain them.\n"
+            "- If a tool call fails (e.g. 404), try alternative paths (read the root directory, try common file names) before giving up.\n"
+            "- When you need more context, use the actual repo tools instead of prose about what you will do next.\n"
+            "- Do NOT paste code blocks, pseudo-code, or raw file content when repo tools are available. Use the tools.\n\n"
+            f"{file_tree_section}"
             "First determine whether the current user turn is asking for read-only repository help or for actual code changes.\n"
             "- If the user is asking what the repo is, how it works, where something lives, or for analysis/review, stay read-only: inspect files as needed and answer directly.\n"
             "- Only enter the edit workflow when the user explicitly asks you to modify the repository.\n"
             "- Never treat repo selection by itself as permission to edit.\n\n"
             "Operate like a code agent: inspect the repo with tools, make concrete changes with tools when requested, "
             "and keep narration brief.\n\n"
-            "WORKFLOW — FOR CHANGE REQUESTS ONLY:\n"
+            "WORKFLOW — FOR CHANGE REQUESTS:\n"
             "1. Use read_repo_file to read files and understand the codebase.\n"
             "2. Use batch_edit_repo_files to apply changes.\n"
-            "3. Do NOT ask the user which file to edit — explore the repo yourself using read_repo_file.\n"
-            "4. Do NOT ask clarifying questions. Use your judgment, explore the repo to understand the codebase, and make changes directly. If the request is ambiguous, make reasonable assumptions and explain them.\n"
-            "5. When making changes, address ALL requested changes, not just one.\n"
-            "6. When you need more repository context, use the actual repo tools instead of prose about what you will do next.\n"
-            "7. Do NOT paste code blocks, pseudo-code, or raw file content when repo tools are available. Use the tools.\n"
+            "3. When making changes, address ALL requested changes, not just one.\n"
             f"{repo_access_instruction}"
             f"\n{current_turn_instruction}\n"
         )
@@ -1253,10 +1906,26 @@ class AIAgent:
         repo_tool_enforcement_attempts = 0
         fix_intent_continuation_attempts = 0
         forced_repo_tool_choice: Optional[str] = None
+        last_content_with_tools: Optional[str] = None  # fallback for empty responses
+        length_continuations = 0  # track finish_reason="length" retries
+        context_was_reset = False  # track whether we've done a full reset
+        edit_contract_injected = False  # track planning contract injection
 
         for iteration in range(self.max_iterations):
-            # Compact context if it's getting too large
-            messages = self._compact_context(messages)
+            # Full context reset (once) when the session is long-running.
+            # Harness pattern: resets with structured handoffs beat in-place
+            # compaction for maintaining output quality (Anthropic research).
+            if not context_was_reset and self._should_reset_context(messages, iteration):
+                messages = self._build_context_handoff(messages, user_message, iteration)
+                context_was_reset = True
+            else:
+                # Fall back to compaction when reset isn't warranted
+                messages = self._compact_context(messages)
+
+            # Budget pressure warning
+            budget_warning = _get_budget_warning(iteration, self.max_iterations)
+            if budget_warning:
+                print(f"[hermes-agent] {budget_warning}", flush=True)
 
             print(f"[hermes-agent] Iteration {iteration + 1}/{self.max_iterations}, msgs={len(messages)}", flush=True)
             if self.on_thinking:
@@ -1267,14 +1936,56 @@ class AIAgent:
             choice = response["choices"][0]
             message = choice["message"]
             finish_reason = choice.get("finish_reason", "stop")
-            content_preview = (message.get("content") or "")[:100]
-            tool_call_count = len(message.get("tool_calls") or [])
-            print(f"[hermes-agent] Response: finish_reason={finish_reason} content_len={len(message.get('content') or '')} tool_calls={tool_call_count} preview={content_preview!r}", flush=True)
+            raw_content = message.get("content") or ""
 
-            # Emit any text content
-            if message.get("content"):
+            # Extract <think> blocks from reasoning models (DeepSeek, QwQ, etc.)
+            if raw_content and "<think>" in raw_content:
+                visible_content, reasoning_text = _extract_think_blocks(raw_content)
+                message["content"] = visible_content
+                if reasoning_text and self.on_reasoning:
+                    self.on_reasoning(reasoning_text)
+            else:
+                visible_content = raw_content
+
+            # OpenRouter returns reasoning_content for some models (o-series, DeepSeek-R1)
+            api_reasoning = message.get("reasoning_content") or ""
+            if api_reasoning and self.on_reasoning:
+                self.on_reasoning(api_reasoning)
+
+            tool_call_count = len(message.get("tool_calls") or [])
+            content_preview = visible_content[:100]
+            print(f"[hermes-agent] Response: finish_reason={finish_reason} content_len={len(visible_content)} tool_calls={tool_call_count} preview={content_preview!r}", flush=True)
+
+            # Handle finish_reason="length" — response was truncated
+            if finish_reason == "length" and length_continuations < FINISH_LENGTH_MAX_CONTINUATIONS:
+                length_continuations += 1
+                if visible_content:
+                    messages.append({"role": "assistant", "content": visible_content})
+                    if self.on_text:
+                        self.on_text(visible_content)
+                messages.append({
+                    "role": "user",
+                    "content": "[System: Your response was truncated due to length. Please continue from where you left off.]",
+                })
+                print(
+                    f"[hermes-agent] finish_reason=length, continuation {length_continuations}/{FINISH_LENGTH_MAX_CONTINUATIONS}",
+                    flush=True,
+                )
+                continue
+            length_continuations = 0  # reset on non-length finish
+
+            # Empty content fallback — use prior turn content if model returns blank
+            if not visible_content and not message.get("tool_calls") and last_content_with_tools:
+                print("[hermes-agent] Empty response, using prior content as fallback", flush=True)
+                visible_content = last_content_with_tools
+                message["content"] = visible_content
+
+            # Emit any text content (inject budget warning into the stream if needed)
+            if visible_content:
                 if self.on_text:
-                    self.on_text(message["content"])
+                    self.on_text(visible_content)
+                if budget_warning and self.on_text:
+                    self.on_text(f"\n\n> *{budget_warning}*\n\n")
 
             # Check for tool calls
             tool_calls = message.get("tool_calls") or []
@@ -1353,90 +2064,200 @@ class AIAgent:
             repo_tool_enforcement_attempts = 0
             fix_intent_continuation_attempts = 0
 
+            # Deduplicate tool calls
+            tool_calls = _deduplicate_tool_calls(tool_calls)
+
+            # Track content for empty-response fallback
+            if visible_content and tool_calls:
+                last_content_with_tools = visible_content
+
             # Add assistant message with tool calls to history
             messages.append(message)
 
-            # Execute each tool call
+            # --- Parse and validate tool call arguments ---
+            parsed_tool_calls: list[tuple[dict, str, dict]] = []  # (tc, tool_name, arguments)
             for tc in tool_calls:
                 func = tc["function"]
                 raw_tool_name = func["name"]
                 tool_name = _normalize_tool_name(raw_tool_name)
                 if tool_name != raw_tool_name:
                     print(f"[hermes-agent] Normalized tool name: {raw_tool_name!r} -> {tool_name!r}", flush=True)
+
+                # Invalid JSON recovery: inject error tool result instead of silent {}
                 try:
                     arguments = json.loads(func["arguments"])
-                except json.JSONDecodeError:
-                    arguments = {}
+                except (json.JSONDecodeError, TypeError):
+                    error_msg = (
+                        f"Error: Invalid JSON in tool call arguments for '{tool_name}'. "
+                        f"Raw arguments: {func.get('arguments', '')[:200]}. "
+                        "Please retry with valid JSON arguments."
+                    )
+                    print(f"[hermes-agent] Invalid JSON for {tool_name}: {func.get('arguments', '')[:100]}", flush=True)
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": error_msg,
+                    })
+                    continue
 
-                tool_input = json.dumps(arguments)
+                parsed_tool_calls.append((tc, tool_name, arguments))
 
-                print(f"[hermes-agent] Tool call: {tool_name} args_keys={list(arguments.keys())} repo_tool={tool_name in REPO_TOOL_NAMES}", flush=True)
-                # Repo tools emit structured ServerToolEvent JSON via the
-                # on_server_tool_event callback. The frontend receives these
-                # as dedicated SSE events and renders them as proposal cards,
-                # file edit previews, etc.
-                if tool_name in REPO_TOOL_NAMES:
-                    try:
-                        result = self._execute_repo_tool(tool_name, arguments)
-                    except Exception as e:
-                        print(f"[hermes-agent] Repo tool error ({tool_name}): {e}", flush=True)
-                        result = f"Error executing {tool_name}: {str(e)}"
+            # --- Execute tool calls (parallel or sequential) ---
+            if _should_parallelize_tool_batch([tc for tc, _, _ in parsed_tool_calls]):
+                # Parallel execution for read-only safe tools
+                print(f"[hermes-agent] Executing {len(parsed_tool_calls)} tool calls in parallel", flush=True)
+                results: dict[str, str] = {}  # tc_id -> result
 
+                def _run_one(tc_tuple):
+                    tc, tool_name, arguments = tc_tuple
+                    tool_input = json.dumps(arguments)
+                    if self.on_tool_start:
+                        self.on_tool_start(tool_name, tool_input)
+                    if tool_name in REPO_TOOL_NAMES:
+                        try:
+                            result = self._execute_repo_tool(tool_name, arguments)
+                        except Exception as e:
+                            result = f"Error executing {tool_name}: {str(e)}"
+                    elif tool_name in self._mcp_tool_routes:
+                        route = self._mcp_tool_routes[tool_name]
+                        result = _execute_mcp_tool(
+                            route["url"], tool_name, arguments, route.get("api_key"),
+                        )
+                    else:
+                        result = _execute_tool(tool_name, arguments)
+                    if self.on_tool_end:
+                        self.on_tool_end(tool_name, tool_input, result)
+                    return tc["id"], result
+
+                with ThreadPoolExecutor(max_workers=min(_MAX_PARALLEL_WORKERS, len(parsed_tool_calls))) as executor:
+                    futures = {executor.submit(_run_one, t): t for t in parsed_tool_calls}
+                    for future in as_completed(futures):
+                        tc_id, result = future.result()
+                        results[tc_id] = result
+
+                # Append results in original order
+                for tc, tool_name, arguments in parsed_tool_calls:
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": results.get(tc["id"], "Error: result not found"),
+                    })
+            else:
+                # Sequential execution
+                for tc, tool_name, arguments in parsed_tool_calls:
+                    tool_input = json.dumps(arguments)
+
+                    is_mcp = tool_name in self._mcp_tool_routes
+                    print(f"[hermes-agent] Tool call: {tool_name} args_keys={list(arguments.keys())} repo_tool={tool_name in REPO_TOOL_NAMES} mcp={is_mcp}", flush=True)
+                    # Repo tools emit structured ServerToolEvent JSON via the
+                    # on_server_tool_event callback. The frontend receives these
+                    # as dedicated SSE events and renders them as proposal cards,
+                    # file edit previews, etc.
+                    if tool_name in REPO_TOOL_NAMES:
+                        try:
+                            result = self._execute_repo_tool(tool_name, arguments)
+                        except Exception as e:
+                            print(f"[hermes-agent] Repo tool error ({tool_name}): {e}", flush=True)
+                            result = f"Error executing {tool_name}: {str(e)}"
+
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
+                            "content": result,
+                        })
+                        continue
+
+                    if self.on_tool_start:
+                        self.on_tool_start(tool_name, tool_input)
+
+                    if is_mcp:
+                        route = self._mcp_tool_routes[tool_name]
+                        result = _execute_mcp_tool(
+                            route["url"], tool_name, arguments, route.get("api_key"),
+                        )
+                    else:
+                        result = _execute_tool(tool_name, arguments)
+
+                    if self.on_tool_end:
+                        self.on_tool_end(tool_name, tool_input, result)
+
+                    # Add tool result to messages
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc["id"],
                         "content": result,
                     })
-                    continue
 
-                if self.on_tool_start:
-                    self.on_tool_start(tool_name, tool_input)
-
-                result = _execute_tool(tool_name, arguments)
-
-                if self.on_tool_end:
-                    self.on_tool_end(tool_name, tool_input, result)
-
-                # Add tool result to messages
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "content": result,
-                })
+            # --- Inject budget pressure into last tool result ---
+            if budget_warning and messages and messages[-1].get("role") == "tool":
+                messages[-1]["content"] = messages[-1]["content"] + f"\n\n{budget_warning}"
 
             # --- Post-tool-execution: verification and reflection ---
             executed_tool_names = [
-                _normalize_tool_name(tc["function"]["name"])
-                for tc in tool_calls
+                tool_name for _, tool_name, _ in parsed_tool_calls
             ]
 
-            # Verification: after edit tools, prompt the agent to review its changes
+            # Evaluator phase: after edit tools, run a skeptical review.
+            # Harness pattern: separate evaluator tuned toward skepticism
+            # catches issues that self-evaluating generators miss (Anthropic
+            # harness design research).  The evaluator should resist the urge
+            # to declare everything "looks good" — it must actively search
+            # for problems.
             made_edits = any(name in REPO_EDIT_TOOL_NAMES for name in executed_tool_names)
             if made_edits and self.repo_mode:
                 messages.append({
                     "role": "user",
                     "content": (
-                        "[System: You just made file changes. Before finishing, verify your work:\n"
-                        "1. Did you address ALL parts of the user's request?\n"
-                        "2. Are there any syntax errors, missing imports, or broken references in your changes?\n"
-                        "3. Are there related files that also need updating for consistency?\n"
-                        "If everything looks correct, summarize what you changed. "
-                        "If you find issues, fix them now with another tool call.]"
+                        "[System — EVALUATOR PHASE: Briefly review the changes "
+                        "you just staged.\n\n"
+                        "Check: (1) Did you address the user's full request? "
+                        "(2) Any obvious syntax errors or missing imports? "
+                        "(3) Does the code style match the repo?\n\n"
+                        "If everything looks correct, provide a short summary "
+                        "of what was changed and stop. Do NOT re-apply the same "
+                        "edits. Do NOT read files you just edited — the staged "
+                        "content is already applied. Only make additional tool "
+                        "calls if you find a concrete, specific bug in your "
+                        "changes.]"
                     ),
                 })
-                print(f"[hermes-agent] Injected verification prompt after edit tools.", flush=True)
+                print(f"[hermes-agent] Injected evaluator phase after edit tools.", flush=True)
 
-            # Nudge: user requested edits but the agent only read files / didn't edit
+            # Contract phase: when the agent has read files and has edit
+            # intent but hasn't started editing, inject a planning contract.
+            # Harness pattern: pre-agreement on "done" between planner and
+            # evaluator bridges high-level specs to testable implementation
+            # (Anthropic harness design research).
             elif not made_edits and self.repo_mode and self.repo_edit_intent:
-                messages.append({
-                    "role": "user",
-                    "content": (
-                        "[System: The user requested changes but no edits have been made yet. "
-                        "Please use the available edit tools (edit_repo_file, batch_edit_repo_files) "
-                        "to implement the requested changes.]"
-                    ),
-                })
-                print(f"[hermes-agent] Injected edit-nudge prompt (no edits made yet).", flush=True)
+                did_read = any(name == "read_repo_file" for name in executed_tool_names)
+                if did_read and not edit_contract_injected:
+                    edit_contract_injected = True
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "[System — PLANNING CONTRACT: Before editing, write a "
+                            "brief plan (3-8 lines) that states:\n"
+                            "1. Which files you will modify/create/delete\n"
+                            "2. What each change achieves\n"
+                            "3. What 'done' looks like — how would someone verify "
+                            "your changes work?\n\n"
+                            "Then immediately begin implementing with the repo "
+                            "edit tools.  The evaluator will grade your work "
+                            "against this contract.]"
+                        ),
+                    })
+                    print(f"[hermes-agent] Injected planning contract prompt.", flush=True)
+                else:
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "[System: The user requested changes but no edits "
+                            "have been made yet. Use the available edit tools "
+                            "(edit_repo_file, batch_edit_repo_files) to "
+                            "implement the requested changes now.]"
+                        ),
+                    })
+                    print(f"[hermes-agent] Injected edit-nudge prompt (no edits made yet).", flush=True)
 
             # Structured reflection: every 5 iterations, check if the agent is
             # making progress or stuck in a loop
