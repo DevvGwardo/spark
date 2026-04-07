@@ -169,6 +169,13 @@ try:
                 "python": f"{sys.version_info.major}.{sys.version_info.minor}",
             })
             await _brain_rpc("tools/call", {"name": "brain_set", "arguments": {"key": "bridge:metrics", "value": health_metrics, "scope": "global"}})
+            # Verify contracts are readable (contract check on self)
+            try:
+                result = await _brain_rpc("tools/call", {"name": "brain_contract_check", "arguments": {}})
+                if result:
+                    print(f"[hermes-bridge] Contract check passed: {result}", flush=True)
+            except Exception:
+                pass
             _brain_initialized = True
             print(f"[hermes-bridge] Brain MCP connected PID={_brain_proc.pid}", flush=True)
         except Exception as e:
@@ -582,7 +589,7 @@ app = FastAPI(title="Hermes Bridge", lifespan=_brain_lifespan)
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "brain_initialized": _brain_initialized, "active_requests": _bridge_active_requests}
 
 
 @app.get("/v1/models")
@@ -800,18 +807,30 @@ async def _passthrough_chat_completions(body: ChatCompletionRequest, api_key: st
     payload = _build_passthrough_payload(body)
     request_headers = _passthrough_headers(api_key)
 
-    async with httpx.AsyncClient(timeout=PASSTHROUGH_TIMEOUT_SECONDS) as client:
-        request = client.build_request(
-            "POST",
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers=request_headers,
-            json=payload,
-        )
-        upstream = await client.send(request, stream=bool(payload.get("stream", True)))
-        if upstream.status_code >= 400:
-            error_body = await upstream.aread()
-            await upstream.aclose()
-            return _passthrough_error_response(upstream.status_code, error_body)
+    try:
+        async with httpx.AsyncClient(timeout=PASSTHROUGH_TIMEOUT_SECONDS) as client:
+            request = client.build_request(
+                "POST",
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers=request_headers,
+                json=payload,
+            )
+            upstream = await client.send(request, stream=bool(payload.get("stream", True)))
+            if upstream.status_code >= 400:
+                error_body = await upstream.aread()
+                await upstream.aclose()
+                # Record circuit breaker failure for upstream errors
+                if "minimax" in body.model.lower():
+                    _minimax_circuit.record_failure()
+                else:
+                    _openrouter_circuit.record_failure()
+                return _passthrough_error_response(upstream.status_code, error_body)
+
+            # Record success
+            if "minimax" in body.model.lower():
+                _minimax_circuit.record_success()
+            else:
+                _openrouter_circuit.record_success()
 
         if not payload.get("stream", True):
             response_body = await upstream.aread()
@@ -915,21 +934,22 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
     #   3. X-Hermes-Minimax-Key header (forwarded from user's settings)
     is_minimax_model = body.model.startswith(MINIMAX_MODEL_PREFIX)
     if is_minimax_model:
+        if not _minimax_circuit.is_available():
+            return _circuit_open_error("MiniMax")
         minimax_key = (
             _get_local_gateway_key()
             or MINIMAX_KEY
             or request.headers.get("x-hermes-minimax-key", "").strip()
         )
         if not minimax_key:
-            return JSONResponse(
-                status_code=401,
-                content={"error": {"message": "MiniMax API key required. Set HERMES_MINIMAX_KEY, configure a MiniMax key in Settings, or run the local OpenClaw gateway."}},
-            )
+            return _no_api_key_error("minimax")
         agent_base_url = MINIMAX_BASE_URL
         agent_api_key = minimax_key
     else:
+        if not _openrouter_circuit.is_available():
+            return _circuit_open_error("OpenRouter")
         if not api_key:
-            return JSONResponse(status_code=401, content={"error": {"message": "No API key provided. Set HERMES_OPENROUTER_KEY, pass Authorization header, or run the local OpenClaw gateway."}})
+            return _no_api_key_error("openrouter")
         agent_base_url = "https://openrouter.ai/api/v1"
         agent_api_key = api_key
 
