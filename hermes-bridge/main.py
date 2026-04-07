@@ -146,7 +146,7 @@ try:
                             "run_phase_architect": {"phase": "architect", "brain_keys": {"writes": "request:<id>:ctx", "polls": "plan:<id>"}},
                             "run_phase_implementor": {"phase": "implementor", "brain_keys": {"writes": "request:<id>:phase", "staging:<id>:<filepath>", "polls": "request:<id>:staging_keys"}},
                             "run_phase_reviewer": {"phase": "reviewer", "brain_keys": {"writes": "request:<id>:verdict", "polls": "request:<id>:staging_keys"}},
-                            "_finish": {"phase": "done", "brain_keys": {"writes": "request:<id>:status", "request:<id>:phase"}},
+                            "_finish": {"phase": "done", "brain_keys": {"writes": "request:<id>:status", "polls": "request:<id>:phase"}},
                         },
                         "run_swarm": {
                             "params": ["user_message", "conversation_history", "enabled_toolsets", "repo_mode", "repo_owner", "repo_name", "github_pat"],
@@ -969,6 +969,12 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
         _using_real_agent = False
 
     chunk_id = f"chatcmpl-hermes-{os.urandom(8).hex()}"
+    # Brain MCP: publish per-request job metadata keyed by chunk_id so the overseer
+    # can correlate in-flight requests and inspect individual job state.
+    try:
+        _brain_set(f"bridge:active-request:{chunk_id}", active_job_meta)
+    except Exception:
+        pass
     # Thread-safe asyncio queue for all events (text and tool activity)
     # Replaces sync queue.Queue — now native async, no to_thread bridging needed
     event_queue: asyncio.Queue = asyncio.Queue()
@@ -986,7 +992,11 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
             try:
                 args = json.loads(tool_input) if tool_input else {}
                 path = args.get("path", "unknown")
-                claim_resource = f"repo_file:{path}"
+                # Namespace the claim by owner/repo to prevent cross-repo lock collisions
+                if repo_owner and repo_name:
+                    claim_resource = f"hermes-bridge:repo:{repo_owner}/{repo_name}:{path}"
+                else:
+                    claim_resource = f"hermes-bridge:repo:unknown:{path}"
                 _brain_claim(claim_resource, ttl=120)
             except (json.JSONDecodeError, TypeError, KeyError):
                 pass
@@ -998,7 +1008,11 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
             try:
                 args = json.loads(tool_input) if tool_input else {}
                 path = args.get("path", "unknown")
-                release_resource = f"repo_file:{path}"
+                # Must match the claim key format used in on_tool_start
+                if repo_owner and repo_name:
+                    release_resource = f"hermes-bridge:repo:{repo_owner}/{repo_name}:{path}"
+                else:
+                    release_resource = f"hermes-bridge:repo:unknown:{path}"
                 _brain_release(release_resource)
             except (json.JSONDecodeError, TypeError, KeyError):
                 pass
@@ -1239,6 +1253,18 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
             "api_calls": event_count,
             "estimated_cost_usd": round(event_count * 0.001, 4),
         }))
+        # Brain MCP: per-request metrics keyed by chunk_id for per-request auditing
+        try:
+            _brain_set(f"bridge:metrics:{chunk_id}", json.dumps({
+                "tokens": 0,
+                "api_calls": event_count,
+                "cost": round(event_count * 0.001, 4),
+                "elapsed_ms": elapsed_ms,
+                "model": body.model,
+                "repo_mode": has_repo_tools,
+            }))
+        except Exception:
+            pass
         yield sse_chunk(make_delta_chunk(chunk_id, body.model, {}, finish_reason="stop"))
         yield "data: [DONE]\n\n"
 
