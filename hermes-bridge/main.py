@@ -572,30 +572,26 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
     _brain_set("hermes-bridge:model", body.model, "global")
     _brain_set("hermes-bridge:toolsets", ",".join(enabled_toolsets), "global")
 
-    api_key = OPENROUTER_KEY
+    # Key priority: 1. Local gateway token, 2. HERMES_OPENROUTER_KEY env var, 3. Authorization: Bearer header
     auth_header = request.headers.get("authorization", "")
-    if auth_header.startswith("Bearer "):
-        api_key = auth_header[7:]
-    # Fall back to local gateway token if no explicit key configured.
-    # Users running the gateway locally don't need to enter a separate key.
-    if not api_key:
-        api_key = _get_local_gateway_key() or ""
+    api_key = (
+        _get_local_gateway_key()
+        or OPENROUTER_KEY
+        or (auth_header[7:] if auth_header.startswith("Bearer ") else "")
+    )
 
     # MiniMax direct routing: when model starts with "MiniMax-", route to
     # the MiniMax API instead of OpenRouter.  Key priority:
-    #   1. X-Hermes-Minimax-Key header (forwarded from user's settings)
+    #   1. Local gateway token (for users running the gateway)
     #   2. HERMES_MINIMAX_KEY env var
-    #   3. Local gateway token (for users running the gateway)
+    #   3. X-Hermes-Minimax-Key header (forwarded from user's settings)
     is_minimax_model = body.model.startswith(MINIMAX_MODEL_PREFIX)
     if is_minimax_model:
         minimax_key = (
-            request.headers.get("x-hermes-minimax-key", "").strip()
+            _get_local_gateway_key()
             or MINIMAX_KEY
+            or request.headers.get("x-hermes-minimax-key", "").strip()
         )
-        if not minimax_key:
-            # Last resort: try the local gateway token
-            gateway_key = _get_local_gateway_key()
-            minimax_key = gateway_key if gateway_key else ""
         if not minimax_key:
             return JSONResponse(
                 status_code=401,
