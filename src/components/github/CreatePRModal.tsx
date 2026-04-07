@@ -28,7 +28,6 @@ import { useSettingsStore } from '@/stores/settings-store';
 import { useActivityStore } from '@/stores/activity-store';
 import { cn } from '@/lib/utils';
 import { getApiBaseUrl } from '@/lib/api';
-import { GhostIcon } from '@/components/chat/GhostIcon';
 import { Progress } from '@/components/ui/progress';
 import type { PullRequestRecord } from '@/lib/pull-request';
 
@@ -163,13 +162,66 @@ function getChecksHeadline(summary: PullRequestStatus['checks']['summary']) {
   return 'No checks reported yet';
 }
 
-const VERIFICATION_PROGRESS_STEPS = [
-  { threshold: 0, label: 'Cloning repository snapshot', detail: 'Pulling the base branch into a clean workspace.' },
-  { threshold: 24, label: 'Finding project workspace', detail: 'Locating the package.json closest to the changed files.' },
-  { threshold: 46, label: 'Installing dependencies', detail: 'Using the detected package manager for that workspace.' },
-  { threshold: 68, label: 'Running validation scripts', detail: 'Checking lint, types, tests, and build scripts when available.' },
-  { threshold: 86, label: 'Generating provider review', detail: 'Asking the selected model for a final code review pass.' },
-] as const;
+async function getResponseErrorMessage(response: Response, fallback: string) {
+  try {
+    const data = await response.json() as { error?: unknown; message?: unknown };
+    if (typeof data.error === 'string' && data.error.trim().length > 0) {
+      return data.error;
+    }
+    if (typeof data.message === 'string' && data.message.trim().length > 0) {
+      return data.message;
+    }
+  } catch {
+    try {
+      const text = await response.text();
+      if (text.trim().length > 0) {
+        return text;
+      }
+    } catch {
+      // Ignore body parsing failures and fall back to the caller-provided message.
+    }
+  }
+
+  return fallback;
+}
+
+function normalizeGitHubActionError(message: string) {
+  if (/bad credentials/i.test(message)) {
+    return 'GitHub authentication failed: Bad credentials. Update your GitHub PAT in Settings and retry.';
+  }
+
+  if (/valid github pat is required/i.test(message)) {
+    return 'GitHub authentication failed: add a valid GitHub PAT in Settings and retry.';
+  }
+
+  return message;
+}
+
+type VerificationStep =
+  | 'cloning'
+  | 'applying_changes'
+  | 'finding_workspace'
+  | 'installing'
+  | 'running_scripts'
+  | 'reviewing';
+
+const VERIFICATION_STEP_ORDER: VerificationStep[] = [
+  'cloning',
+  'applying_changes',
+  'finding_workspace',
+  'installing',
+  'running_scripts',
+  'reviewing',
+];
+
+/** Steps shown in the overlay grid (applying_changes and finding_workspace are fast and merged visually). */
+const VERIFICATION_DISPLAY_STEPS: { step: VerificationStep; label: string }[] = [
+  { step: 'cloning', label: 'Cloning repository snapshot' },
+  { step: 'finding_workspace', label: 'Finding project workspace' },
+  { step: 'installing', label: 'Installing dependencies' },
+  { step: 'running_scripts', label: 'Running validation scripts' },
+  { step: 'reviewing', label: 'Generating provider review' },
+];
 
 export const CreatePRModal: React.FC<CreatePRModalProps> = ({
   isOpen,
@@ -204,7 +256,6 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
   const [verificationLoading, setVerificationLoading] = useState(false);
   const [verificationError, setVerificationError] = useState<string | null>(null);
   const [verificationResult, setVerificationResult] = useState<VerificationResult | null>(null);
-  const [verificationProgress, setVerificationProgress] = useState(0);
   const [isDraft, setIsDraft] = useState(false);
   const [generateMetadataLoading, setGenerateMetadataLoading] = useState(false);
   const [generateMetadataError, setGenerateMetadataError] = useState<string | null>(null);
@@ -226,11 +277,20 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
     [providers],
   );
 
+  const [activeStep, setActiveStep] = useState<VerificationStep | null>(null);
+  const [activeStepLabel, setActiveStepLabel] = useState('');
+  const [activeStepDetail, setActiveStepDetail] = useState('');
+  const [completedSteps, setCompletedSteps] = useState<Set<VerificationStep>>(new Set());
+
   const handleRunVerification = useCallback(async () => {
     if (!githubPAT || files.length === 0) return;
 
     setVerificationLoading(true);
     setVerificationError(null);
+    setActiveStep(null);
+    setActiveStepLabel('');
+    setActiveStepDetail('');
+    setCompletedSteps(new Set());
 
     try {
       const response = await fetch(
@@ -240,6 +300,7 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             action: 'verify-changes',
+            stream: true,
             pat: githubPAT,
             owner,
             repo,
@@ -259,13 +320,55 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
       );
 
       if (!response.ok) throw new Error(`Server returned ${response.status}`);
-      const data = await response.json();
-      if (data.error) {
-        setVerificationError(data.error);
-        return;
+
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('No response body');
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let result: VerificationResult | null = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const payload = JSON.parse(line.slice(6)) as
+            | { type: 'progress'; step: VerificationStep; label: string; detail: string }
+            | ({ type: 'result' } & VerificationResult)
+            | { type: 'error'; error: string };
+
+          if (payload.type === 'progress') {
+            setCompletedSteps((prev) => {
+              if (!prev.size) return prev;
+              const next = new Set(prev);
+              // Mark all earlier steps as completed
+              for (const s of VERIFICATION_STEP_ORDER) {
+                if (s === payload.step) break;
+                next.add(s);
+              }
+              return next;
+            });
+            setActiveStep(payload.step);
+            setActiveStepLabel(payload.label);
+            setActiveStepDetail(payload.detail);
+          } else if (payload.type === 'result') {
+            const { type: _, ...rest } = payload;
+            result = rest;
+          } else if (payload.type === 'error') {
+            setVerificationError(payload.error);
+          }
+        }
       }
 
-      setVerificationResult(data as VerificationResult);
+      if (result) {
+        setVerificationResult(result);
+      }
     } catch {
       setVerificationError('Failed to review staged changes');
     } finally {
@@ -393,7 +496,6 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
       setVerificationResult(null);
       setGenerateMetadataLoading(false);
       setGenerateMetadataError(null);
-      setVerificationProgress(0);
       setIsDraft(false);
     }
   }, [isOpen]);
@@ -403,47 +505,33 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
     setVerificationLoading(false);
     setVerificationError(null);
     setVerificationResult(null);
-    setVerificationProgress(0);
   }, [baseBranch, createdPr, filesFingerprint, isOpen, owner, repo]);
 
   const setVerification = useActivityStore((s) => s.setVerification);
 
+  // Compute progress percentage from real step events
+  const verificationProgress = useMemo(() => {
+    if (!activeStep) return 0;
+    const totalSteps = VERIFICATION_STEP_ORDER.length;
+    const currentIndex = VERIFICATION_STEP_ORDER.indexOf(activeStep);
+    if (currentIndex < 0) return 0;
+    // Each step is an equal slice; being on a step means it's in progress
+    return Math.round(((currentIndex + 0.5) / totalSteps) * 100);
+  }, [activeStep]);
+
+  // Sync verification state to the global activity store for the ghost overlay
   useEffect(() => {
-    if (!verificationLoading) {
-      setVerificationProgress(0);
+    if (!verificationLoading || !activeStep) {
       setVerification({ active: false, progress: 0, stepLabel: '', stepDetail: '' });
       return;
     }
-
-    setVerificationProgress(12);
-    const interval = window.setInterval(() => {
-      setVerificationProgress((current) => {
-        const remaining = 94 - current;
-        if (remaining <= 0) {
-          return 94;
-        }
-
-        return Math.min(94, current + Math.max(3, remaining * 0.22));
-      });
-    }, 420);
-
-    return () => window.clearInterval(interval);
-  }, [verificationLoading, setVerification]);
-
-  // Sync verification progress to the global activity store for the ghost overlay
-  useEffect(() => {
-    if (!verificationLoading) return;
-    const step = VERIFICATION_PROGRESS_STEPS.reduce(
-      (cur, s) => (verificationProgress >= s.threshold ? s : cur),
-      VERIFICATION_PROGRESS_STEPS[0],
-    );
     setVerification({
       active: true,
       progress: verificationProgress,
-      stepLabel: step.label,
-      stepDetail: step.detail,
+      stepLabel: activeStepLabel,
+      stepDetail: activeStepDetail,
     });
-  }, [verificationLoading, verificationProgress, setVerification]);
+  }, [verificationLoading, activeStep, verificationProgress, activeStepLabel, activeStepDetail, setVerification]);
 
   useEffect(() => {
     if (!createdPr || !isOpen) return;
@@ -466,6 +554,11 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
     setError(null);
 
     try {
+      if (!githubPAT.trim()) {
+        setError('GitHub authentication failed: add a valid GitHub PAT in Settings and retry.');
+        return;
+      }
+
       const response = await fetch(
         `${getApiBaseUrl()}/functions/v1/github-integration`,
         {
@@ -492,10 +585,16 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
         },
       );
 
-      if (!response.ok) throw new Error(`Server returned ${response.status}`);
+      if (!response.ok) {
+        throw new Error(
+          normalizeGitHubActionError(
+            await getResponseErrorMessage(response, `Failed to create pull request (${response.status})`),
+          ),
+        );
+      }
       const data = await response.json();
       if (data.error) {
-        setError(data.error);
+        setError(normalizeGitHubActionError(data.error));
         return;
       }
 
@@ -505,8 +604,12 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
       setMergeBody(nextPr.body || body);
       onPullRequestCreated?.(nextPr);
       onSuccess?.();
-    } catch {
-      setError('Failed to create pull request');
+    } catch (error) {
+      setError(
+        normalizeGitHubActionError(
+          error instanceof Error ? error.message : 'Failed to create pull request',
+        ),
+      );
     } finally {
       setLoading(false);
     }
@@ -519,6 +622,11 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
     setMergeError(null);
 
     try {
+      if (!githubPAT.trim()) {
+        setMergeError('GitHub authentication failed: add a valid GitHub PAT in Settings and retry.');
+        return;
+      }
+
       const response = await fetch(
         `${getApiBaseUrl()}/functions/v1/github-integration`,
         {
@@ -539,17 +647,27 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
         },
       );
 
-      if (!response.ok) throw new Error(`Server returned ${response.status}`);
+      if (!response.ok) {
+        throw new Error(
+          normalizeGitHubActionError(
+            await getResponseErrorMessage(response, `Failed to merge pull request (${response.status})`),
+          ),
+        );
+      }
       const data = await response.json();
       if (data.error) {
-        setMergeError(data.error);
+        setMergeError(normalizeGitHubActionError(data.error));
         return;
       }
 
       setMergeSuccess(data?.merged?.message || 'Pull request merged successfully.');
       await loadPullRequestStatus();
-    } catch {
-      setMergeError('Failed to merge pull request');
+    } catch (error) {
+      setMergeError(
+        normalizeGitHubActionError(
+          error instanceof Error ? error.message : 'Failed to merge pull request',
+        ),
+      );
     } finally {
       setMergeLoading(false);
     }
@@ -588,10 +706,7 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
         ? `${verificationResult.summary.findings} review finding${verificationResult.summary.findings === 1 ? '' : 's'}`
         : 'Verification passed'
     : 'Run a repo review and validation pass before opening the pull request.';
-  const activeVerificationStep = VERIFICATION_PROGRESS_STEPS.reduce(
-    (currentStep, step) => (verificationProgress >= step.threshold ? step : currentStep),
-    VERIFICATION_PROGRESS_STEPS[0],
-  );
+  const activeVerificationDisplay = activeStepLabel || 'Preparing...';
 
   if (!isOpen) return null;
 
@@ -780,105 +895,158 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
                   </div>
                 </div>
 
-                {/* Pre-submit Checks */}
-                <div className="flex items-center gap-3.5 rounded-xl border border-[#1E1E22] bg-[#111115] p-4">
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[#32D58312]">
-                    <ShieldCheck className="h-[18px] w-[18px] text-[#32D583]" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[13px] font-semibold text-[#DDDDDDB3]">Pre-submit checks</div>
-                    <p className="text-xs text-[#4A4A50]">
-                      {verificationResult ? verificationHeadline : 'Run lint, tests & review before opening'}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void handleRunVerification()}
-                    disabled={verificationLoading || files.length === 0}
-                    className="inline-flex shrink-0 items-center justify-center rounded-lg border border-[#2A2A2E] bg-[#1E1E22] px-3.5 py-[7px] text-xs font-medium text-[#DDDDDDB3] transition-colors hover:bg-[#2A2A2E] disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    {verificationLoading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
-                    {verificationResult ? 'Re-run checks' : 'Run checks'}
-                  </button>
-                </div>
-
-                {verificationError && (
-                  <div className="mt-3 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-300">
-                    {verificationError}
-                  </div>
-                )}
-
-                {verificationResult && (
-                  <div className="mt-3 space-y-2">
-                    <div
-                      className={cn(
-                        'rounded-xl border px-3 py-2 text-sm',
-                        verificationResult.review.status === 'skipped'
-                          ? 'border-amber-500/30 bg-amber-500/10 text-amber-100'
-                          : verificationResult.summary.status === 'failed'
-                            ? 'border-rose-500/30 bg-rose-500/10 text-rose-200'
-                            : verificationResult.summary.status === 'warning'
-                              ? 'border-amber-500/30 bg-amber-500/10 text-amber-100'
-                              : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200',
-                      )}
+                {/* Pre-submit Checks — unified card for progress + results */}
+                <div className="rounded-xl border border-[#1E1E22] bg-[#111115]">
+                  <div className="flex items-center gap-3.5 p-4">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[#32D58312]">
+                      <ShieldCheck className="h-[18px] w-[18px] text-[#32D583]" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[13px] font-semibold text-[#DDDDDDB3]">Pre-submit checks</div>
+                      <p className="text-xs text-[#4A4A50]">
+                        {verificationLoading
+                          ? activeStepLabel || 'Starting verification...'
+                          : verificationResult ? verificationHeadline : 'Run lint, tests & review before opening'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleRunVerification()}
+                      disabled={verificationLoading || files.length === 0}
+                      className="inline-flex shrink-0 items-center justify-center rounded-lg border border-[#2A2A2E] bg-[#1E1E22] px-3.5 py-[7px] text-xs font-medium text-[#DDDDDDB3] transition-colors hover:bg-[#2A2A2E] disabled:cursor-not-allowed disabled:opacity-40"
                     >
-                      {verificationResult.review.status === 'skipped' && (
-                        <AlertCircle className="mr-1.5 -mt-0.5 inline-block h-3.5 w-3.5" />
-                      )}
-                      {verificationResult.review.summary}
-                    </div>
+                      {verificationLoading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+                      {verificationResult ? 'Re-run checks' : 'Run checks'}
+                    </button>
+                  </div>
 
-                    <div className="space-y-2">
-                      {verificationResult.commands.map((command) => (
-                        <details
-                          key={`${command.name}-${command.command}`}
-                          className="overflow-hidden rounded-xl border border-[#1E1E22] bg-[#111115]"
-                        >
-                          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm">
-                            <div className="flex items-center gap-2">
-                              {getStatusIcon(command.status === 'skipped' ? 'pending' : command.status)}
-                              <span className="font-medium">{command.name}</span>
-                            </div>
-                            <span className="text-xs text-[#4A4A50]">{command.command}</span>
-                          </summary>
-                          <div className="border-t border-[#1E1E22] px-3 py-2 text-xs text-[#6B6B70]">
-                            <div>{command.summary}</div>
-                            {command.output ? (
-                              <pre className="mt-2 max-h-40 overflow-auto rounded-lg border border-[#1E1E22] bg-[#0B0B0E] p-2 text-[11px] leading-relaxed text-[#DDDDDDB3]">
-                                {command.output}
-                              </pre>
-                            ) : null}
-                          </div>
-                        </details>
-                      ))}
-                    </div>
+                  {/* Inline progress steps while loading */}
+                  {verificationLoading && (
+                    <div role="status" aria-live="polite">
+                      <div className="border-t border-[#1E1E22] px-4 py-2.5">
+                        <div className="mb-1 flex items-center justify-between text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                          <span>{activeVerificationDisplay}</span>
+                          <span className="font-mono text-foreground/85">{Math.round(verificationProgress)}%</span>
+                        </div>
+                        <Progress
+                          value={verificationProgress}
+                          className="h-1.5 bg-background/70 [&>div]:bg-[linear-gradient(90deg,rgba(245,208,84,0.95),rgba(16,185,129,0.95))]"
+                        />
+                      </div>
+                      <div className="divide-y divide-[#1E1E22] border-t border-[#1E1E22]">
+                        {VERIFICATION_DISPLAY_STEPS.map((displayStep) => {
+                          const isActive = activeStep === displayStep.step;
+                          const isComplete = completedSteps.has(displayStep.step);
 
-                    {verificationResult.review.findings.length > 0 ? (
-                      <div className="space-y-2">
-                        {verificationResult.review.findings.map((finding, index) => (
-                          <div
-                            key={`${finding.title}-${index}`}
-                            className="rounded-xl border border-[#1E1E22] bg-[#111115] px-3 py-2 text-sm"
-                          >
-                            <div className="flex items-center gap-2">
-                              <span className="rounded-lg border border-[#1E1E22] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[#6B6B70]">
-                                {finding.severity}
+                          return (
+                            <div
+                              key={displayStep.step}
+                              className="flex items-center justify-between gap-3 px-3 py-2 text-sm"
+                            >
+                              <div className="flex items-center gap-2">
+                                {isActive ? (
+                                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-amber-300" />
+                                ) : isComplete ? (
+                                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+                                ) : (
+                                  <div className="h-4 w-4 shrink-0 rounded-full border border-[#2A2A2E]" />
+                                )}
+                                <span className={cn(
+                                  'font-medium',
+                                  isActive ? 'text-foreground' : isComplete ? 'text-foreground/80' : 'text-[#4A4A50]',
+                                )}>
+                                  {displayStep.label}
+                                </span>
+                              </div>
+                              <span className="text-xs text-[#4A4A50]">
+                                {isActive ? 'running' : isComplete ? 'done' : ''}
                               </span>
-                              <span className="font-medium text-[#FAFAF9]">{finding.title}</span>
                             </div>
-                            <p className="mt-1.5 text-[#6B6B70]">{finding.summary}</p>
-                            {finding.file ? (
-                              <div className="mt-1.5 font-mono text-xs text-[#4A4A50]">{finding.file}</div>
-                            ) : null}
-                            {finding.suggestion ? (
-                              <p className="mt-1.5 text-xs text-[#4A4A50]">{finding.suggestion}</p>
-                            ) : null}
-                          </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Error banner */}
+                  {verificationError && (
+                    <div className="border-t border-[#1E1E22] px-3 py-2 text-sm text-rose-300">
+                      {verificationError}
+                    </div>
+                  )}
+
+                  {/* Results — rendered inside the same card */}
+                  {verificationResult && (
+                    <div className="border-t border-[#1E1E22]">
+                      <div
+                        className={cn(
+                          'px-3 py-2 text-sm',
+                          verificationResult.review.status === 'skipped'
+                            ? 'bg-amber-500/10 text-amber-100'
+                            : verificationResult.summary.status === 'failed'
+                              ? 'bg-rose-500/10 text-rose-200'
+                              : verificationResult.summary.status === 'warning'
+                                ? 'bg-amber-500/10 text-amber-100'
+                                : 'bg-emerald-500/10 text-emerald-200',
+                        )}
+                      >
+                        {verificationResult.review.status === 'skipped' && (
+                          <AlertCircle className="mr-1.5 -mt-0.5 inline-block h-3.5 w-3.5" />
+                        )}
+                        {verificationResult.review.summary}
+                      </div>
+
+                      <div className="divide-y divide-[#1E1E22]">
+                        {verificationResult.commands.map((command) => (
+                          <details
+                            key={`${command.name}-${command.command}`}
+                          >
+                            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm">
+                              <div className="flex items-center gap-2">
+                                {getStatusIcon(command.status === 'skipped' ? 'pending' : command.status === 'passed' ? 'success' : 'failure')}
+                                <span className="font-medium">{command.name}</span>
+                              </div>
+                              <span className="text-xs text-[#4A4A50]">{command.command}</span>
+                            </summary>
+                            <div className="border-t border-[#1E1E22] px-3 py-2 text-xs text-[#6B6B70]">
+                              <div>{command.summary}</div>
+                              {command.output ? (
+                                <pre className="mt-2 max-h-40 overflow-auto rounded-lg border border-[#1E1E22] bg-[#0B0B0E] p-2 text-[11px] leading-relaxed text-[#DDDDDDB3]">
+                                  {command.output}
+                                </pre>
+                              ) : null}
+                            </div>
+                          </details>
                         ))}
                       </div>
-                    ) : null}
-                  </div>
-                )}
+
+                      {verificationResult.review.findings.length > 0 ? (
+                        <div className="divide-y divide-[#1E1E22] border-t border-[#1E1E22]">
+                          {verificationResult.review.findings.map((finding, index) => (
+                            <div
+                              key={`${finding.title}-${index}`}
+                              className="px-3 py-2 text-sm"
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className="rounded-lg border border-[#1E1E22] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[#6B6B70]">
+                                  {finding.severity}
+                                </span>
+                                <span className="font-medium text-[#FAFAF9]">{finding.title}</span>
+                              </div>
+                              <p className="mt-1.5 text-[#6B6B70]">{finding.summary}</p>
+                              {finding.file ? (
+                                <div className="mt-1.5 font-mono text-xs text-[#4A4A50]">{finding.file}</div>
+                              ) : null}
+                              {finding.suggestion ? (
+                                <p className="mt-1.5 text-xs text-[#4A4A50]">{finding.suggestion}</p>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
 
                 {error && (
                   <div className="mt-4 flex items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
@@ -1185,67 +1353,6 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
           </div>
         )}
 
-        {/* Verification overlay — unchanged */}
-        {verificationLoading && (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/72 backdrop-blur-md">
-            <div
-              role="status"
-              aria-live="polite"
-              className="mx-6 w-full max-w-md rounded-[28px] border border-border/70 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.08),_transparent_55%),linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.01))] p-6 shadow-[0_24px_80px_rgba(0,0,0,0.38)]"
-            >
-              <div className="flex flex-col items-center text-center">
-                <div className="relative flex h-28 w-28 items-center justify-center rounded-full border border-border/60 bg-background/80 shadow-[0_0_0_14px_rgba(255,255,255,0.03)]">
-                  <GhostIcon size={72} />
-                </div>
-                <div className="mt-5 inline-flex items-center rounded-full border border-emerald-500/25 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.24em] text-emerald-200/90">
-                  Review &amp; Checks
-                </div>
-                <h3 className="mt-4 text-xl font-semibold tracking-tight text-foreground">
-                  Running verification
-                </h3>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  {activeVerificationStep.detail}
-                </p>
-              </div>
-
-              <div className="mt-6">
-                <div className="mb-2 flex items-center justify-between text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                  <span>{activeVerificationStep.label}</span>
-                  <span className="font-mono text-foreground/85">{Math.round(verificationProgress)}%</span>
-                </div>
-                <Progress
-                  value={verificationProgress}
-                  className="h-2.5 bg-background/70 [&>div]:bg-[linear-gradient(90deg,rgba(245,208,84,0.95),rgba(16,185,129,0.95))]"
-                />
-              </div>
-
-              <div className="mt-5 grid gap-2 sm:grid-cols-2">
-                {VERIFICATION_PROGRESS_STEPS.map((step) => {
-                  const isActive = activeVerificationStep.label === step.label;
-                  const isComplete = verificationProgress > step.threshold + 8;
-
-                  return (
-                    <div
-                      key={step.label}
-                      className={cn(
-                        'rounded-2xl border px-3 py-2 text-left',
-                        isActive
-                          ? 'border-emerald-500/35 bg-emerald-500/10 text-foreground'
-                          : isComplete
-                            ? 'border-border/60 bg-background/60 text-foreground/80'
-                            : 'border-border/50 bg-background/35 text-muted-foreground',
-                      )}
-                    >
-                      <div className="text-[11px] font-medium uppercase tracking-[0.18em]">
-                        {step.label}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

@@ -11,6 +11,7 @@ import { ApiKeyModal } from './ApiKeyModal';
 import { ChangeApprovalModal } from './ChangeApprovalModal';
 import { ChatErrorBanner } from './ChatErrorBanner';
 import { getProviderLabel } from '@/lib/providers';
+import type { Provider } from '@/stores/settings-store';
 import { getErrorMessage } from '@/lib/errors';
 import {
   buildIssueFixFollowUpPrompt,
@@ -39,7 +40,7 @@ import { useChangesetStore } from '@/stores/changeset-store';
 import { useChatScopeId, usePanelId } from '@/contexts/PanelContext';
 
 interface ChatPartLike {
-  type?: string;
+  type?: 'text' | 'reasoning' | 'tool-invocation' | 'step-start' | 'source' | 'file';
   text?: string;
   reasoning?: string;
   toolInvocation?: ProposalToolInvocationLike;
@@ -49,6 +50,7 @@ interface ChatMessageLike {
   id: string;
   role: string;
   content: string;
+  timestamp?: string;
   parts?: ChatPartLike[];
   toolInvocations?: ProposalToolInvocationLike[];
 }
@@ -286,7 +288,7 @@ interface ChatAreaProps {
   error?: Error | null;
   apiKeyModalOpen: boolean;
   setApiKeyModalOpen: (v: boolean) => void;
-  activeProvider: string;
+  activeProvider: Provider;
   activeModel: string;
   toolActivityMap?: Record<string, ToolActivityEvent[]>;
   agentStatus?: AgentStatusEvent | null;
@@ -320,7 +322,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const panelId = usePanelId();
   const scopeId = useChatScopeId();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const transcriptContentRef = useRef<HTMLDivElement>(null);
   const isAutoScroll = useRef(true);
+  const scrollAnimationFrameRef = useRef<number | null>(null);
   const touchStartYRef = useRef<number | null>(null);
   const pendingProposalCacheRef = useRef<{ digest: string; proposal: ReturnType<typeof findPendingProposal> }>({
     digest: '',
@@ -407,23 +411,58 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     [activeToolActivity, lastAssistantAllowsPseudoRepoWrites, lastAssistantMessage],
   );
 
-  useEffect(() => {
-    if (!isAutoScroll.current || !scrollRef.current) return;
+  const scheduleScrollToBottom = useCallback(() => {
+    if (!isAutoScroll.current || !scrollRef.current) {
+      return;
+    }
 
-    const frame = window.requestAnimationFrame(() => {
-      if (!isAutoScroll.current || !scrollRef.current) return;
+    if (scrollAnimationFrameRef.current !== null) {
+      window.cancelAnimationFrame(scrollAnimationFrameRef.current);
+    }
+
+    scrollAnimationFrameRef.current = window.requestAnimationFrame(() => {
+      scrollAnimationFrameRef.current = null;
+      if (!isAutoScroll.current || !scrollRef.current) {
+        return;
+      }
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     });
+  }, []);
 
-    return () => window.cancelAnimationFrame(frame);
+  useEffect(() => {
+    scheduleScrollToBottom();
   }, [
     conversationId,
     isStreaming,
     lastMessageDigest,
+    scheduleScrollToBottom,
     toolActivityDigest,
     messages.length,
     showInlineApprovalBanner,
   ]);
+
+  useEffect(() => () => {
+    if (scrollAnimationFrameRef.current !== null) {
+      window.cancelAnimationFrame(scrollAnimationFrameRef.current);
+      scrollAnimationFrameRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    const transcriptContent = transcriptContentRef.current;
+    if (!transcriptContent || typeof ResizeObserver === 'undefined') {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      scheduleScrollToBottom();
+    });
+
+    observer.observe(transcriptContent);
+    return () => {
+      observer.disconnect();
+    };
+  }, [scheduleScrollToBottom]);
 
   useEffect(() => {
     const hasMessageHistory = messages.some((message) => message.content.trim().length > 0);
@@ -692,7 +731,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         onTouchCancel={handleTouchEnd}
         className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden"
       >
-        <div className="max-w-[720px] mx-auto px-20 py-6">
+        <div ref={transcriptContentRef} className="max-w-[720px] mx-auto px-20 py-6">
           {messages.map((msg, i) => {
             const isLastAssistantStreaming =
               isStreaming && msg.role === 'assistant' && i === messages.length - 1;
@@ -735,14 +774,14 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   conversationId: conversationId || '',
                   role: msg.role as 'user' | 'assistant',
                   content: msg.content,
-                  timestamp: (messageTimestampCacheRef.current[msg.id] ??= new Date().toISOString()),
+                  timestamp: msg.timestamp || (messageTimestampCacheRef.current[msg.id] ??= new Date().toISOString()),
                 }}
                 isStreaming={isLastAssistantStreaming}
                 streamingContent={isLastAssistantStreaming ? msg.content : undefined}
-                parts={parts}
+                parts={parts as React.ComponentProps<typeof MessageBubble>['parts']}
                 reasoning={reasoning}
                 isReasoningStreaming={isReasoningStreaming}
-                toolInvocations={toolInvocations}
+                toolInvocations={toolInvocations as React.ComponentProps<typeof MessageBubble>['toolInvocations']}
                 toolActivity={messageToolActivity}
                 allowPseudoRepoWrites={allowPseudoRepoWrites}
                 onRegenerate={

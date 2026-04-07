@@ -52,8 +52,8 @@ function ChatRuntimeArea({
       activeModel={chat.activeModel}
       toolActivityMap={'toolActivityMap' in chat ? chat.toolActivityMap : undefined}
       agentStatus={'agentStatus' in chat ? chat.agentStatus : undefined}
-      conversationAutoApproveEnabled={'conversationAutoApproveEnabled' in chat ? chat.conversationAutoApproveEnabled : false}
-      setConversationAutoApprove={'setConversationAutoApprove' in chat ? chat.setConversationAutoApprove : undefined}
+      conversationAutoApproveEnabled={'conversationAutoApproveEnabled' in chat ? (chat.conversationAutoApproveEnabled as boolean) : false}
+      setConversationAutoApprove={'setConversationAutoApprove' in chat ? (chat.setConversationAutoApprove as (value: boolean) => void) : undefined}
     />
   );
 }

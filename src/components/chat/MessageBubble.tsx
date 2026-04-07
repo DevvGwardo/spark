@@ -55,7 +55,7 @@ function SlDetails({
   }, [open]);
 
   return (
-    <sl-details ref={ref} class={className}>
+    <sl-details ref={ref} className={className}>
       <div slot="summary">{summary}</div>
       {children}
     </sl-details>
@@ -83,6 +83,21 @@ function getToolErrorMessage(result: unknown): string | null {
     const error = (result as { error?: unknown }).error;
     if (typeof error === 'string' && error.trim()) {
       return error.trim();
+    }
+  }
+
+  return null;
+}
+
+function getToolOutputMessage(result: unknown): string | null {
+  if (typeof result === 'string') {
+    return result;
+  }
+
+  if (result && typeof result === 'object') {
+    const output = (result as { output?: unknown }).output;
+    if (typeof output === 'string' && output.trim()) {
+      return output;
     }
   }
 
@@ -427,7 +442,7 @@ function FileChangeMetaBadge({
   if (!change) {
     if (!showStaged) return null;
     return (
-      <span className="ml-1 flex items-center gap-1 text-[10px] font-medium text-green-400">
+      <span className="ml-1 flex shrink-0 items-center gap-1 whitespace-nowrap text-[10px] font-medium text-green-400">
         <ArrowRight className="h-2.5 w-2.5" />
         staged
       </span>
@@ -442,7 +457,7 @@ function FileChangeMetaBadge({
   }
 
   return (
-    <span className="ml-1 flex items-center gap-1.5 text-[10px] font-medium">
+    <span className="ml-1 flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[10px] font-medium">
       {showStaged && (
         <>
           <ArrowRight className="h-2.5 w-2.5 text-green-400" />
@@ -661,7 +676,8 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
   const errorMessage = getToolErrorMessage(invocation.result);
   const hasError = !!errorMessage;
   const isExecTool = invocation.toolName === 'run_command' || invocation.toolName === 'terminal' || invocation.toolName === 'execute_python';
-  const hasOutput = isComplete && !hasError && isExecTool && typeof invocation.result === 'string' && invocation.result !== '(no output)';
+  const outputMessage = getToolOutputMessage(invocation.result);
+  const hasOutput = isComplete && !hasError && isExecTool && !!outputMessage && outputMessage !== '(no output)';
   const progressLabel = invocation.toolName === 'read_repo_file' || invocation.toolName === 'read_file' ? 'Reading...'
     : invocation.toolName === 'run_command' || invocation.toolName === 'terminal' ? 'Running...'
     : invocation.toolName === 'execute_python' ? 'Executing...'
@@ -670,7 +686,7 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
   const panelChanges = useChangesetStore((s) => s.getChangeset(scopeId).changes);
 
   // Extract file info from args
-  const filePath = invocation.args?.path;
+  const filePath = invocation.args?.path as string | undefined;
   const toolTarget = getToolTarget(invocation);
   const artifactFilename = invocation.args?.filename as string | undefined;
   const batchChangesRaw = invocation.args?.changes;
@@ -793,7 +809,7 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
       )}
     >
       {/* Tool header row */}
-      <div className="flex items-center gap-2 text-[13px] py-0.5">
+      <div className="flex items-center gap-2 text-[13px] py-0.5 min-w-0">
         {isInProgress ? (
           <GhostIcon />
         ) : isComplete ? (
@@ -858,7 +874,7 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
           </button>
           {expanded && (
             <pre className="mt-1 text-[11px] font-mono text-foreground/80 bg-muted/30 rounded-md px-2.5 py-2 max-h-[200px] overflow-auto whitespace-pre-wrap break-all">
-              {invocation.result as string}
+              {outputMessage}
             </pre>
           )}
         </div>
@@ -874,9 +890,9 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
         <div className="mt-1 space-y-0.5 pl-6">
           {affectedPaths.map((p, idx) => (
             <div key={idx}>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground min-w-0">
                 <FileCode className="h-3 w-3 shrink-0" />
-                <code className="font-mono text-foreground/70 text-[11px] bg-muted/40 px-1 py-0.5 rounded truncate">{p}</code>
+                <code className="font-mono text-foreground/70 text-[11px] bg-muted/40 px-1 py-0.5 rounded truncate min-w-0">{p}</code>
                 {batchChanges?.[idx]?.action && (
                   <span className="text-muted-foreground/50 text-[10px]">{batchChanges[idx].action}</span>
                 )}
