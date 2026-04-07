@@ -20,8 +20,11 @@ from typing import Optional, Callable
 # Brain HTTP cache — imported from standalone module
 # ---------------------------------------------------------------------------
 from brain_cache import (
+    _BRAIN_GATEWAY_TOKEN,
     _brain_circuit,
     _BRAIN_GATEWAY_URL,
+    _get_brain_token,
+    _brain_http_call,
     brain_safe_set as _brain_safe_set,
     brain_safe_get as _brain_safe_get,
     brain_safe_delete as _brain_safe_delete,

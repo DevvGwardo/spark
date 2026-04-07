@@ -164,33 +164,36 @@ class SwarmCoordinator:
         self._pulse_interval = 5  # pulse every 5 tool calls
 
     # -----------------------------------------------------------------------------------
-    # Brain helpers — delegate to main.py's _brain_* functions
+    # Brain helpers — all async, delegate to main.py's _brain_rpc / _brain_call_async
     # -----------------------------------------------------------------------------------
 
-    def _set(self, key: str, value: str, scope: str = "global"):
-        main._brain_set(key, value, scope)
+    async def _set(self, key: str, value: str, scope: str = "global"):
+        await main._brain_call_async("brain_set", {"key": key, "value": value, "scope": scope})
 
     async def _get(self, key: str) -> Optional[str]:
-        # Use raw RPC since _brain_get doesn't exist in main.py
-        result = await main._brain_rpc("tools/call", {
-            "name": "brain_get",
-            "arguments": {"key": key}
-        })
+        result = await main._brain_call_async("brain_get", {"key": key})
         if result and isinstance(result, dict):
-            return result.get("content", result.get("value"))
+            content = result.get("content") or result.get("value")
+            # MCP tool results are wrapped in a content array
+            if isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "text":
+                        return item.get("text")
+            if isinstance(content, str):
+                return content
         return None
 
-    def _post(self, content: str, channel: str = "general"):
-        main._brain_post(content, channel)
+    async def _post(self, content: str, channel: str = "general"):
+        await main._brain_call_async("brain_post", {"content": content, "channel": channel})
 
-    def _pulse(self, status: str = "working", progress: str = ""):
-        main._brain_pulse(status, progress)
+    async def _pulse(self, status: str = "working", progress: str = ""):
+        await main._brain_call_async("brain_pulse", {"status": status, "progress": progress})
 
-    def _claim(self, resource: str, ttl: int = 120):
-        return main._brain_claim(resource, ttl)
+    async def _claim(self, resource: str, ttl: int = 120):
+        await main._brain_call_async("brain_claim", {"resource": resource, "ttl": ttl})
 
-    def _release(self, resource: str):
-        main._brain_release(resource)
+    async def _release(self, resource: str):
+        await main._brain_call_async("brain_release", {"resource": resource})
 
     async def _wake(self, name: str, task: str):
         """Spawn a named agent via brain_wake."""
@@ -203,7 +206,7 @@ class SwarmCoordinator:
     # Pipeline steps
     # -----------------------------------------------------------------------------------
 
-    def _store_request_context(self):
+    async def _store_request_context(self):
         """Write request metadata to brain so spawned agents can read it."""
         ctx = {
             "request_id": self.request.id,
@@ -215,13 +218,13 @@ class SwarmCoordinator:
             "custom_tools_count": len(self.request.custom_tools),
             "repo_file_tree_count": len(self.request.repo_file_tree),
         }
-        self._set(f"request:{self.request.id}:ctx", json.dumps(ctx))
-        self._set(f"request:{self.request.id}:phase", Phase.ARCHITECT.value)
-        self._pulse("working", f"phase=architect request_id={self.request.id}")
+        await self._set(f"request:{self.request.id}:ctx", json.dumps(ctx))
+        await self._set(f"request:{self.request.id}:phase", Phase.ARCHITECT.value)
+        await self._pulse("working", f"phase=architect request_id={self.request.id}")
 
     async def run_phase_architect(self) -> list[PlanStep]:
         """Phase 1: spawn Architect to produce the implementation plan."""
-        self._store_request_context()
+        await self._store_request_context()
 
         # Build prompt with request context inline (prompts don't use .format())
         prompt = ARCHITECT_PROMPT
@@ -235,7 +238,7 @@ class SwarmCoordinator:
         prompt += f"\n\nRequest ID: {self.request.id}"
 
         # Spawn Architect as a sub-agent
-        self._wake("architect", prompt)
+        await self._wake("architect", prompt)
 
         # Poll brain state until Architect posts the plan
         plan = await self._poll_for_plan()
@@ -245,24 +248,24 @@ class SwarmCoordinator:
         """Wait for Architect to write the plan to brain state."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            plan_json = self._get(f"plan:{self.request.id}")
+            plan_json = await self._get(f"plan:{self.request.id}")
             if plan_json:
                 try:
                     data = json.loads(plan_json)
                     steps = [PlanStep(**s) for s in data.get("steps", [])]
-                    self._post(f"**Architect** plan ready: {len(steps)} steps", channel="hermes-bridge")
+                    await self._post(f"**Architect** plan ready: {len(steps)} steps", channel="hermes-bridge")
                     return steps
                 except (json.JSONDecodeError, TypeError) as e:
-                    self._post(f"**Architect** plan parse error: {e}", channel="hermes-bridge")
+                    await self._post(f"**Architect** plan parse error: {e}", channel="hermes-bridge")
             await asyncio.sleep(3)
 
-        self._post("**Architect** timed out waiting for plan", channel="hermes-bridge")
+        await self._post("**Architect** timed out waiting for plan", channel="hermes-bridge")
         return []
 
     async def run_phase_implementor(self, plan: list[PlanStep]) -> dict[str, str]:
         """Phase 2: spawn Implementor to apply the planned changes."""
-        self._set(f"request:{self.request.id}:phase", Phase.IMPLEMENTOR.value)
-        self._pulse("working", "phase=implementor")
+        await self._set(f"request:{self.request.id}:phase", Phase.IMPLEMENTOR.value)
+        await self._pulse("working", "phase=implementor")
 
         # Build Implementor prompt with the plan
         plan_lines = "\n".join(
@@ -274,7 +277,7 @@ class SwarmCoordinator:
         if self.request.repo_mode:
             prompt += f"\nRepository: {self.request.repo_owner}/{self.request.repo_name}\n"
 
-        self._wake("implementor", prompt)
+        await self._wake("implementor", prompt)
 
         # Poll for staged files
         staged = await self._poll_for_staged_files(timeout=240)
@@ -286,42 +289,42 @@ class SwarmCoordinator:
         last_count = 0
         while time.monotonic() < deadline:
             # Scan for staging keys
-            all_keys_json = self._get(f"request:{self.request.id}:staging_keys")
+            all_keys_json = await self._get(f"request:{self.request.id}:staging_keys")
             if all_keys_json:
                 try:
                     keys: list[str] = json.loads(all_keys_json)
                     staged = {}
                     for key in keys:
-                        content = self._get(key)
+                        content = await self._get(key)
                         if content:
                             path = key.split(":")[-1]
                             staged[path] = content
                     current_count = len(staged)
                     if current_count > last_count:
-                        self._post(f"**Implementor** staged {current_count} files", channel="hermes-bridge")
+                        await self._post(f"**Implementor** staged {current_count} files", channel="hermes-bridge")
                         last_count = current_count
                     # Check if done (Implementor posts completion message)
-                    completion = self._get(f"request:{self.request.id}:implementor_completion")
+                    completion = await self._get(f"request:{self.request.id}:implementor_completion")
                     if completion:
-                        self._post(f"**Implementor** completed", channel="hermes-bridge")
+                        await self._post(f"**Implementor** completed", channel="hermes-bridge")
                         return staged
                 except (json.JSONDecodeError, TypeError):
                     pass
             await asyncio.sleep(4)
 
-        self._post("**Implementor** timed out", channel="hermes-bridge")
+        await self._post("**Implementor** timed out", channel="hermes-bridge")
         return {}
 
     async def run_phase_reviewer(self, staged: dict[str, str]) -> tuple[str, str]:
         """Phase 3: spawn Reviewer to audit staged files."""
-        self._set(f"request:{self.request.id}:phase", Phase.REVIEWER.value)
-        self._pulse("working", "phase=reviewer")
+        await self._set(f"request:{self.request.id}:phase", Phase.REVIEWER.value)
+        await self._pulse("working", "phase=reviewer")
 
         file_list = ", ".join(staged.keys()) if staged else "(no files staged)"
         prompt = REVIEWER_PROMPT
         prompt += f"\n\n## Staged Files\n{file_list}\n\n## User Request\n{self.request.user_message}\n\n## Request ID: {self.request.id}\n"
 
-        self._wake("reviewer", prompt)
+        await self._wake("reviewer", prompt)
 
         verdict, notes = await self._poll_for_verdict(timeout=120)
         return verdict, notes
@@ -330,17 +333,17 @@ class SwarmCoordinator:
         """Wait for Reviewer to post a verdict."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            verdict_json = self._get(f"request:{self.request.id}:verdict")
+            verdict_json = await self._get(f"request:{self.request.id}:verdict")
             if verdict_json:
                 try:
                     data = json.loads(verdict_json)
-                    self._post(f"**Reviewer** verdict: {data.get('verdict')}", channel="hermes-bridge")
+                    await self._post(f"**Reviewer** verdict: {data.get('verdict')}", channel="hermes-bridge")
                     return data.get("verdict", "changes_requested"), data.get("notes", "")
                 except (json.JSONDecodeError, TypeError):
                     pass
             await asyncio.sleep(3)
 
-        self._post("**Reviewer** timed out", channel="hermes-bridge")
+        await self._post("**Reviewer** timed out", channel="hermes-bridge")
         return "changes_requested", "Reviewer timed out"
 
     # -----------------------------------------------------------------------------------
@@ -360,37 +363,37 @@ class SwarmCoordinator:
                 "phases": {"architect": [...steps], "implementor": {...}, "reviewer": {...}}
             }
         """
-        self._set(f"request:{self.request.id}:status", "running")
+        await self._set(f"request:{self.request.id}:status", "running")
 
         try:
             # Phase 1: Architect
             plan = await self.run_phase_architect()
             if not plan:
-                return self._finish(success=False, verdict="changes_requested",
-                                     review_notes="Architect failed to produce a plan")
+                return await self._finish(success=False, verdict="changes_requested",
+                                          review_notes="Architect failed to produce a plan")
 
             # Phase 2: Implementor
             staged = await self.run_phase_implementor(plan)
             if not staged:
-                return self._finish(success=False, verdict="changes_requested",
-                                     review_notes="Implementor staged no files")
+                return await self._finish(success=False, verdict="changes_requested",
+                                          review_notes="Implementor staged no files")
 
             # Phase 3: Reviewer
             verdict, notes = await self.run_phase_reviewer(staged)
 
-            return self._finish(success=(verdict == "approved"), verdict=verdict,
-                                review_notes=notes, staged_files=staged, plan=plan)
+            return await self._finish(success=(verdict == "approved"), verdict=verdict,
+                                      review_notes=notes, staged_files=staged, plan=plan)
 
         except Exception as e:
-            self._pulse("failed", f"pipeline_error={str(e)[:100]}")
-            self._set(f"request:{self.request.id}:status", "failed")
+            await self._pulse("failed", f"pipeline_error={str(e)[:100]}")
+            await self._set(f"request:{self.request.id}:status", "failed")
             raise
 
-    def _finish(self, success: bool, verdict: str, review_notes: str,
-                staged_files: dict[str, str] = None, plan: list[PlanStep] = None) -> dict:
-        self._set(f"request:{self.request.id}:status", "completed" if success else "failed")
-        self._set(f"request:{self.request.id}:phase", Phase.DONE.value)
-        self._pulse("done", f"verdict={verdict}")
+    async def _finish(self, success: bool, verdict: str, review_notes: str,
+                      staged_files: dict[str, str] = None, plan: list[PlanStep] = None) -> dict:
+        await self._set(f"request:{self.request.id}:status", "completed" if success else "failed")
+        await self._set(f"request:{self.request.id}:phase", Phase.DONE.value)
+        await self._pulse("done", f"verdict={verdict}")
         elapsed_ms = int((time.monotonic() - self._started_at) * 1000)
         return {
             "success": success,
