@@ -257,11 +257,14 @@ export async function proxyHermesAgentLoopToDataStream(input: {
   githubPAT?: string;
   hermesMiniMaxKey?: string;
   repoFileTree?: string[];
+  customTools?: unknown[];
 }) {
   const bridgeUrl = `${OPENAI_COMPATIBLE.hermes}/chat/completions`;
   const abortController = new AbortController();
-  const timeoutSignal = AbortSignal.timeout(60_000);
-  const combinedSignal = AbortSignal.any([abortController.signal, timeoutSignal]);
+  // No hard wall-clock timeout — the bridge sends SSE heartbeats to keep the
+  // connection alive, and the real Hermes agent has its own iteration budget.
+  // Only abort on client disconnect (handled by bindClientDisconnect above).
+  const combinedSignal = abortController.signal;
   const startedAt = Date.now();
   const repoLabel = input.activeRepo?.owner && input.activeRepo?.name
     ? `${input.activeRepo.owner}/${input.activeRepo.name}`
@@ -304,6 +307,9 @@ export async function proxyHermesAgentLoopToDataStream(input: {
         ...(input.repoFileTree && input.repoFileTree.length > 0
           ? { repo_file_tree: input.repoFileTree }
           : {}),
+        ...(input.customTools && input.customTools.length > 0
+          ? { custom_tools: input.customTools }
+          : {}),
       }),
       signal: combinedSignal,
     });
@@ -313,9 +319,6 @@ export async function proxyHermesAgentLoopToDataStream(input: {
   } catch (error) {
     if (disconnect.isDisconnected() && isAbortLikeError(error)) {
       return;
-    }
-    if (timeoutSignal.aborted) {
-      throw new Error('Hermes bridge request timed out after 60s. The bridge may be overloaded or unresponsive.');
     }
     throw new Error(
       `Hermes bridge is not reachable at ${OPENAI_COMPATIBLE.hermes}. ` +
@@ -345,6 +348,107 @@ export async function proxyHermesAgentLoopToDataStream(input: {
     },
     emptyTextFallback:
       'Hermes returned an empty response for this turn. Retry the request. If this keeps happening, inspect the Hermes bridge logs.',
+  });
+}
+
+export async function proxyHermesSwarmToDataStream(input: {
+  req: express.Request;
+  res: express.Response;
+  apiKey: string;
+  model: string;
+  messages: unknown[];
+  temperature?: number;
+  topP?: number;
+  maxTokens?: number;
+  hermesToolsets?: string | null;
+  activeRepo?: { owner?: string; name?: string } | null;
+  githubPAT?: string;
+  repoFileTree?: string[];
+  customTools?: unknown[];
+}) {
+  const bridgeUrl = `${OPENAI_COMPATIBLE.hermes}/swarm`;
+  const abortController = new AbortController();
+  const startedAt = Date.now();
+  const repoLabel = input.activeRepo?.owner && input.activeRepo?.name
+    ? `${input.activeRepo.owner}/${input.activeRepo.name}`
+    : '-';
+  let firstEventLogged = false;
+
+  const disconnect = bindClientDisconnect(input.req, input.res, () => {
+    abortController.abort();
+  });
+
+  let bridgeResponse: Response;
+  try {
+    console.log(
+      `[chat] Hermes swarm bridge fetch start. model=${input.model} repo=${repoLabel} toolsets=${input.hermesToolsets || '-'} t=${startedAt}`,
+    );
+    bridgeResponse = await fetch(bridgeUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${input.apiKey}`,
+        'Content-Type': 'application/json',
+        ...(input.hermesToolsets ? { 'X-Hermes-Toolsets': input.hermesToolsets } : {}),
+        'X-Hermes-Execution-Mode': 'swarm',
+        ...(input.activeRepo?.owner && input.activeRepo?.name
+          ? {
+              'X-Hermes-Repo-Owner': input.activeRepo.owner,
+              'X-Hermes-Repo-Name': input.activeRepo.name,
+            }
+          : {}),
+        ...(input.githubPAT ? { 'X-Hermes-Github-PAT': input.githubPAT } : {}),
+      },
+      body: JSON.stringify({
+        model: input.model,
+        messages: input.messages,
+        temperature: input.temperature ?? 0.7,
+        top_p: input.topP ?? 0.9,
+        max_tokens: input.maxTokens ?? 32768,
+        stream: true,
+        ...(input.repoFileTree && input.repoFileTree.length > 0
+          ? { repo_file_tree: input.repoFileTree }
+          : {}),
+        ...(input.customTools && input.customTools.length > 0
+          ? { custom_tools: input.customTools }
+          : {}),
+      }),
+      signal: abortController.signal,
+    });
+    console.log(
+      `[chat] Hermes swarm bridge headers received in ${Date.now() - startedAt}ms. status=${bridgeResponse.status}`,
+    );
+  } catch (error) {
+    if (disconnect.isDisconnected() && isAbortLikeError(error)) {
+      return;
+    }
+    throw new Error(
+      `Hermes bridge is not reachable at ${OPENAI_COMPATIBLE.hermes}. ` +
+      'Start hermes-bridge/main.py and try again.',
+    );
+  }
+
+  if (!bridgeResponse.ok) {
+    const errorText = await bridgeResponse.text().catch(() => '');
+    throw new Error(errorText || `Hermes bridge swarm error (${bridgeResponse.status})`);
+  }
+
+  await proxySseToDataStream({
+    req: input.req,
+    res: input.res,
+    upstreamResponse: bridgeResponse,
+    corsHeaders: buildCorsHeaders(input.req.headers.origin),
+    normalizePayload: normalizeHermesAgentLoopPayload,
+    onFirstEvent: (kind) => {
+      if (firstEventLogged) {
+        return;
+      }
+      firstEventLogged = true;
+      console.log(
+        `[chat] Hermes swarm first ${kind} event emitted in ${Date.now() - startedAt}ms. model=${input.model}`,
+      );
+    },
+    emptyTextFallback:
+      'Hermes swarm returned an empty response. Check hermes-bridge logs.',
   });
 }
 

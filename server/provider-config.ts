@@ -7,15 +7,22 @@ import { createMistral } from '@ai-sdk/mistral';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createTogetherAI } from '@ai-sdk/togetherai';
 import { createXai } from '@ai-sdk/xai';
+import type { LanguageModelV1 } from 'ai';
 import { Agent } from 'undici';
 
 type ReasoningEffort = 'low' | 'medium' | 'high';
 
 export const HERMES_TOOL_CAPABLE_MODELS = [
-  'meta-llama/llama-4-maverick',
+  'anthropic/claude-sonnet-4',
+  'google/gemini-3.1-flash-lite-preview',
   'MiniMax-M2.7',
+  'MiniMax-M2.7-highspeed',
+  'deepseek/deepseek-v3.2',
+  'meta-llama/llama-4-maverick',
   'openai/gpt-4.1-mini',
   'google/gemini-2.5-flash',
+  'deepseek/deepseek-chat-v3.1',
+  'meta-llama/llama-4-scout',
 ] as const;
 
 // Disable body timeout for streaming LLM responses — models can pause for
@@ -163,7 +170,7 @@ export const OPENAI_COMPATIBLE: Record<string, string> = {
   openrouter: 'https://openrouter.ai/api/v1',
   sambanova: 'https://api.sambanova.ai/v1',
   'z-ai': 'https://open.bigmodel.cn/api/paas/v4',
-  hermes: process.env.HERMES_BRIDGE_URL || 'http://localhost:3003/v1',
+  hermes: process.env.HERMES_BRIDGE_URL || 'http://localhost:3002/v1',
 };
 
 export const ANTHROPIC_COMPATIBLE: Record<string, string> = {
@@ -261,7 +268,7 @@ export const VALIDATION_MODELS: Record<string, string> = {
   kimi: 'moonshot-v1-32k',
   'kimi-coding': 'kimi-for-coding',
   cerebras: 'llama-3.3-70b',
-  openrouter: 'nvidia/llama-3.1-nemotron-70b-instruct:free',
+  openrouter: 'meta-llama/llama-3.3-70b-instruct',
   sambanova: 'Meta-Llama-3.3-70B-Instruct',
   'z-ai': 'glm-5-plus',
   hermes: HERMES_TOOL_CAPABLE_MODELS[0],
@@ -332,7 +339,7 @@ export function createProviderModel(
   model: string,
   apiKey: string,
   options?: { origin?: string; extraHeaders?: Record<string, string> }
-) {
+): LanguageModelV1 {
   if (ANTHROPIC_COMPATIBLE[provider]) {
     const anthropic = createAnthropic({
       baseURL: ANTHROPIC_COMPATIBLE[provider],
@@ -347,7 +354,7 @@ export function createProviderModel(
       apiKey,
       headers: getProviderHeaders(provider, options?.origin, options?.extraHeaders),
       fetch: createProviderFetch(provider),
-    })(model);
+    })(model) as LanguageModelV1;
   }
 
   const baseURL = OPENAI_COMPATIBLE[provider];
@@ -372,57 +379,17 @@ export interface ReviewProviderResolution {
   apiKey: string;
 }
 
-const REVIEW_PROVIDER_RANK = [
-  'anthropic', 'openai', 'google', 'deepseek', 'groq', 'mistral', 'together', 'xai',
-  'cerebras', 'openrouter', 'sambanova', 'z-ai', 'kimi', 'kimi-coding', 'minimax', 'minimax-payg',
-] as const;
-
 export function resolveReviewCapableProvider(
   activeProvider: string,
   activeModel: string,
   activeApiKey: string,
-  allProviders?: Record<string, { apiKey: string; model: string }>,
+  _allProviders?: Record<string, { apiKey: string; model: string }>,
 ): ReviewProviderResolution | null {
-  // 1. Active provider is NOT hermes — use it directly
-  if (activeProvider !== 'hermes' && activeApiKey) {
-    return { provider: activeProvider, model: activeModel, apiKey: activeApiKey };
+  if (!activeProvider || !activeApiKey) {
+    return null;
   }
 
-  // 2. Active provider IS hermes — the Hermes key is an OpenRouter key
-  if (activeProvider === 'hermes' && activeApiKey) {
-    return {
-      provider: 'openrouter',
-      model: VALIDATION_MODELS['openrouter'],
-      apiKey: activeApiKey,
-    };
-  }
-
-  // 3. Scan allProviders for first provider with a key (ranked)
-  if (allProviders) {
-    for (const candidate of REVIEW_PROVIDER_RANK) {
-      const config = allProviders[candidate];
-      if (config?.apiKey) {
-        return {
-          provider: candidate,
-          model: config.model || VALIDATION_MODELS[candidate],
-          apiKey: config.apiKey,
-        };
-      }
-    }
-    // Check any remaining providers not in the rank list (skip hermes — it can't do generateObject)
-    for (const [key, config] of Object.entries(allProviders)) {
-      if (config?.apiKey && key !== 'hermes' && !REVIEW_PROVIDER_RANK.includes(key as (typeof REVIEW_PROVIDER_RANK)[number])) {
-        return {
-          provider: key,
-          model: config.model || VALIDATION_MODELS[key],
-          apiKey: config.apiKey,
-        };
-      }
-    }
-  }
-
-  // 4. Nothing works
-  return null;
+  return { provider: activeProvider, model: activeModel, apiKey: activeApiKey };
 }
 
 export function supportsReasoningEffort(provider: string, model?: string): boolean {

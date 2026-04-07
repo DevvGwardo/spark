@@ -83,13 +83,25 @@ describe('chat route abort handling', () => {
 
   afterEach(() => {
     vi.clearAllMocks()
+    vi.unstubAllGlobals()
   })
 
   it('passes a request-scoped abort signal into streamText for tool-capable repo turns', async () => {
+    // Stub fetch so the repo validation HEAD request returns 200
+    // and normal server requests pass through
+    const actualFetch = global.fetch
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as { url: string }).url
+      if (url.includes('api.github.com/repos/')) {
+        return new Response(null, { status: 200 })
+      }
+      return actualFetch(input, init)
+    }))
+
     const server = await createTestServer()
 
     try {
-      const response = await fetch(`${server.url}/functions/v1/chat`, {
+      const response = await actualFetch(`${server.url}/functions/v1/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

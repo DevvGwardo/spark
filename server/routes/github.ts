@@ -856,6 +856,8 @@ app.post('/functions/v1/github-integration', async (req, res) => {
             title?: string;
             html_url?: string;
             state?: string;
+            draft?: boolean;
+            pull_request?: { html_url?: string };
             user?: { login?: string };
             created_at?: string;
           }>;
@@ -867,6 +869,7 @@ app.post('/functions/v1/github-integration', async (req, res) => {
             title: pr.title || '',
             html_url: pr.html_url || '',
             state: pr.state || 'open',
+            draft: pr.draft ?? false,
             user: { login: pr.user?.login || 'unknown' },
             created_at: pr.created_at || new Date(0).toISOString(),
           })),
@@ -1087,6 +1090,7 @@ app.post('/functions/v1/github-integration', async (req, res) => {
           model,
           apiKey,
           allProviders,
+          stream: wantsStream,
         } = params as {
           owner: string;
           repo: string;
@@ -1096,12 +1100,48 @@ app.post('/functions/v1/github-integration', async (req, res) => {
           model?: string;
           apiKey?: string;
           allProviders?: Record<string, { apiKey: string; model: string }>;
+          stream?: boolean;
         };
 
         if (!owner || !repo || !baseBranch || !Array.isArray(files) || files.length === 0) {
           return sendJson(res, 400, {
             error: 'owner, repo, baseBranch, and files are required',
           });
+        }
+
+        if (wantsStream) {
+          res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            Connection: 'keep-alive',
+          });
+
+          const onProgress: import('../repo-verifier').OnVerificationProgress = (event) => {
+            res.write(`data: ${JSON.stringify({ type: 'progress', ...event })}\n\n`);
+          };
+
+          try {
+            const verification = await verifyRepoChanges({
+              owner,
+              repo,
+              pat,
+              baseBranch,
+              files,
+              provider,
+              model,
+              apiKey,
+              origin: req.headers.origin as string | undefined,
+              allProviders,
+              onProgress,
+            });
+
+            res.write(`data: ${JSON.stringify({ type: 'result', ...verification })}\n\n`);
+          } catch (error) {
+            res.write(`data: ${JSON.stringify({ type: 'error', error: getUnknownErrorMessage(error) })}\n\n`);
+          }
+
+          res.end();
+          return;
         }
 
         const verification = await verifyRepoChanges({
@@ -1238,7 +1278,7 @@ app.post('/functions/v1/github-integration', async (req, res) => {
     }
   } catch (error: unknown) {
     console.error('GitHub integration error:', error);
-    sendJson(res, 500, { error: getUnknownErrorMessage(error) });
+    return sendJson(res, 500, { error: getUnknownErrorMessage(error) });
   }
 });
 
@@ -1269,7 +1309,7 @@ app.post('/functions/v1/github-analyzer', async (req, res) => {
     });
   } catch (error: unknown) {
     console.error('GitHub analyzer error:', error);
-    sendJson(res, 500, { error: getUnknownErrorMessage(error) });
+    return sendJson(res, 500, { error: getUnknownErrorMessage(error) });
   }
 });
 

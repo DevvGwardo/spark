@@ -27,6 +27,7 @@ import {
 import {
   proxyCompatibleProviderToDataStream,
   proxyHermesAgentLoopToDataStream,
+  proxyHermesSwarmToDataStream,
   shouldDirectProxyCompatibleProvider,
 } from '../lib/hermes';
 import { buildLocalExecutionTools, parseAgentToolsets, getLocalToolsSystemPromptFragment } from '../local-tools';
@@ -269,9 +270,11 @@ app.post('/functions/v1/chat', async (req, res) => {
       conversation_id,
       hermes_toolsets,
       hermes_minimax_key,
+      hermes_swarm_mode,
       repo_file_cache,
       repo_file_tree,
       agent_toolsets,
+      custom_tools,
     } = req.body;
 
     const sanitizeFileTree = (tree: unknown): string[] =>
@@ -598,6 +601,27 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
         console.warn(`[chat] WARNING: activeRepo set (${activeRepo.owner}/${activeRepo.name}) but no github_pat in request body — Hermes won't be able to read repo files`);
     }
 
+    // Swarm mode: Architect → Implementor → Reviewer pipeline
+    if (provider === 'hermes' && runtimeProvider === 'hermes' && hermes_swarm_mode) {
+      console.log(`[chat] Proxying Hermes swarm pipeline. model=${model}`);
+      await proxyHermesSwarmToDataStream({
+        req,
+        res,
+        apiKey,
+        model,
+        messages: normalizedChatInput.messages,
+        temperature,
+        topP: top_p,
+        maxTokens: max_tokens,
+        hermesToolsets: hermes_toolsets,
+        activeRepo: shouldForwardHermesRepoContext ? activeRepo : undefined,
+        githubPAT: shouldForwardHermesRepoContext ? githubPAT : undefined,
+        repoFileTree: shouldForwardHermesRepoContext ? sanitizeFileTree(repo_file_tree) : undefined,
+        customTools: Array.isArray(custom_tools) ? custom_tools : undefined,
+      });
+      return;
+    }
+
     if (provider === 'hermes' && runtimeProvider === 'hermes' && hermesExecutionMode === 'agent-loop') {
       console.log(`[chat] Proxying Hermes agent-loop directly to AI SDK data stream. model=${model}`);
       await proxyHermesAgentLoopToDataStream({
@@ -615,6 +639,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
         githubPAT: shouldForwardHermesRepoContext ? githubPAT : undefined,
         hermesMiniMaxKey: hermes_minimax_key,
         repoFileTree: shouldForwardHermesRepoContext ? sanitizeFileTree(repo_file_tree) : undefined,
+        customTools: Array.isArray(custom_tools) ? custom_tools : undefined,
       });
       return;
     }

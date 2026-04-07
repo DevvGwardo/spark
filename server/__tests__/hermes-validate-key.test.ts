@@ -75,12 +75,18 @@ describe('Hermes validate-key route', () => {
       expect(response.ok).toBe(true)
       expect(body).toEqual({
         valid: true,
-        defaultModel: 'meta-llama/llama-4-maverick',
+        defaultModel: 'anthropic/claude-sonnet-4',
         models: [
-          'meta-llama/llama-4-maverick',
+          'anthropic/claude-sonnet-4',
+          'google/gemini-3.1-flash-lite-preview',
           'MiniMax-M2.7',
+          'MiniMax-M2.7-highspeed',
+          'deepseek/deepseek-v3.2',
+          'meta-llama/llama-4-maverick',
           'openai/gpt-4.1-mini',
           'google/gemini-2.5-flash',
+          'deepseek/deepseek-chat-v3.1',
+          'meta-llama/llama-4-scout',
         ],
       })
     } finally {

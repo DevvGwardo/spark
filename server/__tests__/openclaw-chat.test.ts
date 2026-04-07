@@ -1,4 +1,7 @@
 import type { AddressInfo } from 'net'
+import { mkdtempSync, mkdirSync, rmSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const openclawMocks = vi.hoisted(() => ({
@@ -6,9 +9,17 @@ const openclawMocks = vi.hoisted(() => ({
   runOpenClawTurn: vi.fn(),
 }))
 
+const cloneManagerMocks = vi.hoisted(() => ({
+  ensureRepoClone: vi.fn(),
+}))
+
 vi.mock('../openclaw', () => ({
   getOpenClawModels: openclawMocks.getOpenClawModels,
   runOpenClawTurn: openclawMocks.runOpenClawTurn,
+}))
+
+vi.mock('../repo-clone-manager', () => ({
+  ensureRepoClone: cloneManagerMocks.ensureRepoClone,
 }))
 
 async function createTestServer() {
@@ -39,6 +50,8 @@ async function createTestServer() {
 }
 
 describe('OpenClaw provider chat route', () => {
+  const tempDirs: string[] = []
+
   beforeEach(() => {
     openclawMocks.runOpenClawTurn.mockResolvedValue({
       text: 'ok',
@@ -55,13 +68,23 @@ describe('OpenClaw provider chat route', () => {
       defaultModel: 'kimi-coding/k2p5',
       models: ['kimi-coding/k2p5', 'google/gemini-2.5-pro'],
     })
+    cloneManagerMocks.ensureRepoClone.mockReset()
   })
 
   afterEach(() => {
     vi.clearAllMocks()
+    tempDirs.splice(0).forEach((dir) => rmSync(dir, { recursive: true, force: true }))
   })
 
+  function createLocalRepoClone() {
+    const repoDir = mkdtempSync(join(tmpdir(), 'cloudchat-openclaw-'))
+    mkdirSync(join(repoDir, '.git'))
+    tempDirs.push(repoDir)
+    return repoDir
+  }
+
   it('routes chat requests through OpenClaw and emits an AI SDK data stream', async () => {
+    const repoDir = createLocalRepoClone()
     const server = await createTestServer()
 
     try {
@@ -78,6 +101,7 @@ describe('OpenClaw provider chat route', () => {
           activeRepo: {
             owner: 'octo',
             name: 'cloudchat',
+            localPath: repoDir,
           },
           repo_edit_intent: false,
           repo_file_tree: ['src/App.tsx', 'src/hooks/useChat.ts'],
@@ -98,6 +122,7 @@ describe('OpenClaw provider chat route', () => {
           message: 'Reply with exactly: ok',
           model: 'default',
           sessionId: 'conv-123',
+          cwd: repoDir,
         }),
       )
       expect(openclawMocks.runOpenClawTurn).toHaveBeenCalledWith(
@@ -115,6 +140,144 @@ describe('OpenClaw provider chat route', () => {
           systemPrompt: expect.stringContaining('src/App.tsx'),
         }),
       )
+      expect(openclawMocks.runOpenClawTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          systemPrompt: expect.stringContaining(repoDir),
+        }),
+      )
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('auto-clones the attached repository for OpenClaw when a GitHub token is available', async () => {
+    cloneManagerMocks.ensureRepoClone.mockResolvedValue({
+      exists: true,
+      path: '/tmp/cloudchat-managed-clone',
+    })
+
+    const server = await createTestServer()
+
+    try {
+      const response = await fetch(`${server.url}/functions/v1/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          provider: 'openclaw',
+          model: 'default',
+          github_pat: 'ghp_validtokenformat1234567890abcdef12345',
+          activeRepo: {
+            owner: 'octo',
+            name: 'cloudchat',
+            default_branch: 'main',
+          },
+          messages: [
+            { role: 'user', content: 'Reply with exactly: ok' },
+          ],
+        }),
+      })
+
+      expect(response.ok).toBe(true)
+      expect(cloneManagerMocks.ensureRepoClone).toHaveBeenCalledWith({
+        owner: 'octo',
+        repo: 'cloudchat',
+        pat: 'ghp_validtokenformat1234567890abcdef12345',
+        branch: 'main',
+      })
+      expect(openclawMocks.runOpenClawTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: '/tmp/cloudchat-managed-clone',
+          systemPrompt: expect.stringContaining('/tmp/cloudchat-managed-clone'),
+        }),
+      )
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('prefers the PAT-backed managed clone over an attached local path for OpenClaw', async () => {
+    const repoDir = createLocalRepoClone()
+    cloneManagerMocks.ensureRepoClone.mockResolvedValue({
+      exists: true,
+      path: '/tmp/cloudchat-pat-clone',
+    })
+
+    const server = await createTestServer()
+
+    try {
+      const response = await fetch(`${server.url}/functions/v1/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          provider: 'openclaw',
+          model: 'default',
+          github_pat: 'ghp_validtokenformat1234567890abcdef12345',
+          activeRepo: {
+            owner: 'octo',
+            name: 'cloudchat',
+            default_branch: 'main',
+            localPath: repoDir,
+          },
+          messages: [
+            { role: 'user', content: 'Reply with exactly: ok' },
+          ],
+        }),
+      })
+
+      expect(response.ok).toBe(true)
+      expect(cloneManagerMocks.ensureRepoClone).toHaveBeenCalledWith({
+        owner: 'octo',
+        repo: 'cloudchat',
+        pat: 'ghp_validtokenformat1234567890abcdef12345',
+        branch: 'main',
+      })
+      expect(openclawMocks.runOpenClawTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: '/tmp/cloudchat-pat-clone',
+          systemPrompt: expect.stringContaining('/tmp/cloudchat-pat-clone'),
+        }),
+      )
+      expect(openclawMocks.runOpenClawTurn).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: repoDir,
+        }),
+      )
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('returns 422 when OpenClaw repo mode has neither a token nor a verified local clone', async () => {
+    const server = await createTestServer()
+
+    try {
+      const response = await fetch(`${server.url}/functions/v1/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          provider: 'openclaw',
+          model: 'default',
+          activeRepo: {
+            owner: 'octo',
+            name: 'cloudchat',
+          },
+          messages: [
+            { role: 'user', content: 'Analyze the codebase' },
+          ],
+        }),
+      })
+
+      expect(response.status).toBe(422)
+      await expect(response.json()).resolves.toEqual({
+        error: expect.stringContaining('OpenClaw needs either a GitHub token'),
+      })
+      expect(openclawMocks.runOpenClawTurn).not.toHaveBeenCalled()
     } finally {
       await server.close()
     }
