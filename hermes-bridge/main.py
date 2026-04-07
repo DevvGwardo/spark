@@ -1,11 +1,10 @@
 import os
 import json
 import asyncio
-import queue
 import time
 from typing import Optional
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 
@@ -67,7 +66,7 @@ try:
 
     async def _brain_lifespan(app):
         """FastAPI lifespan — spawns brain-mcp as async subprocess, shuts down cleanly."""
-        global _brain_proc, _brain_reader_task, _brain_initialized
+        global _brain_proc, _brain_reader_task, _brain_initialized, _bridge_start_time, _bridge_total_requests, _bridge_error_count
         try:
             brain_path = os.path.expanduser("~/brain-mcp/dist/index.js")
             if not os.path.exists(brain_path):
@@ -94,6 +93,82 @@ try:
             await _brain_rpc("tools/call", {"name": "brain_set", "arguments": {"key": "hermes-bridge:active_sessions", "value": "0", "scope": "global"}})
             await _brain_rpc("tools/call", {"name": "brain_set", "arguments": {"key": "hermes-bridge:model", "value": DEFAULT_MODEL, "scope": "global"}})
             await _brain_rpc("tools/call", {"name": "brain_set", "arguments": {"key": "hermes-bridge:toolsets", "value": DEFAULT_TOOLSETS, "scope": "global"}})
+            # Publish bridge health metadata
+            import platform, sys
+            health_meta = json.dumps({
+                "port": HERMES_PORT,
+                "model": DEFAULT_MODEL,
+                "toolsets": DEFAULT_TOOLSETS,
+                "max_iterations": MAX_AGENT_ITERATIONS,
+                "python": f"{sys.version_info.major}.{sys.version_info.minor}",
+                "platform": platform.platform(),
+            })
+            await _brain_rpc("tools/call", {"name": "brain_set", "arguments": {"key": "bridge:health", "value": health_meta, "scope": "global"}})
+            # Publish bridge contracts (inter-agent interface agreements)
+            _bridge_start_time = time.time()
+            _bridge_total_requests = 0
+            _bridge_error_count = 0
+            contracts = json.dumps({
+                "hermes-bridge:v1": {
+                    "description": "Hermes agent bridge — OpenAI-compatible /v1/chat/completions proxy with repo tools",
+                    "port": HERMES_PORT,
+                    "model": DEFAULT_MODEL,
+                    "toolsets": DEFAULT_TOOLSETS,
+                    "max_iterations": MAX_AGENT_ITERATIONS,
+                    "endpoints": ["/health", "/v1/models", "/v1/chat/completions"],
+                    "headers": {
+                        "x-hermes-toolsets": "comma-separated toolset list",
+                        "x-hermes-execution-mode": "agent-loop | passthrough",
+                        "x-hermes-repo-owner": "GitHub repo owner (for repo mode)",
+                        "x-hermes-repo-name": "GitHub repo name (for repo mode)",
+                        "x-hermes-github-pat": "GitHub PAT for repo operations",
+                        "x-hermes-repo-edit-intent": "1 to enable edit-mode tools",
+                    },
+                },
+            })
+            await _brain_rpc("tools/call", {"name": "brain_contract_set", "arguments": {"key": "hermes-bridge:contracts", "value": contracts, "scope": "global"}})
+            metrics_contract = json.dumps({
+                "description": "Bridge operational metrics published by hermes-bridge",
+                "keys": {
+                    "bridge:health": "JSON — port, model, toolsets, platform info",
+                    "bridge:metrics": "JSON — api_calls, estimated_cost_usd, active_requests, error_rate, uptime, start_time",
+                    "hermes-bridge:active_request": "Current request metadata (owner/repo/model/toolsets)",
+                    "hermes-bridge:active_sessions": "Number of active sessions (global counter)",
+                },
+            })
+            await _brain_rpc("tools/call", {"name": "brain_contract_set", "arguments": {"key": "bridge:metrics:contract", "value": metrics_contract, "scope": "global"}})
+            # Publish swarm pattern contracts (3-phase pipeline interface)
+            swarm_contract = json.dumps({
+                "description": "Architect → Implementor → Reviewer swarm pipeline for hermes-bridge",
+                "modules": {
+                    "hermes-bridge/swarm_pattern.py": {
+                        "SwarmCoordinator": {
+                            "run_phase_architect": {"phase": "architect", "brain_keys": {"writes": "request:<id>:ctx", "polls": "plan:<id>"}},
+                            "run_phase_implementor": {"phase": "implementor", "brain_keys": {"writes": "request:<id>:phase", "staging:<id>:<filepath>", "polls": "request:<id>:staging_keys"}},
+                            "run_phase_reviewer": {"phase": "reviewer", "brain_keys": {"writes": "request:<id>:verdict", "polls": "request:<id>:staging_keys"}},
+                            "_finish": {"phase": "done", "brain_keys": {"writes": "request:<id>:status", "request:<id>:phase"}},
+                        },
+                        "run_swarm": {
+                            "params": ["user_message", "conversation_history", "enabled_toolsets", "repo_mode", "repo_owner", "repo_name", "github_pat"],
+                            "returns": {"success": "bool", "verdict": "str", "review_notes": "str", "staged_files": "dict", "elapsed_ms": "int"},
+                        },
+                    },
+                },
+            })
+            await _brain_rpc("tools/call", {"name": "brain_contract_set", "arguments": {"key": "swarm:contracts", "value": swarm_contract, "scope": "global"}})
+            # Publish initial health metrics with uptime tracking
+            health_metrics = json.dumps({
+                "active_requests": 0,
+                "error_rate": 0.0,
+                "uptime": 0.0,
+                "start_time": _bridge_start_time,
+                "port": HERMES_PORT,
+                "model": DEFAULT_MODEL,
+                "toolsets": DEFAULT_TOOLSETS,
+                "platform": platform.platform(),
+                "python": f"{sys.version_info.major}.{sys.version_info.minor}",
+            })
+            await _brain_rpc("tools/call", {"name": "brain_set", "arguments": {"key": "bridge:metrics", "value": health_metrics, "scope": "global"}})
             _brain_initialized = True
             print(f"[hermes-bridge] Brain MCP connected PID={_brain_proc.pid}", flush=True)
         except Exception as e:
@@ -181,6 +256,76 @@ try:
         except Exception:
             pass
 
+    def _brain_dm(target: str, content: str):
+        """Helper to send a direct message to another agent via brain DM."""
+        if not _brain_initialized or _brain_proc is None:
+            return
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(_brain_call_async("brain_dm", {"target": target, "content": content}))
+            else:
+                loop.run_until_complete(_brain_call_async("brain_dm", {"target": target, "content": content}))
+        except Exception:
+            pass
+
+    def _brain_contract_set(key: str, value: str, scope: str = "global"):
+        """Helper to publish a bridge contract, silently fails if brain unavailable."""
+        if not _brain_initialized or _brain_proc is None:
+            return
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(_brain_call_async("brain_contract_set", {"key": key, "value": value, "scope": scope}))
+            else:
+                loop.run_until_complete(_brain_call_async("brain_contract_set", {"key": key, "value": value, "scope": scope}))
+        except Exception:
+            pass
+
+    def _brain_contract_get(key: str, scope: str = "global") -> Optional[str]:
+        """Helper to read a published contract, returns value or None."""
+        if not _brain_initialized or _brain_proc is None:
+            return None
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                fut = loop.create_task(_brain_call_async("brain_contract_get", {"key": key, "scope": scope}))
+                return loop.run_until_complete(asyncio.wait_for(fut, timeout=5))
+            else:
+                return loop.run_until_complete(_brain_call_async("brain_contract_get", {"key": key, "scope": scope}))
+        except Exception:
+            return None
+
+    def _brain_contract_check(key: str, expected: str) -> bool:
+        """Check that a published contract matches expected value. Returns True if match or brain unavailable."""
+        val = _brain_contract_get(key)
+        if val is None:
+            return True  # brain unavailable — assume match
+        return val == expected
+
+    def _update_bridge_metrics(success: bool, increment_active: bool = False, decrement_active: bool = False):
+        """Update bridge health metrics (active_requests, error_rate, uptime)."""
+        global _bridge_total_requests, _bridge_error_count, _bridge_start_time, _bridge_active_requests
+        if not _brain_initialized or _brain_proc is None:
+            return
+        if decrement_active:
+            _bridge_active_requests = max(0, _bridge_active_requests - 1)
+        if increment_active:
+            _bridge_active_requests += 1
+        if not success:
+            _bridge_error_count += 1
+        error_rate = round(_bridge_error_count / max(_bridge_total_requests, 1), 4)
+        uptime = round(time.time() - _bridge_start_time, 1) if _bridge_start_time > 0 else 0.0
+        metrics = json.dumps({
+            "active_requests": _bridge_active_requests,
+            "error_rate": error_rate,
+            "uptime": uptime,
+            "start_time": _bridge_start_time,
+            "total_requests": _bridge_total_requests,
+            "error_count": _bridge_error_count,
+        })
+        _brain_set("bridge:metrics", metrics)
+
 except ImportError:
     # mcp package not available, bridge runs without brain integration
     _brain_session = None
@@ -190,6 +335,9 @@ except ImportError:
     _brain_reader_task = None
     _brain_pending = {}
     _brain_msg_id = 0
+    _bridge_start_time: float = 0.0
+    _bridge_total_requests: int = 0
+    _bridge_error_count: int = 0
 
     async def _brain_rpc(method: str, params: dict):
         return None
@@ -209,6 +357,16 @@ except ImportError:
         return None
     def _brain_release(*args, **kwargs):
         pass
+    def _brain_dm(*args, **kwargs):
+        pass
+    def _brain_contract_set(*args, **kwargs):
+        pass
+    def _brain_contract_get(*args, **kwargs):
+        return None
+    def _brain_contract_check(*args, **kwargs):
+        return True
+    def _update_bridge_metrics(*args, **kwargs):
+        pass
 
 HERMES_PORT = int(os.environ.get("HERMES_PORT", "3002"))
 OPENROUTER_KEY = os.environ.get("HERMES_OPENROUTER_KEY", "")
@@ -219,6 +377,147 @@ DEFAULT_MODEL = os.environ.get("HERMES_DEFAULT_MODEL", "meta-llama/llama-4-maver
 # MiniMax direct routing — models matching this prefix bypass OpenRouter
 MINIMAX_BASE_URL = "https://api.minimax.io/v1"
 MINIMAX_MODEL_PREFIX = "MiniMax-"
+
+# ------------------------------------------------------------------
+# Circuit breaker for upstream API calls
+# ------------------------------------------------------------------
+class CircuitBreaker:
+    """Prevents cascading failures by opening the circuit after consecutive errors."""
+
+    def __init__(self, failure_threshold: int = 5, recovery_timeout: float = 30.0):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.failures = 0
+        self.last_failure_time: Optional[float] = None
+        self.state = "closed"  # closed | open | half-open
+
+    def record_success(self):
+        self.failures = 0
+        self.state = "closed"
+
+    def record_failure(self):
+        self.failures += 1
+        self.last_failure_time = time.monotonic()
+        if self.failures >= self.failure_threshold:
+            self.state = "open"
+
+    def is_available(self) -> bool:
+        if self.state == "closed":
+            return True
+        if self.state == "open":
+            if self.last_failure_time and (time.monotonic() - self.last_failure_time) >= self.recovery_timeout:
+                self.state = "half-open"
+                return True
+            return False
+        # half-open: allow one attempt
+        return True
+
+    def get_state(self) -> str:
+        return self.state
+
+
+# Circuit breakers per upstream provider
+_openrouter_circuit = CircuitBreaker(failure_threshold=5, recovery_timeout=30.0)
+_minimax_circuit = CircuitBreaker(failure_threshold=5, recovery_timeout=30.0)
+_brain_circuit = CircuitBreaker(failure_threshold=3, recovery_timeout=15.0)
+
+# ------------------------------------------------------------------
+# Retry helper for brain gateway calls
+# ------------------------------------------------------------------
+def _retry_brain_call(func, *args, retries: int = 2, backoff: float = 0.5, **kwargs):
+    """Call a brain gateway function with retry and exponential backoff."""
+    for attempt in range(retries + 1):
+        if not _brain_circuit.is_available():
+            return None
+        try:
+            result = func(*args, **kwargs)
+            if result is not None:
+                _brain_circuit.record_success()
+                return result
+            # None means brain unavailable — treat as failure
+            _brain_circuit.record_failure()
+        except Exception as e:
+            print(f"[hermes-bridge] brain call attempt {attempt + 1} failed: {e}", flush=True)
+            _brain_circuit.record_failure()
+        if attempt < retries:
+            time.sleep(backoff * (2 ** attempt))
+    return None
+
+# ------------------------------------------------------------------
+# Error message helpers for common failures
+# ------------------------------------------------------------------
+def _no_api_key_error(provider: str) -> JSONResponse:
+    messages = {
+        "openrouter": "No API key provided. Set HERMES_OPENROUTER_KEY, pass Authorization: Bearer <key> header, or run the local OpenClaw gateway.",
+        "minimax": "MiniMax API key required. Set HERMES_MINIMAX_KEY, configure a MiniMax key in Settings, or run the local OpenClaw gateway.",
+        "github": "GitHub token required for repository operations. Provide x-hermes-github-pat header or configure a GitHub token in Settings.",
+    }
+    return JSONResponse(
+        status_code=401,
+        content={"error": {"message": messages.get(provider, "API key required.")}},
+    )
+
+
+def _repo_not_found_error(owner: str, repo: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=404,
+        content={
+            "error": {
+                "message": f"Repository '{owner}/{repo}' not found or not accessible. Check the repository name and ensure your GitHub token has access.",
+                "code": "REPO_NOT_FOUND",
+            }
+        },
+    )
+
+
+def _github_token_expired_error() -> JSONResponse:
+    return JSONResponse(
+        status_code=401,
+        content={
+            "error": {
+                "message": "GitHub token is invalid or expired. Please update your GitHub Personal Access Token in Settings.",
+                "code": "GITHUB_TOKEN_EXPIRED",
+            }
+        },
+    )
+
+
+def _circuit_open_error(provider: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": {
+                "message": f"{provider} service is temporarily unavailable (circuit open). Please retry shortly.",
+                "code": "CIRCUIT_OPEN",
+            }
+        },
+    )
+
+
+# ------------------------------------------------------------------
+# Metrics helper
+# ------------------------------------------------------------------
+_bridge_start_time: float = 0.0
+_bridge_total_requests: int = 0
+_bridge_error_count: int = 0
+
+
+def _update_bridge_metrics(success: bool):
+    global _bridge_total_requests, _bridge_error_count
+    _bridge_total_requests += 1
+    if not success:
+        _bridge_error_count += 1
+    error_rate = _bridge_error_count / max(_bridge_total_requests, 1)
+    uptime = time.time() - _bridge_start_time if _bridge_start_time else 0
+    import platform, sys
+    metrics = json.dumps({
+        "api_calls": _bridge_total_requests,
+        "error_rate": round(error_rate, 4),
+        "active_requests": 0,
+        "uptime": round(uptime, 1),
+        "start_time": _bridge_start_time,
+    })
+    _brain_set("bridge:metrics", metrics, "global")
 
 
 def _get_local_gateway_key() -> Optional[str]:
@@ -255,6 +554,7 @@ MAX_AGENT_ITERATIONS = _read_positive_int_env("HERMES_MAX_ITERATIONS", 60)
 PASSTHROUGH_TIMEOUT_SECONDS = _read_positive_int_env(
     "HERMES_PROVIDER_TIMEOUT_SECONDS", 5400
 )
+REQUEST_TIMEOUT_SECONDS = _read_positive_int_env("HERMES_REQUEST_TIMEOUT_SECONDS", 600)
 
 AGENT_MODELS = [
     # Paid models
@@ -537,6 +837,22 @@ async def _passthrough_chat_completions(body: ChatCompletionRequest, api_key: st
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request, body: ChatCompletionRequest):
+    try:
+        async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
+            return await _chat_completions_impl(request, body)
+    except asyncio.TimeoutError:
+        return JSONResponse(
+            status_code=504,
+            content={
+                "error": {
+                    "message": f"Request timed out after {REQUEST_TIMEOUT_SECONDS} seconds. The agent took too long to respond.",
+                    "code": "REQUEST_TIMEOUT",
+                }
+            },
+        )
+
+
+async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
     toolsets_header = request.headers.get("x-hermes-toolsets", DEFAULT_TOOLSETS)
     enabled_toolsets = [t.strip() for t in toolsets_header.split(",") if t.strip()]
     execution_mode = request.headers.get("x-hermes-execution-mode", "agent-loop").strip().lower() or "agent-loop"
@@ -566,10 +882,22 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
     if not has_repo_tools and repo_owner and repo_name:
         has_repo_tools = True
 
-    # Brain MCP: track active request (after has_repo_tools is defined)
-    _brain_set("hermes-bridge:active_request", f"model={body.model} toolsets={','.join(enabled_toolsets)} repo_mode={has_repo_tools}")
+    # Brain MCP: track active request with rich job metadata (after has_repo_tools is defined)
+    _bridge_total_requests += 1
+    active_job_meta = json.dumps({
+        "owner": repo_owner or None,
+        "repo": repo_name or None,
+        "model": body.model,
+        "toolsets": enabled_toolsets,
+        "repo_mode": has_repo_tools,
+        "edit_intent": repo_edit_intent,
+        "request_num": _bridge_total_requests,
+    })
+    _brain_set("hermes-bridge:active_request", active_job_meta)
     _brain_set("hermes-bridge:active_sessions", "1", "global")
     _brain_set("hermes-bridge:model", body.model, "global")
+    # Increment active request counter and publish updated metrics
+    _update_bridge_metrics(success=True, increment_active=True)
     _brain_set("hermes-bridge:toolsets", ",".join(enabled_toolsets), "global")
 
     # Key priority: 1. Local gateway token, 2. HERMES_OPENROUTER_KEY env var, 3. Authorization: Bearer header
@@ -621,14 +949,18 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
         _using_real_agent = False
 
     chunk_id = f"chatcmpl-hermes-{os.urandom(8).hex()}"
-    # Thread-safe queue for all events (text and tool activity)
-    event_queue: queue.Queue = queue.Queue()
+    # Thread-safe asyncio queue for all events (text and tool activity)
+    # Replaces sync queue.Queue — now native async, no to_thread bridging needed
+    event_queue: asyncio.Queue = asyncio.Queue()
     done_event = asyncio.Event()
-    loop = asyncio.get_event_loop()
+
+    # Queue wrapper for safe thread → async put
+    def _qput(item):
+        asyncio.get_event_loop().call_soon_threadsafe(event_queue.put_nowait, item)
 
     def on_tool_start(tool_name: str, tool_input: str):
         # Emit tool start as visible text so user sees activity
-        event_queue.put(("tool_start", tool_name, tool_input))
+        _qput(("tool_start", tool_name, tool_input))
         # Brain MCP: claim resource for edit operations to prevent conflicts
         if tool_name in REPO_EDIT_TOOL_NAMES:
             try:
@@ -640,7 +972,7 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
                 pass
 
     def on_tool_end(tool_name: str, tool_input: str, tool_output: str):
-        event_queue.put(("tool_end", tool_name, tool_output[:500]))
+        _qput(("tool_end", tool_name, tool_output[:500]))
         # Brain MCP: release resource for edit operations
         if tool_name in REPO_EDIT_TOOL_NAMES:
             try:
@@ -655,10 +987,10 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
         # Stream normal text in small chunks for responsiveness
         chunk_size = _get_stream_chunk_size(text)
         for i in range(0, len(text), chunk_size):
-            event_queue.put(("text", text[i:i + chunk_size]))
+            _qput(("text", text[i:i + chunk_size]))
 
     def on_thinking(iteration: int):
-        event_queue.put(("thinking", iteration))
+        _qput(("thinking", iteration))
         # Brain MCP: pulse on each thinking iteration
         _brain_pulse("working", f"iteration={iteration} model={body.model}")
 
@@ -666,10 +998,10 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
         # Stream reasoning in small chunks for responsiveness
         chunk_size = _get_stream_chunk_size(text)
         for i in range(0, len(text), chunk_size):
-            event_queue.put(("reasoning", text[i:i + chunk_size]))
+            _qput(("reasoning", text[i:i + chunk_size]))
 
     def on_server_tool_event(event: dict):
-        event_queue.put(("server_tool_event", event))
+        _qput(("server_tool_event", event))
 
     def _run_agent_sync():
         try:
@@ -769,13 +1101,16 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
             print(f"[hermes-bridge] Agent conversation completed.", flush=True)
             # Brain MCP: pulse on successful completion
             _brain_pulse("working", "completed")
+            # Update bridge health metrics (decrement active request counter)
+            _update_bridge_metrics(success=True, decrement_active=True)
         except Exception as e:
             print(f"[hermes-bridge] Agent error: {e}", flush=True)
-            event_queue.put(("text", f"\n\n[Error: {str(e)}]"))
+            _qput(("text", f"\n\n[Error: {str(e)}]"))
             # Brain MCP: report failure
             _brain_pulse("failed", f"error={str(e)[:100]}")
+            _update_bridge_metrics(success=False, decrement_active=True)
         finally:
-            loop.call_soon_threadsafe(done_event.set)
+            asyncio.get_running_loop().call_soon(done_event.set)
 
     async def event_stream():
         # Role chunk
@@ -802,7 +1137,7 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
                 idle_ticks = 0
                 try:
                     event = event_queue.get_nowait()
-                except queue.Empty:
+                except asyncio.QueueEmpty:
                     break
 
                 event_count += 1
@@ -868,10 +1203,22 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
         print(f"[hermes-bridge] SSE stream ending. Total events emitted: {event_count}", flush=True)
         # Brain MCP: post completion status and update metrics
         elapsed_ms = int((time.monotonic() - stream_started_at) * 1000)
-        _brain_post(f"hermes-bridge completed: model={body.model} events={event_count} elapsed_ms={elapsed_ms}", channel="general")
+        _brain_post(f"hermes-bridge completed: model={body.model} events={event_count} elapsed_ms={elapsed_ms}", channel="hermes-bridge")
         _brain_set("hermes-bridge:active_request", "")
         _brain_set("hermes-bridge:active_sessions", "0", "global")
         _brain_set("hermes-bridge:last_completion", f"model={body.model} events={event_count} elapsed_ms={elapsed_ms}", "global")
+        # Bridge metrics — publish final state via _update_bridge_metrics (called from
+        # _run_agent_sync) plus api_calls for the completed request
+        _brain_set("bridge:metrics", json.dumps({
+            "active_requests": _bridge_active_requests,
+            "error_rate": round(_bridge_error_count / max(_bridge_total_requests, 1), 4),
+            "uptime": round(time.time() - _bridge_start_time, 1) if _bridge_start_time > 0 else 0.0,
+            "start_time": _bridge_start_time,
+            "total_requests": _bridge_total_requests,
+            "error_count": _bridge_error_count,
+            "api_calls": event_count,
+            "estimated_cost_usd": round(event_count * 0.001, 4),
+        }))
         yield sse_chunk(make_delta_chunk(chunk_id, body.model, {}, finish_reason="stop"))
         yield "data: [DONE]\n\n"
 
