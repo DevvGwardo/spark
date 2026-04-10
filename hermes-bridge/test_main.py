@@ -849,6 +849,56 @@ class SwarmCoordinatorTests(unittest.TestCase):
         self.assertGreaterEqual(result["elapsed_ms"], 0)
 
 
+class SwarmRoutingTests(unittest.TestCase):
+    """Tests for x-hermes-execution-mode: swarm header routing in chat_completions."""
+
+    def setUp(self):
+        self.mock_brain = _MockBrainCalls()
+        self.main_patches = [
+            patch.object(main, '_brain_set', self.mock_brain.mock_set),
+            patch.object(main, '_brain_get', self.mock_brain.mock_get),
+            patch.object(main, '_brain_pulse', self.mock_brain.mock_pulse),
+            patch.object(main, '_brain_claim', self.mock_brain.mock_claim),
+            patch.object(main, '_brain_release', self.mock_brain.mock_release),
+            patch.object(main, '_brain_contract_set', self.mock_brain.mock_contract_set),
+        ]
+        for p in self.main_patches:
+            p.start()
+        self.mock_brain.reset()
+
+    def tearDown(self):
+        for p in self.main_patches:
+            p.stop()
+
+    def test_swarm_header_routes_to_swarm_endpoint(self):
+        """chat_completions with x-hermes-execution-mode: swarm calls swarm_endpoint."""
+        # Track whether swarm_endpoint was called by mocking run_swarm
+        async def fake_run_swarm(**kwargs):
+            return {"success": True, "verdict": "approved", "review_notes": "", "staged_files": {}, "plan": [], "elapsed_ms": 0}
+
+        call_record = {"called": False, "call_args": None}
+
+        async def patched_swarm_endpoint(request, body):
+            call_record["called"] = True
+            call_record["call_args"] = (request, body)
+            return main.StreamingResponse(iter([]), media_type="text/event-stream")
+
+        with patch.object(main, 'swarm_endpoint', patched_swarm_endpoint):
+            body = main.ChatCompletionRequest.model_validate({
+                "model": "meta-llama/llama-4-maverick",
+                "messages": [{"role": "user", "content": "Fix the auth bug"}],
+                "stream": True,
+            })
+            request = _FakeRequest({
+                "authorization": "Bearer test-key",
+                "x-hermes-execution-mode": "swarm",
+            })
+            asyncio.run(main.chat_completions(request, body))
+
+        self.assertTrue(call_record["called"], "swarm_endpoint should be called when execution_mode=swarm")
+        self.assertEqual(call_record["call_args"][1].model, "meta-llama/llama-4-maverick")
+
+
 class SwarmEndpointTests(unittest.TestCase):
     """Tests for the /v1/swarm wiring in main.py."""
 
