@@ -1087,6 +1087,11 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
         _using_real_agent = False
 
     chunk_id = f"chatcmpl-hermes-{os.urandom(8).hex()}"
+    # Brain MCP: register per-request session so overseer can address it directly
+    try:
+        _brain_rpc("tools/call", {"name": "brain_register", "arguments": {"name": f"hermes-request-{chunk_id}"}})
+    except Exception:
+        pass
     # Brain MCP: publish per-request job metadata keyed by chunk_id so the overseer
     # can correlate in-flight requests and inspect individual job state.
     try:
@@ -1157,8 +1162,9 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
 
     def on_thinking(iteration: int):
         _qput(("thinking", iteration))
-        # Brain MCP: pulse on each thinking iteration
-        _brain_pulse("working", f"iteration={iteration} model={body.model}")
+        # Brain MCP: pulse every 5 iterations (not every iteration — avoids noise)
+        if iteration % 5 == 0:
+            _brain_pulse("working", f"iteration={iteration} model={body.model}")
 
     def on_reasoning(text: str):
         # Stream reasoning in small chunks for responsiveness
