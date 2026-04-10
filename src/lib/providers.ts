@@ -18,18 +18,18 @@ export interface ProviderInfo {
 
 export const HERMES_RECOMMENDED_MODELS = [
   // Paid — best budget-to-performance
-  'google/gemini-3.1-flash-lite-preview-20260303',
+  'anthropic/claude-sonnet-4',
+  'google/gemini-3.1-flash-lite-preview',
   'MiniMax-M2.7',
   'MiniMax-M2.7-highspeed',
-  'deepseek/deepseek-v3.2-20251201',
+  'deepseek/deepseek-v3.2',
   'meta-llama/llama-4-maverick',
   'openai/gpt-4.1-mini',
   'google/gemini-2.5-flash',
   'deepseek/deepseek-chat-v3.1',
   'meta-llama/llama-4-scout',
   // Free
-  'nvidia/llama-3.1-nemotron-70b-instruct:free',
-  'deepseek/deepseek-r1-0528:free',
+  'deepseek/deepseek-r1-0528',
   'google/gemini-2.0-flash-001',
   'nousresearch/hermes-3-llama-3.1-405b:free',
   'meta-llama/llama-3.3-70b-instruct:free',
@@ -323,13 +323,13 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     id: 'hermes',
     label: 'Hermes Agent',
     description: 'Autonomous agent over tool-capable OpenRouter models',
-    needsApiKey: true,
+    needsApiKey: false,
     category: 'specialized',
     badge: 'Agent',
     iconLetter: 'H',
     iconColor: '#8B5CF6',
     models: [...HERMES_RECOMMENDED_MODELS],
-    defaultModel: 'google/gemini-3.1-flash-lite-preview-20260303',
+    defaultModel: 'google/gemini-3.1-flash-lite-preview',
   },
 };
 
@@ -337,8 +337,8 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
 export const PROVIDER_ORDER: Provider[] = [
   'openai', 'anthropic', 'google', 'xai',
   'groq', 'cerebras', 'openrouter', 'sambanova',
-  'deepseek', 'mistral', 'together', 'minimax', 'minimax-payg', 'kimi', 'kimi-coding', 'z-ai', 'openclaw',
-  'hermes',
+  'deepseek', 'mistral', 'together', 'minimax', 'minimax-payg', 'kimi', 'kimi-coding', 'z-ai',
+  'hermes', 'openclaw',
 ];
 
 export function getProviderLabel(provider: Provider): string {
