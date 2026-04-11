@@ -44,18 +44,34 @@ describe('Hermes validate-key route', () => {
           ? input.toString()
           : input.url
 
-      if (url.startsWith(server.url)) {
-        return realFetch(input, init)
+      // Mock Hermes bridge /models endpoint (used when api_key is provided)
+      if (url.includes('/models')) {
+        return Promise.resolve({
+          ok: true,
+          json: vi.fn().mockResolvedValue({
+            data: [
+              { id: 'random/model-from-bridge' },
+            ],
+          }),
+        } as unknown as Response)
       }
 
-      return Promise.resolve({
-        ok: true,
-        json: vi.fn().mockResolvedValue({
-          data: [
-            { id: 'random/model-from-bridge' },
-          ],
-        }),
-      } as unknown as Response)
+      // Mock Hermes bridge /health endpoint (used when no api_key is provided)
+      if (url.includes('/health')) {
+        return Promise.resolve({
+          ok: true,
+          json: vi.fn().mockResolvedValue({
+            status: 'ok',
+            has_openrouter_creds: true,
+            has_minimax_creds: false,
+            brain_initialized: true,
+            active_requests: 0,
+          }),
+        } as unknown as Response)
+      }
+
+      // Pass through to real fetch for other requests
+      return realFetch(input, init)
     }))
 
     try {

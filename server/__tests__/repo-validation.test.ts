@@ -371,11 +371,11 @@ describe('Server-side repo validation', () => {
         }),
       })
 
-      // Invalid PATs now fail closed for Hermes repo turns unless a verified
-      // local clone is attached. Validation still skips the GitHub HEAD check.
+      // Invalid PAT format fails early with a user-facing error before
+      // any GitHub API call or provider-specific logic runs.
       expect(response.status).toBe(422)
       const body = await response.json() as { error: string }
-      expect(body.error).toContain('Hermes needs either a GitHub token')
+      expect(body.error).toContain('GitHub token format is invalid')
       // Verify no GitHub API call was made
       const githubCalls = fetchSpy.mock.calls.filter(([input]: [RequestInfo | URL]) => {
         const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as { url: string }).url

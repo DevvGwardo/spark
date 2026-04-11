@@ -4,6 +4,8 @@ import os
 import sys
 import types
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch, MagicMock
 
 
@@ -51,6 +53,21 @@ if "fastapi" not in sys.modules:
             return decorator
 
         def post(self, *args, **kwargs):
+            def decorator(fn):
+                return fn
+            return decorator
+
+        def delete(self, *args, **kwargs):
+            def decorator(fn):
+                return fn
+            return decorator
+
+        def put(self, *args, **kwargs):
+            def decorator(fn):
+                return fn
+            return decorator
+
+        def on_event(self, *args, **kwargs):
             def decorator(fn):
                 return fn
             return decorator
@@ -921,6 +938,65 @@ class SwarmEndpointTests(unittest.TestCase):
         """The swarm contract in brain lifespan includes /v1/swarm."""
         source = open(os.path.join(os.path.dirname(__file__), "main.py")).read()
         self.assertIn('"/v1/swarm"', source)
+
+
+class CronBridgeMappingTests(unittest.TestCase):
+    def test_map_hermes_job_preserves_cloud_chat_link(self):
+        job = {
+            "id": "job123",
+            "name": "Daily sync",
+            "prompt": "Summarize updates",
+            "schedule": {"kind": "cron", "expr": "0 9 * * *"},
+            "schedule_display": "0 9 * * *",
+            "enabled": True,
+            "state": "scheduled",
+            "created_at": "2026-04-10T09:00:00+00:00",
+            "last_run_at": "2026-04-10T09:01:00+00:00",
+            "next_run_at": "2026-04-11T09:00:00+00:00",
+            "last_status": "ok",
+            "last_error": None,
+            "origin": {
+                "platform": "cloud-chat-hub",
+                "chat_id": "conv-123",
+                "chat_name": "Bug triage",
+            },
+        }
+
+        mapped = main._map_hermes_job(job)
+
+        self.assertEqual(mapped["id"], "job123")
+        self.assertEqual(mapped["schedule"], "0 9 * * *")
+        self.assertEqual(mapped["status"], "active")
+        self.assertEqual(mapped["conversation_id"], "conv-123")
+        self.assertEqual(mapped["conversation_title"], "Bug triage")
+        self.assertEqual(mapped["origin_platform"], "cloud-chat-hub")
+
+    def test_build_hermes_run_history_reads_output_files(self):
+        job_id = "job456"
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / job_id
+            output_dir.mkdir(parents=True, exist_ok=True)
+            (output_dir / "2026-04-10_09-00-00.md").write_text(
+                "# Cron Job: Daily sync\n\n## Response\n\nAll clear.\n",
+                encoding="utf-8",
+            )
+            (output_dir / "2026-04-10_08-00-00.md").write_text(
+                "# Cron Job: Daily sync (FAILED)\n\n## Error\n\n```\nboom\n```\n",
+                encoding="utf-8",
+            )
+
+            with (
+                patch.object(main, "_HERMES_CRON_AVAILABLE", True),
+                patch.object(main, "_HERMES_CRON_OUTPUT_DIR", Path(tmpdir), create=True),
+                patch.object(main, "_hermes_get_job", return_value={"id": job_id, "last_run_at": None}, create=True),
+            ):
+                runs = main._build_hermes_run_history(job_id)
+
+        self.assertEqual(len(runs), 2)
+        self.assertEqual(runs[0]["status"], "success")
+        self.assertIn("All clear.", runs[0]["output"] or "")
+        self.assertEqual(runs[1]["status"], "error")
+        self.assertEqual(runs[1]["error"], "boom")
 
 
 if __name__ == "__main__":

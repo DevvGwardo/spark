@@ -1,6 +1,8 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { ChatSidebar } from '@/components/sidebar/ChatSidebar';
 import { ChatPanelContainer } from '@/components/chat/ChatPanelContainer';
+import { CronHistoryChat } from '@/components/chat/CronHistoryChat';
+import { SessionHistoryChat } from '@/components/chat/SessionHistoryChat';
 import { SettingsModal } from '@/components/settings/SettingsModal';
 import { SetupWizard } from '@/components/settings/SetupWizard';
 import { CreatePRModal } from '@/components/github/CreatePRModal';
@@ -12,14 +14,16 @@ import { useChangesetStore } from '@/stores/changeset-store';
 import { PreviewSidebar } from '@/components/preview/PreviewSidebar';
 import { usePreviewStore } from '@/stores/preview-store';
 import { useChatStore } from '@/stores/chat-store';
+import { useCronStore } from '@/stores/cron-store';
 import { usePanelStore } from '@/stores/panel-store';
 import { useContextUsageStore } from '@/stores/context-usage-store';
 import { useTheme } from '@/hooks/useTheme';
 import { useGlobalStyles } from '@/hooks/useGlobalStyles';
 import { PROVIDERS } from '@/lib/providers';
 import { getChatScopeId } from '@/lib/chat-scope';
-import { PanelLeft, GitPullRequest, MoreHorizontal, Circle, Pin, Pencil, Archive, Copy, PanelRight, Plus, FileCode2, MessageSquare, TerminalSquare } from 'lucide-react';
+import { PanelLeft, GitPullRequest, MoreHorizontal, Circle, Pin, Pencil, Archive, Copy, PanelRight, Plus, FileCode2, MessageSquare, TerminalSquare, Globe } from 'lucide-react';
 import { TerminalPanel } from '@/components/terminal/TerminalPanel';
+import { MiniBrowser, MiniBrowserToggle } from '@/components/browser/MiniBrowser';
 import { SlotNumber } from '@/components/ui/SlotNumber';
 import { cn } from '@/lib/utils';
 
@@ -38,6 +42,8 @@ export const AppLayout: React.FC = () => {
     setRepoBrowserOpen,
     terminalOpen,
     toggleTerminal,
+    selectedCronJobId,
+    selectedSessionId,
   } = useUIStore();
   const { isSetupComplete, activeProvider, providers } = useSettingsStore(
     useShallow((s) => ({ isSetupComplete: s.isSetupComplete, activeProvider: s.activeProvider, providers: s.providers })),
@@ -122,24 +128,29 @@ export const AppLayout: React.FC = () => {
   const footerModel = activeTab === 'chat' ? footerUsage?.model ?? config.model : config.model;
   const footerProviderInfo = PROVIDERS[footerProvider as keyof typeof PROVIDERS];
   const footerDisplayModel = footerModel.split('/').pop() || footerModel;
-const headerSecondaryLabel = activeTab === 'chat'
-    ? activeRepo?.name ?? null
-    : activeTab === 'github'
-      ? 'Repository tools'
-      : activeTab === 'analyzer'
-        ? 'Diagnostics'
-        : 'Workspace memory';
+  const cronJob = useCronStore((s) => selectedCronJobId ? s.jobs.find((j) => j.id === selectedCronJobId) : undefined);
+const headerSecondaryLabel = selectedCronJobId
+    ? (cronJob?.schedule_display ?? cronJob?.schedule ?? null)
+    : activeTab === 'chat'
+      ? activeRepo?.name ?? null
+      : activeTab === 'github'
+        ? 'Repository tools'
+        : activeTab === 'analyzer'
+          ? 'Diagnostics'
+          : 'Prompts';
   const chromeIconButtonClass = 'inline-flex h-8 w-8 items-center justify-center rounded-xl border border-border/60 bg-background/60 text-muted-foreground transition-colors duration-100 hover:bg-background/85 hover:text-foreground';
   const chromeActionButtonClass = 'inline-flex h-8 items-center gap-2 rounded-xl border border-border/60 bg-background/60 px-3 text-[12px] font-medium text-muted-foreground transition-colors duration-100 hover:bg-background/85 hover:text-foreground';
 
   // Header title based on active tab
-  const headerTitle = activeTab === 'chat'
-    ? (activeConv?.title || 'New thread')
-    : activeTab === 'github'
-      ? 'GitHub'
-      : activeTab === 'analyzer'
-        ? 'Analyzer'
-        : 'Knowledge';
+  const headerTitle = selectedCronJobId
+    ? (cronJob?.name || 'Cron Job')
+    : activeTab === 'chat'
+      ? (activeConv?.title || 'New thread')
+      : activeTab === 'github'
+        ? 'GitHub'
+        : activeTab === 'analyzer'
+          ? 'Analyzer'
+          : 'Knowledge';
 
   const handlePrSuccess = useCallback(() => {
     clearChanges(prScopeId);
@@ -265,7 +276,7 @@ const headerSecondaryLabel = activeTab === 'chat'
                   >
                     <PanelLeft className="h-3.5 w-3.5" />
                   </button>
-                  {activeTab === 'chat' && (
+                  {activeTab === 'chat' && !selectedCronJobId && (
                     <button
                       onClick={() => setConversationForPanel(focusedPanelId, null)}
                       className={chromeActionButtonClass}
@@ -304,7 +315,7 @@ const headerSecondaryLabel = activeTab === 'chat'
                       </p>
                     )}
                   </div>
-                  {activeTab === 'chat' && (
+                  {activeTab === 'chat' && !selectedCronJobId && (
                     <div className="relative" ref={headerMenuRef}>
                       <button
                         onClick={() => setHeaderMenuOpen((v) => !v)}
@@ -424,6 +435,7 @@ const headerSecondaryLabel = activeTab === 'chat'
                 >
                   <TerminalSquare className="h-3.5 w-3.5" />
                 </button>
+                <MiniBrowserToggle className={chromeIconButtonClass} />
               </div>
 
               {/* Commit button — only in single-panel mode (multi-panel has per-panel commit) */}
@@ -475,7 +487,13 @@ const headerSecondaryLabel = activeTab === 'chat'
                     className={cn('h-full overflow-hidden', activeTab !== 'chat' && 'hidden')}
                     aria-hidden={activeTab !== 'chat'}
                   >
-                    <ChatPanelContainer onOpenPR={handleOpenPRForPanel} />
+                    {selectedCronJobId ? (
+                      <CronHistoryChat />
+                    ) : selectedSessionId ? (
+                      <SessionHistoryChat />
+                    ) : (
+                      <ChatPanelContainer onOpenPR={handleOpenPRForPanel} />
+                    )}
                   </div>
                 </div>
                 <div className={cn(activeTab !== 'chat' && 'hidden')} aria-hidden={activeTab !== 'chat'}>
@@ -520,6 +538,7 @@ const headerSecondaryLabel = activeTab === 'chat'
           </div>
         )}
       </div>
+      <MiniBrowser />
     </>
   );
 };

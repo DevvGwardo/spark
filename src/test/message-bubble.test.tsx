@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MessageBubble } from '@/components/chat/MessageBubble';
 import { PanelProvider } from '@/contexts/PanelContext';
@@ -273,6 +273,35 @@ describe('MessageBubble', () => {
     expect(screen.getByText('Summary complete.')).toBeInTheDocument();
     expect(screen.queryByText('Agent Activity')).not.toBeInTheDocument();
     expect(screen.queryByText(/Done — read 123 chars/i)).not.toBeInTheDocument();
+  });
+
+  it('renders execution output when tool activity stores it under result.output', () => {
+    render(
+      <PanelProvider value="panel-1">
+        <MessageBubble
+          message={{
+            id: 'assistant-command-output',
+            conversationId: 'conv-1',
+            role: 'assistant',
+            content: 'Build complete.',
+            timestamp: new Date().toISOString(),
+          }}
+          toolActivity={[
+            {
+              tool: 'run_command',
+              status: 'completed',
+              input: '{"command":"npm run lint"}',
+              output: 'Lint passed',
+            },
+          ]}
+        />
+      </PanelProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Output' }));
+
+    expect(screen.getByText('Running command')).toBeInTheDocument();
+    expect(screen.getByText('Lint passed')).toBeInTheDocument();
   });
 
   it('shows a multi-file edit summary when Hermes activity does not include per-file inputs', () => {

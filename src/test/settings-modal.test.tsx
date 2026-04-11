@@ -61,7 +61,7 @@ describe('SettingsModal', () => {
   it('shows local runtime startup guidance for Hermes providers', async () => {
     validateApiKeyMock.mockResolvedValue({
       valid: false,
-      error: 'Hermes bridge is not reachable at http://localhost:3003/v1. Start hermes-bridge/main.py and try again.',
+      error: 'Hermes bridge is not reachable at http://localhost:3002/v1. Start hermes-bridge/main.py and try again.',
     });
 
     useSettingsStore.setState((state) => ({
@@ -82,7 +82,7 @@ describe('SettingsModal', () => {
     fireEvent.click(screen.getByText('Hermes Agent').closest('button')!);
 
     expect(await screen.findByText(/hermes needs its local bridge running/i)).toBeInTheDocument();
-    expect(screen.getByText(/cd hermes-bridge && python main.py/i)).toBeInTheDocument();
+    expect(screen.getByText(/cd hermes-bridge && \.venv\/bin\/python main.py/i)).toBeInTheDocument();
     expect(screen.getByText(/start hermes-bridge\/main\.py and try again\./i)).toBeInTheDocument();
   });
 });

@@ -318,7 +318,7 @@ describe('Hermes chat route', () => {
 
       expect(response.status).toBe(422)
       await expect(response.json()).resolves.toEqual({
-        error: expect.stringContaining('Hermes needs either a GitHub token'),
+        error: expect.stringContaining('Your GitHub token is missing or invalid'),
       })
     } finally {
       await server.close()
@@ -357,6 +357,53 @@ describe('Hermes chat route', () => {
       await expect(response.json()).resolves.toEqual({
         error: 'Hermes bridge is not reachable at http://localhost:3002/v1. Start hermes-bridge/main.py and try again.',
       })
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('preserves Hermes bridge status and message instead of collapsing to a generic 500', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (url.includes('/functions/v1/chat')) {
+        return actualFetch(input, init)
+      }
+
+      return new Response(JSON.stringify({
+        error: {
+          message: 'No API key provided. Set HERMES_OPENROUTER_KEY, pass Authorization: Bearer <key> header, or run the local OpenClaw gateway.',
+        },
+      }), {
+        status: 401,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      })
+    }))
+
+    const server = await createTestServer()
+
+    try {
+      const response = await actualFetch(`${server.url}/functions/v1/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          provider: 'hermes',
+          model: 'xiaomi/mimo-v2-pro',
+          messages: [
+            { role: 'user', content: 'Hello' },
+          ],
+        }),
+      })
+
+      expect(response.status).toBe(401)
+      await expect(response.json()).resolves.toEqual({
+        error: 'No API key provided. Set HERMES_OPENROUTER_KEY, pass Authorization: Bearer <key> header, or run the local OpenClaw gateway.',
+      })
+      expect(providerConfigMocks.createProviderModel).not.toHaveBeenCalled()
+      expect(aiMocks.streamText).not.toHaveBeenCalled()
     } finally {
       await server.close()
     }

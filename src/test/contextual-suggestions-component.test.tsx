@@ -33,6 +33,8 @@ describe('ContextualSuggestions', () => {
           repoFileTree: [],
           repoFileTreeStatus: 'idle',
           repoFileCache: {},
+          selectedRepoFilePath: null,
+          repoFileTreeError: null,
           pullRequest: null,
         },
       },

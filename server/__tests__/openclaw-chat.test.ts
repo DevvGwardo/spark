@@ -275,7 +275,7 @@ describe('OpenClaw provider chat route', () => {
 
       expect(response.status).toBe(422)
       await expect(response.json()).resolves.toEqual({
-        error: expect.stringContaining('OpenClaw needs either a GitHub token'),
+        error: expect.stringContaining('GitHub token is missing or invalid'),
       })
       expect(openclawMocks.runOpenClawTurn).not.toHaveBeenCalled()
     } finally {

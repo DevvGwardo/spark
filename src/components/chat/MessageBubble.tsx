@@ -806,6 +806,7 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
       {/* Accordion header — always visible, click to expand */}
       <button
         onClick={() => setExpanded(!expanded)}
+        aria-expanded={expanded}
         className="flex items-center gap-2 w-full px-3 py-1.5 text-left hover:bg-amber-500/10 transition-colors"
       >
         <ChevronDown
@@ -856,7 +857,7 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
           <span className="ml-auto text-[10px] text-amber-500/70">error</span>
         )}
         {!isInProgress && isComplete && !hasError && (
-          <span className="ml-auto text-[10px] text-muted-foreground/40">done</span>
+          <span className="ml-auto text-[10px] text-muted-foreground/60">done</span>
         )}
       </button>
 

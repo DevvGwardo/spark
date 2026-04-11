@@ -26,7 +26,7 @@ describe('chat queue helpers', () => {
 
       vi.useFakeTimers();
       vi.setSystemTime(now);
-      vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValue('queued-1');
+      vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValue('queued-1' as `${string}-${string}-${string}-${string}-${string}`);
 
       expect(createQueuedMessage('Draft reply')).toEqual({
         id: 'queued-1',

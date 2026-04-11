@@ -72,7 +72,8 @@ function unwrapPayload(input: unknown): unknown {
       return current;
     }
 
-    const wrapperKey = WRAPPER_KEYS.find((key) => key in current);
+    const rec = current;
+    const wrapperKey = WRAPPER_KEYS.find((key) => key in rec);
     if (!wrapperKey) {
       return current;
     }

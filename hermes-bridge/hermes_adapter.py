@@ -15,6 +15,7 @@ import os
 import sys
 import httpx
 from typing import Optional, Callable
+from urllib.parse import quote
 
 # ---------------------------------------------------------------------------
 # Brain HTTP cache — imported from standalone module
@@ -68,8 +69,27 @@ if _HERMES_AGENT_DIR not in sys.path:
 
 # This import will fail if hermes-agent is not installed, which is fine —
 # main.py catches ImportError and falls back to the custom run_agent.py.
-from run_agent import AIAgent as RealAIAgent  # noqa: E402
-from tools.registry import registry  # noqa: E402
+# Force import from hermes-agent dir — sys.path.insert(0) isn't enough if
+# run_agent was already imported from the bridge directory.
+import importlib.util
+_run_agent_spec = importlib.util.spec_from_file_location(
+    "run_agent",
+    os.path.join(_HERMES_AGENT_DIR, "run_agent.py"),
+)
+_run_agent_mod = importlib.util.module_from_spec(_run_agent_spec)
+sys.modules["run_agent"] = _run_agent_mod
+_run_agent_spec.loader.exec_module(_run_agent_mod)
+RealAIAgent = _run_agent_mod.AIAgent
+
+# Also load tools.registry from hermes-agent
+_tools_spec = importlib.util.spec_from_file_location(
+    "tools.registry",
+    os.path.join(_HERMES_AGENT_DIR, "tools", "registry.py"),
+)
+_tools_mod = importlib.util.module_from_spec(_tools_spec)
+sys.modules["tools.registry"] = _tools_mod
+_tools_spec.loader.exec_module(_tools_mod)
+registry = _tools_mod.registry
 
 print(f"[hermes-adapter] Loaded real Hermes agent from {_HERMES_AGENT_DIR}", flush=True)
 
@@ -585,7 +605,11 @@ class HermesAgentAdapter:
             if ts not in real_toolsets:
                 real_toolsets.append(ts)
 
-        # Set up repo tool provider (registered when run_conversation is called)
+        # Set up repo tool provider.
+        # IMPORTANT: Tools must be registered BEFORE creating the agent because
+        # the real hermes-agent calls get_tool_definitions() in __init__, which
+        # checks the registry at that moment. If tools aren't registered yet,
+        # validate_toolset() returns False and the toolset is silently skipped.
         self._repo_provider: Optional[RepoToolProvider] = None
         if repo_mode and github_repo_owner and github_repo_name:
             self._repo_provider = RepoToolProvider(
@@ -597,13 +621,15 @@ class HermesAgentAdapter:
                 on_server_tool_event=on_server_tool_event,
             )
             real_toolsets.append(_REPO_TOOLSET)
+            # Pre-register tools so the agent discovers them during __init__
+            self._repo_provider._register_tools()
 
         # Build ephemeral system prompt for repo context
         self._ephemeral_system_prompt = None
         if self._repo_provider:
             self._ephemeral_system_prompt = self._repo_provider.build_repo_system_prompt()
 
-        # Determine provider from base_url
+        # Determine provider from base_url or hermes config
         provider = None
         if "openrouter.ai" in (base_url or ""):
             provider = "openrouter"
@@ -613,6 +639,20 @@ class HermesAgentAdapter:
             provider = "anthropic"
         elif "openai.com" in (base_url or ""):
             provider = "openai"
+        elif "nousresearch" in (base_url or "") or "nous" in (base_url or ""):
+            provider = "nous"
+        # If base_url doesn't match known providers, check hermes config
+        if not provider:
+            try:
+                import yaml
+                cfg_path = os.path.expanduser("~/.hermes/config.yaml")
+                with open(cfg_path) as f:
+                    cfg = yaml.safe_load(f) or {}
+                cfg_provider = (cfg.get("model", {}) or {}).get("provider", "")
+                if cfg_provider:
+                    provider = cfg_provider
+            except Exception:
+                pass
 
         # Create the real AIAgent
         key_preview = f"{api_key[:8]}...{api_key[-4:]}" if api_key and len(api_key) > 12 else repr(api_key)
@@ -621,6 +661,9 @@ class HermesAgentAdapter:
             f"api_key={key_preview} provider={provider} model={model}",
             flush=True,
         )
+        # Only pass parameters the real hermes-agent AIAgent actually accepts.
+        # The real signature is: base_url, api_key, provider, api_mode, model,
+        # max_iterations, enabled_toolsets, quiet_mode, platform, callbacks, etc.
         self._agent = RealAIAgent(
             base_url=base_url,
             api_key=api_key,
@@ -630,9 +673,6 @@ class HermesAgentAdapter:
             enabled_toolsets=real_toolsets,
             platform="cloudchat",
             quiet_mode=True,
-            skip_context_files=False,
-            skip_memory=False,
-            persist_session=False,
             # Callbacks — translated to CloudChat's format
             stream_delta_callback=self._on_stream_delta,
             tool_start_callback=self._on_tool_start,
@@ -691,21 +731,20 @@ class HermesAgentAdapter:
         The real agent handles the full tool loop internally. All output
         is streamed via callbacks — nothing meaningful is returned here
         for the SSE bridge (main.py streams from the event queue).
+
+        Note: repo tools are already registered in __init__ (before agent
+        creation). We deregister after the conversation completes.
         """
-        if self._repo_provider:
-            # Register repo tools for this request, deregister after
-            with self._repo_provider:
-                result = self._agent.run_conversation(
-                    user_message=user_message,
-                    system_message=self._ephemeral_system_prompt,
-                    conversation_history=conversation_history or [],
-                )
-        else:
+        try:
             result = self._agent.run_conversation(
                 user_message=user_message,
                 system_message=self._ephemeral_system_prompt,
                 conversation_history=conversation_history or [],
             )
+        finally:
+            # Deregister repo tools after the conversation to clean up the registry
+            if self._repo_provider:
+                self._repo_provider._deregister_tools()
 
         # Log completion stats
         if isinstance(result, dict):

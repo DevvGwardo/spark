@@ -194,6 +194,73 @@ code, pre, .font-mono {
   background: #161616;
 }
 
+/* ── File-change card titlebar (macOS-style dots + file tab) ───────────── */
+
+.chat-code-block__titlebar {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid hsl(var(--border) / 0.4);
+}
+
+.chat-code-block__window-controls {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.chat-code-block__window-dot {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #3a3a3a;
+}
+
+.chat-code-block__window-dot--red    { background: #ff5f57; }
+.chat-code-block__window-dot--amber  { background: #febc2e; }
+.chat-code-block__window-dot--green  { background: #28c840; }
+
+.chat-code-block__tab {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+}
+
+.chat-code-block__filename {
+  font-size: 12px;
+  font-weight: 500;
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, monospace;
+  color: #d4d4d4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── File-change card meta row (action badge + line count) ─────────────── */
+
+.chat-code-block__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.375rem 0.75rem;
+  background: rgba(255, 255, 255, 0.015);
+  border-bottom: 1px solid hsl(var(--border) / 0.3);
+}
+
+.chat-code-block__language {
+  font-size: 11px;
+  font-weight: 500;
+  color: #9ca3af;
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, monospace;
+  letter-spacing: 0.01em;
+}
+
 .chat-code-block__header {
   display: flex;
   align-items: center;
@@ -443,14 +510,12 @@ code, pre, .font-mono {
   }
 }
 
-/* Settings cog spin (one rotation then pause, 3s cycle) */
 @keyframes cog-spin {
   0% { transform: rotate(0deg); }
   35% { transform: rotate(360deg); }
   100% { transform: rotate(360deg); }
 }
 
-/* Sidebar button glimmer sweep (hover-triggered, one sweep per 2s cycle) */
 @keyframes sidebar-btn-glimmer {
   0% { transform: translateX(-120%); }
   50% { transform: translateX(120%); }
@@ -497,28 +562,20 @@ code, pre, .font-mono {
   animation: fade-in-up 0.4s ease-out 0.3s both;
 }
 
-/* Slot digit roll animation */
-@keyframes slot-roll {
-  0% {
-    transform: translateY(0);
-    opacity: 1;
-  }
-  30% {
-    transform: translateY(-60%);
-    opacity: 0;
-  }
-  31% {
-    transform: translateY(60%);
-    opacity: 0;
-  }
-  100% {
-    transform: translateY(0);
-    opacity: 1;
-  }
+/* Slot digit bounce — subtle pop when digit lands */
+@keyframes slot-digit-bounce {
+  0% { transform: translateY(-2px); }
+  50% { transform: translateY(1px); }
+  100% { transform: translateY(0); }
 }
 
+.slot-digit-bounce {
+  animation: slot-digit-bounce 0.12s ease-out;
+}
+
+/* Legacy slot-digit-roll (still used by any existing consumers) */
 .slot-digit-roll {
-  animation: slot-roll 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: slot-digit-bounce 0.12s ease-out;
 }
 
 /* Respect prefers-reduced-motion for all chat animations */
@@ -574,6 +631,7 @@ code, pre, .font-mono {
   #sidebar-rainbow animate {
     display: none;
   }
+
 }
 
 /* KaTeX overrides */

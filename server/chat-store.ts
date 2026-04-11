@@ -556,7 +556,10 @@ function isNonEmptyString(value: unknown): value is string {
 export function registerChatStoreRoutes(app: express.Express) {
   const chatStore = createChatStore();
 
+  let isShuttingDown = false;
   const shutdown = () => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
     console.log('[chat-store] Closing database connection');
     chatStore.close();
   };

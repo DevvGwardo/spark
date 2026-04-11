@@ -72,6 +72,31 @@ vi.mock('@/lib/tokens', () => ({
 describe('ChatArea auto-scroll', () => {
   const originalRequestAnimationFrame = window.requestAnimationFrame;
   const originalCancelAnimationFrame = window.cancelAnimationFrame;
+  const originalResizeObserver = globalThis.ResizeObserver;
+  const resizeObserverCallbacks = new Set<ResizeObserverCallback>();
+
+  class ResizeObserverMock {
+    private readonly callback: ResizeObserverCallback;
+
+    constructor(callback: ResizeObserverCallback) {
+      this.callback = callback;
+      resizeObserverCallbacks.add(callback);
+    }
+
+    observe() {}
+
+    unobserve() {}
+
+    disconnect() {
+      resizeObserverCallbacks.delete(this.callback);
+    }
+  }
+
+  const triggerTranscriptResize = () => {
+    for (const callback of resizeObserverCallbacks) {
+      callback([], {} as ResizeObserver);
+    }
+  };
 
   beforeEach(() => {
     window.requestAnimationFrame = ((callback: FrameRequestCallback) => {
@@ -79,11 +104,15 @@ describe('ChatArea auto-scroll', () => {
       return 1;
     }) as typeof window.requestAnimationFrame;
     window.cancelAnimationFrame = (() => undefined) as typeof window.cancelAnimationFrame;
+    resizeObserverCallbacks.clear();
+    globalThis.ResizeObserver = ResizeObserverMock as typeof ResizeObserver;
   });
 
   afterEach(() => {
     window.requestAnimationFrame = originalRequestAnimationFrame;
     window.cancelAnimationFrame = originalCancelAnimationFrame;
+    resizeObserverCallbacks.clear();
+    globalThis.ResizeObserver = originalResizeObserver;
   });
 
   it('keeps auto-scroll working when the last message mutates in place during streaming', async () => {
@@ -298,7 +327,7 @@ describe('ChatArea auto-scroll', () => {
   });
 
   it('auto-scrolls when the approval banner opens inside the transcript', async () => {
-    const messages = [
+    const messages: Array<{ id: string; role: string; content: string; toolInvocations?: Array<{ toolName: string }> }> = [
       {
         id: 'assistant-1',
         role: 'assistant',
@@ -375,6 +404,124 @@ describe('ChatArea auto-scroll', () => {
       expect(screen.getByTestId('change-approval-banner')).toBeInTheDocument();
       expect(scrollEl.scrollTop).toBe(560);
     });
+  });
+
+  it('keeps following transcript height changes from streamed repo file reads and edits', async () => {
+    const messages = [
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: 'Reading files...',
+      },
+    ];
+
+    let transcriptHeight = 480;
+
+    const { container } = render(
+      <PanelProvider value="panel-1">
+        <ChatArea
+          conversationId="conv-1"
+          messages={messages}
+          input=""
+          setInput={() => {}}
+          handleSend={() => {}}
+          handleStop={() => {}}
+          handleRegenerate={() => {}}
+          isStreaming
+          error={null}
+          apiKeyModalOpen={false}
+          setApiKeyModalOpen={() => {}}
+          activeProvider="hermes"
+          activeModel="meta-llama/llama-4-maverick"
+        />
+      </PanelProvider>,
+    );
+
+    const scrollEl = container.querySelector('.overflow-y-auto') as HTMLDivElement;
+    expect(scrollEl).toBeTruthy();
+
+    Object.defineProperty(scrollEl, 'scrollHeight', {
+      configurable: true,
+      get: () => transcriptHeight,
+    });
+    Object.defineProperty(scrollEl, 'clientHeight', {
+      configurable: true,
+      get: () => 120,
+    });
+
+    scrollEl.scrollTop = 0;
+
+    act(() => {
+      transcriptHeight = 620;
+      triggerTranscriptResize();
+    });
+
+    await waitFor(() => {
+      expect(scrollEl.scrollTop).toBe(620);
+    });
+
+    act(() => {
+      transcriptHeight = 760;
+      triggerTranscriptResize();
+    });
+
+    await waitFor(() => {
+      expect(scrollEl.scrollTop).toBe(760);
+    });
+  });
+
+  it('does not resume auto-scroll on transcript resize after the user scrolls away', () => {
+    const messages = [
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: 'Editing files...',
+      },
+    ];
+
+    let transcriptHeight = 480;
+
+    const { container } = render(
+      <PanelProvider value="panel-1">
+        <ChatArea
+          conversationId="conv-1"
+          messages={messages}
+          input=""
+          setInput={() => {}}
+          handleSend={() => {}}
+          handleStop={() => {}}
+          handleRegenerate={() => {}}
+          isStreaming
+          error={null}
+          apiKeyModalOpen={false}
+          setApiKeyModalOpen={() => {}}
+          activeProvider="hermes"
+          activeModel="meta-llama/llama-4-maverick"
+        />
+      </PanelProvider>,
+    );
+
+    const scrollEl = container.querySelector('.overflow-y-auto') as HTMLDivElement;
+    expect(scrollEl).toBeTruthy();
+
+    Object.defineProperty(scrollEl, 'scrollHeight', {
+      configurable: true,
+      get: () => transcriptHeight,
+    });
+    Object.defineProperty(scrollEl, 'clientHeight', {
+      configurable: true,
+      get: () => 120,
+    });
+
+    scrollEl.scrollTop = 0;
+    fireEvent.scroll(scrollEl);
+
+    act(() => {
+      transcriptHeight = 720;
+      triggerTranscriptResize();
+    });
+
+    expect(scrollEl.scrollTop).toBe(0);
   });
 
   it('waits until streaming stops before showing the approval banner', async () => {

@@ -7,6 +7,7 @@ export interface ProposalPlanItem {
 }
 
 export interface ProposalToolInvocationLike {
+  toolCallId?: string;
   toolName?: string;
   state?: string;
   args?: Record<string, unknown>;

@@ -40,7 +40,7 @@ describe('server-tool-events', () => {
 
   describe('constants', () => {
     it('SERVER_TOOL_EVENT_TYPES contains exactly the 6 expected event types', () => {
-      const expectedTypes = [
+      const expectedTypes: Array<typeof REPO_FILE_READ | typeof REPO_FILE_EDIT | typeof REPO_FILE_CREATE | typeof REPO_FILE_DELETE | typeof REPO_BATCH_EDIT | typeof REPO_PROPOSAL> = [
         'repo_file_read',
         'repo_file_edit',
         'repo_file_create',

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useCallback, useState } from 'react';
 import { ArrowUp, Square, Plus, ChevronDown, Mic, CornerDownLeft, Bot } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSettingsStore } from '@/stores/settings-store';
@@ -7,6 +7,9 @@ import type { QueuedMessage } from '@/lib/chat-queue';
 import { StreamingStatusBar } from './StreamingStatusBar';
 import { ContextUsageBar } from './ContextUsageBar';
 import { QueuedMessageTray } from './QueuedMessageTray';
+import { CommandSuggestions } from './CommandSuggestions';
+import { parseCommand, findCommand, type CommandContext } from '@/lib/hermes-commands';
+import { useCommandCallbacks } from '@/contexts/CommandCallbacksContext';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -55,6 +58,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   onSteerQueuedMessage,
 }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [showCommandSuggestions, setShowCommandSuggestions] = useState(false);
   const { activeProvider: selectedProvider, providers, availableModels, updateProviderConfig } = useSettingsStore();
   const config = providers[selectedProvider];
   const providerInfo = PROVIDERS[selectedProvider];
@@ -65,6 +69,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const displayModel = config.model.split('/').pop() || config.model;
   const reasoningSupported = supportsReasoningEffort(selectedProvider, config.model);
   const reasoningLabel = REASONING_EFFORT_LABELS[config.reasoningEffort];
+  const commandCallbacks = useCommandCallbacks();
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -76,12 +81,54 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
   const safeValue = value ?? '';
 
+  const executeCommand = useCallback(async (input: string): Promise<boolean> => {
+    const parsed = parseCommand(input);
+    if (!parsed) return false;
+
+    const cmd = findCommand(parsed.command);
+    if (!cmd) return false;
+
+    const context: CommandContext = {
+      setActiveSubTab: () => {},
+      setMiniBrowserOpen: () => {},
+      setMiniBrowserUrl: () => {},
+      ...commandCallbacks,
+    };
+
+    try {
+      const result = await cmd.handler(parsed.args, context);
+      onChange(result);
+    } catch {
+      onChange(`Error executing /${parsed.command}.`);
+    }
+    return true;
+  }, [commandCallbacks, onChange]);
+
+  const handleSendOrCommand = useCallback(async () => {
+    if (!safeValue.trim()) return;
+    const wasCommand = await executeCommand(safeValue);
+    if (!wasCommand) {
+      onSend();
+    }
+  }, [safeValue, executeCommand, onSend]);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (safeValue.trim()) onSend();
+      if (safeValue.trim()) handleSendOrCommand();
+    }
+    if (e.key === 'Escape') {
+      setShowCommandSuggestions(false);
     }
   };
+
+  const handleCommandSelect = useCallback((command: string) => {
+    if (command) {
+      onChange(command + ' ');
+    }
+    setShowCommandSuggestions(false);
+    setTimeout(() => textareaRef.current?.focus(), 0);
+  }, [onChange]);
 
   const hasContent = messages.length > 0;
   const hasQueuedMessages = queuedMessages.length > 0;
@@ -114,13 +161,26 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             embedded
           />
 
+          {/* Command Suggestions */}
+          {showCommandSuggestions && (
+            <div className="px-3">
+              <CommandSuggestions
+                query={safeValue}
+                visible={showCommandSuggestions}
+                onSelect={handleCommandSelect}
+              />
+            </div>
+          )}
+
           {/* Textarea area */}
           <div className="flex items-end gap-2 px-4 py-3 min-h-[50px]">
             <textarea
               ref={textareaRef}
               value={safeValue}
               onChange={(e) => {
-                if (typeof onChange === 'function') onChange(e.target.value);
+                const val = e.target.value;
+                if (typeof onChange === 'function') onChange(val);
+                setShowCommandSuggestions(val.startsWith('/'));
               }}
               onKeyDown={handleKeyDown}
               placeholder={placeholder}
@@ -232,7 +292,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               </>
             ) : (
               <button
-                onClick={onSend}
+                onClick={handleSendOrCommand}
                 disabled={!safeValue.trim() || disabled}
                 className={cn(
                   "h-[30px] w-[30px] flex items-center justify-center rounded-[8px] transition-opacity duration-100",

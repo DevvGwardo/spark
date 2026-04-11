@@ -23,11 +23,7 @@ export interface ProviderConfig {
 }
 
 type PersistedSettingsState = Partial<SettingsState> & {
-  activeProvider?: Provider | 'lovable';
   availableModels?: Partial<Record<Provider, string[]>>;
-  providers?: Partial<Record<Provider, ProviderConfig>> & {
-    lovable?: ProviderConfig;
-  };
 };
 
 export type Language = 'en' | 'es' | 'fr' | 'de' | 'ja' | 'zh' | 'ko' | 'pt';
@@ -109,6 +105,7 @@ const defaultProviders: Record<Provider, ProviderConfig> = {
   cerebras: makeDefault('llama-3.3-70b'),
   openrouter: makeDefault('nvidia/llama-3.1-nemotron-70b-instruct:free'),
   sambanova: makeDefault('Meta-Llama-3.3-70B-Instruct'),
+  'z-ai': makeDefault('glm-5-plus'),
   hermes: makeDefault(HERMES_DEFAULT_MODEL),
 };
 
@@ -336,12 +333,14 @@ export const useSettingsStore = create<SettingsState>()(
           replaceIfLegacy('kimi', ['kimi-k2-0711-preview'], 'moonshot-v1-32k');
         }
         if (version < 8) {
-          // Remove lovable provider; migrate users to openai
-          if (state.activeProvider === 'lovable') {
+          // Remove lovable provider; migrate users to openai.
+          // Cast to string: persisted data may contain legacy provider values
+          // that no longer exist in the Provider union.
+          if ((state.activeProvider as string) === 'lovable') {
             state.activeProvider = 'openai';
           }
           if (state.providers) {
-            delete state.providers.lovable;
+            delete (state.providers as Record<string, unknown>).lovable;
           }
         }
         if (version < 9) {

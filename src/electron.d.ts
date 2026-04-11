@@ -16,6 +16,17 @@ export interface ElectronAPI {
     onData: (callback: (id: string, data: string) => void) => () => void
     onExit: (callback: (id: string, exitCode: number) => void) => () => void
   }
+  browser?: {
+    create: (url?: string) => Promise<void>
+    navigate: (url: string) => Promise<void>
+    goBack: () => Promise<void>
+    goForward: () => Promise<void>
+    close: () => Promise<void>
+    resize: (bounds: { x: number; y: number; width: number; height: number }) => Promise<void>
+    show: () => Promise<void>
+    hide: () => Promise<void>
+  }
+  onNewChat?: (callback: () => void) => () => void
 }
 
 declare global {

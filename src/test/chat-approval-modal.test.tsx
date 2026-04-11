@@ -67,7 +67,7 @@ describe('ChatArea approval modal', () => {
   });
 
   it('renders the approval modal when Hermes mutates the latest proposal message in place', () => {
-    const messages = [
+    const messages: Array<{ id: string; role: string; content: string; toolInvocations?: Array<{ toolName: string; state?: string; args?: Record<string, unknown> }> }> = [
       {
         id: 'assistant-1',
         role: 'assistant',

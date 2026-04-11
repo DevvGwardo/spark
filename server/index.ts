@@ -6,11 +6,31 @@ import { registerGitHubRoutes } from './routes/github';
 import { registerValidateRoute } from './routes/validate';
 import { registerProxyRoute } from './routes/proxy';
 import { registerTranslateRoute } from './routes/translate';
+import { registerHermesAdminRoute } from './routes/hermes-admin';
 import { sendJson } from './lib/helpers';
 import { MAX_BODY_SIZE } from './config';
 
 // Re-export for external consumers
 export { shouldDirectProxyCompatibleProvider } from './lib/hermes';
+
+const HEALTH_ROUTES = [
+  '/functions/v1/chat',
+  '/functions/v1/chat-store/conversations',
+  '/functions/v1/chat-store/messages',
+  '/functions/v1/chat-store/conversations/:id/messages',
+  '/functions/v1/chat-store/conversations/:id/files',
+  '/functions/v1/github-integration',
+  '/functions/v1/github-analyzer',
+  '/functions/v1/validate-key',
+  '/functions/v1/chat-proxy',
+  '/functions/v1/translate',
+  '/api/hermes/cron',
+  '/api/hermes/sessions',
+  '/api/hermes/workspace/overview',
+  '/api/hermes/workspace/usage',
+  '/api/hermes/workspace/files',
+  '/api/hermes/workspace/skills',
+] as const;
 
 export function createApp() {
   const app = express();
@@ -23,10 +43,11 @@ export function createApp() {
   registerValidateRoute(app);
   registerProxyRoute(app);
   registerTranslateRoute(app);
+  registerHermesAdminRoute(app);
 
   // ─── Health check ──────────────────────────────────────────────────────────
   app.get('/functions/v1/health', (_req, res) => {
-    sendJson(res, 200, { ok: true, routes: ['/functions/v1/chat', '/functions/v1/github-integration', '/functions/v1/github-analyzer', '/functions/v1/validate-key', '/functions/v1/chat-proxy', '/functions/v1/translate'] });
+    sendJson(res, 200, { ok: true, routes: HEALTH_ROUTES });
   });
 
   // ─── 404 catch-all (debug unmatched routes) ─────────────────────────────────

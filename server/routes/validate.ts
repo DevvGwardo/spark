@@ -29,6 +29,99 @@ app.post('/functions/v1/validate-key', async (req, res) => {
       return sendJson(res, 200, { valid: true, defaultModel, models });
     }
 
+    if (provider === 'hermes') {
+      // Hermes bridge handles its own credential fallback
+      // If no api_key provided, check if bridge is running with local credentials
+      if (!api_key) {
+        const bridgeUrl = OPENAI_COMPATIBLE.hermes;
+        try {
+          const healthUrl = `${bridgeUrl.replace('/v1', '')}/health`;
+          const healthResponse = await fetch(healthUrl, {
+            method: 'GET',
+            signal: AbortSignal.timeout(5000),
+          });
+
+          if (!healthResponse.ok) {
+            return sendJson(res, 503, {
+              valid: false,
+              error: `Hermes bridge is not reachable at ${bridgeUrl}. Start hermes-bridge/main.py and try again.`,
+            });
+          }
+
+          const healthData = await healthResponse.json() as {
+            has_openrouter_creds?: boolean;
+            has_minimax_creds?: boolean;
+            hermes_default_model?: string;
+            hermes_provider?: string;
+          };
+
+          // Use the bridge's configured model if available, fall back to hardcoded list
+          const bridgeModel = healthData.hermes_default_model;
+          const models = bridgeModel
+            ? [bridgeModel, ...HERMES_TOOL_CAPABLE_MODELS.filter(m => m !== bridgeModel)]
+            : [...HERMES_TOOL_CAPABLE_MODELS];
+
+          if (!healthData.has_openrouter_creds && !healthData.has_minimax_creds) {
+            return sendJson(res, 200, {
+              valid: true,
+              defaultModel: bridgeModel || models[0],
+              models,
+              warning: 'Hermes bridge has no API credentials configured. Set HERMES_OPENROUTER_KEY or HERMES_MINIMAX_KEY env var, or configure ~/.openclaw/openclaw.json.',
+            });
+          }
+
+          return sendJson(res, 200, {
+            valid: true,
+            defaultModel: bridgeModel || models[0],
+            models,
+          });
+        } catch {
+          return sendJson(res, 503, {
+            valid: false,
+            error: `Hermes bridge is not reachable at ${bridgeUrl}. Start hermes-bridge/main.py and try again.`,
+          });
+        }
+      }
+
+      // If api_key IS provided, validate it via model discovery (original approach)
+      const bridgeUrl = OPENAI_COMPATIBLE.hermes;
+      const listModelsUrl = `${bridgeUrl}/models`;
+      try {
+        const modelListResponse = await fetch(listModelsUrl, {
+          headers: getModelDiscoveryHeaders(provider, api_key, req.headers.origin),
+        });
+
+        if (modelListResponse.ok) {
+          // Also fetch health to get the bridge's configured model
+          let bridgeModel: string | undefined;
+          try {
+            const healthUrl2 = `${bridgeUrl.replace('/v1', '')}/health`;
+            const hr = await fetch(healthUrl2, { signal: AbortSignal.timeout(3000) });
+            if (hr.ok) {
+              const hd = await hr.json() as { hermes_default_model?: string };
+              bridgeModel = hd.hermes_default_model;
+            }
+          } catch { /* ignore health fetch failure */ }
+
+          const models = bridgeModel
+            ? [bridgeModel, ...HERMES_TOOL_CAPABLE_MODELS.filter(m => m !== bridgeModel)]
+            : [...HERMES_TOOL_CAPABLE_MODELS];
+          return sendJson(res, 200, {
+            valid: true,
+            defaultModel: bridgeModel || models[0],
+            models,
+          });
+        }
+      } catch {
+        // Fall through to error
+      }
+
+      return sendJson(res, 503, {
+        valid: false,
+        error: `Hermes bridge validation failed at ${bridgeUrl}.`,
+      });
+    }
+
     if (!api_key || !provider) {
       return sendJson(res, 400, { valid: false, error: 'Missing provider or api_key' });
     }
@@ -43,32 +136,11 @@ app.post('/functions/v1/validate-key', async (req, res) => {
     const listModelsUrl = discoveryBaseUrl ? `${discoveryBaseUrl}/models` : null;
 
     if (listModelsUrl) {
-      let modelListResponse: Response;
-      try {
-        modelListResponse = await fetch(listModelsUrl, {
-          headers: getModelDiscoveryHeaders(provider, api_key, origin),
-        });
-      } catch (error) {
-        if (provider === 'hermes') {
-          return sendJson(res, 503, {
-            valid: false,
-            error:
-              `Hermes bridge is not reachable at ${OPENAI_COMPATIBLE.hermes}. ` +
-              'Start hermes-bridge/main.py and try again.',
-          });
-        }
-        throw error;
-      }
+      const modelListResponse = await fetch(listModelsUrl, {
+        headers: getModelDiscoveryHeaders(provider, api_key, origin),
+      });
 
       if (modelListResponse.ok) {
-        if (provider === 'hermes') {
-          return sendJson(res, 200, {
-            valid: true,
-            defaultModel: HERMES_TOOL_CAPABLE_MODELS[0],
-            models: [...HERMES_TOOL_CAPABLE_MODELS],
-          });
-        }
-
         const data = await modelListResponse.json();
         const models = Array.isArray(data?.data)
           ? (data.data as Array<{ id?: string }>)

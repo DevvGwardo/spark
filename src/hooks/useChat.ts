@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { useChat as useAIChat, type Message as AIMessage } from '@ai-sdk/react';
 import { parseDataStreamPart } from 'ai';
 import { useShallow } from 'zustand/shallow';
@@ -15,7 +15,7 @@ import { createQueuedMessage, moveQueuedMessageToFront, removeQueuedMessage, typ
 import { PROVIDERS, supportsReasoningEffort } from '@/lib/providers';
 import { useHermesStore } from '@/stores/hermes-store';
 
-import { findPendingProposal } from '@/lib/proposed-changes';
+import { findPendingProposal, type PendingProposal, type ProposalToolInvocationLike } from '@/lib/proposed-changes';
 import {
   getRepoTurnIntentInstruction,
   isRepoApprovalFollowUpMessage,
@@ -59,10 +59,12 @@ import {
   normalizeRepoPath,
   resolveRepoWriteAction,
   sanitizePartialToolCalls,
+  synthesizeToolInvocationsForPersistence,
   stalledOnRepoRead,
   summarizeContentForLog,
   toStoredAIMessages,
   upsertStoredMessage,
+  type AgentStatusEvent,
   type AutoContinueRequest,
   type ProviderOverride,
   type SendMessageOptions,
@@ -74,9 +76,21 @@ export function useChat(
   onConversationCreated?: (id: string) => void,
   providerOverride?: ProviderOverride,
   panelId: string = 'default',
-  onReadyForPR?: (panelId: string) => void,
+  onReadyForPR?: (panelId: string, mode?: 'create' | 'review') => void,
   stateScopeId?: string,
 ) {
+  const sanitizeRetryMessages = useCallback((msgs: AIMessage[]): AIMessage[] => (
+    sanitizePartialToolCalls(
+      msgs as unknown as Array<{
+        id: string;
+        role: AIMessage['role'];
+        content: string;
+        parts?: Array<Record<string, unknown>>;
+        toolInvocations?: Array<Record<string, unknown>>;
+      }>,
+    ) as unknown as AIMessage[]
+  ), []);
+
   const scopeId = stateScopeId ?? panelId;
   const createConversation = useChatStore((s) => s.createConversation);
   const renameConversation = useChatStore((s) => s.renameConversation);
@@ -99,20 +113,26 @@ export function useChat(
   const clearPanelPrompt = useUIStore((s) => s.clearPanelPrompt);
   const { activeRepo, isRepoMode, repoFileTree } = changeset;
   const hermesToolsetConfig = useHermesStore((s) => s.toolsets);
+  const hermesMcpServers = useHermesStore((s) => s.mcpServers);
+  const hermesSwarmEnabled = useHermesStore((s) => s.swarm.enabled);
+  const hermesCustomToolDefs = useMemo(() => {
+    const servers = hermesMcpServers.filter((s) => s.enabled && s.tools.length > 0);
+    return servers.flatMap((server) =>
+      server.tools.map((tool) => ({
+        type: 'function' as const,
+        function: { name: tool.name, description: tool.description, parameters: tool.inputSchema },
+        mcp_server_id: server.id,
+        mcp_server_url: server.url,
+        mcp_server_api_key: server.apiKey,
+      }))
+    );
+  }, [hermesMcpServers]);
   const hermesToolsets = useMemo(
     () =>
       Object.entries(hermesToolsetConfig)
         .filter(([, enabled]) => enabled)
         .map(([toolset]) => toolset),
     [hermesToolsetConfig],
-  );
-  const effectiveHermesToolsets = useMemo(
-    () => (
-      isRepoMode
-        ? hermesToolsets.filter((toolset) => !REPO_MODE_DISABLED_HERMES_TOOLSETS.has(toolset))
-        : hermesToolsets
-    ),
-    [hermesToolsets, isRepoMode],
   );
   // Local execution toolsets (terminal, files, code_execution) sent to all non-Hermes providers
   const agentToolsets = useMemo(
@@ -163,7 +183,8 @@ When the user asks you to make changes:
 7. Never print pseudo-tool syntax like batch_edit_repo_files(...) in visible text. Use the actual tool calls instead.
 8. IMPORTANT: If you need to edit many large files, split batch_edit_repo_files into multiple calls (max 3-4 files per batch) to avoid output truncation. For very large files, use individual edit_repo_file calls instead.
 9. Never conclude that the repository is empty or inaccessible just because a guessed file path failed to read. If a read fails, choose another path from the loaded repo tree and continue exploring.
-10. Do not guess generic placeholder paths like \`.\`, \`/\`, \`src/main\`, \`server\`, \`client\`, or \`package.json\` unless that exact path is present in the loaded repo tree.`;
+10. Do not guess generic placeholder paths like \`.\`, \`/\`, \`src/main\`, \`server\`, \`client\`, or \`package.json\` unless that exact path is present in the loaded repo tree.
+11. Only use exact file paths that appear in the repo tree or that are returned by a read_repo_file error as a possible match. Do not infer unlisted sibling paths or directory names.`;
 
       if (!hasRepoAccess) {
         repoContext += `\n11. GitHub file access is unavailable for this request because no GitHub token is configured. Do not call repo tools and do not search the web just to compensate for missing repo access.
@@ -269,9 +290,8 @@ When the user asks you to make changes:
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
   const [toolActivityMap, setToolActivityMap] = useState<Record<string, ToolActivityEvent[]>>({});
   const [agentStatus, setAgentStatus] = useState<AgentStatusEvent | null>(null);
+  const [conversationAutoApproveEnabled, setConversationAutoApproveEnabled] = useState(false);
   const requestConversationIdRef = useRef<string | null>(conversationId);
-  // Keep the ref in sync with the prop (when conversation switches externally)
-  requestConversationIdRef.current = conversationId ?? requestConversationIdRef.current;
   const activeRequestBodyRef = useRef<Record<string, unknown> | null>(null);
   const toolActivityRef = useRef<Record<string, ToolActivityEvent[]>>({});
   const serverToolEventsRef = useRef<Record<string, ServerToolEvent[]>>({});
@@ -291,8 +311,15 @@ When the user asks you to make changes:
   }
   prevConversationIdForSessionRef.current = conversationId;
   const chatSessionId = `${conversationId ?? `draft-${draftEpochRef.current}`}:${panelId}`;
-  const stableChatSessionIdRef = useRef(chatSessionId);
+  const [aiChatSessionId, setAiChatSessionId] = useState(chatSessionId);
   const isStreamingRef = useRef(false);
+  const shouldRetainRequestConversationId =
+    conversationId === null && (isStreamingRef.current || pendingConversationIdRef.current !== null);
+  // Keep the request conversation aligned with the visible conversation unless we are
+  // intentionally holding on to the previous conversation during an in-flight handoff.
+  requestConversationIdRef.current = shouldRetainRequestConversationId
+    ? requestConversationIdRef.current
+    : conversationId;
   const abortControllerRef = useRef<AbortController | null>(null);
   const isSendingRef = useRef(false);
   const autoSendingQueuedRef = useRef<string | null>(null);
@@ -304,18 +331,49 @@ When the user asks you to make changes:
   const repoStopRetryRef = useRef(0);
   const MAX_REPO_STOP_RETRIES = 5;
   const autoContinueTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Set when the user explicitly clicks stop — prevents onFinish from auto-continuing
+  const userStoppedRef = useRef(false);
   const messagesRef = useRef<AIMessage[]>([]);
 
-  const persistAssistantSnapshot = useCallback(async (message: Record<string, unknown>, convId: string) => {
+  const persistAssistantSnapshot = useCallback(async (
+    message: Record<string, unknown>,
+    convId: string,
+    fallback?: {
+      toolActivity?: ToolActivityEvent[];
+      serverToolEvents?: ServerToolEvent[];
+    },
+  ) => {
     const messageId = typeof message.id === 'string' && message.id ? message.id : crypto.randomUUID();
+    const parts = Array.isArray(message.parts) ? message.parts as unknown[] : undefined;
+    const toolInvocations = Array.isArray(message.toolInvocations) ? message.toolInvocations as unknown[] : undefined;
+    const timestamp = typeof message.timestamp === 'string' && message.timestamp
+      ? message.timestamp
+      : new Date().toISOString();
+    const hasStructuredToolInvocations = Boolean(
+      toolInvocations?.length ||
+      parts?.some((part) =>
+        !!part &&
+        typeof part === 'object' &&
+        (part as { type?: unknown }).type === 'tool-invocation',
+      ),
+    );
+    const synthesizedToolInvocations = !hasStructuredToolInvocations
+      ? synthesizeToolInvocationsForPersistence(
+          fallback?.toolActivity ?? [],
+          fallback?.serverToolEvents ?? [],
+        )
+      : [];
+
     await upsertStoredMessage({
       id: messageId,
       conversationId: convId,
       role: 'assistant',
       content: typeof message.content === 'string' ? message.content : '',
-      timestamp: new Date().toISOString(),
-      parts: message.parts as unknown[] | undefined,
-      toolInvocations: message.toolInvocations as unknown[] | undefined,
+      timestamp,
+      parts,
+      toolInvocations: toolInvocations && toolInvocations.length > 0
+        ? toolInvocations
+        : (synthesizedToolInvocations.length > 0 ? synthesizedToolInvocations : undefined),
     });
     await db.conversations.update(convId, { updatedAt: new Date().toISOString() });
     await loadConversations();
@@ -622,6 +680,12 @@ When the user asks you to make changes:
       : repoEditIntentRef.current;
     const continuingApprovedProposal = overrides?.continuingApprovedProposal === true;
 
+    // Compute effective hermes toolsets from fresh store state to avoid stale memo values mid-stream
+    const currentHermesUsesLocalCloneFallback = currentIsRepoMode && !!currentActiveRepo?.localPath && !currentGithubPAT;
+    const currentEffectiveHermesToolsets = currentIsRepoMode && !currentHermesUsesLocalCloneFallback
+      ? hermesToolsets.filter((toolset) => !REPO_MODE_DISABLED_HERMES_TOOLSETS.has(toolset))
+      : hermesToolsets;
+
     return {
       provider: effectiveProvider,
       model: effectiveModel,
@@ -634,7 +698,7 @@ When the user asks you to make changes:
         currentActiveRepo,
         currentIsRepoMode,
         repoEditIntentForRequest,
-        !!(currentIsRepoMode && currentActiveRepo && currentGithubPAT),
+        !!(currentIsRepoMode && currentActiveRepo && (currentGithubPAT || currentActiveRepo.localPath)),
       ),
       ...(currentIsRepoMode && currentActiveRepo
         ? {
@@ -645,7 +709,9 @@ When the user asks you to make changes:
           }
         : {}),
       ...(currentIsRepoMode && currentActiveRepo ? { repo_edit_intent: repoEditIntentForRequest } : {}),
-      ...(effectiveProvider === 'hermes' ? { hermes_toolsets: effectiveHermesToolsets.join(',') } : {}),
+      ...(effectiveProvider === 'hermes' ? { hermes_toolsets: currentEffectiveHermesToolsets.join(',') } : {}),
+      ...(effectiveProvider === 'hermes' && hermesSwarmEnabled ? { hermes_swarm_mode: true } : {}),
+      ...(effectiveProvider === 'hermes' && hermesCustomToolDefs.length > 0 ? { custom_tools: hermesCustomToolDefs } : {}),
       ...(effectiveProvider !== 'hermes' && effectiveProvider !== 'openclaw' && agentToolsets ? { agent_toolsets: agentToolsets } : {}),
       ...(effectiveProvider === 'hermes' && effectiveModel.startsWith('MiniMax-')
         ? { hermes_minimax_key: useSettingsStore.getState().providers.minimax?.apiKey || useSettingsStore.getState().providers['minimax-payg']?.apiKey || '' }
@@ -665,7 +731,9 @@ When the user asks you to make changes:
     config.maxTokens,
     config.temperature,
     config.topP,
-    effectiveHermesToolsets,
+    hermesCustomToolDefs,
+    hermesSwarmEnabled,
+    hermesToolsets,
     effectiveModel,
     effectiveProvider,
     reasoningEffort,
@@ -700,42 +768,134 @@ When the user asks you to make changes:
       ...(activeRequestBodyRef.current ?? buildRequestBody()),
       ...(perRequestBody ?? {}),
     }),
-    id: stableChatSessionIdRef.current,
+    id: aiChatSessionId,
     streamProtocol: 'data',
-    throttle: 32,
+    experimental_throttle: 32,
     maxSteps: Infinity,
     onFinish: async (message, options) => {
       const convId = convIdRef.current;
       if (!convId) return;
       setAgentStatus(null);
 
+      const currentToolActivity = toolActivityRef.current.current || [];
+      const currentServerToolEvents = serverToolEventsRef.current.current || [];
+      const hasCurrentFallbackData = currentToolActivity.length > 0 || currentServerToolEvents.length > 0;
+      const incomingParts = Array.isArray(message?.parts) ? message.parts as unknown[] : undefined;
+      const incomingToolInvocations = Array.isArray(message?.toolInvocations)
+        ? message.toolInvocations as unknown[]
+        : undefined;
+      const synthesizedCurrentToolInvocations = hasCurrentFallbackData
+        ? synthesizeToolInvocationsForPersistence(currentToolActivity, currentServerToolEvents)
+        : [];
+      let finishedMessage = message as unknown as Record<string, unknown> | undefined;
+      let finishedMessageId = typeof message?.id === 'string' && message.id ? message.id : null;
+      const messageWithTimestamp = message as (AIMessage & { timestamp?: string }) | undefined;
+      const finishedTimestamp = typeof messageWithTimestamp?.timestamp === 'string' && messageWithTimestamp.timestamp
+        ? messageWithTimestamp.timestamp
+        : new Date().toISOString();
+
+      if (
+        !finishedMessageId &&
+        (
+          hasCurrentFallbackData ||
+          (typeof message?.content === 'string' && message.content.length > 0) ||
+          (incomingParts?.length ?? 0) > 0 ||
+          (incomingToolInvocations?.length ?? 0) > 0
+        )
+      ) {
+        finishedMessageId = crypto.randomUUID();
+        finishedMessage = {
+          id: finishedMessageId,
+          role: 'assistant',
+          content: typeof message?.content === 'string' ? message.content : '',
+          timestamp: finishedTimestamp,
+          ...(incomingParts ? { parts: incomingParts } : {}),
+          ...(
+            incomingToolInvocations && incomingToolInvocations.length > 0
+              ? { toolInvocations: incomingToolInvocations }
+              : (synthesizedCurrentToolInvocations.length > 0
+                  ? { toolInvocations: synthesizedCurrentToolInvocations }
+                  : {})
+          ),
+        };
+      }
+
       // Remap tool activity from 'current' to the actual message ID
-      if (message?.id && toolActivityRef.current['current']) {
+      if (finishedMessageId && toolActivityRef.current['current']) {
         const currentActivity = toolActivityRef.current['current'];
         delete toolActivityRef.current['current'];
-        toolActivityRef.current[message.id] = currentActivity;
+        toolActivityRef.current[finishedMessageId] = currentActivity;
         setToolActivityMap({ ...toolActivityRef.current });
       }
-      if (message?.id && serverToolEventsRef.current['current']) {
+      if (finishedMessageId && serverToolEventsRef.current['current']) {
         const currentEvents = serverToolEventsRef.current['current'];
         delete serverToolEventsRef.current['current'];
-        serverToolEventsRef.current[message.id] = currentEvents;
+        serverToolEventsRef.current[finishedMessageId] = currentEvents;
       }
-      if (message?.id && serverToolEventKeysRef.current.current) {
+      if (finishedMessageId && serverToolEventKeysRef.current.current) {
         const currentEventKeys = serverToolEventKeysRef.current.current;
         delete serverToolEventKeysRef.current.current;
-        serverToolEventKeysRef.current[message.id] = currentEventKeys;
+        serverToolEventKeysRef.current[finishedMessageId] = currentEventKeys;
+      }
+
+      const messageToolActivity = finishedMessageId
+        ? toolActivityRef.current[finishedMessageId] || []
+        : currentToolActivity;
+      const messageServerToolEvents = finishedMessageId
+        ? serverToolEventsRef.current[finishedMessageId] || []
+        : currentServerToolEvents;
+      const finishedMessageParts = Array.isArray(finishedMessage?.parts) ? finishedMessage.parts as unknown[] : undefined;
+      const finishedMessageToolInvocations = Array.isArray(finishedMessage?.toolInvocations)
+        ? finishedMessage.toolInvocations as unknown[]
+        : undefined;
+      const shouldInjectFinishedMessage =
+        !!finishedMessageId &&
+        !messagesRef.current.some((entry) => entry.id === finishedMessageId) &&
+        (
+          (typeof finishedMessage?.content === 'string' && finishedMessage.content.length > 0) ||
+          (finishedMessageParts?.length ?? 0) > 0 ||
+          (finishedMessageToolInvocations?.length ?? 0) > 0 ||
+          messageToolActivity.length > 0 ||
+          messageServerToolEvents.length > 0
+        );
+
+      if (shouldInjectFinishedMessage && finishedMessage) {
+        const nextMessages = [
+          ...messagesRef.current,
+          {
+            id: finishedMessageId,
+            role: (typeof finishedMessage.role === 'string' ? finishedMessage.role : 'assistant') as AIMessage['role'],
+            content: typeof finishedMessage.content === 'string' ? finishedMessage.content : '',
+            ...(typeof finishedMessage.timestamp === 'string' ? { timestamp: finishedMessage.timestamp } : {}),
+            ...(finishedMessageParts ? { parts: finishedMessageParts } : {}),
+            ...(finishedMessageToolInvocations ? { toolInvocations: finishedMessageToolInvocations } : {}),
+          } as AIMessage,
+        ];
+        messagesRef.current = nextMessages;
+        setMessages(nextMessages);
       }
 
       // Persist assistant message (including parts and tool invocations)
-      if (!message) return;
-      await persistAssistantSnapshot(message as Record<string, unknown>, convId);
+      if (!finishedMessage) return;
+      await persistAssistantSnapshot(finishedMessage, convId, {
+        toolActivity: messageToolActivity,
+        serverToolEvents: messageServerToolEvents,
+      });
+
+      // If the user explicitly clicked stop, skip all auto-continue logic.
+      // Reset counters so the next user-initiated send starts fresh.
+      if (userStoppedRef.current) {
+        userStoppedRef.current = false;
+        unknownFinishRetryRef.current = 0;
+        repoStopRetryRef.current = 0;
+        activeRequestBodyRef.current = null;
+        approvedProposalContinuationRef.current = null;
+        return;
+      }
 
       const finishReason = options?.finishReason;
-      const messageToolActivity = message.id ? toolActivityRef.current[message.id] || [] : [];
-      const messageServerToolEvents = message.id ? serverToolEventsRef.current[message.id] || [] : [];
       const repoWorkflowNames = collectRepoWorkflowToolNames(
-        message as {
+        finishedMessage as {
           content?: string;
           parts?: Array<{ type?: string; text?: string; toolInvocation?: { toolName?: string } }>;
           toolInvocations?: Array<{ toolName?: string }>;
@@ -747,7 +907,7 @@ When the user asks you to make changes:
         messagesRef.current.findLast((entry) => entry.role === 'user')?.content ?? '',
       );
       const approvedPlanMentioned = /\b(?:approved|accepted)\s+plan\b/i.test(
-        typeof message.content === 'string' ? message.content : '',
+        typeof finishedMessage.content === 'string' ? finishedMessage.content : '',
       );
       const inferredApprovedContinuation =
         pendingProposalRef.current !== null &&
@@ -766,9 +926,9 @@ When the user asks you to make changes:
       }
       // Detect partial/incomplete tool calls left by a dropped stream (common
       // with Minimax and other providers that may terminate mid-tool-call).
-      const hasPartialToolCalls = (message.parts as Array<{ type?: string; toolInvocation?: { state?: string } }> | undefined)?.some(
+      const hasPartialToolCalls = (finishedMessage.parts as Array<{ type?: string; toolInvocation?: { state?: string } }> | undefined)?.some(
         (p) => p.type === 'tool-invocation' && (p.toolInvocation?.state === 'partial-call' || p.toolInvocation?.state === 'call'),
-      ) || (message.toolInvocations as Array<{ state?: string }> | undefined)?.some(
+      ) || (finishedMessage.toolInvocations as Array<{ state?: string }> | undefined)?.some(
         (inv) => inv.state === 'partial-call' || inv.state === 'call',
       );
 
@@ -805,7 +965,7 @@ When the user asks you to make changes:
             continuingApprovedProposal ||
             repoWorkflowNames.length > 0 ||
             stalledOnRepoRead(
-              message as {
+              finishedMessage as {
                 content?: string;
                 parts?: Array<{ type?: string; text?: string; toolInvocation?: { toolName?: string } }>;
                 toolInvocations?: Array<{ toolName?: string }>;
@@ -832,7 +992,7 @@ When the user asks you to make changes:
           activeRepo &&
           repoStopRetryRef.current < MAX_REPO_STOP_RETRIES &&
           stalledOnRepoRead(
-            message as {
+            finishedMessage as {
               content?: string;
               parts?: Array<{ type?: string; text?: string; toolInvocation?: { toolName?: string } }>;
               toolInvocations?: Array<{ toolName?: string }>;
@@ -1082,6 +1242,10 @@ When the user asks you to make changes:
         if (!path) {
           return 'Error: delete_repo_file is missing a valid path.';
         }
+        const existingPaths = getRepoToolExistingPaths(scopeId);
+        if (!existingPaths.has(path)) {
+          return `Error: delete_repo_file can only delete existing repo files. \`${path}\` is not in the indexed repo tree or staged changes.`;
+        }
         const existing = useChangesetStore.getState().getChangeset(scopeId).changes[path];
         const originalContent = existing?.originalContent ?? useChangesetStore.getState().getChangeset(scopeId).repoFileCache[path] ?? '';
         addChange({ path, action: 'delete', content: '', originalContent, staged: true });
@@ -1111,6 +1275,9 @@ When the user asks you to make changes:
           const action = resolveRepoWriteAction(change.action, change.path, knownPaths);
           if (action === 'edit' && !knownPaths.has(change.path) && !approvedPlanEditPaths.has(change.path)) {
             return `Error: batch_edit_repo_files cannot edit missing file \`${change.path}\`. Use create only for genuinely new files and edit only for paths already in the repo.`;
+          }
+          if (action === 'delete' && !knownPaths.has(change.path)) {
+            return `Error: batch_edit_repo_files cannot delete missing file \`${change.path}\`. Use delete only for paths already present in the repo or staged changes.`;
           }
           const existing = useChangesetStore.getState().getChangeset(scopeId).changes[change.path];
           const originalContent = existing?.originalContent ?? useChangesetStore.getState().getChangeset(scopeId).repoFileCache[change.path] ?? '';
@@ -1154,6 +1321,12 @@ When the user asks you to make changes:
 
   // Wrap SDK stop to also abort the in-flight fetch
   const stop = useCallback(() => {
+    userStoppedRef.current = true;
+    // Cancel any pending auto-continue so it doesn't fire after stop
+    if (autoContinueTimerRef.current) {
+      clearTimeout(autoContinueTimerRef.current);
+      autoContinueTimerRef.current = null;
+    }
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
     sdkStop();
@@ -1170,7 +1343,7 @@ When the user asks you to make changes:
 
   const scheduleAutoContinue = useCallback((request: AutoContinueRequest) => {
     const currentMessages = messagesRef.current;
-    const sanitized = sanitizePartialToolCalls(currentMessages);
+    const sanitized = sanitizeRetryMessages(currentMessages);
     if (sanitized !== currentMessages) {
       safeSetMessages(sanitized, true);
     }
@@ -1208,15 +1381,16 @@ When the user asks you to make changes:
         activeRequestBodyRef.current = null;
       });
     }, AUTO_CONTINUE_DELAY_MS);
-  }, [activeRepo, append, buildRequestBody, isRepoMode, safeSetMessages]);
+  }, [activeRepo, append, buildRequestBody, isRepoMode, safeSetMessages, sanitizeRetryMessages]);
 
   // Track streaming state in global activity store
   const isStreaming = status === 'streaming' || status === 'submitted';
   isStreamingRef.current = isStreaming;
-  // Only update stable session ID when not streaming to prevent AI SDK message resets
-  if (!isStreaming) {
-    stableChatSessionIdRef.current = chatSessionId;
-  }
+  useLayoutEffect(() => {
+    if (!isStreaming && aiChatSessionId !== chatSessionId) {
+      setAiChatSessionId(chatSessionId);
+    }
+  }, [aiChatSessionId, chatSessionId, isStreaming]);
   useEffect(() => {
     const pendingProposal = findPendingProposal(messages as Array<{
       id: string;
@@ -1230,7 +1404,7 @@ When the user asks you to make changes:
 
     pendingProposalRef.current = pendingProposal ?? pendingProposalRef.current;
 
-    if (!isStreaming || !pendingProposal || autoApproveRepoChanges || approvedProposalContinuationRef.current) {
+    if (!isStreaming || !pendingProposal || autoApproveRepoChanges || conversationAutoApproveEnabled || approvedProposalContinuationRef.current) {
       if (!pendingProposal) {
         pausedProposalKeyRef.current = null;
         contentProposalStabilityRef.current = { key: null, cycles: 0 };
@@ -1263,7 +1437,10 @@ When the user asks you to make changes:
     const proposalMessage = messages.find((message) => message.id === pendingProposal.messageId);
     const persistedConversationId = convIdRef.current ?? pendingConversationIdRef.current;
     if (proposalMessage && persistedConversationId) {
-      void persistAssistantSnapshot(proposalMessage as Record<string, unknown>, persistedConversationId);
+      void persistAssistantSnapshot(proposalMessage as unknown as Record<string, unknown>, persistedConversationId, {
+        toolActivity: proposalMessage.id ? toolActivityRef.current[proposalMessage.id] || [] : [],
+        serverToolEvents: proposalMessage.id ? serverToolEventsRef.current[proposalMessage.id] || [] : [],
+      });
     }
 
     if (!conversationId && pendingConversationIdRef.current) {
@@ -1272,6 +1449,7 @@ When the user asks you to make changes:
     }
   }, [
     autoApproveRepoChanges,
+    conversationAutoApproveEnabled,
     conversationId,
     isStreaming,
     messages,
@@ -1373,6 +1551,9 @@ When the user asks you to make changes:
         if (!path) continue;
         const knownPaths = getRepoToolExistingPaths(scopeId);
         const resolvedAction = resolveRepoWriteAction(action, path, knownPaths);
+        if (resolvedAction === 'delete' && !knownPaths.has(path)) {
+          continue;
+        }
         const existing = useChangesetStore.getState().getChangeset(scopeId).changes[path];
         const originalContent = existing?.originalContent ?? useChangesetStore.getState().getChangeset(scopeId).repoFileCache[path] ?? '';
         addChange({
@@ -1525,6 +1706,7 @@ When the user asks you to make changes:
           files: preview.files as PreviewFile[],
           activeFileId: preview.activeFileId,
           projectType: preview.projectType as ProjectType,
+          railWidth: typeof (preview as Record<string, unknown>).railWidth === 'number' ? (preview as Record<string, unknown>).railWidth as number : 320,
           activeView:
             preview.activeView === 'changes'
               ? 'changes'
@@ -1564,10 +1746,11 @@ When the user asks you to make changes:
     // until the next conversation is assigned. This prevents losing streaming responses.
 
     // Don't hydrate or reset messages while streaming — it would clobber the live buffer.
-    // The effect will re-run once streaming ends (isStreaming is in deps).
+    // Also wait until the AI SDK session ID catches up with the visible conversation so
+    // persisted messages never hydrate into the previous conversation's session bucket.
     // Note: prevConversationIdRef is NOT updated here so that the deferred re-run
     // still sees the actual previous conversation and performs the full switch.
-    if (isStreaming) return;
+    if (isStreaming || aiChatSessionId !== chatSessionId) return;
 
     const prevConvId = prevConversationIdRef.current;
     prevConversationIdRef.current = conversationId;
@@ -1593,7 +1776,7 @@ When the user asks you to make changes:
           psStore.replacePreview(scopeId, psStore.getPreview(prevScopeId));
         }
 
-        // When stableChatSessionIdRef changed (draft→convId), the AI SDK resets
+        // When the AI SDK session ID changed (draft→convId), the AI SDK resets
         // its internal message store to []. If that happened, hydrate from DB
         // so the user message and assistant response aren't lost.
         if (messagesRef.current.length === 0) {
@@ -1646,12 +1829,13 @@ When the user asks you to make changes:
     // Clear hermes tool activity and server-side detection flag on conversation switch
     setToolActivityMap({});
     setAgentStatus(null);
+    setConversationAutoApproveEnabled(false);
     toolActivityRef.current = {};
     serverToolEventsRef.current = {};
     serverToolEventKeysRef.current = {};
     serverSideToolsDetectedRef.current = false;
 
-  }, [conversationId, safeSetMessages, panelId, resetPanelFileState, restoreFileState, saveConversationFiles, hydrateConversationMessages, isStreaming, scopeId]);
+  }, [aiChatSessionId, chatSessionId, conversationId, safeSetMessages, panelId, resetPanelFileState, restoreFileState, saveConversationFiles, hydrateConversationMessages, isStreaming, scopeId]);
 
   // Auto-save file state (debounced) whenever the panel's file state changes
   useEffect(() => {
@@ -1711,9 +1895,10 @@ When the user asks you to make changes:
       return;
     }
 
-    // Reset auto-continue counter on explicit user messages
+    // Reset auto-continue counter and stop flag on explicit user messages
     unknownFinishRetryRef.current = 0;
     repoStopRetryRef.current = 0;
+    userStoppedRef.current = false;
 
     let convId = conversationId ?? pendingConversationIdRef.current;
     let createdConversationId: string | null = null;
@@ -1786,7 +1971,7 @@ When the user asks you to make changes:
 
     // Sanitize any partial tool invocations from interrupted streams
     const currentMessages = messagesRef.current;
-    const sanitized = sanitizePartialToolCalls(currentMessages);
+    const sanitized = sanitizeRetryMessages(currentMessages);
     if (sanitized !== currentMessages) {
       safeSetMessages(sanitized, true);
     }
@@ -1839,12 +2024,12 @@ When the user asks you to make changes:
     if (createdConversationId && pendingConversationIdRef.current === createdConversationId) {
       skipNextLoadRef.current = true;
       // Don't clear pendingConversationIdRef before onConversationCreated —
-      // it keeps chatSessionId stable until conversationId is set by the parent.
+      // it keeps the active AI chat session stable until conversationId is set by the parent.
       // The conversation-switch effect clears it once conversationId matches.
       onConversationCreated?.(createdConversationId);
     }
     return true;
-  }, [activeRepo, append, buildRequestBody, config, conversationId, createConversation, defaultSystemPrompt, effectiveModel, effectiveProvider, ensureRepoFileTreeLoaded, isRepoMode, onConversationCreated, renameConversation, saveConversationFiles, scopeId, safeSetMessages]);
+  }, [activeRepo, append, buildRequestBody, config, conversationId, createConversation, defaultSystemPrompt, effectiveModel, effectiveProvider, ensureRepoFileTreeLoaded, isRepoMode, onConversationCreated, renameConversation, saveConversationFiles, scopeId, safeSetMessages, sanitizeRetryMessages]);
 
   const handleSend = useCallback(() => {
     if (isStreaming) {
@@ -1959,5 +2144,7 @@ When the user asks you to make changes:
     activeModel: effectiveModel,
     toolActivityMap,
     agentStatus,
+    conversationAutoApproveEnabled,
+    setConversationAutoApprove: setConversationAutoApproveEnabled,
   };
 }

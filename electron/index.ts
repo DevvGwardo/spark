@@ -1,4 +1,4 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, Menu, Notification, Tray, nativeImage, shell } from 'electron'
+import { app, BrowserView, BrowserWindow, globalShortcut, ipcMain, Menu, Notification, Tray, nativeImage, shell } from 'electron'
 import { existsSync } from 'fs'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
@@ -8,6 +8,7 @@ let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let apiPort: number = 3001
 let dockBounceId: number | null = null
+let miniBrowserView: BrowserView | null = null
 const dockIconPath = join(__dirname, '../../build/icon.png')
 
 interface AttentionRequestPayload {
@@ -70,8 +71,18 @@ async function createWindow() {
     }
   })
 
-  // Content Security Policy
+  // Content Security Policy — only apply to the main window, not the BrowserView
   mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    // Skip CSP injection for BrowserView (mini browser) — it needs full web access for sites like YouTube
+    if (miniBrowserView && details.webContentsId === miniBrowserView.webContents.id) {
+      callback({ responseHeaders: details.responseHeaders })
+      return
+    }
+    // Also skip for any non-main-window webContents (safety net)
+    if (details.webContentsId !== mainWindow.webContents.id) {
+      callback({ responseHeaders: details.responseHeaders })
+      return
+    }
     callback({
       responseHeaders: {
         ...details.responseHeaders,
@@ -215,6 +226,112 @@ ipcMain.handle('app:notify-attention', (_event, payload?: AttentionRequestPayloa
 
 ipcMain.handle('app:clear-attention', () => {
   clearAttentionRequest()
+})
+
+// ── Mini Browser (BrowserView) management ───────────────────────────
+ipcMain.handle('browser:create', (_event, url?: string) => {
+  if (!mainWindow) return
+  if (miniBrowserView) {
+    mainWindow.removeBrowserView(miniBrowserView)
+    miniBrowserView.webContents.close()
+    miniBrowserView = null
+  }
+  miniBrowserView = new BrowserView({
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: false, // Disabled: sandbox blocks media playback (YouTube, etc.)
+      plugins: true,  // Allow media plugins if needed
+    }
+  })
+  mainWindow.addBrowserView(miniBrowserView)
+  // Use getContentBounds() — BrowserView coords are relative to content area, not window frame
+  const bounds = mainWindow.getContentBounds()
+  const TOOLBAR_HEIGHT = 36
+  // Default: bottom-right corner, 600x400, with some padding from edges
+  miniBrowserView.setBounds({
+    x: bounds.width - 620,
+    y: bounds.height - 460 + TOOLBAR_HEIGHT,
+    width: 600,
+    height: 400 - TOOLBAR_HEIGHT,
+  })
+  miniBrowserView.setAutoResize({ width: false, height: false })
+  const initialUrl = url || 'about:blank'
+  if (initialUrl !== 'about:blank') {
+    try {
+      const parsed = new URL(initialUrl);
+      if (!['http:', 'https:'].includes(parsed.protocol)) {
+        console.warn('Blocked creation with non-http URL:', initialUrl);
+        return;
+      }
+    } catch {
+      console.warn('Invalid URL:', initialUrl);
+      return;
+    }
+  }
+  miniBrowserView.webContents.loadURL(initialUrl)
+})
+
+ipcMain.handle('browser:navigate', (_event, url: string) => {
+  try {
+    const parsed = new URL(url);
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      console.warn('Blocked navigation to non-http URL:', url);
+      return;
+    }
+  } catch {
+    console.warn('Invalid URL:', url);
+    return;
+  }
+  miniBrowserView?.webContents.loadURL(url)
+})
+
+ipcMain.handle('browser:go-back', () => {
+  if (miniBrowserView?.webContents.canGoBack()) {
+    miniBrowserView.webContents.goBack()
+  }
+})
+
+ipcMain.handle('browser:go-forward', () => {
+  if (miniBrowserView?.webContents.canGoForward()) {
+    miniBrowserView.webContents.goForward()
+  }
+})
+
+ipcMain.handle('browser:close', () => {
+  if (miniBrowserView && mainWindow) {
+    mainWindow.removeBrowserView(miniBrowserView)
+    miniBrowserView.webContents.close()
+    miniBrowserView = null
+  }
+})
+
+ipcMain.handle('browser:resize', (_event, bounds: { x: number; y: number; width: number; height: number }) => {
+  if (!miniBrowserView || !mainWindow) return;
+  const winBounds = mainWindow.getContentBounds();
+  // BrowserView y must account for the 36px toolbar — never let it overlap the URL bar.
+  // bounds.y is already the BrowserView's y (passed from renderer as position.y + TOOLBAR_HEIGHT).
+  // Just clamp to stay below toolbar area and within window.
+  const TOOLBAR_HEIGHT = 36;
+  const clamped = {
+    x: Math.max(0, Math.min(bounds.x, winBounds.width - 100)),
+    y: Math.max(TOOLBAR_HEIGHT, Math.min(bounds.y, winBounds.height - 100)),
+    width: Math.max(200, Math.min(bounds.width, winBounds.width)),
+    height: Math.max(150, Math.min(bounds.height, winBounds.height - TOOLBAR_HEIGHT)),
+  };
+  miniBrowserView.setBounds(clamped);
+})
+
+ipcMain.handle('browser:show', () => {
+  if (miniBrowserView && mainWindow) {
+    mainWindow.addBrowserView(miniBrowserView)
+  }
+})
+
+ipcMain.handle('browser:hide', () => {
+  if (miniBrowserView && mainWindow) {
+    mainWindow.removeBrowserView(miniBrowserView)
+  }
 })
 
 // ── Terminal PTY management ──────────────────────────────────────────
@@ -362,6 +479,14 @@ app.on('will-quit', () => {
 
 // Cleanup preview-manager child processes on quit
 app.on('before-quit', () => {
+  // Destroy mini browser view
+  if (miniBrowserView) {
+    if (mainWindow) {
+      mainWindow.removeBrowserView(miniBrowserView)
+    }
+    miniBrowserView.webContents.close()
+    miniBrowserView = null
+  }
   // Kill all terminal PTY processes
   for (const [, term] of terminals) {
     term.kill()

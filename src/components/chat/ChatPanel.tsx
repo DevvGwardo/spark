@@ -9,6 +9,7 @@ import { useChangesetStore } from '@/stores/changeset-store';
 import { usePreviewStore } from '@/stores/preview-store';
 import { useActivityStore } from '@/stores/activity-store';
 import { PanelProvider } from '@/contexts/PanelContext';
+import { CommandCallbacksProvider } from '@/contexts/CommandCallbacksContext';
 import { cn } from '@/lib/utils';
 import { SlotNumber } from '@/components/ui/SlotNumber';
 import { getChatScopeId } from '@/lib/chat-scope';
@@ -71,7 +72,25 @@ function StandardChatRuntime({
 }) {
   const scopeId = getChatScopeId(panelId, conversationId);
   const chat = useChat(conversationId, onConversationCreated, undefined, panelId, onOpenPR, scopeId);
-  return <ChatRuntimeArea conversationId={conversationId} chat={chat} />;
+  const setConversationForPanel = usePanelStore((s) => s.setConversationForPanel);
+  const renameConversation = useChatStore((s) => s.renameConversation);
+
+  const commandCallbacks = {
+    stopAgent: chat.handleStop,
+    retryMessage: chat.handleRegenerate,
+    newConversation: conversationId
+      ? () => setConversationForPanel(panelId, null)
+      : undefined,
+    renameConversation: conversationId
+      ? (title: string) => renameConversation(conversationId, title)
+      : undefined,
+  };
+
+  return (
+    <CommandCallbacksProvider callbacks={commandCallbacks}>
+      <ChatRuntimeArea conversationId={conversationId} chat={chat} />
+    </CommandCallbacksProvider>
+  );
 }
 
 function BackgroundStandardChatRuntime({

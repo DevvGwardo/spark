@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
 export type AppTab = 'chat' | 'github' | 'analyzer' | 'knowledge';
+export type SubTab = 'overview' | 'threads' | 'chats' | 'cron' | 'memories' | 'skills' | 'usage';
 
 export interface PendingPanelPrompt {
   content: string;
@@ -18,6 +19,9 @@ interface UIState {
   terminalOpen: boolean;
   terminalHeight: number;
   activeTab: AppTab;
+  activeSubTab: SubTab;
+  miniBrowserOpen: boolean;
+  miniBrowserUrl: string;
   pendingPanelPrompts: Record<string, PendingPanelPrompt | undefined>;
   preservePanelRepoHandoffs: Record<string, boolean | undefined>;
   setSidebarOpen: (v: boolean) => void;
@@ -29,11 +33,18 @@ interface UIState {
   setTerminalOpen: (v: boolean) => void;
   toggleTerminal: () => void;
   setTerminalHeight: (h: number) => void;
+  setMiniBrowserOpen: (v: boolean) => void;
+  setMiniBrowserUrl: (url: string) => void;
   queuePanelPrompt: (panelId: string, prompt: PendingPanelPrompt) => void;
   clearPanelPrompt: (panelId: string) => void;
   markPanelRepoHandoff: (panelId: string) => void;
   clearPanelRepoHandoff: (panelId: string) => void;
   setActiveTab: (tab: AppTab) => void;
+  setActiveSubTab: (tab: SubTab) => void;
+  selectedCronJobId: string | null;
+  setSelectedCronJobId: (id: string | null) => void;
+  selectedSessionId: string | null;
+  setSelectedSessionId: (id: string | null) => void;
 }
 
 export const useUIStore = create<UIState>()(
@@ -47,6 +58,9 @@ export const useUIStore = create<UIState>()(
       terminalOpen: false,
       terminalHeight: 300,
       activeTab: 'chat',
+      activeSubTab: 'threads',
+      miniBrowserOpen: false,
+      miniBrowserUrl: 'about:blank',
       pendingPanelPrompts: {},
       preservePanelRepoHandoffs: {},
       setSidebarOpen: (v) => set({ sidebarOpen: v }),
@@ -58,6 +72,8 @@ export const useUIStore = create<UIState>()(
       setTerminalOpen: (v) => set({ terminalOpen: v }),
       toggleTerminal: () => set((s) => ({ terminalOpen: !s.terminalOpen })),
       setTerminalHeight: (h) => set({ terminalHeight: Math.max(150, Math.min(600, h)) }),
+      setMiniBrowserOpen: (v) => set({ miniBrowserOpen: v }),
+      setMiniBrowserUrl: (url) => set({ miniBrowserUrl: url }),
       queuePanelPrompt: (panelId, prompt) =>
         set((state) => ({
           pendingPanelPrompts: {
@@ -89,6 +105,11 @@ export const useUIStore = create<UIState>()(
           };
         }),
       setActiveTab: (tab) => set({ activeTab: tab }),
+      setActiveSubTab: (tab) => set({ activeSubTab: tab }),
+      selectedCronJobId: null,
+      setSelectedCronJobId: (id) => set({ selectedCronJobId: id }),
+      selectedSessionId: null,
+      setSelectedSessionId: (id) => set({ selectedSessionId: id }),
     }),
     {
       name: 'ui-store',

@@ -10,7 +10,10 @@
     "strict": false,
     "skipLibCheck": true,
     "esModuleInterop": true,
+    "paths": {
+      "@/*": ["./src/*"]
+    },
     "types": ["node"]
   },
-  "include": ["electron/**/*.ts", "server/**/*.ts"]
+  "include": ["electron/**/*.ts", "server/**/*.ts", "src/**/*.d.ts", "src/vite-env.d.ts"]
 }

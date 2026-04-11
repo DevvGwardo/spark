@@ -377,7 +377,8 @@ function unwrapJsonPayload(value: unknown): unknown {
       return current;
     }
 
-    const wrapperKey = JSON_WRAPPER_KEYS.find((key) => key in current);
+    const rec = current;
+    const wrapperKey = JSON_WRAPPER_KEYS.find((key) => key in rec);
     if (!wrapperKey) {
       return current;
     }

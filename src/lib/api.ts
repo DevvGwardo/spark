@@ -201,7 +201,7 @@ export async function fetchRepoFileTreeResult(
       };
     }
 
-    const items: Array<{ path: string; type: string }> = data.items || [];
+    const items = (data.items || []) as Array<{ path: string; type: string }>;
     return {
       paths: items
         .filter(i => i.type === 'file')
@@ -369,6 +369,7 @@ export interface LinkedPR {
   title: string;
   html_url: string;
   state: string;
+  draft?: boolean;
   user: { login: string };
   created_at: string;
 }

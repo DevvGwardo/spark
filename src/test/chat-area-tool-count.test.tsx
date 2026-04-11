@@ -145,7 +145,6 @@ describe('ChatArea streaming tool count', () => {
               content: '',
               toolInvocations: [
                 {
-                  toolCallId: 'old-tool',
                   toolName: 'read_repo_file',
                   state: 'result',
                   args: { path: 'src/old.ts' },

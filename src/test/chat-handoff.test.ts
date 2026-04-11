@@ -28,7 +28,7 @@ const { dbMock, aiChatState } = vi.hoisted(() => ({
   },
   aiChatState: {
     messages: [] as Array<{ id: string; role: string; content: string }>,
-    append: vi.fn<(_: { role: string; content: string }) => Promise<void>>(),
+    append: vi.fn<(_: { role: string; content: string }, _opts?: Record<string, unknown>) => Promise<void>>(),
     status: 'ready',
     stop: vi.fn(),
     reload: vi.fn(),
@@ -1013,10 +1013,9 @@ describe('new thread handoff', () => {
       | ((value: { toolCall: { toolName: string; args: Record<string, unknown> } }) => Promise<unknown>)
       | undefined;
     const onFinish = latestUseChatOptions?.onFinish as
-      | ((value: {
-          message: { id: string; role: string; content: string; parts?: unknown[]; toolInvocations?: unknown[] };
-          finishReason?: string;
-        }) => Promise<void>)
+      | ((message: {
+          id: string; role: string; content: string; parts?: unknown[]; toolInvocations?: unknown[];
+        }, options?: { finishReason?: string }) => Promise<void>)
       | undefined;
 
     expect(onToolCall).toBeDefined();
@@ -1187,6 +1186,32 @@ describe('new thread handoff', () => {
     expect(toolResult).toBe('Handled server-side');
   });
 
+  it('rejects repo delete tool calls for paths that do not exist', async () => {
+    renderHook(() => useChat('conv-1'));
+
+    const onToolCall = latestUseChatOptions?.onToolCall as
+      | ((value: { toolCall: { toolName: string; args: Record<string, unknown> } }) => Promise<unknown>)
+      | undefined;
+
+    expect(onToolCall).toBeDefined();
+
+    let deleteResult: unknown;
+    await act(async () => {
+      deleteResult = await onToolCall?.({
+        toolCall: {
+          toolName: 'delete_repo_file',
+          args: {
+            path: 'src/missing.ts',
+            reason: 'Remove dead code',
+          },
+        },
+      });
+    });
+
+    expect(deleteResult).toBe('Error: delete_repo_file can only delete existing repo files. `src/missing.ts` is not in the indexed repo tree or staged changes.');
+    expect(useChangesetStore.getState().getChangeset('default').changes['src/missing.ts']).toBeUndefined();
+  });
+
   it('still stages text-only repo edits after an earlier server-side repo read', async () => {
     useSettingsStore.setState((state) => ({
       ...state,
@@ -1288,6 +1313,263 @@ body { color: white; }
         staged: true,
       });
     });
+  });
+
+  it('persists Hermes server-side repo edits even when the final assistant message is otherwise empty', async () => {
+    useSettingsStore.setState((state) => ({
+      ...state,
+      activeProvider: 'hermes',
+      providers: {
+        ...state.providers,
+        hermes: {
+          ...state.providers.hermes,
+          apiKey: 'test-key',
+          model: 'meta-llama/llama-4-maverick',
+        },
+      },
+    }));
+    useChangesetStore.getState().setActiveRepo('default', {
+      owner: 'octo',
+      name: 'cloudchat',
+      defaultBranch: 'main',
+      fullName: 'octo/cloudchat',
+    });
+
+    renderHook(() => useChat('conv-1'));
+
+    const fetchInterceptor = latestUseChatOptions?.fetch as ((url: string, init?: RequestInit) => Promise<Response>) | undefined;
+    const onFinish = latestUseChatOptions?.onFinish as
+      | ((message: {
+          id: string;
+          role: string;
+          content: string;
+          toolInvocations?: unknown[];
+          parts?: unknown[];
+        }, options?: { finishReason?: string }) => Promise<void>)
+      | undefined;
+
+    expect(fetchInterceptor).toBeDefined();
+    expect(onFinish).toBeDefined();
+
+    const payload = [
+      formatDataStreamPart('data', [{
+        type: 'repo_batch_edit',
+        changes: [
+          {
+            path: 'src/App.tsx',
+            action: 'edit',
+            content: 'export default function App() { return <main>Updated</main>; }',
+            originalContent: 'export default function App() { return null; }',
+            description: 'Refresh the app shell',
+          },
+          {
+            path: 'src/styles.css',
+            action: 'edit',
+            content: 'body { color: white; }',
+            originalContent: 'body { color: black; }',
+            description: 'Refresh the visual styling',
+          },
+        ],
+      }]),
+      formatDataStreamPart('finish_message', {
+        finishReason: 'stop',
+        usage: { promptTokens: 1, completionTokens: 1 },
+      }),
+    ].join('');
+
+    const originalFetch = global.fetch;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(payload));
+            controller.close();
+          },
+        }),
+        { status: 200 },
+      ),
+    ));
+
+    try {
+      await act(async () => {
+        const intercepted = await fetchInterceptor?.('http://localhost:3001/functions/v1/chat');
+        expect(intercepted).toBeDefined();
+        await intercepted?.text();
+      });
+    } finally {
+      vi.stubGlobal('fetch', originalFetch);
+    }
+
+    dbMock.messages.add.mockClear();
+
+    await act(async () => {
+      await onFinish?.(
+        {
+          id: 'assistant-empty-after-server-edit',
+          role: 'assistant',
+          content: '',
+          toolInvocations: [],
+        },
+        { finishReason: 'stop' },
+      );
+    });
+
+    expect(dbMock.messages.add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'assistant-empty-after-server-edit',
+        conversationId: 'conv-1',
+        role: 'assistant',
+        content: '',
+        toolInvocations: [
+          expect.objectContaining({
+            toolName: 'batch_edit_repo_files',
+            state: 'result',
+            args: {
+              changes: [
+                expect.objectContaining({
+                  path: 'src/App.tsx',
+                  action: 'edit',
+                }),
+                expect.objectContaining({
+                  path: 'src/styles.css',
+                  action: 'edit',
+                }),
+              ],
+            },
+          }),
+        ],
+      }),
+    );
+  });
+
+  it('injects a synthetic assistant turn when a Hermes repo turn finishes with only data events', async () => {
+    useSettingsStore.setState((state) => ({
+      ...state,
+      activeProvider: 'hermes',
+      providers: {
+        ...state.providers,
+        hermes: {
+          ...state.providers.hermes,
+          apiKey: 'test-key',
+          model: 'MiniMax-M2.7',
+        },
+      },
+    }));
+    useChangesetStore.getState().setActiveRepo('default', {
+      owner: 'octo',
+      name: 'cloudchat',
+      defaultBranch: 'main',
+      fullName: 'octo/cloudchat',
+    });
+    aiChatState.messages = [
+      {
+        id: 'user-only-before-finish',
+        role: 'user',
+        content: 'Review the codebase for performance bottlenecks and refactor the most impactful areas for better efficiency.',
+      },
+    ];
+
+    renderHook(() => useChat('conv-1'));
+
+    const fetchInterceptor = latestUseChatOptions?.fetch as ((url: string, init?: RequestInit) => Promise<Response>) | undefined;
+    const onFinish = latestUseChatOptions?.onFinish as
+      | ((message?: {
+          id?: string;
+          role?: string;
+          content?: string;
+          toolInvocations?: unknown[];
+          parts?: unknown[];
+        }, options?: { finishReason?: string }) => Promise<void>)
+      | undefined;
+
+    expect(fetchInterceptor).toBeDefined();
+    expect(onFinish).toBeDefined();
+
+    const payload = [
+      formatDataStreamPart('data', [{
+        type: 'repo_batch_edit',
+        changes: [
+          {
+            path: 'src/hooks/useChat.ts',
+            action: 'edit',
+            content: 'patched',
+            originalContent: 'original',
+            description: 'Preserve tool-only Hermes turns in the transcript',
+          },
+        ],
+      }]),
+      formatDataStreamPart('finish_message', {
+        finishReason: 'stop',
+        usage: { promptTokens: 1, completionTokens: 1 },
+      }),
+    ].join('');
+
+    const originalFetch = global.fetch;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(payload));
+            controller.close();
+          },
+        }),
+        { status: 200 },
+      ),
+    ));
+
+    try {
+      await act(async () => {
+        const intercepted = await fetchInterceptor?.('http://localhost:3001/functions/v1/chat');
+        expect(intercepted).toBeDefined();
+        await intercepted?.text();
+      });
+    } finally {
+      vi.stubGlobal('fetch', originalFetch);
+    }
+
+    dbMock.messages.add.mockClear();
+    aiChatState.setMessages.mockClear();
+
+    await act(async () => {
+      await onFinish?.(undefined, { finishReason: 'stop' });
+    });
+
+    expect(aiChatState.setMessages).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: expect.any(String),
+          role: 'assistant',
+          content: '',
+          toolInvocations: [
+            expect.objectContaining({
+              toolName: 'batch_edit_repo_files',
+              state: 'result',
+              args: {
+                changes: [
+                  expect.objectContaining({
+                    path: 'src/hooks/useChat.ts',
+                    action: 'edit',
+                  }),
+                ],
+              },
+            }),
+          ],
+        }),
+      ]),
+    );
+    expect(dbMock.messages.add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: 'conv-1',
+        role: 'assistant',
+        content: '',
+        toolInvocations: [
+          expect.objectContaining({
+            toolName: 'batch_edit_repo_files',
+            state: 'result',
+          }),
+        ],
+      }),
+    );
   });
 
   it('auto-continues read-only Hermes repo analysis after a server-side repo read ends with an unknown finish', async () => {
@@ -1807,7 +2089,7 @@ Next I'll inspect the remaining component and then complete the rest of the acce
           },
         ],
       },
-    ] as const;
+    ];
 
     for (const [index, stopMessage] of stopMessages.entries()) {
       await act(async () => {
@@ -2332,6 +2614,21 @@ body { color: white; }
     aiChatState.status = 'ready';
     appendDeferred.resolve();
     await appendDeferred.promise;
+  });
+
+  it('switches the AI chat session when changing conversations while idle', async () => {
+    const { rerender } = renderHook(
+      ({ convId }) => useChat(convId),
+      { initialProps: { convId: 'conv-1' as string | null } },
+    );
+
+    expect((latestUseChatOptions as Record<string, unknown>)?.id).toBe('conv-1:default');
+
+    rerender({ convId: 'conv-2' });
+
+    await waitFor(() => {
+      expect((latestUseChatOptions as Record<string, unknown>)?.id).toBe('conv-2:default');
+    });
   });
 
   it('blocks setMessages during streaming unless forced', async () => {

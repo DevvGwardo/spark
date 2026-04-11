@@ -20,6 +20,21 @@ export const DIRECT_COMPAT_PROXY_PROVIDERS = new Set([
   'kimi-coding',
 ]);
 
+function createUpstreamHttpError(message: string, status: number, responseBody?: string): Error & {
+  status: number;
+  responseBody?: string;
+} {
+  const error = new Error(message) as Error & {
+    status: number;
+    responseBody?: string;
+  };
+  error.status = status;
+  if (responseBody) {
+    error.responseBody = responseBody;
+  }
+  return error;
+}
+
 export function shouldDirectProxyCompatibleProvider(provider: string, hasServerRepoContext: boolean): boolean {
   return DIRECT_COMPAT_PROXY_PROVIDERS.has(provider) && !hasServerRepoContext;
 }
@@ -328,7 +343,11 @@ export async function proxyHermesAgentLoopToDataStream(input: {
 
   if (!bridgeResponse.ok) {
     const errorText = await bridgeResponse.text().catch(() => '');
-    throw new Error(errorText || `Hermes bridge error (${bridgeResponse.status})`);
+    throw createUpstreamHttpError(
+      errorText || `Hermes bridge error (${bridgeResponse.status})`,
+      bridgeResponse.status,
+      errorText,
+    );
   }
 
   await proxySseToDataStream({
@@ -429,7 +448,11 @@ export async function proxyHermesSwarmToDataStream(input: {
 
   if (!bridgeResponse.ok) {
     const errorText = await bridgeResponse.text().catch(() => '');
-    throw new Error(errorText || `Hermes bridge swarm error (${bridgeResponse.status})`);
+    throw createUpstreamHttpError(
+      errorText || `Hermes bridge swarm error (${bridgeResponse.status})`,
+      bridgeResponse.status,
+      errorText,
+    );
   }
 
   await proxySseToDataStream({

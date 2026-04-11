@@ -13,6 +13,37 @@ function jsonResponse(body: unknown) {
   });
 }
 
+/** Build an SSE Response that streams progress events then a final result. */
+function sseVerificationResponse(result: unknown) {
+  const progressEvents = [
+    { type: 'progress', step: 'cloning', label: 'Cloning repository snapshot', detail: 'Pulling the base branch into a clean workspace.' },
+    { type: 'progress', step: 'applying_changes', label: 'Applying file changes', detail: 'Writing staged changes into the cloned workspace.' },
+    { type: 'progress', step: 'finding_workspace', label: 'Finding project workspace', detail: 'Locating the package.json closest to the changed files.' },
+    { type: 'progress', step: 'installing', label: 'Installing dependencies', detail: 'Running npm install in repo root.' },
+    { type: 'progress', step: 'running_scripts', label: 'Running validation scripts', detail: 'Checking lint, types, tests, and build scripts when available.' },
+    { type: 'progress', step: 'reviewing', label: 'Generating provider review', detail: 'Asking the selected model for a final code review pass.' },
+  ];
+
+  const chunks = [
+    ...progressEvents.map((e) => `data: ${JSON.stringify(e)}\n\n`),
+    `data: ${JSON.stringify({ type: 'result', ...(result as Record<string, unknown>) })}\n\n`,
+  ];
+
+  const body = new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) {
+        controller.enqueue(new TextEncoder().encode(chunk));
+      }
+      controller.close();
+    },
+  });
+
+  return new Response(body, {
+    status: 200,
+    headers: { 'Content-Type': 'text/event-stream' },
+  });
+}
+
 describe('CreatePRModal', () => {
   beforeEach(() => {
     useSettingsStore.setState({
@@ -34,7 +65,7 @@ describe('CreatePRModal', () => {
     vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const payload = JSON.parse(String(init?.body || '{}'));
       if (payload.action === 'verify-changes') {
-        return jsonResponse({
+        return sseVerificationResponse({
           summary: {
             status: 'passed',
             findings: 0,
@@ -188,7 +219,7 @@ describe('CreatePRModal', () => {
       const payload = JSON.parse(String(init?.body || '{}'));
 
       if (payload.action === 'verify-changes') {
-        return jsonResponse({
+        return sseVerificationResponse({
           summary: {
             status: 'passed',
             findings: 0,
@@ -374,7 +405,7 @@ describe('CreatePRModal', () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const payload = JSON.parse(String(init?.body || '{}'));
       if (payload.action === 'verify-changes') {
-        return jsonResponse({
+        return sseVerificationResponse({
           summary: {
             status: 'passed',
             findings: 0,
@@ -515,7 +546,7 @@ describe('CreatePRModal', () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const payload = JSON.parse(String(init?.body || '{}'));
       if (payload.action === 'verify-changes') {
-        return jsonResponse({
+        return sseVerificationResponse({
           summary: {
             status: 'failed',
             findings: 1,
@@ -629,15 +660,85 @@ describe('CreatePRModal', () => {
     expect(await screen.findByText(/pull request #11/i)).toBeInTheDocument();
   });
 
+  it('surfaces GitHub authentication errors from create-pr responses', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const payload = JSON.parse(String(init?.body || '{}'));
+      if (payload.action === 'verify-changes') {
+        return sseVerificationResponse({
+          summary: {
+            status: 'passed',
+            findings: 0,
+            commandsRun: 1,
+            commandsFailed: 0,
+          },
+          review: {
+            status: 'passed',
+            summary: 'No actionable issues found.',
+            findings: [],
+          },
+          commands: [],
+        });
+      }
+
+      if (payload.action === 'create-pr') {
+        return new Response(JSON.stringify({
+          error: 'GitHub API error: {"message":"Bad credentials","status":"401"}',
+        }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      throw new Error(`Unexpected action: ${payload.action}`);
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <CreatePRModal
+        isOpen
+        onClose={() => {}}
+        owner="octo"
+        repo="cloudchat"
+        baseBranch="main"
+        files={[{ path: 'src/App.tsx', content: 'export default 1', action: 'edit' }]}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/feat: polish the workspace shell/i), {
+      target: { value: 'fix: surface auth errors' },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /run checks/i }));
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /^create pr$/i }));
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText(/GitHub authentication failed: Bad credentials\./i)).toBeInTheDocument();
+    expect(screen.getByText(/Update your GitHub PAT in Settings and retry\./i)).toBeInTheDocument();
+    expect(screen.queryByText(/pull request #/i)).not.toBeInTheDocument();
+  });
+
   it('shows a centered verification loader while review and checks are running', async () => {
-    let resolveVerification: ((response: Response) => void) | null = null;
+    let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
 
     vi.stubGlobal('fetch', vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
       const payload = JSON.parse(String(init?.body || '{}'));
       if (payload.action === 'verify-changes') {
-        return new Promise<Response>((resolve) => {
-          resolveVerification = resolve;
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            streamController = controller;
+            // Send the first progress event so the overlay renders step labels
+            const event = { type: 'progress', step: 'cloning', label: 'Cloning repository snapshot', detail: 'Pulling the base branch into a clean workspace.' };
+            controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
+          },
         });
+        return Promise.resolve(new Response(body, { status: 200, headers: { 'Content-Type': 'text/event-stream' } }));
       }
 
       throw new Error(`Unexpected action: ${payload.action}`);
@@ -656,26 +757,23 @@ describe('CreatePRModal', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /run checks/i }));
 
-    expect(await screen.findByRole('status')).toHaveTextContent(/running verification/i);
-    expect(screen.getAllByText(/cloning repository snapshot/i).length).toBeGreaterThan(0);
+    const statusEl = await screen.findByRole('status');
+    expect(statusEl).toHaveTextContent(/cloning repository snapshot/i);
     expect(screen.getByText(/finding project workspace/i)).toBeInTheDocument();
-    expect(screen.getByText(/pulling the base branch into a clean workspace/i)).toBeInTheDocument();
     expect(screen.getByText(/%/)).toBeInTheDocument();
 
-    resolveVerification?.(jsonResponse({
-      summary: {
-        status: 'passed',
-        findings: 0,
-        commandsRun: 2,
-        commandsFailed: 0,
-      },
-      review: {
-        status: 'passed',
-        summary: 'No actionable issues found.',
-        findings: [],
-      },
-      commands: [],
-    }));
+    // Close the stream with the result to finish the verification
+    await act(async () => {
+      const result = {
+        type: 'result',
+        summary: { status: 'passed', findings: 0, commandsRun: 2, commandsFailed: 0 },
+        review: { status: 'passed', summary: 'No actionable issues found.', findings: [] },
+        commands: [],
+      };
+      streamController?.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(result)}\n\n`));
+      streamController?.close();
+      await Promise.resolve();
+    });
 
     await waitFor(() => {
       expect(screen.queryByRole('status')).not.toBeInTheDocument();
@@ -686,7 +784,7 @@ describe('CreatePRModal', () => {
     vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const payload = JSON.parse(String(init?.body || '{}'));
       if (payload.action === 'verify-changes') {
-        return jsonResponse({
+        return sseVerificationResponse({
           summary: {
             status: 'warning',
             findings: 0,

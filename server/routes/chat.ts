@@ -296,8 +296,9 @@ app.post('/functions/v1/chat', async (req, res) => {
 
     // Resolve API key
     let apiKey = '';
-    if (provider === 'openclaw') {
-      apiKey = '';
+    if (provider === 'openclaw' || provider === 'hermes') {
+      // These providers can use local credentials fallback - no API key required from client
+      apiKey = api_key ?? '';
     } else {
       apiKey = api_key;
       if (!apiKey) {
@@ -310,6 +311,15 @@ app.post('/functions/v1/chat', async (req, res) => {
     // so the AI doesn't waste turns trying to access a phantom repo.
     const rawGithubPAT = typeof req.body.github_pat === 'string' ? req.body.github_pat.trim() : req.body.github_pat;
     const githubPAT = isValidGitHubPAT(rawGithubPAT) ? rawGithubPAT : undefined;
+
+    // Fail fast with a clear error if a PAT was provided but failed format validation
+    if (activeRepo && rawGithubPAT && !githubPAT) {
+      console.warn(`[chat] WARNING: github_pat provided but failed validation (prefix=${typeof rawGithubPAT === 'string' ? rawGithubPAT.slice(0, 8) : typeof rawGithubPAT}...) — returning 422`);
+      return sendJson(res, 422, {
+        error: `Your GitHub token format is invalid. CloudChat needs a valid GitHub Personal Access Token with access to ${activeRepo.owner}/${activeRepo.name} to read and edit repository files. Please re-enter your token in Settings → GitHub.`,
+      });
+    }
+
     const requestedLocalRepoPath = resolveAttachedLocalRepoPath(activeRepo?.localPath);
     const hermesToolsetsRequested = parseToolsetList(hermes_toolsets);
     const hermesHasLocalRepoTools = Array.from(HERMES_LOCAL_REPO_TOOLSETS).some((toolset) => hermesToolsetsRequested.has(toolset));
@@ -361,24 +371,13 @@ app.post('/functions/v1/chat', async (req, res) => {
 
     const hermesUsesLocalCloneFallback = provider === 'hermes' && !!activeRepo && !githubPAT && !!resolvedLocalRepoPath;
 
-    if (
-      provider === 'hermes'
-      && activeRepo
-      && !githubPAT
-      && !resolvedLocalRepoPath
-    ) {
-      repoAccessError = `Hermes needs either a GitHub token with access to ${activeRepo.owner}/${activeRepo.name} or a verified local clone path before it can inspect the repository.`;
+    if (activeRepo && !githubPAT && !resolvedLocalRepoPath) {
+      repoAccessError = `Your GitHub token is missing or invalid. CloudChat needs a valid GitHub Personal Access Token with access to ${activeRepo.owner}/${activeRepo.name} to read and edit repository files. Please re-enter your token in Settings → GitHub.`;
     } else if (
       hermesUsesLocalCloneFallback
       && !hermesHasLocalRepoTools
     ) {
       repoAccessError = 'Hermes found the attached local clone, but Files or Terminal access is disabled. Enable a local Hermes toolset or attach a GitHub token for repo access.';
-    } else if (
-      provider === 'openclaw'
-      && activeRepo
-      && !resolvedLocalRepoPath
-    ) {
-      repoAccessError = `OpenClaw needs either a GitHub token with access to ${activeRepo.owner}/${activeRepo.name} or a verified local clone path before it can inspect the repository.`;
     }
 
     // If repo validation failed, return error to client so they can re-select
@@ -547,9 +546,6 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
     };
 
     // githubPAT was already extracted and validated above (before system prompt building)
-    if (activeRepo && rawGithubPAT && !githubPAT) {
-      console.warn(`[chat] WARNING: github_pat provided but failed validation (prefix=${typeof rawGithubPAT === 'string' ? rawGithubPAT.slice(0, 8) : typeof rawGithubPAT}...) — repo tools will be unavailable`);
-    }
     const hasServerRepoContext = !!(activeRepo && githubPAT);
     const shouldForwardHermesRepoContext = provider === 'hermes' && !!(activeRepo && githubPAT);
     const runtimeProvider = resolveRuntimeProvider(provider, { activeRepo });
@@ -597,8 +593,8 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
     console.log(
       `[chat] provider=${provider} runtime=${runtimeProvider} model=${model} activeRepo=${activeRepo?.owner}/${activeRepo?.name || '-'} serverRepoTools=${hasServerRepoContext} hermesExecutionMode=${hermesExecutionMode ?? '-'} msgs=${messages?.length}`,
     );
-    if (activeRepo && !githubPAT && !resolvedLocalRepoPath && (provider === 'hermes' || runtimeProvider === 'hermes')) {
-        console.warn(`[chat] WARNING: activeRepo set (${activeRepo.owner}/${activeRepo.name}) but no github_pat in request body — Hermes won't be able to read repo files`);
+    if (activeRepo && !githubPAT && !resolvedLocalRepoPath) {
+        console.warn(`[chat] WARNING: activeRepo set (${activeRepo.owner}/${activeRepo.name}) but no valid github_pat in request body — repo tools unavailable`);
     }
 
     // Swarm mode: Architect → Implementor → Reviewer pipeline

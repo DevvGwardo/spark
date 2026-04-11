@@ -2,6 +2,14 @@ import os
 import json
 import asyncio
 import time
+import threading
+import subprocess
+import uuid
+import sys
+import hashlib
+import sqlite3
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 import httpx
 from fastapi import FastAPI, Request, HTTPException
@@ -9,6 +17,913 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 app: FastAPI = None  # created after brain-lifespan is defined
+
+# --- Session tracking for Hermes Chats view ---
+_sessions: dict[str, dict] = {}
+_sessions_lock = threading.Lock()
+_MAX_SESSION_CHAT_MESSAGES = 200
+_MAX_SESSION_MESSAGE_CHARS = 12000
+
+
+def _iso_to_unix(iso_str: str) -> float:
+    """Convert ISO timestamp string to unix seconds."""
+    try:
+        return datetime.fromisoformat(iso_str).timestamp()
+    except Exception:
+        return datetime.now(timezone.utc).timestamp()
+
+
+def _save_session_to_db(session: dict) -> None:
+    """Persist a session row to hermes state.db. Skips if DB doesn't exist."""
+    try:
+        if not _HERMES_STATE_DB.exists():
+            return
+        started_at = _iso_to_unix(session.get("created_at", ""))
+        ended_at_raw = session.get("updated_at")
+        ended_at = _iso_to_unix(ended_at_raw) if ended_at_raw else None
+        status = session.get("status", "active")
+        end_reason = None
+        if status == "completed":
+            end_reason = "completed"
+        elif status == "error":
+            end_reason = "error"
+        with sqlite3.connect(str(_HERMES_STATE_DB)) as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO sessions (id, source, model, started_at, ended_at, end_reason, message_count, title) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    session.get("id"),
+                    "bridge",
+                    session.get("model"),
+                    started_at,
+                    ended_at,
+                    end_reason,
+                    session.get("messages", 0),
+                    session.get("firstUserMessage", "")[:100],
+                ),
+            )
+    except Exception:
+        pass  # Best-effort; don't break request handling
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _trim_session_message_content(content: str) -> str:
+    if len(content) <= _MAX_SESSION_MESSAGE_CHARS:
+        return content
+    head = _MAX_SESSION_MESSAGE_CHARS // 2
+    tail = _MAX_SESSION_MESSAGE_CHARS - head
+    return (
+        content[:head]
+        + "\n\n...[session message truncated]...\n\n"
+        + content[-tail:]
+    )
+
+
+def _message_field(message, field: str):
+    if isinstance(message, dict):
+        return message.get(field)
+    return getattr(message, field, None)
+
+
+def _normalize_message_role(message) -> str:
+    role = str(_message_field(message, "role") or "").strip().lower()
+    if role in {"system", "user", "assistant", "tool"}:
+        return role
+    return "assistant"
+
+
+def _normalize_message_content(message) -> str:
+    content = _message_field(message, "content")
+    if content is None:
+        return ""
+    return str(content)
+
+
+def _normalize_chat_messages(messages) -> list[dict]:
+    normalized: list[dict] = []
+    for message in messages or []:
+        normalized.append(
+            {
+                "role": _normalize_message_role(message),
+                "content": _normalize_message_content(message),
+            }
+        )
+    return normalized
+
+
+def _append_session_chat_chunk(session_id: str, role: str, text: str):
+    if not text:
+        return
+
+    with _sessions_lock:
+        session = _sessions.get(session_id)
+        if not session:
+            return
+
+        chat = session.setdefault("chat", [])
+        if (
+            role == "assistant"
+            and chat
+            and chat[-1].get("role") == "assistant"
+        ):
+            merged = f"{chat[-1].get('content', '')}{text}"
+            chat[-1]["content"] = _trim_session_message_content(merged)
+        else:
+            chat.append(
+                {
+                    "role": role,
+                    "content": _trim_session_message_content(text),
+                }
+            )
+
+        if len(chat) > _MAX_SESSION_CHAT_MESSAGES:
+            session["chat"] = chat[-_MAX_SESSION_CHAT_MESSAGES:]
+
+        session["messages"] = len(session.get("chat", []))
+        session["updated_at"] = _now_iso()
+
+
+def _session_summary(session: dict) -> dict:
+    summary = dict(session)
+    summary.pop("chat", None)
+    return summary
+
+
+# --- Hermes workspace inspection/editing ---
+_HERMES_HOME = Path(os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes")))
+_HERMES_STATE_DB = _HERMES_HOME / "state.db"
+_HERMES_SKILLS_DIR = _HERMES_HOME / "skills"
+_HERMES_CANONICAL_FILES: dict[str, dict[str, object]] = {
+    "soul": {
+        "label": "SOUL.md",
+        "description": "System identity and operating posture",
+        "path": _HERMES_HOME / "SOUL.md",
+    },
+    "user": {
+        "label": "USER.md",
+        "description": "User-facing working memory",
+        "path": _HERMES_HOME / "memories" / "USER.md",
+    },
+    "memory": {
+        "label": "MEMORY.md",
+        "description": "Shared durable memory",
+        "path": _HERMES_HOME / "memories" / "MEMORY.md",
+    },
+}
+
+
+def _iso_from_unix(timestamp: Optional[float]) -> Optional[str]:
+    if timestamp in (None, ""):
+        return None
+    try:
+        return datetime.fromtimestamp(float(timestamp), tz=timezone.utc).isoformat()
+    except Exception:
+        return None
+
+
+def _iso_from_stat(path: Path) -> Optional[str]:
+    if not path.exists():
+        return None
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+    except Exception:
+        return None
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ""
+    except UnicodeDecodeError:
+        return path.read_text(encoding="utf-8", errors="replace")
+
+
+def _content_version(content: str) -> str:
+    return hashlib.sha1(content.encode("utf-8")).hexdigest()[:12]
+
+
+def _collapse_excerpt(text: str, limit: int = 220) -> str:
+    if not text:
+        return ""
+
+    lines = text.splitlines()
+    start_index = 0
+    if lines and lines[0].strip() == "---":
+        for idx in range(1, len(lines)):
+            if lines[idx].strip() == "---":
+                start_index = idx + 1
+                break
+
+    parts: list[str] = []
+    total = 0
+    for line in lines[start_index:]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        parts.append(stripped)
+        total += len(stripped) + 1
+        if total >= limit:
+            break
+
+    excerpt = " ".join(parts).strip()
+    if len(excerpt) <= limit:
+        return excerpt
+    return excerpt[: limit - 1].rstrip() + "…"
+
+
+def _parse_frontmatter(text: str) -> dict[str, str]:
+    lines = text.splitlines()
+    if len(lines) < 3 or lines[0].strip() != "---":
+        return {}
+
+    metadata: dict[str, str] = {}
+    for line in lines[1:]:
+        stripped = line.strip()
+        if stripped == "---":
+            break
+        if ":" not in stripped:
+            continue
+        key, value = stripped.split(":", 1)
+        metadata[key.strip()] = value.strip().strip('"').strip("'")
+    return metadata
+
+
+def _canonical_file_entry(file_key: str, *, include_content: bool = False) -> Optional[dict]:
+    config = _HERMES_CANONICAL_FILES.get(file_key)
+    if not config:
+        return None
+
+    path = config["path"]
+    assert isinstance(path, Path)
+    content = _read_text(path)
+    exists = path.exists()
+    payload = {
+        "key": file_key,
+        "label": config["label"],
+        "description": config["description"],
+        "path": str(path),
+        "exists": exists,
+        "size": path.stat().st_size if exists else 0,
+        "modified_at": _iso_from_stat(path),
+        "preview": _collapse_excerpt(content, 180),
+        "version": _content_version(content),
+    }
+    if include_content:
+        payload["content"] = content
+    return payload
+
+
+def _list_canonical_files() -> list[dict]:
+    return [
+        entry
+        for key in ("soul", "user", "memory")
+        if (entry := _canonical_file_entry(key)) is not None
+    ]
+
+
+def _query_state_db(query: str, params: tuple = ()) -> list[sqlite3.Row]:
+    if not _HERMES_STATE_DB.exists():
+        return []
+
+    connection = sqlite3.connect(str(_HERMES_STATE_DB))
+    connection.row_factory = sqlite3.Row
+    try:
+        return connection.execute(query, params).fetchall()
+    finally:
+        connection.close()
+
+
+def _load_state_db_sessions() -> list[dict]:
+    """Load sessions from hermes-agent's state.db and map to HermesSession dicts."""
+    rows = _query_state_db(
+        "SELECT id, source, model, started_at, ended_at, end_reason, message_count, title "
+        "FROM sessions ORDER BY started_at DESC"
+    )
+    results: list[dict] = []
+    for row in rows:
+        row = dict(row)
+        if row.get("ended_at") is None:
+            status = "active"
+        elif "error" in (row.get("end_reason") or "").lower():
+            status = "error"
+        else:
+            status = "completed"
+        created_at = datetime.fromtimestamp(row["started_at"], tz=timezone.utc).isoformat()
+        updated_at = None
+        if row.get("ended_at") is not None:
+            updated_at = datetime.fromtimestamp(row["ended_at"], tz=timezone.utc).isoformat()
+        results.append({
+            "id": row["id"],
+            "created_at": created_at,
+            "updated_at": updated_at,
+            "messages": row.get("message_count") or 0,
+            "model": row.get("model") or "",
+            "status": status,
+            "toolsets": [f"source:{row.get('source') or 'cli'}"],
+            "repo": None,
+            "firstUserMessage": row.get("title") or "",
+        })
+    return results
+
+
+def _query_state_db_row(query: str, params: tuple = ()) -> Optional[sqlite3.Row]:
+    rows = _query_state_db(query, params)
+    return rows[0] if rows else None
+
+
+def _list_skills() -> list[dict]:
+    if not _HERMES_SKILLS_DIR.exists():
+        return []
+
+    skills: list[dict] = []
+    for skill_path in sorted(_HERMES_SKILLS_DIR.rglob("SKILL.md")):
+        content = _read_text(skill_path)
+        metadata = _parse_frontmatter(content)
+        relative_path = skill_path.relative_to(_HERMES_SKILLS_DIR).as_posix()
+        parts = skill_path.relative_to(_HERMES_SKILLS_DIR).parts
+        skills.append(
+            {
+                "id": relative_path,
+                "name": metadata.get("name") or skill_path.parent.name,
+                "summary": metadata.get("description") or _collapse_excerpt(content, 180),
+                "category": parts[0] if len(parts) > 1 else skill_path.parent.name,
+                "path": str(skill_path),
+                "modified_at": _iso_from_stat(skill_path),
+                "line_count": len(content.splitlines()),
+                "size_bytes": skill_path.stat().st_size,
+                "estimated_tokens": skill_path.stat().st_size // 4,
+            }
+        )
+
+    skills.sort(key=lambda item: (str(item["category"]).lower(), str(item["name"]).lower()))
+    return skills
+
+
+def _skill_detail(skill_id: str) -> Optional[dict]:
+    if not skill_id:
+        return None
+
+    try:
+        candidate = (_HERMES_SKILLS_DIR / skill_id).resolve()
+        candidate.relative_to(_HERMES_SKILLS_DIR.resolve())
+    except Exception:
+        return None
+
+    if candidate.is_dir():
+        candidate = candidate / "SKILL.md"
+
+    if candidate.name != "SKILL.md" or not candidate.exists():
+        return None
+
+    content = _read_text(candidate)
+    metadata = _parse_frontmatter(content)
+    parts = candidate.relative_to(_HERMES_SKILLS_DIR).parts
+    return {
+        "id": candidate.relative_to(_HERMES_SKILLS_DIR).as_posix(),
+        "name": metadata.get("name") or candidate.parent.name,
+        "summary": metadata.get("description") or _collapse_excerpt(content, 180),
+        "category": parts[0] if len(parts) > 1 else candidate.parent.name,
+        "path": str(candidate),
+        "modified_at": _iso_from_stat(candidate),
+        "line_count": len(content.splitlines()),
+        "size_bytes": candidate.stat().st_size,
+        "content": content,
+    }
+
+
+def _cron_job_count() -> int:
+    if _HERMES_CRON_AVAILABLE:
+        try:
+            return len(_hermes_list_jobs(include_disabled=True) or [])
+        except Exception:
+            pass
+
+    return len(_cron_jobs)
+
+
+def _workspace_overview_payload() -> dict:
+    totals = _query_state_db_row(
+        """
+        select
+            count(*) as session_count,
+            coalesce(sum(message_count), 0) as message_count,
+            coalesce(sum(input_tokens), 0) as input_tokens,
+            coalesce(sum(output_tokens), 0) as output_tokens,
+            max(started_at) as last_started_at
+        from sessions
+        """
+    )
+    top_models = _query_state_db(
+        """
+        select
+            coalesce(nullif(model, ''), 'unknown') as model,
+            count(*) as session_count,
+            coalesce(sum(input_tokens), 0) as input_tokens,
+            coalesce(sum(output_tokens), 0) as output_tokens
+        from sessions
+        group by 1
+        order by (coalesce(sum(input_tokens), 0) + coalesce(sum(output_tokens), 0)) desc, session_count desc
+        limit 4
+        """
+    )
+    skill_summaries = _list_skills()
+
+    with _sessions_lock:
+        live_sessions = len(_sessions)
+
+    return {
+        "hermes_home": str(_HERMES_HOME),
+        "session_source": {
+            "kind": "sqlite",
+            "path": str(_HERMES_STATE_DB),
+            "available": _HERMES_STATE_DB.exists(),
+        },
+        "cron_backend": "hermes" if _HERMES_CRON_AVAILABLE else "bridge-local",
+        "counts": {
+            "tracked_sessions": int(totals["session_count"]) if totals else 0,
+            "messages": int(totals["message_count"]) if totals else 0,
+            "input_tokens": int(totals["input_tokens"]) if totals else 0,
+            "output_tokens": int(totals["output_tokens"]) if totals else 0,
+            "live_sessions": live_sessions,
+            "cron_jobs": _cron_job_count(),
+            "skills": len(skill_summaries),
+        },
+        "last_session_started_at": _iso_from_unix(float(totals["last_started_at"])) if totals and totals["last_started_at"] is not None else None,
+        "files": _list_canonical_files(),
+        "top_models": [
+            {
+                "model": row["model"],
+                "session_count": int(row["session_count"]),
+                "input_tokens": int(row["input_tokens"]),
+                "output_tokens": int(row["output_tokens"]),
+                "total_tokens": int(row["input_tokens"]) + int(row["output_tokens"]),
+            }
+            for row in top_models
+        ],
+    }
+
+
+def _workspace_usage_payload() -> dict:
+    totals = _query_state_db_row(
+        """
+        select
+            count(*) as session_count,
+            coalesce(sum(message_count), 0) as message_count,
+            coalesce(sum(tool_call_count), 0) as tool_call_count,
+            coalesce(sum(input_tokens), 0) as input_tokens,
+            coalesce(sum(output_tokens), 0) as output_tokens,
+            coalesce(sum(coalesce(actual_cost_usd, estimated_cost_usd, 0)), 0) as cost_usd,
+            min(started_at) as first_started_at,
+            max(started_at) as last_started_at
+        from sessions
+        """
+    )
+    top_models = _query_state_db(
+        """
+        select
+            coalesce(nullif(model, ''), 'unknown') as model,
+            count(*) as session_count,
+            coalesce(sum(input_tokens), 0) as input_tokens,
+            coalesce(sum(output_tokens), 0) as output_tokens,
+            coalesce(sum(coalesce(actual_cost_usd, estimated_cost_usd, 0)), 0) as cost_usd
+        from sessions
+        group by 1
+        order by (coalesce(sum(input_tokens), 0) + coalesce(sum(output_tokens), 0)) desc, session_count desc
+        limit 8
+        """
+    )
+
+    recent_rows = _query_state_db(
+        """
+        select
+            strftime('%Y-%m-%d', started_at, 'unixepoch') as day,
+            count(*) as session_count,
+            coalesce(sum(input_tokens), 0) as input_tokens,
+            coalesce(sum(output_tokens), 0) as output_tokens
+        from sessions
+        where started_at >= ?
+        group by 1
+        order by day asc
+        """,
+        (time.time() - 13 * 86400,),
+    )
+    recent_map = {
+        str(row["day"]): {
+            "day": str(row["day"]),
+            "session_count": int(row["session_count"]),
+            "input_tokens": int(row["input_tokens"]),
+            "output_tokens": int(row["output_tokens"]),
+            "total_tokens": int(row["input_tokens"]) + int(row["output_tokens"]),
+        }
+        for row in recent_rows
+        if row["day"]
+    }
+
+    today = datetime.now(timezone.utc).date()
+    recent_days: list[dict] = []
+    for offset in range(13, -1, -1):
+        day = (today - timedelta(days=offset)).isoformat()
+        recent_days.append(
+            recent_map.get(
+                day,
+                {
+                    "day": day,
+                    "session_count": 0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "total_tokens": 0,
+                },
+            )
+        )
+
+    return {
+        "state_db_available": _HERMES_STATE_DB.exists(),
+        "session_count": int(totals["session_count"]) if totals else 0,
+        "message_count": int(totals["message_count"]) if totals else 0,
+        "tool_call_count": int(totals["tool_call_count"]) if totals else 0,
+        "input_tokens": int(totals["input_tokens"]) if totals else 0,
+        "output_tokens": int(totals["output_tokens"]) if totals else 0,
+        "total_tokens": (int(totals["input_tokens"]) + int(totals["output_tokens"])) if totals else 0,
+        "cost_usd": float(totals["cost_usd"]) if totals else 0.0,
+        "first_session_started_at": _iso_from_unix(float(totals["first_started_at"])) if totals and totals["first_started_at"] is not None else None,
+        "last_session_started_at": _iso_from_unix(float(totals["last_started_at"])) if totals and totals["last_started_at"] is not None else None,
+        "top_models": [
+            {
+                "model": row["model"],
+                "session_count": int(row["session_count"]),
+                "input_tokens": int(row["input_tokens"]),
+                "output_tokens": int(row["output_tokens"]),
+                "total_tokens": int(row["input_tokens"]) + int(row["output_tokens"]),
+                "cost_usd": float(row["cost_usd"]),
+            }
+            for row in top_models
+        ],
+        "recent_days": recent_days,
+    }
+
+
+class HermesWorkspaceFileUpdate(BaseModel):
+    content: str = Field(default="")
+    expected_version: Optional[str] = None
+
+
+# --- Hermes cron backend integration ---
+_HERMES_AGENT_DIR = os.environ.get(
+    "HERMES_AGENT_DIR",
+    os.path.expanduser("~/.hermes/hermes-agent"),
+)
+_HERMES_CRON_HELPER_PYTHON = os.environ.get(
+    "HERMES_CRON_PYTHON",
+    os.path.join(os.path.dirname(__file__), ".venv", "bin", "python"),
+)
+_HERMES_CRON_RESULT_PREFIX = "__HERMES_CRON_RESULT__="
+_HERMES_CRON_OUTPUT_DIR = (
+    Path(os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes")))
+    / "cron"
+    / "output"
+)
+
+if _HERMES_AGENT_DIR not in sys.path:
+    sys.path.insert(0, _HERMES_AGENT_DIR)
+
+_HERMES_CRON_AVAILABLE = False
+_HERMES_CRON_IMPORT_ERROR: Optional[str] = None
+
+_HERMES_CRON_HELPER_CODE = f"""
+import json
+import sys
+
+agent_dir = sys.argv[1]
+action = sys.argv[2]
+payload = json.loads(sys.argv[3]) if len(sys.argv) > 3 else {{}}
+if agent_dir not in sys.path:
+    sys.path.insert(0, agent_dir)
+
+from cron.jobs import create_job, get_job, list_jobs, pause_job, remove_job, resume_job, trigger_job
+from cron.scheduler import tick
+
+if action == "list_jobs":
+    result = list_jobs(**payload)
+elif action == "create_job":
+    result = create_job(**payload)
+elif action == "get_job":
+    result = get_job(**payload)
+elif action == "pause_job":
+    result = pause_job(**payload)
+elif action == "remove_job":
+    result = remove_job(**payload)
+elif action == "resume_job":
+    result = resume_job(**payload)
+elif action == "trigger_job":
+    result = trigger_job(**payload)
+elif action == "tick":
+    tick(**payload)
+    result = True
+else:
+    raise ValueError(f"unsupported Hermes cron action: {{action}}")
+
+print("{_HERMES_CRON_RESULT_PREFIX}" + json.dumps({{"result": result}}, default=str))
+"""
+
+
+def _run_hermes_cron_helper(action: str, payload: Optional[dict] = None):
+    completed = subprocess.run(
+        [
+            _HERMES_CRON_HELPER_PYTHON,
+            "-c",
+            _HERMES_CRON_HELPER_CODE,
+            _HERMES_AGENT_DIR,
+            action,
+            json.dumps(payload or {}),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        stderr = completed.stderr.strip()
+        stdout = completed.stdout.strip()
+        raise RuntimeError(
+            stderr or stdout or f"Hermes cron helper failed for {action}"
+        )
+
+    for line in reversed((completed.stdout or "").splitlines()):
+        if line.startswith(_HERMES_CRON_RESULT_PREFIX):
+            payload_text = line[len(_HERMES_CRON_RESULT_PREFIX):]
+            return json.loads(payload_text).get("result")
+
+    raise RuntimeError(f"Hermes cron helper returned no result for {action}")
+
+try:
+    from cron.jobs import (
+        create_job as _hermes_create_job,
+        get_job as _hermes_get_job,
+        list_jobs as _hermes_list_jobs,
+        pause_job as _hermes_pause_job,
+        remove_job as _hermes_remove_job,
+        resume_job as _hermes_resume_job,
+        trigger_job as _hermes_trigger_job,
+        OUTPUT_DIR as _HERMES_CRON_OUTPUT_DIR,
+    )
+    from cron.scheduler import tick as _hermes_cron_tick
+    _HERMES_CRON_AVAILABLE = True
+except Exception as e:
+    _HERMES_CRON_IMPORT_ERROR = str(e)
+    helper_error = None
+    if os.path.exists(_HERMES_CRON_HELPER_PYTHON):
+        try:
+            _run_hermes_cron_helper("list_jobs", {"include_disabled": True})
+            _hermes_create_job = lambda **kwargs: _run_hermes_cron_helper("create_job", kwargs)
+            _hermes_get_job = lambda job_id: _run_hermes_cron_helper("get_job", {"job_id": job_id})
+            _hermes_list_jobs = lambda include_disabled=False: _run_hermes_cron_helper(
+                "list_jobs",
+                {"include_disabled": include_disabled},
+            )
+            _hermes_pause_job = lambda job_id: _run_hermes_cron_helper("pause_job", {"job_id": job_id})
+            _hermes_remove_job = lambda job_id: _run_hermes_cron_helper("remove_job", {"job_id": job_id})
+            _hermes_resume_job = lambda job_id: _run_hermes_cron_helper("resume_job", {"job_id": job_id})
+            _hermes_trigger_job = lambda job_id: _run_hermes_cron_helper("trigger_job", {"job_id": job_id})
+            _hermes_cron_tick = lambda verbose=False: _run_hermes_cron_helper("tick", {"verbose": verbose})
+            _HERMES_CRON_AVAILABLE = True
+            print(
+                f"[cron] Hermes cron backend enabled via helper interpreter {_HERMES_CRON_HELPER_PYTHON}",
+                flush=True,
+            )
+        except Exception as helper_exc:
+            helper_error = str(helper_exc)
+
+    if not _HERMES_CRON_AVAILABLE:
+        detail = (
+            f"{e}; helper {_HERMES_CRON_HELPER_PYTHON} failed: {helper_error}"
+            if helper_error
+            else str(e)
+        )
+        print(
+            f"[cron] Hermes cron backend unavailable, falling back to bridge-local store: {detail}",
+            flush=True,
+        )
+
+
+def _cron_query_value(request: Request, key: str) -> Optional[str]:
+    query_params = getattr(request, "query_params", None)
+    if query_params is None:
+        return None
+    value = query_params.get(key)
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _cloudchat_origin_from_body(body: dict) -> Optional[dict]:
+    conversation_id = str(body.get("conversation_id") or "").strip()
+    if not conversation_id:
+        return None
+
+    title = str(body.get("conversation_title") or "").strip() or None
+    origin = {
+        "platform": "cloud-chat-hub",
+        "chat_id": conversation_id,
+    }
+    if title:
+        origin["chat_name"] = title
+    return origin
+
+
+def _hermes_schedule_input(job: dict) -> str:
+    schedule = job.get("schedule")
+    if not isinstance(schedule, dict):
+        return str(job.get("schedule_display") or "")
+
+    kind = schedule.get("kind")
+    if kind == "cron":
+        return str(schedule.get("expr") or job.get("schedule_display") or "")
+    if kind == "interval":
+        minutes = schedule.get("minutes")
+        return f"every {minutes}m" if minutes else str(job.get("schedule_display") or "")
+    if kind == "once":
+        return str(schedule.get("run_at") or job.get("schedule_display") or "")
+
+    return str(job.get("schedule_display") or "")
+
+
+def _map_hermes_job(job: dict) -> dict:
+    origin = job.get("origin") if isinstance(job.get("origin"), dict) else {}
+    origin_platform = str(origin.get("platform") or "").strip() or None
+    conversation_id = None
+    conversation_title = None
+    if origin_platform == "cloud-chat-hub":
+        conversation_id = str(origin.get("chat_id") or "").strip() or None
+        conversation_title = str(origin.get("chat_name") or "").strip() or None
+
+    state = str(job.get("state") or "").strip() or (
+        "scheduled" if job.get("enabled", True) else "paused"
+    )
+    if state == "paused":
+        status = "paused"
+    elif state == "completed":
+        status = "completed"
+    elif job.get("enabled", True):
+        status = "active"
+    else:
+        status = "paused"
+
+    schedule = _hermes_schedule_input(job)
+
+    return {
+        "id": job["id"],
+        "name": job.get("name") or job["id"],
+        "schedule": schedule,
+        "schedule_display": job.get("schedule_display") or schedule,
+        "prompt": job.get("prompt") or "",
+        "status": status,
+        "state": state,
+        "created_at": job.get("created_at"),
+        "last_run": job.get("last_run_at"),
+        "next_run": job.get("next_run_at"),
+        "last_status": job.get("last_status"),
+        "last_error": job.get("last_error"),
+        "conversation_id": conversation_id,
+        "conversation_title": conversation_title,
+        "origin_platform": origin_platform,
+    }
+
+
+def _local_tz():
+    return datetime.now().astimezone().tzinfo or timezone.utc
+
+
+def _history_timestamp_from_output(path: Path) -> str:
+    try:
+        dt = datetime.strptime(path.stem, "%Y-%m-%d_%H-%M-%S").replace(tzinfo=_local_tz())
+        return dt.isoformat()
+    except ValueError:
+        return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+
+
+def _history_sort_key(path: Path) -> float:
+    try:
+        return datetime.strptime(path.stem, "%Y-%m-%d_%H-%M-%S").replace(
+            tzinfo=_local_tz()
+        ).timestamp()
+    except ValueError:
+        try:
+            return path.stat().st_mtime
+        except OSError:
+            return 0.0
+
+
+def _iso_timestamp(value: Optional[str]) -> Optional[float]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value).timestamp()
+    except Exception:
+        return None
+
+
+def _run_matches_last(run_started_at: Optional[str], last_run_at: Optional[str]) -> bool:
+    run_ts = _iso_timestamp(run_started_at)
+    last_ts = _iso_timestamp(last_run_at)
+    if run_ts is None or last_ts is None:
+        return False
+    return abs(run_ts - last_ts) < 120
+
+
+def _extract_history_error(output: str) -> Optional[str]:
+    if "## Error" not in output:
+        return None
+    error_block = output.split("## Error", 1)[1].strip()
+    if error_block.startswith("```"):
+        error_block = error_block.strip("`\n")
+    error_block = error_block.strip()
+    return error_block[:500] or None
+
+
+def _excerpt_history_output(output: str, limit: int = 500) -> Optional[str]:
+    # If the output has a "## Response" section, extract from there to skip
+    # system hints and metadata (e.g. from cron job output files).
+    if "## Response" in output:
+        response_section = output.split("## Response", 1)[1]
+    else:
+        response_section = output
+    lines = [line.rstrip() for line in response_section.splitlines()]
+    cleaned = "\n".join(line for line in lines if line).strip()
+    if not cleaned:
+        return None
+    return cleaned[:limit]
+
+
+MAX_RUN_HISTORY = 20
+
+
+def _build_hermes_run_history(job_id: str) -> list[dict]:
+    if not _HERMES_CRON_AVAILABLE:
+        return []
+
+    runs: list[dict] = []
+    output_dir = Path(_HERMES_CRON_OUTPUT_DIR) / job_id
+    output_files = []
+    if output_dir.exists():
+        output_files = sorted(
+            output_dir.glob("*.md"),
+            key=_history_sort_key,
+            reverse=True,
+        )[:MAX_RUN_HISTORY]
+
+    for path in output_files:
+        try:
+            output = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+
+        started_at = _history_timestamp_from_output(path)
+        completed_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+        error = _extract_history_error(output)
+        status = "error" if error or "(FAILED)" in output else "success"
+        runs.append({
+            "run_id": path.stem,
+            "job_id": job_id,
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "status": status,
+            "output": _excerpt_history_output(output),
+            "error": error,
+            "tool_log": [],
+            "duration_ms": None,
+        })
+
+    job = _hermes_get_job(job_id)
+    if job and job.get("last_run_at") and not any(
+        _run_matches_last(run.get("started_at"), job.get("last_run_at"))
+        for run in runs
+    ):
+        status = "error" if job.get("last_status") == "error" else "success"
+        runs.insert(0, {
+            "run_id": f"{job_id}:{job.get('last_run_at')}",
+            "job_id": job_id,
+            "started_at": job.get("last_run_at"),
+            "completed_at": job.get("last_run_at"),
+            "status": status,
+            "output": None,
+            "error": job.get("last_error"),
+            "tool_log": [],
+            "duration_ms": None,
+        })
+
+    return runs[:MAX_RUN_HISTORY]
+
+
+def _run_hermes_tick_now():
+    if not _HERMES_CRON_AVAILABLE:
+        return
+    try:
+        _hermes_cron_tick(verbose=False)
+    except Exception as e:
+        print(f"[cron] Hermes tick failed: {e}", flush=True)
 
 # --- Brain MCP integration ---
 # Uses MCP Python SDK to spawn brain-mcp server as a stdio subprocess.
@@ -969,8 +1884,13 @@ async def _passthrough_chat_completions(
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request, body: ChatCompletionRequest):
     try:
-        async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
-            return await _chat_completions_impl(request, body)
+        if hasattr(asyncio, "timeout"):
+            async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
+                return await _chat_completions_impl(request, body)
+        return await asyncio.wait_for(
+            _chat_completions_impl(request, body),
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
     except asyncio.TimeoutError:
         return JSONResponse(
             status_code=504,
@@ -991,6 +1911,52 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
     repo_name = request.headers.get("x-hermes-repo-name", "")
     github_pat = request.headers.get("x-hermes-github-pat", "")
     repo_edit_intent = request.headers.get("x-hermes-repo-edit-intent", "") == "1"
+    request_messages = _normalize_chat_messages(body.messages)
+
+    # Session tracking for Hermes Chats view
+    session_id = f"sess-{uuid.uuid4().hex[:12]}"
+    last_user_msg = ""
+    initial_chat: list[dict] = []
+    for m in request_messages:
+        role = m["role"]
+        content = (m["content"] or "").strip()
+        if content:
+            initial_chat.append(
+                {
+                    "role": role,
+                    "content": _trim_session_message_content(content),
+                }
+            )
+        if role == "user":
+            last_user_msg = content
+
+    created_at = _now_iso()
+    with _sessions_lock:
+        _sessions[session_id] = {
+            "id": session_id,
+            "model": body.model,
+            "status": "active",
+            "created_at": created_at,
+            "updated_at": created_at,
+            "messages": len(initial_chat),
+            "toolsets": enabled_toolsets,
+            "repo": f"{repo_owner}/{repo_name}" if repo_owner and repo_name else None,
+            "firstUserMessage": last_user_msg[:100] if last_user_msg else "",
+            "chat": initial_chat[-_MAX_SESSION_CHAT_MESSAGES:],
+            "error": None,
+        }
+    _save_session_to_db(_sessions[session_id])
+
+    def _finalize_session(success: bool, error_message: Optional[str] = None):
+        with _sessions_lock:
+            session = _sessions.get(session_id)
+            if not session:
+                return
+            session["status"] = "completed" if success else "error"
+            session["messages"] = len(session.get("chat", []))
+            session["updated_at"] = _now_iso()
+            session["error"] = error_message if error_message else None
+            _save_session_to_db(session)
 
     # Detect repo mode from either the request body tools OR the repo headers.
     # In agent-loop mode the server sends repo info via headers (not body tools),
@@ -1059,22 +2025,30 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
 
     if execution_mode == "swarm":
         # Redirect to the dedicated swarm endpoint handler
-        print(f"[hermes-bridge] Swarm mode. model={body.model} msgs={len(body.messages)}", flush=True)
-        swarm_body = SwarmRequest(model=body.model, messages=body.messages, stream=body.stream, **(body.model_extra or {}))
+        print(f"[hermes-bridge] Swarm mode. model={body.model} msgs={len(request_messages)}", flush=True)
+        swarm_body = SwarmRequest(
+            model=body.model,
+            messages=request_messages,
+            stream=body.stream,
+            **(body.model_extra or {}),
+        )
         return await swarm_endpoint(request, swarm_body)
 
     if execution_mode == "passthrough":
         print(
-            f"[hermes-bridge] Passthrough mode. model={body.model} msgs={len(body.messages)} extra_keys={list((body.model_extra or {}).keys())}",
+            f"[hermes-bridge] Passthrough mode. model={body.model} msgs={len(request_messages)} extra_keys={list((body.model_extra or {}).keys())}",
             flush=True,
         )
         return await _passthrough_chat_completions(
             body,
             agent_api_key if is_minimax_model else api_key,
-            finalize_request=lambda success: _mark_request_finished(
-                model=body.model,
-                success=success,
-                summary=f"model={body.model} mode=passthrough success={str(success).lower()}",
+            finalize_request=lambda success: (
+                _finalize_session(success),
+                _mark_request_finished(
+                    model=body.model,
+                    success=success,
+                    summary=f"model={body.model} mode=passthrough success={str(success).lower()}",
+                ),
             ),
         )
 
@@ -1142,6 +2116,11 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
     def on_tool_start(tool_name: str, tool_input: str):
         # Emit tool start as visible text so user sees activity
         _qput(("tool_start", tool_name, tool_input))
+        _append_session_chat_chunk(
+            session_id,
+            "assistant",
+            _format_tool_start_text(tool_name, tool_input),
+        )
         # Brain MCP: claim resource for edit operations to prevent conflicts
         if tool_name in REPO_EDIT_TOOL_NAMES:
             for resource in _repo_claim_resources(tool_name, tool_input):
@@ -1149,12 +2128,18 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
 
     def on_tool_end(tool_name: str, tool_input: str, tool_output: str):
         _qput(("tool_end", tool_name, tool_output[:500]))
+        _append_session_chat_chunk(
+            session_id,
+            "assistant",
+            _format_tool_end_text(tool_name, tool_output),
+        )
         # Brain MCP: release resource for edit operations
         if tool_name in REPO_EDIT_TOOL_NAMES:
             for resource in _repo_claim_resources(tool_name, tool_input):
                 _brain_release(resource)
 
     def on_text(text: str):
+        _append_session_chat_chunk(session_id, "assistant", text)
         # Stream normal text in small chunks for responsiveness
         chunk_size = _get_stream_chunk_size(text)
         for i in range(0, len(text), chunk_size):
@@ -1179,9 +2164,9 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
         try:
             print(f"[hermes-bridge] Using {'real' if _using_real_agent else 'custom'} Hermes agent", flush=True)
             # Log message roles for debugging system prompt delivery
-            msg_roles = [m.role for m in body.messages]
+            msg_roles = [m["role"] for m in request_messages]
             has_extra_system = bool((body.model_extra or {}).get("system"))
-            print(f"[hermes-bridge] Starting agent. mode={execution_mode} model={body.model} repo_mode={has_repo_tools} has_github={'yes' if github_pat else 'no'} repo={repo_owner}/{repo_name} toolsets={enabled_toolsets} msgs={len(body.messages)} roles={msg_roles} extra_system={has_extra_system}", flush=True)
+            print(f"[hermes-bridge] Starting agent. mode={execution_mode} model={body.model} repo_mode={has_repo_tools} has_github={'yes' if github_pat else 'no'} repo={repo_owner}/{repo_name} toolsets={enabled_toolsets} msgs={len(request_messages)} roles={msg_roles} extra_system={has_extra_system}", flush=True)
             if has_repo_tools and not github_pat:
                 print(f"[hermes-bridge] WARNING: repo_mode is active but no GitHub PAT provided — read_repo_file will fail", flush=True)
             # Extract repo file tree from request body (sent by server for Hermes agent-loop)
@@ -1223,9 +2208,7 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
             agent.on_thinking = on_thinking
             agent.on_reasoning = on_reasoning
 
-            conversation_history = [
-                {"role": m.role, "content": m.content} for m in body.messages
-            ]
+            conversation_history = [dict(m) for m in request_messages]
 
             # The AI SDK may send the system prompt as a separate top-level
             # "system" field instead of (or in addition to) a system message
@@ -1275,12 +2258,16 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
             _brain_pulse("working", "completed")
             # Update bridge health metrics (decrement active request counter)
             _update_bridge_metrics(success=True, decrement_active=True)
+            _finalize_session(True)
         except Exception as e:
-            print(f"[hermes-bridge] Agent error: {e}", flush=True)
-            _qput(("text", f"\n\n[Error: {str(e)}]"))
+            error_message = str(e)
+            print(f"[hermes-bridge] Agent error: {error_message}", flush=True)
+            _append_session_chat_chunk(session_id, "assistant", f"\n\n[Error: {error_message}]")
+            _qput(("text", f"\n\n[Error: {error_message}]"))
             # Brain MCP: report failure
-            _brain_pulse("failed", f"error={str(e)[:100]}")
+            _brain_pulse("failed", f"error={error_message[:100]}")
             _update_bridge_metrics(success=False, decrement_active=True)
+            _finalize_session(False, error_message=error_message)
         finally:
             loop.call_soon_threadsafe(done_event.set)
 
@@ -1442,7 +2429,7 @@ async def swarm_endpoint(request: Request, body: SwarmRequest):
     repo_mode = bool(repo_owner and repo_name)
 
     # Extract last user message
-    conversation_history = [{"role": m.role, "content": m.content} for m in body.messages]
+    conversation_history = _normalize_chat_messages(body.messages)
     last_user_idx = None
     for i in range(len(conversation_history) - 1, -1, -1):
         if conversation_history[i]["role"] == "user":
@@ -1535,6 +2522,7 @@ async def swarm_endpoint(request: Request, body: SwarmRequest):
                 success=success,
                 summary=f"model={body.model} mode=swarm verdict={verdict} elapsed_ms={elapsed_ms}",
             )
+            _finalize_session(success)
 
         except Exception as e:
             error_text = f"\n\n**Swarm Pipeline Error:** {str(e)}\n"
@@ -1551,11 +2539,625 @@ async def swarm_endpoint(request: Request, body: SwarmRequest):
                 success=False,
                 summary=f"model={body.model} mode=swarm error={str(e)[:80]}",
             )
+            _finalize_session(False)
 
         yield sse_chunk(make_delta_chunk(chunk_id, body.model, {}, finish_reason="stop"))
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(swarm_stream(), media_type="text/event-stream")
+
+
+# ------------------------------------------------------------------
+# Cron job storage (persistent JSON file + in-memory cache)
+# ------------------------------------------------------------------
+_cron_jobs: dict[str, dict] = {}
+_cron_run_history: dict[str, list[dict]] = {}  # job_id -> list of run records
+MAX_RUN_HISTORY = 20
+
+import os as _os
+import json as _json
+import tempfile as _tempfile
+
+_CRON_DATA_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "data")
+_CRON_JOBS_FILE = _os.path.join(_CRON_DATA_DIR, "cron_jobs.json")
+_CRON_HISTORY_FILE = _os.path.join(_CRON_DATA_DIR, "cron_history.json")
+_cron_lock = threading.Lock()
+
+
+def _ensure_data_dir():
+    """Create the data directory if it doesn't exist."""
+    try:
+        _os.makedirs(_CRON_DATA_DIR, exist_ok=True)
+    except OSError as e:
+        print(f"[cron-persist] Error creating data dir: {e}", flush=True)
+
+
+def _atomic_write_json(filepath: str, data):
+    """Write JSON to a file atomically (write to temp, then rename)."""
+    dir_name = _os.path.dirname(filepath)
+    fd = None
+    tmp_path = None
+    try:
+        fd, tmp_path = _tempfile.mkstemp(dir=dir_name, suffix=".tmp")
+        with _os.fdopen(fd, "w") as f:
+            fd = None  # fdopen took ownership
+            _json.dump(data, f, ensure_ascii=False, indent=2)
+        _os.replace(tmp_path, filepath)
+        tmp_path = None  # successfully renamed
+    except Exception as e:
+        print(f"[cron-persist] Error writing {filepath}: {e}", flush=True)
+        if tmp_path and _os.path.exists(tmp_path):
+            try:
+                _os.unlink(tmp_path)
+            except OSError:
+                pass
+        raise
+
+
+def _load_cron_data():
+    """Load cron jobs and history from disk into memory."""
+    global _cron_jobs, _cron_run_history
+    _ensure_data_dir()
+    # Load jobs
+    try:
+        if _os.path.exists(_CRON_JOBS_FILE):
+            with open(_CRON_JOBS_FILE, "r") as f:
+                data = _json.load(f)
+            if isinstance(data, dict):
+                _cron_jobs = data
+                print(f"[cron-persist] Loaded {len(_cron_jobs)} cron jobs from disk", flush=True)
+    except Exception as e:
+        print(f"[cron-persist] Error loading cron jobs: {e}", flush=True)
+        _cron_jobs = {}
+    # Load history
+    try:
+        if _os.path.exists(_CRON_HISTORY_FILE):
+            with open(_CRON_HISTORY_FILE, "r") as f:
+                data = _json.load(f)
+            if isinstance(data, dict):
+                _cron_run_history = data
+                print(f"[cron-persist] Loaded run history for {len(_cron_run_history)} jobs", flush=True)
+    except Exception as e:
+        print(f"[cron-persist] Error loading cron history: {e}", flush=True)
+        _cron_run_history = {}
+
+
+def _save_cron_jobs():
+    """Persist current cron jobs to disk (thread-safe, atomic)."""
+    with _cron_lock:
+        try:
+            _ensure_data_dir()
+            _atomic_write_json(_CRON_JOBS_FILE, _cron_jobs)
+        except Exception as e:
+            print(f"[cron-persist] Error saving cron jobs: {e}", flush=True)
+
+
+def _save_cron_history():
+    """Persist current cron run history to disk (thread-safe, atomic)."""
+    with _cron_lock:
+        try:
+            _ensure_data_dir()
+            _atomic_write_json(_CRON_HISTORY_FILE, _cron_run_history)
+        except Exception as e:
+            print(f"[cron-persist] Error saving cron history: {e}", flush=True)
+
+try:
+    from croniter import croniter as _croniter_cls
+except ImportError:
+    _croniter_cls = None
+
+
+def _compute_next_run(schedule: str) -> Optional[str]:
+    """Compute next run time from a cron expression. Returns ISO string or None."""
+    if not _croniter_cls:
+        return None
+    try:
+        now = datetime.now(timezone.utc)
+        cron = _croniter_cls(schedule, now)
+        return cron.get_next(datetime).isoformat()
+    except Exception:
+        return None
+
+
+@app.get("/cron")
+async def list_cron_jobs(request: Request):
+    if _HERMES_CRON_AVAILABLE:
+        conversation_id = _cron_query_value(request, "conversation_id")
+        jobs = [_map_hermes_job(job) for job in _hermes_list_jobs(include_disabled=True)]
+        if conversation_id:
+            jobs = [job for job in jobs if job.get("conversation_id") == conversation_id]
+        jobs.sort(key=lambda item: item.get("created_at") or "", reverse=True)
+        return JSONResponse(content={"jobs": jobs})
+
+    return JSONResponse(content={"jobs": list(_cron_jobs.values())})
+
+
+@app.post("/cron")
+async def create_cron_job(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
+
+    schedule = body.get("schedule")
+    prompt = body.get("prompt")
+    name = body.get("name", "")
+
+    if not schedule or not prompt:
+        return JSONResponse(status_code=400, content={"error": "schedule and prompt are required"})
+
+    if _HERMES_CRON_AVAILABLE:
+        origin = _cloudchat_origin_from_body(body)
+        job = _hermes_create_job(
+            prompt=str(prompt),
+            schedule=str(schedule),
+            name=str(name).strip() or None,
+            deliver="local",
+            origin=origin,
+        )
+        return JSONResponse(status_code=201, content={"job": _map_hermes_job(job)})
+
+    job_id = str(uuid.uuid4())[:8]
+    now = datetime.now(timezone.utc).isoformat()
+    next_run = _compute_next_run(schedule)
+    job = {
+        "id": job_id,
+        "name": name or f"job-{job_id}",
+        "schedule": schedule,
+        "prompt": prompt,
+        "status": "active",
+        "created_at": now,
+        "last_run": None,
+        "next_run": next_run,
+    }
+    _cron_jobs[job_id] = job
+    _save_cron_jobs()
+    return JSONResponse(status_code=201, content={"job": job})
+
+
+@app.delete("/cron/{job_id}")
+async def delete_cron_job(job_id: str):
+    if _HERMES_CRON_AVAILABLE:
+        if not _hermes_remove_job(job_id):
+            return JSONResponse(status_code=404, content={"error": "not found"})
+        return JSONResponse(content={"ok": True})
+
+    if job_id not in _cron_jobs:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    _cron_jobs.pop(job_id)
+    _cron_run_history.pop(job_id, None)
+    _save_cron_jobs()
+    _save_cron_history()
+    return JSONResponse(content={"ok": True})
+
+
+@app.post("/cron/{job_id}/pause")
+async def pause_cron_job(job_id: str):
+    if _HERMES_CRON_AVAILABLE:
+        updated = _hermes_pause_job(job_id)
+        if not updated:
+            return JSONResponse(status_code=404, content={"error": "not found"})
+        return JSONResponse(content={"job": _map_hermes_job(updated)})
+
+    if job_id not in _cron_jobs:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    _cron_jobs[job_id]["status"] = "paused"
+    _save_cron_jobs()
+    return JSONResponse(content={"job": _cron_jobs[job_id]})
+
+
+@app.post("/cron/{job_id}/resume")
+async def resume_cron_job(job_id: str):
+    if _HERMES_CRON_AVAILABLE:
+        updated = _hermes_resume_job(job_id)
+        if not updated:
+            return JSONResponse(status_code=404, content={"error": "not found"})
+        return JSONResponse(content={"job": _map_hermes_job(updated)})
+
+    if job_id not in _cron_jobs:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    _cron_jobs[job_id]["status"] = "active"
+    _save_cron_jobs()
+    return JSONResponse(content={"job": _cron_jobs[job_id]})
+
+
+def _run_cron_agent(job: dict, run_record: dict):
+    """Background thread: run the agent for a cron job and collect output."""
+    try:
+        # Import AIAgent here to avoid circular issues
+        from hermes_adapter import HermesAgentAdapter as AIAgent
+
+        output_chunks: list[str] = []
+        tool_log: list[dict] = []
+
+        def on_text(text: str):
+            output_chunks.append(text)
+
+        def on_tool_start(name: str, inp: str):
+            tool_log.append({"type": "tool_start", "name": name, "input": inp[:500]})
+
+        def on_tool_end(name: str, out: str):
+            tool_log.append({"type": "tool_end", "name": name, "output": out[:500]})
+
+        def on_thinking(iteration: int):
+            tool_log.append({"type": "thinking", "iteration": iteration})
+
+        def on_reasoning(text: str):
+            pass  # skip reasoning in cron output
+
+        def on_server_tool_event(event: dict):
+            pass  # skip server tool events in cron
+
+        agent = AIAgent(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=os.environ.get("HERMES_OPENROUTER_KEY", ""),
+            model=job.get("model") or os.environ.get("HERMES_DEFAULT_MODEL", "meta-llama/llama-4-maverick"),
+            max_iterations=int(os.environ.get("HERMES_MAX_ITERATIONS", "30")),
+            enabled_toolsets=job.get("toolsets") or os.environ.get("HERMES_TOOLSETS", "web,browser"),
+            on_tool_start=on_tool_start,
+            on_tool_end=on_tool_end,
+            on_text=on_text,
+            on_server_tool_event=on_server_tool_event,
+        )
+        agent.on_thinking = on_thinking
+        agent.on_reasoning = on_reasoning
+
+        # Build a minimal system context from the job prompt
+        conversation_history = [{"role": "system", "content": f"You are executing a scheduled cron job named '{job.get('name', job['id'])}'. Follow the instructions below."}]
+
+        agent.run_conversation(
+            user_message=job["prompt"],
+            conversation_history=conversation_history,
+        )
+
+        run_record["status"] = "completed"
+        run_record["output"] = "".join(output_chunks)
+        run_record["tool_log"] = tool_log
+    except Exception as e:
+        run_record["status"] = "failed"
+        run_record["error"] = str(e)
+        run_record["output"] = "".join(output_chunks) if 'output_chunks' in dir() else ""
+    finally:
+        run_record["completed_at"] = datetime.now(timezone.utc).isoformat()
+        _save_cron_history()
+
+
+@app.post("/cron/{job_id}/run")
+async def run_cron_job(job_id: str):
+    if _HERMES_CRON_AVAILABLE:
+        job = _hermes_get_job(job_id)
+        if not job:
+            return JSONResponse(status_code=404, content={"error": "not found"})
+        updated = _hermes_trigger_job(job_id)
+        threading.Thread(target=_run_hermes_tick_now, daemon=True).start()
+        return JSONResponse(content={
+            "ok": True,
+            "status": "queued",
+            "job": _map_hermes_job(updated or job),
+        })
+
+    if job_id not in _cron_jobs:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    job = _cron_jobs[job_id]
+    run_time = datetime.now(timezone.utc).isoformat()
+    job["last_run"] = run_time
+    # Compute next_run from schedule
+    job["next_run"] = _compute_next_run(job.get("schedule", ""))
+
+    run_id = str(uuid.uuid4())[:8]
+    run_record = {
+        "run_id": run_id,
+        "job_id": job_id,
+        "started_at": run_time,
+        "completed_at": None,
+        "status": "running",
+        "output": "",
+        "error": None,
+        "tool_log": [],
+    }
+
+    # Store in history
+    history = _cron_run_history.setdefault(job_id, [])
+    history.insert(0, run_record)
+    if len(history) > MAX_RUN_HISTORY:
+        _cron_run_history[job_id] = history[:MAX_RUN_HISTORY]
+    _save_cron_jobs()
+    _save_cron_history()
+
+    # Spawn background thread
+    t = threading.Thread(target=_run_cron_agent, args=(job, run_record), daemon=True)
+    t.start()
+
+    return JSONResponse(content={
+        "ok": True,
+        "run_id": run_id,
+        "status": "running",
+    })
+
+
+@app.get("/cron/{job_id}/history")
+async def get_cron_history(job_id: str):
+    if _HERMES_CRON_AVAILABLE:
+        if not _hermes_get_job(job_id):
+            return JSONResponse(status_code=404, content={"error": "not found"})
+        return JSONResponse(content={"job_id": job_id, "runs": _build_hermes_run_history(job_id)})
+
+    if job_id not in _cron_jobs:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    history = _cron_run_history.get(job_id, [])
+    return JSONResponse(content={"job_id": job_id, "runs": history})
+
+
+# ------------------------------------------------------------------
+# Session endpoints for Hermes Chats view
+# ------------------------------------------------------------------
+
+@app.get("/sessions")
+async def list_sessions():
+    with _sessions_lock:
+        summaries = [_session_summary(session) for session in _sessions.values()]
+    # Merge in sessions from state.db (CLI / cron sessions)
+    db_sessions = _load_state_db_sessions()
+    in_memory_ids = {s["id"] for s in summaries}
+    for db_session in db_sessions:
+        if db_session["id"] not in in_memory_ids:
+            summaries.append(db_session)
+    summaries.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+    return JSONResponse(content={"sessions": summaries})
+
+
+@app.get("/sessions/{session_id}")
+async def get_session(session_id: str):
+    with _sessions_lock:
+        session = _sessions.get(session_id)
+        if session:
+            return JSONResponse(content=dict(session))
+    # Fall back to state.db for CLI / cron sessions
+    rows = _query_state_db(
+        "SELECT id, source, model, started_at, ended_at, end_reason, message_count, title "
+        "FROM sessions WHERE id = ?",
+        (session_id,),
+    )
+    if not rows:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    row = dict(rows[0])
+    if row.get("ended_at") is None:
+        status = "active"
+    elif "error" in (row.get("end_reason") or "").lower():
+        status = "error"
+    else:
+        status = "completed"
+    created_at = datetime.fromtimestamp(row["started_at"], tz=timezone.utc).isoformat()
+    updated_at = None
+    if row.get("ended_at") is not None:
+        updated_at = datetime.fromtimestamp(row["ended_at"], tz=timezone.utc).isoformat()
+    payload = {
+        "id": row["id"],
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "messages": row.get("message_count") or 0,
+        "model": row.get("model") or "",
+        "status": status,
+        "toolsets": [f"source:{row.get('source') or 'cli'}"],
+        "repo": None,
+        "firstUserMessage": row.get("title") or "",
+        "chat": _load_session_messages(session_id),
+    }
+    return JSONResponse(content=payload)
+
+
+_MAX_SESSION_CHAT_MESSAGES = 200
+
+
+def _load_session_messages(session_id: str) -> list[dict]:
+    """Load messages for a session from state.db, mapped to HermesSessionMessage format."""
+    rows = _query_state_db(
+        "SELECT role, content FROM messages "
+        "WHERE session_id = ? ORDER BY timestamp ASC "
+        "LIMIT ?",
+        (session_id, _MAX_SESSION_CHAT_MESSAGES),
+    )
+    return [
+        {"role": row["role"], "content": row["content"] or ""}
+        for row in rows
+    ]
+
+
+@app.delete("/sessions/{session_id}")
+async def delete_session(session_id: str):
+    with _sessions_lock:
+        _sessions.pop(session_id, None)
+    return JSONResponse(content={"ok": True})
+
+
+# ------------------------------------------------------------------
+# Workspace endpoints for Hermes overview/files/skills/usage
+# ------------------------------------------------------------------
+
+@app.get("/workspace/overview")
+async def workspace_overview():
+    return JSONResponse(content=_workspace_overview_payload())
+
+
+@app.get("/workspace/usage")
+async def workspace_usage():
+    return JSONResponse(content=_workspace_usage_payload())
+
+
+@app.get("/workspace/files")
+async def workspace_files():
+    return JSONResponse(content={"files": _list_canonical_files()})
+
+
+@app.get("/workspace/files/{file_key}")
+async def workspace_file_detail(file_key: str):
+    entry = _canonical_file_entry(file_key.lower(), include_content=True)
+    if not entry:
+        return JSONResponse(status_code=404, content={"error": "unsupported file"})
+    return JSONResponse(content={"file": entry})
+
+
+@app.put("/workspace/files/{file_key}")
+async def workspace_file_update(file_key: str, payload: HermesWorkspaceFileUpdate):
+    entry = _canonical_file_entry(file_key.lower(), include_content=True)
+    if not entry:
+        return JSONResponse(status_code=404, content={"error": "unsupported file"})
+
+    current_version = entry.get("version")
+    if payload.expected_version is not None and payload.expected_version != current_version:
+        return JSONResponse(
+            status_code=409,
+            content={"error": "File changed on disk. Refresh and try again.", "file": entry},
+        )
+
+    config = _HERMES_CANONICAL_FILES[file_key.lower()]
+    path = config["path"]
+    assert isinstance(path, Path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(payload.content, encoding="utf-8")
+
+    updated = _canonical_file_entry(file_key.lower(), include_content=True)
+    return JSONResponse(content={"file": updated})
+
+
+@app.get("/workspace/skills")
+async def workspace_skills():
+    return JSONResponse(content={"skills": _list_skills()})
+
+
+@app.get("/workspace/skills/content")
+async def workspace_skill_detail(request: Request):
+    skill_id = request.query_params.get("id", "")
+    detail = _skill_detail(skill_id)
+    if not detail:
+        return JSONResponse(status_code=404, content={"error": "skill not found"})
+    return JSONResponse(content={"skill": detail})
+
+
+@app.delete("/workspace/skills")
+async def workspace_skill_uninstall(request: Request):
+    body = await request.json()
+    skill_id = body.get("id", "")
+    if not skill_id:
+        return JSONResponse(status_code=400, content={"error": "skill id is required"})
+
+    try:
+        skill_path = (_HERMES_SKILLS_DIR / skill_id).resolve()
+        skill_path.relative_to(_HERMES_SKILLS_DIR.resolve())
+    except Exception:
+        return JSONResponse(status_code=404, content={"error": "skill not found"})
+
+    if skill_path.is_dir():
+        skill_path = skill_path / "SKILL.md"
+
+    if skill_path.name != "SKILL.md" or not skill_path.exists():
+        return JSONResponse(status_code=404, content={"error": "skill not found"})
+
+    # Use hermes skills uninstall command
+    skill_name = skill_path.parent.name
+    try:
+        result = subprocess.run(
+            ["hermes", "skills", "uninstall", skill_name],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            return JSONResponse(
+                status_code=500,
+                content={"error": f"uninstall failed: {result.stderr.strip()}"},
+            )
+        return JSONResponse(content={"success": True, "message": f"Skill '{skill_name}' uninstalled"})
+    except subprocess.TimeoutExpired:
+        return JSONResponse(status_code=504, content={"error": "uninstall timed out"})
+    except FileNotFoundError:
+        return JSONResponse(status_code=500, content={"error": "hermes command not found"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+# ------------------------------------------------------------------
+# Background cron scheduler
+# ------------------------------------------------------------------
+
+async def _cron_scheduler_loop():
+    """Background task: check active cron jobs every 30s and trigger them."""
+    while True:
+        try:
+            if _HERMES_CRON_AVAILABLE:
+                _run_hermes_tick_now()
+                await asyncio.sleep(30)
+                continue
+
+            now = datetime.now(timezone.utc)
+            for job_id, job in list(_cron_jobs.items()):
+                if job.get("status") != "active":
+                    continue
+                next_run_str = job.get("next_run")
+                if not next_run_str:
+                    continue
+                try:
+                    next_run_dt = datetime.fromisoformat(next_run_str)
+                    if next_run_dt.tzinfo is None:
+                        next_run_dt = next_run_dt.replace(tzinfo=timezone.utc)
+                except (ValueError, TypeError):
+                    continue
+                if now >= next_run_dt:
+                    print(f"[cron-scheduler] Triggering job {job_id} ({job.get('name', '')})", flush=True)
+                    try:
+                        run_time = now.isoformat()
+                        job["last_run"] = run_time
+                        job["next_run"] = _compute_next_run(job.get("schedule", ""))
+
+                        run_id = str(uuid.uuid4())[:8]
+                        run_record = {
+                            "run_id": run_id,
+                            "job_id": job_id,
+                            "started_at": run_time,
+                            "completed_at": None,
+                            "status": "running",
+                            "output": "",
+                            "error": None,
+                            "tool_log": [],
+                        }
+                        history = _cron_run_history.setdefault(job_id, [])
+                        history.insert(0, run_record)
+                        if len(history) > MAX_RUN_HISTORY:
+                            _cron_run_history[job_id] = history[:MAX_RUN_HISTORY]
+                        _save_cron_jobs()
+                        _save_cron_history()
+
+                        t = threading.Thread(target=_run_cron_agent, args=(job, run_record), daemon=True)
+                        t.start()
+                    except Exception as e:
+                        print(f"[cron-scheduler] Error triggering job {job_id}: {e}", flush=True)
+        except Exception as e:
+            print(f"[cron-scheduler] Scheduler loop error: {e}", flush=True)
+        await asyncio.sleep(30)
+
+
+@app.on_event("startup")
+async def _start_cron_scheduler():
+    if _HERMES_CRON_AVAILABLE:
+        try:
+            job_count = len(_hermes_list_jobs(include_disabled=True))
+        except Exception as e:
+            job_count = 0
+            print(f"[cron] Failed to inspect Hermes jobs on startup: {e}", flush=True)
+        print(f"[cron] Hermes-backed scheduler starting with {job_count} jobs", flush=True)
+        asyncio.create_task(_cron_scheduler_loop())
+        return
+
+    # Load persisted cron data from disk
+    _load_cron_data()
+    # Recompute next_run for active jobs (they may have been offline)
+    for job_id, job in _cron_jobs.items():
+        if job.get("status") == "active" and job.get("schedule"):
+            job["next_run"] = _compute_next_run(job["schedule"])
+    if _cron_jobs:
+        _save_cron_jobs()
+    print(f"[cron] Scheduler starting with {len(_cron_jobs)} jobs", flush=True)
+    asyncio.create_task(_cron_scheduler_loop())
 
 
 if __name__ == "__main__":

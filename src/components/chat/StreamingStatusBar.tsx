@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Clock, Wrench } from 'lucide-react';
+import { Clock, Wrench, Square } from 'lucide-react';
 
 interface StreamingStatusBarProps {
   isStreaming: boolean;
   toolCallCount: number;
   statusLabel?: string;
   embedded?: boolean;
+  currentTool?: string;
+  onStop?: () => void;
 }
 
 function formatElapsed(seconds: number): string {
@@ -20,6 +22,8 @@ export const StreamingStatusBar: React.FC<StreamingStatusBarProps> = ({
   toolCallCount,
   statusLabel,
   embedded = false,
+  currentTool,
+  onStop,
 }) => {
   const [elapsed, setElapsed] = useState(0);
   const startTimeRef = useRef<number | null>(null);
@@ -52,15 +56,27 @@ export const StreamingStatusBar: React.FC<StreamingStatusBarProps> = ({
           <Clock className="h-3 w-3" />
           <span className="tabular-nums">{formatElapsed(elapsed)}</span>
         </div>
-        {statusLabel ? (
+        {statusLabel || currentTool ? (
           <div className="min-w-0 flex-1 px-3 text-center">
-            <span className="truncate text-[11px] text-foreground/80">{statusLabel}</span>
+            <span className="truncate text-[11px] text-foreground/80">
+              {currentTool || statusLabel}
+            </span>
           </div>
         ) : <div className="flex-1" />}
         <div className="flex items-center gap-1.5">
           <Wrench className="h-3 w-3" />
           <span className="tabular-nums">{toolCallCount} tool{toolCallCount !== 1 ? 's' : ''}</span>
         </div>
+        {onStop && (
+          <button
+            onClick={onStop}
+            className="ml-2 flex items-center justify-center rounded-[6px] bg-red-500/10 border border-red-500/30 text-red-500 hover:bg-red-500/20 transition-colors duration-100"
+            title="Stop generating"
+            style={{ width: 22, height: 22, minWidth: 22 }}
+          >
+            <Square className="h-2.5 w-2.5" />
+          </button>
+        )}
       </div>
     );
   }
@@ -75,15 +91,27 @@ export const StreamingStatusBar: React.FC<StreamingStatusBarProps> = ({
           <Clock className="h-3 w-3" />
           <span className="tabular-nums">{formatElapsed(elapsed)}</span>
         </div>
-        {statusLabel ? (
+        {statusLabel || currentTool ? (
           <div className="min-w-0 flex-1 px-3 text-center">
-            <span className="truncate text-[11px] text-foreground/80">{statusLabel}</span>
+            <span className="truncate text-[11px] text-foreground/80">
+              {currentTool || statusLabel}
+            </span>
           </div>
         ) : <div className="flex-1" />}
         <div className="flex items-center gap-1.5">
           <Wrench className="h-3 w-3" />
           <span className="tabular-nums">{toolCallCount} tool{toolCallCount !== 1 ? 's' : ''}</span>
         </div>
+        {onStop && (
+          <button
+            onClick={onStop}
+            className="ml-2 flex items-center justify-center rounded-[6px] bg-red-500/10 border border-red-500/30 text-red-500 hover:bg-red-500/20 transition-colors duration-100"
+            title="Stop generating"
+            style={{ width: 22, height: 22, minWidth: 22 }}
+          >
+            <Square className="h-2.5 w-2.5" />
+          </button>
+        )}
       </div>
     </div>
   );

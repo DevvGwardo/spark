@@ -6,6 +6,7 @@ import { isRepoWriteMessage } from '@/lib/repo-intent';
 import type { ToolActivityEvent } from '@/components/chat/AgentActivity';
 import { SERVER_EXECUTED_REPO_TOOLS, SERVER_TOOL_EVENT_TYPES, type ServerToolEvent } from '@/lib/server-tool-events';
 import { extractPseudoToolInvocations, extractTextFileEdits, getPseudoToolSourceText } from '@/lib/pseudo-tool-calls';
+import type { Provider } from '@/stores/settings-store';
 
 /** Delay before auto-continue fires after a stalled or interrupted response. */
 export const AUTO_CONTINUE_DELAY_MS = 300;
@@ -33,12 +34,15 @@ export function isInvalidRepoReadPath(path: string): boolean {
 
 export function getRepoPathSuggestions(paths: string[], requestedPath: string, limit = 6): string[] {
   const normalizedRequestedPath = normalizeRepoPath(requestedPath).toLowerCase();
-  const requestedBasename = normalizedRequestedPath.split('/').at(-1) || normalizedRequestedPath;
+  const requestedSegments = normalizedRequestedPath.split('/').filter(Boolean);
+  const requestedBasename = requestedSegments.at(-1) || normalizedRequestedPath;
+  const requestedTopLevel = requestedSegments[0] || '';
 
   return paths
     .map((candidatePath) => {
       const normalizedCandidate = candidatePath.toLowerCase();
-      const candidateBasename = normalizedCandidate.split('/').at(-1) || normalizedCandidate;
+      const candidateSegments = normalizedCandidate.split('/').filter(Boolean);
+      const candidateBasename = candidateSegments.at(-1) || normalizedCandidate;
       let score = 0;
 
       if (normalizedCandidate === normalizedRequestedPath) score += 100;
@@ -46,6 +50,10 @@ export function getRepoPathSuggestions(paths: string[], requestedPath: string, l
       if (requestedBasename && candidateBasename.includes(requestedBasename)) score += 30;
       if (requestedBasename && normalizedCandidate.includes(requestedBasename)) score += 20;
       if (normalizedRequestedPath && normalizedCandidate.includes(normalizedRequestedPath)) score += 10;
+      if (requestedTopLevel && candidateSegments[0] === requestedTopLevel) score += 25;
+
+      const overlap = requestedSegments.filter((segment) => candidateSegments.includes(segment)).length;
+      if (overlap > 0) score += overlap * 12;
 
       return { candidatePath, score };
     })
@@ -55,16 +63,30 @@ export function getRepoPathSuggestions(paths: string[], requestedPath: string, l
     .map((entry) => entry.candidatePath);
 }
 
+function getRepoPathExamples(paths: string[], requestedPath: string, limit = REPO_PATH_SAMPLE_LIMIT): string[] {
+  const normalizedRequestedPath = normalizeRepoPath(requestedPath).toLowerCase();
+  const requestedTopLevel = normalizedRequestedPath.split('/').find(Boolean) || '';
+
+  if (requestedTopLevel) {
+    const topLevelMatches = paths.filter((path) => path.toLowerCase().startsWith(`${requestedTopLevel}/`));
+    if (topLevelMatches.length > 0) {
+      return topLevelMatches.slice(0, limit);
+    }
+  }
+
+  return paths.slice(0, limit);
+}
+
 export function formatMissingRepoFileError(requestedPath: string, repoPaths: string[]): string {
   const normalizedPath = normalizeRepoPath(requestedPath);
   const suggestions = getRepoPathSuggestions(repoPaths, normalizedPath);
 
   if (suggestions.length > 0) {
-    return `Error: \`${normalizedPath}\` is not present in the selected repository. Choose a real path from the loaded repo tree instead. Possible matches:\n${suggestions.map((path) => `- ${path}`).join('\n')}`;
+    return `Error: \`${normalizedPath}\` is not present in the selected repository. Retry using one of these exact file paths from the loaded repo tree. Do not guess sibling paths or directory names.\nPossible matches:\n${suggestions.map((path) => `- ${path}`).join('\n')}`;
   }
 
-  const samplePaths = repoPaths.slice(0, REPO_PATH_SAMPLE_LIMIT);
-  return `Error: \`${normalizedPath}\` is not present in the selected repository. Choose a real path from the loaded repo tree instead.${samplePaths.length > 0 ? ` Example paths:\n${samplePaths.map((path) => `- ${path}`).join('\n')}` : ''}`;
+  const samplePaths = getRepoPathExamples(repoPaths, normalizedPath);
+  return `Error: \`${normalizedPath}\` is not present in the selected repository. Retry using an exact file path from the loaded repo tree. Do not guess sibling paths or directory names.${samplePaths.length > 0 ? ` Example paths from the same area:\n${samplePaths.map((path) => `- ${path}`).join('\n')}` : ''}`;
 }
 
 export function formatRepoTreeUnavailableError(repoStatus: 'idle' | 'loading' | 'ready' | 'error', repoError?: string | null): string {
@@ -152,19 +174,27 @@ export function toStoredAIMessages(msgs: Awaited<ReturnType<typeof db.messages.g
     id: m.id,
     role: m.role as AIMessage['role'],
     content: m.content,
+    timestamp: m.timestamp,
     ...(m.parts ? { parts: m.parts } : {}),
     ...(m.toolInvocations ? { toolInvocations: m.toolInvocations } : {}),
   }));
 
-  return sanitizePartialToolCalls(restored);
+  return sanitizePartialToolCalls(restored as Array<{
+    id: string;
+    role: AIMessage['role'];
+    content: string;
+    timestamp: string;
+    parts?: Array<Record<string, unknown>>;
+    toolInvocations?: Array<Record<string, unknown>>;
+  }>) as unknown as AIMessage[];
 }
 
 export function isServerToolEvent(value: unknown): value is ServerToolEvent {
-  return !!value && typeof value === 'object' && 'type' in value && SERVER_TOOL_EVENT_TYPES.has((value as { type: string }).type);
+  return !!value && typeof value === 'object' && 'type' in value && (SERVER_TOOL_EVENT_TYPES as Set<string>).has((value as { type: string }).type);
 }
 
 export function isServerExecutedRepoToolName(toolName: unknown): toolName is string {
-  return typeof toolName === 'string' && SERVER_EXECUTED_REPO_TOOLS.has(toolName);
+  return typeof toolName === 'string' && (SERVER_EXECUTED_REPO_TOOLS as Set<string>).has(toolName);
 }
 
 export function isHermesToolActivityData(
@@ -202,6 +232,108 @@ export async function upsertStoredMessage(message: StoredMessage): Promise<void>
   } catch {
     await db.messages.update(message.id, message);
   }
+}
+
+function parseToolActivityInput(input: string): Record<string, unknown> {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    return parsed && typeof parsed === 'object'
+      ? parsed as Record<string, unknown>
+      : { input: trimmed };
+  } catch {
+    return { input: trimmed };
+  }
+}
+
+export function synthesizeToolInvocationsForPersistence(
+  toolActivity: ToolActivityEvent[] = [],
+  serverToolEvents: ServerToolEvent[] = [],
+): Array<Record<string, unknown>> {
+  if (serverToolEvents.length > 0) {
+    return serverToolEvents.map((event, index) => {
+      switch (event.type) {
+        case 'repo_file_read':
+          return {
+            toolCallId: `server-read-${index}:${event.path}`,
+            toolName: 'read_repo_file',
+            args: { path: event.path },
+            state: 'result',
+            result: { ok: true },
+          };
+        case 'repo_file_edit':
+          return {
+            toolCallId: `server-edit-${index}:${event.path}`,
+            toolName: 'edit_repo_file',
+            args: { path: event.path, content: event.content, description: event.description },
+            state: 'result',
+            result: { ok: true },
+          };
+        case 'repo_file_create':
+          return {
+            toolCallId: `server-create-${index}:${event.path}`,
+            toolName: 'create_repo_file',
+            args: { path: event.path, content: event.content, description: event.description },
+            state: 'result',
+            result: { ok: true },
+          };
+        case 'repo_file_delete':
+          return {
+            toolCallId: `server-delete-${index}:${event.path}`,
+            toolName: 'delete_repo_file',
+            args: { path: event.path, reason: event.reason },
+            state: 'result',
+            result: { ok: true },
+          };
+        case 'repo_batch_edit':
+          return {
+            toolCallId: `server-batch-edit-${index}`,
+            toolName: 'batch_edit_repo_files',
+            args: {
+              changes: event.changes.map((change) => ({
+                path: change.path,
+                action: change.action,
+                content: change.content,
+                description: change.description,
+              })),
+            },
+            state: 'result',
+            result: { ok: true },
+          };
+        case 'repo_proposal':
+          return {
+            toolCallId: `server-proposal-${index}`,
+            toolName: 'propose_changes',
+            args: {
+              summary: event.summary,
+              plan: event.plan,
+            },
+            state: 'result',
+            result: { ok: true },
+          };
+      }
+    });
+  }
+
+  return toolActivity.map((event, index) => ({
+    toolCallId: `activity-${index}:${event.tool}`,
+    toolName: event.tool,
+    args: parseToolActivityInput(event.input),
+    state: event.status === 'completed' ? 'result' : 'call',
+    ...(event.status === 'completed'
+      ? {
+          result: event.output
+            ? (/^(error|failed)[:\s]/i.test(event.output.trim())
+                ? { error: event.output.trim() }
+                : { output: event.output })
+            : { ok: true },
+        }
+      : {}),
+  }));
 }
 
 export const REPO_EDIT_TOOL_NAMES = new Set([
@@ -332,7 +464,7 @@ export function describedEditButDidNotExecute(
 }
 
 export interface ProviderOverride {
-  provider: string;
+  provider: Provider;
   model: string;
 }
 

@@ -67,7 +67,7 @@ ${lines}
       if (scrollHeightDescriptor) {
         Object.defineProperty(HTMLElement.prototype, 'scrollHeight', scrollHeightDescriptor);
       } else {
-        delete (HTMLElement.prototype as Partial<HTMLElement>).scrollHeight;
+        delete (HTMLElement.prototype as unknown as Record<string, unknown>).scrollHeight;
       }
     }
   });

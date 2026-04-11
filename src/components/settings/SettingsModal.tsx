@@ -2,11 +2,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { X, Eye, EyeOff, Search, Check, Zap, ChevronDown, ChevronRight, ArrowLeft, ExternalLink, Github, Code2, Network, Info, TerminalSquare, RefreshCw, LayoutGrid, BookOpen, Settings, Plus, Trash2 } from 'lucide-react';
 import { useSettingsStore, type Provider, type Language } from '@/stores/settings-store';
 import { COLOR_THEMES, ACCENT_COLORS } from '@/lib/themes';
-import { useHermesStore, type HermesToolsets } from '@/stores/hermes-store';
+import { useHermesStore, type HermesToolsets, type MCPServer, type MCPTool } from '@/stores/hermes-store';
 import { useKnowledgeStore } from '@/stores/knowledge-store';
 import { useUIStore } from '@/stores/ui-store';
 import { PROVIDERS, PROVIDER_ORDER, CATEGORY_LABELS, getVisibleModelOptions, type ProviderCategory } from '@/lib/providers';
-import { validateApiKey } from '@/lib/api';
+import { validateApiKey, listGitHubRepos, type GitHubRepoSummary } from '@/lib/api';
 import { PROVIDER_KEY_URLS } from '@/components/chat/ApiKeyModal';
 import { cn } from '@/lib/utils';
 import { getLocalProviderRuntimeDetails, parseLocalProviderRuntimeError } from '@/lib/local-provider-runtime';
@@ -422,15 +422,100 @@ export const SettingsModal: React.FC = () => {
     setGithubPAT,
   } = useSettingsStore();
 
-  const { toolsets: hermesToolsets, setToolset: setHermesToolset } = useHermesStore();
+  const {
+    toolsets: hermesToolsets,
+    setToolset: setHermesToolset,
+    swarm: hermesSwarm,
+    setSwarmEnabled: setHermesSwarmEnabled,
+    mcpServers,
+    addMCPServer,
+    removeMCPServer,
+    toggleMCPServer,
+    setMCPServerTools,
+  } = useHermesStore();
 
   const [showKey, setShowKey] = useState(false);
   const [showGithubKey, setShowGithubKey] = useState(false);
+  const [githubUsername, setGithubUsername] = useState<string | null>(null);
+  const [githubRepos, setGithubRepos] = useState<GitHubRepoSummary[]>([]);
+  const [syncingRepos, setSyncingRepos] = useState(false);
+
+  const handleSyncRepos = useCallback(async () => {
+    if (!githubPAT) return;
+    setSyncingRepos(true);
+    try {
+      const repos = await listGitHubRepos(githubPAT);
+      setGithubRepos(repos);
+    } catch (e) {
+      console.error('Failed to sync repos:', e);
+    } finally {
+      setSyncingRepos(false);
+    }
+  }, [githubPAT]);
   const [tab, setTab] = useState<'providers' | 'github' | 'knowledge' | 'general'>('providers');
   const [search, setSearch] = useState('');
   const [providerView, setProviderView] = useState<'list' | 'detail'>('list');
   const [localRuntimeStatus, setLocalRuntimeStatus] = useState<string | null>(null);
   const [refreshingModels, setRefreshingModels] = useState(false);
+
+  // MCP server management state
+  const [mcpAddOpen, setMcpAddOpen] = useState(false);
+  const [mcpName, setMcpName] = useState('');
+  const [mcpUrl, setMcpUrl] = useState('');
+  const [mcpApiKey, setMcpApiKey] = useState('');
+  const [mcpConnecting, setMcpConnecting] = useState<string | null>(null);
+  const [mcpError, setMcpError] = useState<string | null>(null);
+
+  const handleConnectMCP = useCallback(async (serverId: string, url: string, apiKey?: string) => {
+    setMcpConnecting(serverId);
+    setMcpError(null);
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      const tools: MCPTool[] = (data.result?.tools ?? [])
+        .filter((t: unknown): t is { name: string; description?: string; inputSchema?: Record<string, unknown> } =>
+          typeof t === 'object' && t !== null && typeof (t as { name?: unknown }).name === 'string'
+        )
+        .map((t: { name: string; description?: string; inputSchema?: Record<string, unknown> }) => ({
+          name: t.name,
+          description: t.description ?? '',
+          inputSchema: t.inputSchema ?? { type: 'object', properties: {} },
+        }));
+      setMCPServerTools(serverId, tools);
+    } catch (e) {
+      setMcpError(`Failed to connect: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setMcpConnecting(null);
+    }
+  }, [setMCPServerTools]);
+
+  const handleAddMCPServer = useCallback(() => {
+    if (!mcpName.trim() || !mcpUrl.trim()) return;
+    const id = `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const url = mcpUrl.trim();
+    const apiKey = mcpApiKey.trim() || undefined;
+    addMCPServer({
+      id,
+      name: mcpName.trim(),
+      url,
+      apiKey,
+      enabled: true,
+      tools: [],
+    });
+    setMcpName('');
+    setMcpUrl('');
+    setMcpApiKey('');
+    setMcpAddOpen(false);
+    // Auto-connect to discover tools
+    handleConnectMCP(id, url, apiKey);
+  }, [mcpName, mcpUrl, mcpApiKey, addMCPServer, handleConnectMCP]);
 
   // Animation state: tracks whether the modal is mounted and whether it's visually open
   const [mounted, setMounted] = useState(false);
@@ -458,6 +543,47 @@ export const SettingsModal: React.FC = () => {
       closingRef.current = false;
     }
   }, []);
+
+  // Fetch the GitHub username whenever the PAT changes (debounced, validated)
+  useEffect(() => {
+    const pat = githubPAT.trim();
+    if (!pat || !/^(ghp_|github_pat_|gho_|ghs_|ghr_)[a-zA-Z0-9._-]+$/.test(pat)) {
+      setGithubUsername(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await fetch('https://api.github.com/user', {
+            headers: { Authorization: `Bearer ${pat}` },
+          });
+          if (cancelled) return;
+          if (res.ok) {
+            const data = await res.json() as { login?: string };
+            if (!cancelled && data.login) {
+              setGithubUsername(data.login);
+            }
+          } else {
+            setGithubUsername(null);
+          }
+        } catch {
+          if (!cancelled) setGithubUsername(null);
+        }
+      })();
+    }, 500);
+
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [githubPAT]);
+
+  // Auto-fetch repos when GitHub tab is shown and PAT is valid
+  useEffect(() => {
+    if (tab === 'github' && githubUsername && githubPAT && githubRepos.length === 0) {
+      handleSyncRepos();
+    }
+  }, [tab, githubUsername, githubPAT, githubRepos.length, handleSyncRepos]);
 
   const config = providers[activeProvider];
   const providerInfo = PROVIDERS[activeProvider];
@@ -550,6 +676,22 @@ export const SettingsModal: React.FC = () => {
             updateProviderConfig('openclaw', { model: nextDefaultModel });
           }
         }
+
+        if (activeProvider === 'hermes') {
+          const nextModels = (result.models ?? []).filter(Boolean);
+          if (nextModels.length > 0) {
+            setAvailableModels('hermes', nextModels);
+          }
+
+          const nextDefaultModel = result.defaultModel || nextModels[0];
+          const currentModel = providers.hermes.model;
+          if (
+            nextDefaultModel &&
+            (!currentModel || (nextModels.length > 0 && !nextModels.includes(currentModel)))
+          ) {
+            updateProviderConfig('hermes', { model: nextDefaultModel });
+          }
+        }
       } catch (error) {
         console.error(`Failed to validate ${activeProvider} runtime`, error);
         if (!cancelled) {
@@ -572,7 +714,29 @@ export const SettingsModal: React.FC = () => {
 
   const handleRefreshModels = useCallback(async () => {
     const apiKey = config.apiKey;
-    if (!apiKey?.trim() || activeProvider === 'hermes') {
+    if (activeProvider === 'hermes') {
+      // Hermes doesn't need an API key — validate against the bridge directly
+      setRefreshingModels(true);
+      try {
+        const result = await validateApiKey('hermes', '');
+        if (result.valid) {
+          const nextModels = (result.models ?? []).filter(Boolean);
+          if (nextModels.length > 0) {
+            setAvailableModels('hermes', nextModels);
+          }
+          if (result.defaultModel) {
+            updateProviderConfig('hermes', { model: result.defaultModel });
+          }
+        }
+      } catch {
+        // Silently fail
+      } finally {
+        setRefreshingModels(false);
+      }
+      return;
+    }
+
+    if (!apiKey?.trim()) {
       return;
     }
 
@@ -590,7 +754,7 @@ export const SettingsModal: React.FC = () => {
     } finally {
       setRefreshingModels(false);
     }
-  }, [activeProvider, config.apiKey, setAvailableModels]);
+  }, [activeProvider, config.apiKey, setAvailableModels, updateProviderConfig]);
 
   const filteredProviders = useMemo(() => {
     const q = search.toLowerCase();
@@ -957,7 +1121,7 @@ export const SettingsModal: React.FC = () => {
                             { key: 'terminal' as const, label: 'Terminal Access', desc: 'Allows shell command execution on your machine', warn: true },
                             { key: 'files' as const, label: 'File Operations', desc: 'Allows reading and writing files on your machine', warn: true },
                             { key: 'code_execution' as const, label: 'Code Execution', desc: 'Allows running arbitrary code on your machine', warn: true },
-                          ] as const).map(({ key, label, desc, warn }) => (
+                          ]).map(({ key, label, desc, warn }) => (
                             <div key={key} className="flex items-center justify-between">
                               <div>
                                 <div className="text-sm text-foreground">{label}</div>
@@ -979,6 +1143,174 @@ export const SettingsModal: React.FC = () => {
                                   )}
                                 />
                               </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {activeProvider === 'hermes' && (
+                      <div className={cn(settingsCardClass, 'space-y-3 px-5 py-5')}>
+                        <div>
+                          <p className={fieldLabelClass}>Swarm Pipeline</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Run an Architect → Implementor → Reviewer pipeline for multi-step tasks.
+                            Each phase is a separate agent that plans, implements, then reviews changes.
+                          </p>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="text-sm text-foreground">Enable Swarm Mode</div>
+                            <div className="text-xs text-muted-foreground">
+                              {hermesSwarm.enabled
+                                ? 'Messages will run through the 3-phase pipeline'
+                                : 'Messages use the standard single-agent loop'}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => setHermesSwarmEnabled(!hermesSwarm.enabled)}
+                            className={cn(
+                              toggleTrackClass,
+                              hermesSwarm.enabled ? 'bg-primary' : 'bg-border'
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                toggleThumbClass,
+                                hermesSwarm.enabled ? 'translate-x-[20px]' : 'translate-x-[3px]'
+                              )}
+                            />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {activeProvider === 'hermes' && (
+                      <div className={cn(settingsCardClass, 'space-y-3 px-5 py-5')}>
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className={fieldLabelClass}>MCP Servers</p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Connect external tool servers to extend agent capabilities.
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => setMcpAddOpen(!mcpAddOpen)}
+                            className="flex items-center gap-1.5 rounded-md border border-[#2a2a2a] bg-[#1a1a1a] px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:border-[#3a3a3a] transition-colors"
+                          >
+                            <Plus size={12} />
+                            Add
+                          </button>
+                        </div>
+
+                        {mcpAddOpen && (
+                          <div className="space-y-2 rounded-lg border border-[#2a2a2a] bg-[#0d0d0d] p-3">
+                            <input
+                              value={mcpName}
+                              onChange={(e) => setMcpName(e.target.value)}
+                              placeholder="Server name"
+                              className={cn(textInputClass, 'text-xs')}
+                            />
+                            <input
+                              value={mcpUrl}
+                              onChange={(e) => setMcpUrl(e.target.value)}
+                              placeholder="Server URL (e.g. http://localhost:8080/mcp)"
+                              className={cn(textInputClass, 'text-xs font-mono')}
+                            />
+                            <input
+                              value={mcpApiKey}
+                              onChange={(e) => setMcpApiKey(e.target.value)}
+                              placeholder="API key (optional)"
+                              type="password"
+                              className={cn(textInputClass, 'text-xs')}
+                            />
+                            <div className="flex gap-2 pt-1">
+                              <button
+                                onClick={handleAddMCPServer}
+                                disabled={!mcpName.trim() || !mcpUrl.trim()}
+                                className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 transition-colors"
+                              >
+                                Add & Connect
+                              </button>
+                              <button
+                                onClick={() => { setMcpAddOpen(false); setMcpName(''); setMcpUrl(''); setMcpApiKey(''); }}
+                                className="rounded-md border border-[#2a2a2a] px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {mcpError && (
+                          <p className="text-xs text-red-400">{mcpError}</p>
+                        )}
+
+                        {mcpServers.length === 0 && !mcpAddOpen && (
+                          <p className="text-xs text-muted-foreground/60 py-2">
+                            No MCP servers configured. Add one to give the agent extra tools.
+                          </p>
+                        )}
+
+                        <div className="space-y-2">
+                          {mcpServers.map((server) => (
+                            <div key={server.id} className="rounded-lg border border-[#2a2a2a] bg-[#0d0d0d] px-3 py-2.5">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <Network size={13} className="shrink-0 text-muted-foreground" />
+                                  <div className="min-w-0">
+                                    <div className="text-sm text-foreground truncate">{server.name}</div>
+                                    <div className="text-[10px] font-mono text-muted-foreground/60 truncate">{server.url}</div>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <span className="text-[10px] text-muted-foreground">
+                                    {server.tools.length} tool{server.tools.length !== 1 ? 's' : ''}
+                                  </span>
+                                  <button
+                                    onClick={() => handleConnectMCP(server.id, server.url, server.apiKey)}
+                                    disabled={mcpConnecting === server.id}
+                                    className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
+                                    title="Refresh tools"
+                                  >
+                                    <RefreshCw size={12} className={mcpConnecting === server.id ? 'animate-spin' : ''} />
+                                  </button>
+                                  <button
+                                    onClick={() => toggleMCPServer(server.id)}
+                                    className={cn(
+                                      toggleTrackClass,
+                                      server.enabled ? 'bg-primary' : 'bg-border'
+                                    )}
+                                  >
+                                    <span
+                                      className={cn(
+                                        toggleThumbClass,
+                                        server.enabled ? 'translate-x-[20px]' : 'translate-x-[3px]'
+                                      )}
+                                    />
+                                  </button>
+                                  <button
+                                    onClick={() => removeMCPServer(server.id)}
+                                    className="text-muted-foreground hover:text-red-400 transition-colors"
+                                    title="Remove server"
+                                  >
+                                    <Trash2 size={12} />
+                                  </button>
+                                </div>
+                              </div>
+                              {server.tools.length > 0 && (
+                                <div className="mt-2 flex flex-wrap gap-1">
+                                  {server.tools.map((tool) => (
+                                    <span
+                                      key={tool.name}
+                                      className="inline-block rounded-md bg-[#1a1a1a] border border-[#2a2a2a] px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground"
+                                      title={tool.description}
+                                    >
+                                      {tool.name}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -1085,7 +1417,7 @@ export const SettingsModal: React.FC = () => {
                   </div>
                   <div className="min-w-0 flex-1">
                     <span className="text-sm font-medium text-foreground">
-                      {githubPAT ? '@cloudcraft-dev' : 'Not connected'}
+                      {githubPAT ? (githubUsername ? `@${githubUsername}` : 'Verifying...') : 'Not connected'}
                     </span>
                     <p className="text-xs text-[#666666]">
                       {githubPAT ? 'Personal Access Token configured' : 'Add a token to connect'}
@@ -1147,36 +1479,36 @@ export const SettingsModal: React.FC = () => {
                     </div>
 
                     <div className="space-y-2">
-                      {[
-                        { name: 'frontend', desc: 'Main web application' },
-                        { name: 'api', desc: 'Backend API service' },
-                        { name: 'docs', desc: 'Documentation site' },
-                        { name: 'infra', desc: 'Infrastructure configs' },
-                      ].map((repo) => (
-                        <div key={repo.name} className={cn(listCardClass, 'cursor-default')}>
+                      {syncingRepos && githubRepos.length === 0 && (
+                        <p className="text-xs text-muted-foreground py-3 text-center">Loading repositories...</p>
+                      )}
+                      {!syncingRepos && githubRepos.length === 0 && (
+                        <p className="text-xs text-muted-foreground/60 py-3 text-center">No repositories loaded. Click sync to fetch.</p>
+                      )}
+                      {githubRepos.map((repo) => (
+                        <div key={repo.id} className={cn(listCardClass, 'cursor-default')}>
                           <div className="h-[38px] w-[38px] rounded-[10px] flex items-center justify-center shrink-0 bg-[#4F8FEA18]">
                             <Code2 className="h-4 w-4 text-[#4F8FEA]" />
                           </div>
                           <div className="min-w-0 flex-1">
-                            <span className="text-sm font-medium text-foreground">{repo.name}</span>
-                            <p className="text-xs text-[#666666]">{repo.desc}</p>
+                            <span className="text-sm font-medium text-foreground">{repo.full_name}</span>
+                            <p className="text-xs text-[#666666] truncate">{repo.description || (repo.private ? 'Private repository' : 'No description')}</p>
                           </div>
-                          <button
-                            className={cn(
-                              toggleTrackClass,
-                              'bg-[#FF8400]'
-                            )}
-                          >
-                            <span className={cn(toggleThumbClass, 'translate-x-[20px]')} />
-                          </button>
+                          {repo.language && (
+                            <span className="text-[10px] text-muted-foreground/60 shrink-0">{repo.language}</span>
+                          )}
                         </div>
                       ))}
                     </div>
 
                     {/* Sync button */}
-                    <button className={bottomActionClass}>
-                      <RefreshCw className="h-4 w-4" />
-                      Sync repositories
+                    <button
+                      onClick={handleSyncRepos}
+                      disabled={syncingRepos}
+                      className={bottomActionClass}
+                    >
+                      <RefreshCw className={`h-4 w-4 ${syncingRepos ? 'animate-spin' : ''}`} />
+                      {syncingRepos ? 'Syncing...' : 'Sync repositories'}
                     </button>
                   </>
                 )}

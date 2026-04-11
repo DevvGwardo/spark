@@ -10,47 +10,61 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 if "httpx" not in sys.modules:
     httpx_stub = types.ModuleType("httpx")
+    sys.modules["httpx"] = httpx_stub
+else:
+    httpx_stub = sys.modules["httpx"]
 
-    class _HTTPError(Exception):
+
+class _HTTPError(Exception):
+    pass
+
+
+class _HTTPStatusError(_HTTPError):
+    def __init__(self, *args, response=None, **kwargs):
+        super().__init__(*args)
+        self.response = response
+
+
+class _Response:
+    status_code = 200
+    text = ""
+    reason_phrase = "OK"
+
+    def json(self):
+        return {}
+
+    def raise_for_status(self):
+        return None
+
+
+class _Client:
+    def __init__(self, *args, **kwargs):
         pass
 
-    class _HTTPStatusError(_HTTPError):
-        def __init__(self, *args, response=None, **kwargs):
-            super().__init__(*args)
-            self.response = response
+    def __enter__(self):
+        return self
 
-    class _Response:
-        status_code = 200
-        text = ""
-        reason_phrase = "OK"
+    def __exit__(self, exc_type, exc, tb):
+        return False
 
-        def json(self):
-            return {}
+    def get(self, *args, **kwargs):
+        return _Response()
 
-        def raise_for_status(self):
-            return None
+    def post(self, *args, **kwargs):
+        return _Response()
 
-    class _Client:
-        def __init__(self, *args, **kwargs):
-            pass
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def get(self, *args, **kwargs):
-            return _Response()
-
-        def post(self, *args, **kwargs):
-            return _Response()
-
+# Patch missing attributes regardless of whether we created or found the stub
+if not hasattr(httpx_stub, "HTTPError"):
     httpx_stub.HTTPError = _HTTPError
+if not hasattr(httpx_stub, "HTTPStatusError"):
     httpx_stub.HTTPStatusError = _HTTPStatusError
+if not hasattr(httpx_stub, "Response"):
     httpx_stub.Response = _Response
+if not hasattr(httpx_stub, "Client"):
     httpx_stub.Client = _Client
-    sys.modules["httpx"] = httpx_stub
+if not hasattr(httpx_stub, "TimeoutException"):
+    httpx_stub.TimeoutException = TimeoutError
 
 import run_agent
 from run_agent import AIAgent

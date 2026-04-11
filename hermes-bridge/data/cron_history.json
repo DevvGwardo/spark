@@ -1,0 +1,14 @@
+{
+  "8d1e670a": [
+    {
+      "run_id": "bec6f1d4",
+      "job_id": "8d1e670a",
+      "started_at": "2026-04-10T22:30:33.094234+00:00",
+      "completed_at": "2026-04-10T22:30:33.697217+00:00",
+      "status": "failed",
+      "output": "",
+      "error": "cannot import name 'AIAgent' from 'hermes_adapter' (/Users/devgwardo/cloud-chat-hub/hermes-bridge/hermes_adapter.py)",
+      "tool_log": []
+    }
+  ]
+}

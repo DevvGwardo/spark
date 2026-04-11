@@ -11,7 +11,7 @@ export interface LocalProviderRuntimeDetails {
   locationValue: string;
 }
 
-const HERMES_BRIDGE_URL = import.meta.env.VITE_HERMES_BRIDGE_URL || 'http://localhost:3003/v1';
+const HERMES_BRIDGE_URL = import.meta.env.VITE_HERMES_BRIDGE_URL || 'http://localhost:3002/v1';
 const OPENCLAW_BIN = import.meta.env.VITE_OPENCLAW_BIN || 'openclaw';
 
 export function getLocalProviderRuntimeDetails(
@@ -24,7 +24,7 @@ export function getLocalProviderRuntimeDetails(
       badge: 'Local Agent',
       summary: 'Hermes needs its local bridge running before chats can reach the agent.',
       detail: 'Start the FastAPI bridge, then retry your request. Hermes also uses your configured OpenRouter key for model calls.',
-      command: 'cd hermes-bridge && python main.py',
+      command: 'cd hermes-bridge && .venv/bin/python main.py',
       locationLabel: 'Bridge URL',
       locationValue: HERMES_BRIDGE_URL,
     };

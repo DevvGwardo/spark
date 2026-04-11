@@ -5,12 +5,15 @@ import {
   buildIssueUpdateFollowUpPrompt,
   isIssueExplainPrompt,
 } from '@/lib/issue-chat-prompts';
+import type { GitHubIssueSummary } from '@/lib/api';
 
 const issueRepo = {
-  owner: { login: 'openclaw' },
+  id: 1,
+  owner: { login: 'openclaw', avatar_url: null },
   name: 'openclaw',
   full_name: 'openclaw/openclaw',
   private: false,
+  fork: false,
   description: 'Repo',
   html_url: 'https://github.com/openclaw/openclaw',
   default_branch: 'main',
@@ -20,9 +23,11 @@ const issueRepo = {
 
 const editableRepo = {
   ...issueRepo,
-  owner: { login: 'devgwardo' },
+  id: 2,
+  owner: { login: 'devgwardo', avatar_url: null },
   name: 'openclaw',
   full_name: 'devgwardo/openclaw',
+  fork: true,
   permissions: { pull: true, push: true },
 };
 
@@ -38,7 +43,7 @@ const issue = {
   user: { login: 'reporter', avatar_url: '' },
   labels: [{ id: 1, name: 'bug', color: 'ff0000', description: null }],
   comments: 0,
-} as const;
+} as GitHubIssueSummary;
 
 describe('issue chat prompts', () => {
   it('keeps explain prompts focused on repository inspection', () => {

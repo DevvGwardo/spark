@@ -38,7 +38,9 @@ function checkRateLimitResponse(response: Response): void {
 export function isValidGitHubPAT(pat: unknown): pat is string {
   if (typeof pat !== 'string') return false;
   // GitHub PATs: ghp_, github_pat_, gho_, ghs_, ghr_ prefixes
-  return /^(ghp_|github_pat_|gho_|ghs_|ghr_)[a-zA-Z0-9_]{1,255}$/.test(pat.trim());
+  // Fine-grained tokens (github_pat_) can exceed 255 chars, so no upper bound
+  // Token body accepts alphanumeric, dots, underscores, and hyphens
+  return /^(ghp_|github_pat_|gho_|ghs_|ghr_)[a-zA-Z0-9._-]+$/.test(pat.trim());
 }
 
 export interface GitHubRepoPayload {

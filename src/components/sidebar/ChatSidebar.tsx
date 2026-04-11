@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork, Search, ChevronRight } from 'lucide-react';
+import { Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork, Search, ChevronRight, Zap, Clock, House, BookOpen, Sparkles, BarChart3 } from 'lucide-react';
 import { Github } from 'lucide-react';
 import { GhostIcon } from '@/components/chat/GhostIcon';
 import { useChatStore } from '@/stores/chat-store';
@@ -7,26 +7,21 @@ import { useUIStore } from '@/stores/ui-store';
 import { usePanelStore } from '@/stores/panel-store';
 import { useActivityStore } from '@/stores/activity-store';
 import { useChangesetStore } from '@/stores/changeset-store';
+import { useSettingsStore } from '@/stores/settings-store';
 import { getChatScopeId } from '@/lib/chat-scope';
 import { getRepoAccessLabel } from '@/lib/repo-access';
 import { cn } from '@/lib/utils';
 import { SlotNumber } from '@/components/ui/SlotNumber';
+import { CronJobsPanel } from '@/components/sidebar/CronJobsPanel';
+import { HermesChatsPanel } from '@/components/sidebar/HermesChatsPanel';
+import { HermesOverviewPanel } from '@/components/sidebar/HermesOverviewPanel';
+import { HermesMemoriesPanel } from '@/components/sidebar/HermesMemoriesPanel';
+import { HermesSkillsPanel } from '@/components/sidebar/HermesSkillsPanel';
+import { HermesUsagePanel } from '@/components/sidebar/HermesUsagePanel';
 import type { Conversation } from '@/lib/db';
 
-function relativeTime(dateStr: string): string {
-  const now = Date.now();
-  const then = new Date(dateStr).getTime();
-  const diff = now - then;
-  const minutes = Math.floor(diff / 60000);
-  if (minutes < 1) return 'now';
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d`;
-  const weeks = Math.floor(days / 7);
-  return `${weeks}w`;
-}
+import type { SubTab } from '@/stores/ui-store';
+import { relativeTime } from '@/lib/relative-time';
 
 interface ConversationGroup {
   label: string;
@@ -71,6 +66,16 @@ function groupConversationsByDate(conversations: Conversation[]): ConversationGr
   return groups;
 }
 
+const HERMES_SUB_TABS: Array<{ key: SubTab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
+  { key: 'overview', label: 'Overview', icon: House },
+  { key: 'threads', label: 'Threads', icon: MessageSquare },
+  { key: 'chats', label: 'Sessions', icon: Zap },
+  { key: 'cron', label: 'Cron', icon: Clock },
+  { key: 'memories', label: 'Memories', icon: BookOpen },
+  { key: 'skills', label: 'Skills', icon: Sparkles },
+  { key: 'usage', label: 'Usage', icon: BarChart3 },
+];
+
 export const ChatSidebar: React.FC = () => {
   const {
     conversations,
@@ -82,7 +87,8 @@ export const ChatSidebar: React.FC = () => {
   } = useChatStore();
 
   const { panels, focusedPanelId, setConversationForPanel, openPanel } = usePanelStore();
-  const { activeTab, setActiveTab, setSettingsOpen, setRepoBrowserOpen, sidebarWidth } = useUIStore();
+  const { activeTab, setActiveTab, setSettingsOpen, setRepoBrowserOpen, sidebarWidth, activeSubTab, setActiveSubTab } = useUIStore();
+  const { activeProvider } = useSettingsStore();
   const activities = useActivityStore((s) => s.activities);
   const getLineTotals = useChangesetStore((s) => s.getLineTotals);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -92,12 +98,14 @@ export const ChatSidebar: React.FC = () => {
   const [cleanupOpen, setCleanupOpen] = useState(false);
   const [cleanupDays, setCleanupDays] = useState<number | null>(null);
   const [cleanupCount, setCleanupCount] = useState(0);
+  const isHermes = activeProvider === 'hermes';
 
   // Get active repo from focused panel's changeset
   const focusedPanel = panels.find((p) => p.id === focusedPanelId);
   const focusedScopeId = getChatScopeId(focusedPanelId, focusedPanel?.conversationId ?? null);
   const focusedChangeset = useChangesetStore((s) => s.getChangeset(focusedScopeId));
   const activeRepo = focusedChangeset.activeRepo;
+  const focusedConversation = conversations.find((conversation) => conversation.id === focusedPanel?.conversationId);
   const isCompactHeader = sidebarWidth <= 280;
   const isCompactFooter = sidebarWidth <= 320;
   const isUltraCompactFooter = sidebarWidth <= 280;
@@ -121,6 +129,15 @@ export const ChatSidebar: React.FC = () => {
     setActiveTab('chat');
     setConversationForPanel(focusedPanelId, null);
   };
+
+  // Listen for "New Chat" from Electron tray/dock menu
+  useEffect(() => {
+    const cleanup = window.electronAPI?.onNewChat?.(() => {
+      setActiveTab('chat');
+      setConversationForPanel(focusedPanelId, null);
+    });
+    return () => { cleanup?.(); };
+  }, [focusedPanelId, setActiveTab, setConversationForPanel]);
 
   const handleRename = async (id: string) => {
     if (editTitle.trim()) await renameConversation(id, editTitle.trim());
@@ -170,7 +187,7 @@ export const ChatSidebar: React.FC = () => {
     <div className="flex h-full flex-col bg-transparent text-foreground">
       {/* macOS traffic light spacer — clears hiddenInset titlebar buttons */}
       <div className="h-[38px] shrink-0" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
-      {/* Top bar */}
+      {/* Top action bar */}
       <div
         className={cn(
           'flex h-11 items-center',
@@ -201,7 +218,7 @@ export const ChatSidebar: React.FC = () => {
           </defs>
         </svg>
 
-        {/* New thread button */}
+        {/* New thread button — primary action */}
         <button
           onClick={handleNew}
           className={cn(
@@ -220,36 +237,66 @@ export const ChatSidebar: React.FC = () => {
           <span className="pointer-events-none absolute inset-0 z-0 translate-x-[-120%] bg-[linear-gradient(115deg,transparent_0%,transparent_30%,hsl(var(--foreground)/0.12)_48%,transparent_62%,transparent_100%)] opacity-0 group-hover/new:animate-[sidebar-btn-glimmer_4s_ease-in-out_infinite] group-hover/new:opacity-100" />
         </button>
 
-        {/* GitHub button */}
-        <button
-          onClick={() => setRepoBrowserOpen(true)}
-          className="group/gh relative inline-flex h-9 w-9 items-center justify-center overflow-hidden rounded-[8px] border border-[#2F2F2F] bg-[hsl(var(--card))] text-[#888888] transition-colors duration-100 hover:text-[hsl(var(--text-secondary))]"
-          title="Browse repo issues"
-          aria-label="Browse repo issues"
-          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-        >
-          <Github className="relative z-[1] h-4 w-4 group-hover/gh:[stroke:url(#sidebar-rainbow)] group-hover/gh:drop-shadow-[0_0_4px_rgba(200,100,255,0.4)]" />
-          <span className="pointer-events-none absolute inset-0 z-0 translate-x-[-120%] bg-[linear-gradient(115deg,transparent_0%,transparent_30%,hsl(var(--foreground)/0.12)_48%,transparent_62%,transparent_100%)] opacity-0 group-hover/gh:animate-[sidebar-btn-glimmer_4s_ease-in-out_infinite] group-hover/gh:opacity-100" />
-        </button>
+        {/* Secondary actions */}
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setRepoBrowserOpen(true)}
+            className="group/gh relative inline-flex h-9 w-9 items-center justify-center overflow-hidden rounded-[8px] border border-[#2F2F2F] bg-[hsl(var(--card))] text-[#888888] transition-colors duration-100 hover:text-[hsl(var(--text-secondary))]"
+            title="Browse repo issues"
+            aria-label="Browse repo issues"
+            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          >
+            <Github className="relative z-[1] h-4 w-4 group-hover/gh:[stroke:url(#sidebar-rainbow)] group-hover/gh:drop-shadow-[0_0_4px_rgba(200,100,255,0.4)]" />
+            <span className="pointer-events-none absolute inset-0 z-0 translate-x-[-120%] bg-[linear-gradient(115deg,transparent_0%,transparent_30%,hsl(var(--foreground)/0.12)_48%,transparent_62%,transparent_100%)] opacity-0 group-hover/gh:animate-[sidebar-btn-glimmer_4s_ease-in-out_infinite] group-hover/gh:opacity-100" />
+          </button>
 
-        {/* Settings button */}
-        <button
-          onClick={() => setSettingsOpen(true)}
-          className="group/cog relative inline-flex h-9 w-9 items-center justify-center overflow-hidden rounded-[8px] border border-[#2F2F2F] bg-[hsl(var(--card))] text-[#888888] transition-colors duration-100 hover:text-[hsl(var(--text-secondary))]"
-          title="Settings"
-          aria-label="Open settings"
-          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-        >
-          <Settings className="relative z-[1] h-4 w-4 group-hover/cog:animate-[cog-spin_3s_cubic-bezier(0.16,1,0.3,1)_infinite] group-hover/cog:[stroke:url(#sidebar-rainbow)]" />
-          <span className="pointer-events-none absolute inset-0 z-0 translate-x-[-120%] bg-[linear-gradient(115deg,transparent_0%,transparent_30%,hsl(var(--foreground)/0.12)_48%,transparent_62%,transparent_100%)] opacity-0 group-hover/cog:animate-[sidebar-btn-glimmer_4s_ease-in-out_infinite] group-hover/cog:opacity-100" />
-        </button>
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="group/cog relative inline-flex h-9 w-9 items-center justify-center overflow-hidden rounded-[8px] border border-[#2F2F2F] bg-[hsl(var(--card))] text-[#888888] transition-colors duration-100 hover:text-[hsl(var(--text-secondary))]"
+            title="Settings"
+            aria-label="Open settings"
+            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          >
+            <Settings className="relative z-[1] h-4 w-4 group-hover/cog:animate-[cog-spin_3s_cubic-bezier(0.16,1,0.3,1)_infinite] group-hover/cog:[stroke:url(#sidebar-rainbow)]" />
+            <span className="pointer-events-none absolute inset-0 z-0 translate-x-[-120%] bg-[linear-gradient(115deg,transparent_0%,transparent_30%,hsl(var(--foreground)/0.12)_48%,transparent_62%,transparent_100%)] opacity-0 group-hover/cog:animate-[sidebar-btn-glimmer_4s_ease-in-out_infinite] group-hover/cog:opacity-100" />
+          </button>
+        </div>
       </div>
 
-      {/* Threads section header */}
-      <div className="flex items-center justify-between px-4 py-3">
+      {/* Sub-tab navigation (hermes only) */}
+      {isHermes && (
+        <div className="px-3 pb-3 pt-1">
+          <div className={cn(
+            'grid gap-1',
+            sidebarWidth <= 260 ? 'grid-cols-3' : 'grid-cols-4'
+          )}>
+            {HERMES_SUB_TABS.map(({ key, label, icon: Icon }) => (
+              <button
+                key={key}
+                onClick={() => setActiveSubTab(key)}
+                className={cn(
+                  'flex flex-col items-center justify-center gap-1 rounded-lg px-1 py-2.5 text-[10px] font-medium transition-all duration-150',
+                  activeSubTab === key
+                    ? 'bg-[hsl(var(--muted))]/80 text-foreground shadow-sm'
+                    : 'text-muted-foreground/60 hover:bg-[hsl(var(--muted))]/40 hover:text-muted-foreground'
+                )}
+              >
+                <Icon className="h-[18px] w-[18px]" />
+                <span className="leading-none">{label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Conditional content based on active sub-tab */}
+      {!isHermes || activeSubTab === 'threads' ? (
+        <>
+          {/* Threads section header */}
+          <div className="flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-1.5">
           <span className="text-[11px] font-semibold uppercase tracking-[1px] text-[#666666]">Threads</span>
-          <span className="text-[11px] font-mono text-[#555555]">{conversations.length}</span>
+          <SlotNumber value={conversations.length} className="text-[11px] font-mono text-[#555555]" />
         </div>
         <div className="relative flex items-center gap-1.5">
           <button
@@ -481,6 +528,24 @@ export const ChatSidebar: React.FC = () => {
           </>
         )}
       </div>
+
+        </>
+      ) : activeSubTab === 'overview' ? (
+        <HermesOverviewPanel />
+      ) : activeSubTab === 'chats' ? (
+        <HermesChatsPanel />
+      ) : activeSubTab === 'memories' ? (
+        <HermesMemoriesPanel />
+      ) : activeSubTab === 'skills' ? (
+        <HermesSkillsPanel />
+      ) : activeSubTab === 'usage' ? (
+        <HermesUsagePanel />
+      ) : (
+        <CronJobsPanel
+          conversationId={focusedConversation?.id ?? null}
+          conversationTitle={focusedConversation?.title ?? null}
+        />
+      )}
 
       {/* Footer — permissions + repo status */}
       <div className={cn(
