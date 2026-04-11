@@ -802,37 +802,44 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
   }
 
   return (
-    <div
-      className={cn(
-        'my-1.5',
-        (isInProgress || isLatest) && 'chat-tool-glimmer rounded-xl px-3 py-2.5',
-      )}
-    >
-      {/* Tool header row */}
-      <div className="flex items-center gap-2 text-[13px] py-0.5 min-w-0">
+    <div className="rounded-md border border-amber-500/20 bg-amber-500/5 my-1.5 overflow-hidden">
+      {/* Accordion header — always visible, click to expand */}
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-2 w-full px-3 py-1.5 text-left hover:bg-amber-500/10 transition-colors"
+      >
+        <ChevronDown
+          className={cn(
+            'h-3.5 w-3.5 text-amber-500/70 transition-transform duration-200 flex-shrink-0',
+            expanded ? 'rotate-0' : '-rotate-90'
+          )}
+        />
         {isInProgress ? (
           <GhostIcon />
         ) : isComplete ? (
           <CheckCircle2 className={cn('h-3.5 w-3.5 shrink-0', hasError ? 'text-amber-500' : 'text-green-500')} />
         ) : (
-          <Icon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          <Icon className="h-3.5 w-3.5 text-amber-500/70 shrink-0" />
         )}
-        <span className={cn("text-muted-foreground", (isInProgress || isLatest) && "glimmer-text")}>
+        <span className="text-[11px] font-medium text-amber-600/80 dark:text-amber-400/80">
           {displayLabel}
         </span>
         {toolTargetLabel && (
-          <code className={cn("text-[12px] text-foreground/80 bg-muted/50 px-1.5 py-0.5 rounded font-mono truncate max-w-[350px]", (isInProgress || isLatest) && "glimmer-text")} title={toolTargetLabel}>
+          <code
+            className="text-[11px] text-foreground/70 bg-muted/50 px-1.5 py-0.5 rounded font-mono truncate max-w-[300px]"
+            title={toolTargetLabel}
+          >
             {toolTargetLabel}
           </code>
         )}
         {shouldFocusPrimaryBatchFile && affectedPaths.length > 1 && (
-          <span className="text-foreground/70 text-[12px]">+{affectedPaths.length - 1} more queued</span>
+          <span className="text-[11px] text-foreground/60">+{affectedPaths.length - 1} more queued</span>
         )}
         {!shouldFocusPrimaryBatchFile && affectedPaths.length > 1 && (
-          <span className="text-foreground/70 text-[12px]">({affectedPaths.length} files)</span>
+          <span className="text-[11px] text-foreground/60">({affectedPaths.length} files)</span>
         )}
         {isInProgress && (
-          <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-primary/80">
+          <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-primary/80 ml-auto">
             {progressLabel}
           </span>
         )}
@@ -845,70 +852,77 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
             showStaged={isComplete}
           />
         )}
-      </div>
+        {!isInProgress && hasError && (
+          <span className="ml-auto text-[10px] text-amber-500/70">error</span>
+        )}
+        {!isInProgress && isComplete && !hasError && (
+          <span className="ml-auto text-[10px] text-muted-foreground/40">done</span>
+        )}
+      </button>
 
-      {(isInProgress || isLatest) && (
-        <div className="mt-2 pl-5">
-          <div className="chat-tool-glimmer__track">
-            <div className="chat-tool-glimmer__bar chat-tool-glimmer__bar--long" />
-            <div className="chat-tool-glimmer__bar chat-tool-glimmer__bar--short" />
-          </div>
-        </div>
-      )}
+      {/* Accordion body — slides open */}
+      <div
+        className={cn(
+          'overflow-hidden transition-all duration-200 ease-in-out',
+          expanded ? 'max-h-[2000px] opacity-100' : 'max-h-0 opacity-0'
+        )}
+      >
+        <div className="px-3 pb-2 pt-0.5 space-y-1">
+          {(isInProgress || isLatest) && (
+            <div className="mt-1">
+              <div className="chat-tool-glimmer__track">
+                <div className="chat-tool-glimmer__bar chat-tool-glimmer__bar--long" />
+                <div className="chat-tool-glimmer__bar chat-tool-glimmer__bar--short" />
+              </div>
+            </div>
+          )}
 
-      {hasError && (
-        <div className="pl-5 text-[12px] text-amber-400/90 whitespace-pre-wrap">
-          {errorMessage}
-        </div>
-      )}
+          {hasError && (
+            <div className="text-[12px] text-amber-400/90 whitespace-pre-wrap">
+              {errorMessage}
+            </div>
+          )}
 
-      {/* Command/execution output */}
-      {hasOutput && (
-        <div className="pl-5 mt-1">
-          <button
-            onClick={() => setExpanded(!expanded)}
-            className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ChevronDown className={cn('h-3 w-3 transition-transform', expanded && 'rotate-180')} />
-            Output
-          </button>
-          {expanded && (
-            <pre className="mt-1 text-[11px] font-mono text-foreground/80 bg-muted/30 rounded-md px-2.5 py-2 max-h-[200px] overflow-auto whitespace-pre-wrap break-all">
-              {outputMessage}
-            </pre>
+          {/* Command/execution output */}
+          {hasOutput && (
+            <div>
+              <pre className="text-[11px] font-mono text-foreground/80 bg-muted/30 rounded-md px-2.5 py-2 max-h-[200px] overflow-auto whitespace-pre-wrap break-all">
+                {outputMessage}
+              </pre>
+            </div>
+          )}
+
+          {/* Code diff preview — shown when expanded for completed file-modifying tools */}
+          {isComplete && isFileModifyingTool && !isBatch && filePath && (
+            <FileEditPreview filePath={filePath} />
+          )}
+
+          {/* Batch file list */}
+          {showMultiFileList && (
+            <div className="space-y-0.5">
+              {affectedPaths.map((p, idx) => (
+                <div key={idx}>
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground min-w-0">
+                    <FileCode className="h-3 w-3 shrink-0" />
+                    <code className="font-mono text-foreground/70 text-[11px] bg-muted/40 px-1 py-0.5 rounded truncate min-w-0">{p}</code>
+                    {batchChanges?.[idx]?.action && (
+                      <span className="text-muted-foreground/50 text-[10px]">{batchChanges[idx].action}</span>
+                    )}
+                    <FileChangeMetaBadge
+                      filePath={p}
+                      toolName={invocation.toolName}
+                      action={batchChanges?.[idx]?.action}
+                      content={batchChanges?.[idx]?.content}
+                      showStaged={isComplete}
+                    />
+                  </div>
+                  {isComplete && <FileEditPreview filePath={p} />}
+                </div>
+              ))}
+            </div>
           )}
         </div>
-      )}
-
-      {/* Code diff preview — shown by default for completed file-modifying tools */}
-      {isComplete && isFileModifyingTool && !isBatch && filePath && (
-        <FileEditPreview filePath={filePath} />
-      )}
-
-      {/* Batch file list */}
-      {showMultiFileList && (
-        <div className="mt-1 space-y-0.5 pl-6">
-          {affectedPaths.map((p, idx) => (
-            <div key={idx}>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground min-w-0">
-                <FileCode className="h-3 w-3 shrink-0" />
-                <code className="font-mono text-foreground/70 text-[11px] bg-muted/40 px-1 py-0.5 rounded truncate min-w-0">{p}</code>
-                {batchChanges?.[idx]?.action && (
-                  <span className="text-muted-foreground/50 text-[10px]">{batchChanges[idx].action}</span>
-                )}
-                <FileChangeMetaBadge
-                  filePath={p}
-                  toolName={invocation.toolName}
-                  action={batchChanges?.[idx]?.action}
-                  content={batchChanges?.[idx]?.content}
-                  showStaged={isComplete}
-                />
-              </div>
-              {isComplete && <FileEditPreview filePath={p} />}
-            </div>
-          ))}
-        </div>
-      )}
+      </div>
     </div>
   );
 }
