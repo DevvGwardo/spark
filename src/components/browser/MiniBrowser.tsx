@@ -1,6 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
-import { Globe, ArrowLeft, ArrowRight, X, ExternalLink, PanelRight, Terminal, ChevronRight, Maximize2, Minimize2, Minus, Plus } from 'lucide-react';
-import { HermesTerminal } from '@/components/terminal/HermesTerminal';
+import { Globe, ArrowLeft, ArrowRight, X, ExternalLink, PanelRight, Terminal, ChevronRight, Minus, Plus } from 'lucide-react';
 import { useUIStore } from '@/stores/ui-store';
 import { cn } from '@/lib/utils';
 import { Terminal as XTerm } from '@xterm/xterm';
@@ -25,19 +24,19 @@ const EDGE_ZONE = 14; // px from edge to trigger resize
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HermesPTYPanel — real terminal that spawns the hermes CLI via node-pty.
-// Used inside DockedMiniBrowser when the user toggles "Open Hermes".
-// Exposes zoom controls via ref so the footer bar can drive font size.
+// Used in AppLayout when the user toggles "Open Hermes".
+// Exposes zoom controls via ref so UI buttons can drive font size.
 // ─────────────────────────────────────────────────────────────────────────────
 const MIN_FONT_SIZE = 8;
 const MAX_FONT_SIZE = 20;
 const DEFAULT_FONT_SIZE = 12;
 
-interface HermesPTYPanelHandle {
+export interface HermesPTYPanelHandle {
   zoomIn: () => void;
   zoomOut: () => void;
 }
 
-const HermesPTYPanel = forwardRef<HermesPTYPanelHandle, { maximized?: boolean }>(
+export const HermesPTYPanel = forwardRef<HermesPTYPanelHandle, { maximized?: boolean }>(
   ({ maximized }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const termRef = useRef<XTerm | null>(null);
@@ -345,15 +344,12 @@ export const DockedMiniBrowser: React.FC = () => {
   } = useUIStore();
 
   const [urlInput, setUrlInput] = useState('');
-  const [hermesOpen, setHermesOpen] = useState(false);
-  const [hermesMaximized, setHermesMaximized] = useState(false);
+
   const browserViewHidden = useRef(false);
   const dockedResizeRef = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
   // Ref for measuring the Hermes panel height to shrink BrowserView bounds
-  const hermesPanelContainerRef = useRef<HTMLDivElement>(null);
-  // Ref for controlling HermesPTYPanel zoom from the footer buttons
-  const hermesTerminalRef = useRef<HermesPTYPanelHandle>(null);
+
 
   // Sync URL input with store
   useEffect(() => {
@@ -373,14 +369,6 @@ export const DockedMiniBrowser: React.FC = () => {
       const rect = container.getBoundingClientRect();
       // When sidebar is hidden, move BrowserView off-screen so it keeps running
       // but doesn't intercept clicks
-      // Measure the Hermes panel height when open so BrowserView doesn't overlap it.
-      // BrowserView is a native overlay — CSS z-index doesn't apply, so we must
-      // shrink the BrowserView bounds to leave room for the terminal panel.
-      let hermesPanelHeight = 0;
-      if (hermesOpen && hermesPanelContainerRef.current) {
-        hermesPanelHeight = hermesPanelContainerRef.current.getBoundingClientRect().height;
-      }
-
       if (rightSidebarHidden) {
         window.electronAPI?.browser?.resize({
           x: -9999,
@@ -393,7 +381,7 @@ export const DockedMiniBrowser: React.FC = () => {
           x: rect.left,
           y: rect.top + TOOLBAR_HEIGHT,
           width: rect.width,
-          height: rect.height - TOOLBAR_HEIGHT - FOOTER_HEIGHT - hermesPanelHeight,
+          height: rect.height - TOOLBAR_HEIGHT - FOOTER_HEIGHT,
         });
       }
     };
@@ -424,7 +412,7 @@ export const DockedMiniBrowser: React.FC = () => {
       window.removeEventListener('leave-html-full-screen', updateBounds);
       removeForceResize?.();
     };
-  }, [miniBrowserOpen, miniBrowserDocked, hermesOpen, rightSidebarHidden]);
+  }, [miniBrowserOpen, miniBrowserDocked, rightSidebarHidden]);
 
   // Hide/show BrowserView — used during sidebar resize to prevent flickering.
   // In docked mode, BrowserView bounds are set below the toolbar so it's always
@@ -475,6 +463,10 @@ export const DockedMiniBrowser: React.FC = () => {
       dockedResizeRef.current = true;
       const startX = e.clientX;
       const startWidth = miniBrowserDockedWidth;
+      // If sidebar is hidden, show it immediately so drag works visually
+      if (rightSidebarHidden) {
+        setRightSidebarHidden(false);
+      }
       hideBrowserView();
 
       const onMouseMove = (ev: MouseEvent) => {
@@ -496,7 +488,7 @@ export const DockedMiniBrowser: React.FC = () => {
       document.addEventListener('mousemove', onMouseMove);
       document.addEventListener('mouseup', onMouseUp);
     },
-    [miniBrowserDockedWidth, setMiniBrowserDockedWidth, hideBrowserView, showBrowserView]
+    [miniBrowserDockedWidth, setMiniBrowserDockedWidth, hideBrowserView, showBrowserView, rightSidebarHidden, setRightSidebarHidden]
   );
 
   if (!miniBrowserOpen || !miniBrowserDocked) return null;
@@ -546,65 +538,7 @@ export const DockedMiniBrowser: React.FC = () => {
         />
       </div>
 
-      {/* BrowserView overlay — hidden when hermes is maximized */}
-      <div className={cn('min-h-0 bg-transparent', hermesOpen && hermesMaximized ? 'hidden' : 'flex-[2]')} />
-
-      {/* Thin divider */}
-      {hermesOpen && (
-        <div className="h-px bg-border/40 flex-shrink-0" />
-      )}
-
-      {/* Hermes terminal panel — uses real PTY + xterm running the hermes CLI */}
-      {hermesOpen && (
-        <div ref={hermesPanelContainerRef} className={cn('min-h-[200px] overflow-hidden', hermesMaximized ? 'flex-1' : 'flex-[3]')}>
-          <HermesPTYPanel ref={hermesTerminalRef} maximized={hermesMaximized} />
-        </div>
-      )}
-
-      {/* Footer bar with Open/Close Hermes toggle + maximize */}
-      <div className="flex-shrink-0 border-t border-border/40 flex items-center">
-        <button
-          onClick={() => setHermesOpen((v) => !v)}
-          className={cn(
-            'flex-1 flex items-center justify-center gap-2 h-8 text-xs font-medium transition-colors',
-            hermesOpen
-              ? 'text-primary bg-primary/10 hover:bg-primary/20'
-              : 'text-muted-foreground hover:text-foreground hover:bg-accent'
-          )}
-          title={hermesOpen ? 'Close Hermes terminal' : 'Open Hermes terminal'}
-        >
-          <Terminal className="h-3.5 w-3.5" />
-          {hermesOpen ? 'Close Hermes' : 'Open Hermes'}
-        </button>
-        {hermesOpen && (
-          <>
-            {/* Zoom out */}
-            <button
-              onClick={() => hermesTerminalRef.current?.zoomOut()}
-              className="flex items-center justify-center h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-primary/10 transition-colors border-l border-border/40"
-              title="Zoom out"
-            >
-              <Minus className="h-3.5 w-3.5" />
-            </button>
-            {/* Zoom in */}
-            <button
-              onClick={() => hermesTerminalRef.current?.zoomIn()}
-              className="flex items-center justify-center h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-primary/10 transition-colors"
-              title="Zoom in"
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </button>
-            {/* Maximize / restore */}
-            <button
-              onClick={() => setHermesMaximized((v) => !v)}
-              className="flex items-center justify-center h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-primary/10 transition-colors border-l border-border/40"
-              title={hermesMaximized ? 'Restore Hermes' : 'Maximize Hermes'}
-            >
-              {hermesMaximized ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
-            </button>
-          </>
-        )}
-      </div>
+      <div className="flex-[2] min-h-0 bg-transparent" />
     </div>
   );
 };

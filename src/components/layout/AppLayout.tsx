@@ -21,9 +21,10 @@ import { useTheme } from '@/hooks/useTheme';
 import { useGlobalStyles } from '@/hooks/useGlobalStyles';
 import { PROVIDERS } from '@/lib/providers';
 import { getChatScopeId } from '@/lib/chat-scope';
-import { PanelLeft, GitPullRequest, MoreHorizontal, Circle, Pin, Pencil, Archive, Copy, PanelRight, Plus, FileCode2, MessageSquare, TerminalSquare, Globe } from 'lucide-react';
+import { PanelLeft, GitPullRequest, MoreHorizontal, Circle, Pin, Pencil, Archive, Copy, PanelRight, Plus, FileCode2, MessageSquare, TerminalSquare, Globe, Sparkles } from 'lucide-react';
 import { TerminalPanel } from '@/components/terminal/TerminalPanel';
-import { MiniBrowser, MiniBrowserToggle, DockedMiniBrowser } from '@/components/browser/MiniBrowser';
+import { MiniBrowser, MiniBrowserToggle, DockedMiniBrowser, HermesPTYPanel, type HermesPTYPanelHandle } from '@/components/browser/MiniBrowser';
+import { DockedChatSidebar } from '@/components/chat/DockedChatSidebar';
 import { SlotNumber } from '@/components/ui/SlotNumber';
 import { cn } from '@/lib/utils';
 
@@ -42,6 +43,8 @@ export const AppLayout: React.FC = () => {
     setRepoBrowserOpen,
     terminalOpen,
     toggleTerminal,
+    hermesTerminalOpen,
+    toggleHermesTerminal,
     selectedCronJobId,
     selectedSessionId,
     miniBrowserDocked,
@@ -63,6 +66,7 @@ export const AppLayout: React.FC = () => {
   const [prModalMode, setPrModalMode] = useState<'create' | 'review'>('create');
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const headerMenuRef = useRef<HTMLDivElement>(null);
+  const hermesTerminalRef = useRef<HermesPTYPanelHandle>(null);
   const focusedPanel = panels.find((p) => p.id === focusedPanelId);
   const focusedScopeId = getChatScopeId(focusedPanelId, focusedPanel?.conversationId ?? null);
   const preview = usePreviewStore((s) => s.getPreview(focusedScopeId));
@@ -427,7 +431,17 @@ const headerSecondaryLabel = selectedCronJobId
               <div className="flex-1" />
 
               {/* Terminal toggle */}
-              <div className="flex items-center mr-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+              <div className="flex items-center mr-2 gap-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+                <button
+                  onClick={toggleHermesTerminal}
+                  className={cn(
+                    chromeIconButtonClass,
+                    hermesTerminalOpen && 'border-primary/30 bg-primary/10 text-foreground'
+                  )}
+                  title="Toggle Hermes terminal"
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                </button>
                 <button
                   onClick={toggleTerminal}
                   className={cn(
@@ -516,7 +530,13 @@ const headerSecondaryLabel = selectedCronJobId
                   <PreviewSidebar />
                 </div>
                 <DockedMiniBrowser />
+                <DockedChatSidebar />
               </div>
+              {hermesTerminalOpen && (
+                <div className="flex-shrink-0 border-t border-border/60 flex flex-col" style={{ height: 300 }}>
+                  <HermesPTYPanel ref={hermesTerminalRef} />
+                </div>
+              )}
               <TerminalPanel cwd={activeRepo?.name ? undefined : undefined} />
             </main>
           </div>
