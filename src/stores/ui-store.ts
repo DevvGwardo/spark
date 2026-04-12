@@ -18,10 +18,15 @@ interface UIState {
   repoBrowserOpen: boolean;
   terminalOpen: boolean;
   terminalHeight: number;
+  hermesTerminalOpen: boolean;
+  hermesTerminalHeight: number;
   activeTab: AppTab;
   activeSubTab: SubTab;
   miniBrowserOpen: boolean;
   miniBrowserUrl: string;
+  miniBrowserDocked: boolean;
+  miniBrowserDockedWidth: number;
+  rightSidebarHidden: boolean;
   pendingPanelPrompts: Record<string, PendingPanelPrompt | undefined>;
   preservePanelRepoHandoffs: Record<string, boolean | undefined>;
   setSidebarOpen: (v: boolean) => void;
@@ -33,8 +38,15 @@ interface UIState {
   setTerminalOpen: (v: boolean) => void;
   toggleTerminal: () => void;
   setTerminalHeight: (h: number) => void;
+  setHermesTerminalOpen: (v: boolean) => void;
+  toggleHermesTerminal: () => void;
+  setHermesTerminalHeight: (h: number) => void;
   setMiniBrowserOpen: (v: boolean) => void;
   setMiniBrowserUrl: (url: string) => void;
+  setMiniBrowserDocked: (v: boolean) => void;
+  setMiniBrowserDockedWidth: (w: number) => void;
+  setRightSidebarHidden: (v: boolean) => void;
+  toggleRightSidebarHidden: () => void;
   queuePanelPrompt: (panelId: string, prompt: PendingPanelPrompt) => void;
   clearPanelPrompt: (panelId: string) => void;
   markPanelRepoHandoff: (panelId: string) => void;
@@ -57,10 +69,15 @@ export const useUIStore = create<UIState>()(
       repoBrowserOpen: false,
       terminalOpen: false,
       terminalHeight: 300,
+      hermesTerminalOpen: false,
+      hermesTerminalHeight: 300,
       activeTab: 'chat',
       activeSubTab: 'threads',
       miniBrowserOpen: false,
       miniBrowserUrl: 'about:blank',
+      miniBrowserDocked: false,
+      miniBrowserDockedWidth: 400,
+      rightSidebarHidden: false,
       pendingPanelPrompts: {},
       preservePanelRepoHandoffs: {},
       setSidebarOpen: (v) => set({ sidebarOpen: v }),
@@ -72,8 +89,16 @@ export const useUIStore = create<UIState>()(
       setTerminalOpen: (v) => set({ terminalOpen: v }),
       toggleTerminal: () => set((s) => ({ terminalOpen: !s.terminalOpen })),
       setTerminalHeight: (h) => set({ terminalHeight: Math.max(150, Math.min(600, h)) }),
+      setHermesTerminalOpen: (v) => set({ hermesTerminalOpen: v }),
+      toggleHermesTerminal: () => set((s) => ({ hermesTerminalOpen: !s.hermesTerminalOpen })),
+      setHermesTerminalHeight: (h) => set({ hermesTerminalHeight: Math.max(150, Math.min(600, h)) }),
+
       setMiniBrowserOpen: (v) => set({ miniBrowserOpen: v }),
       setMiniBrowserUrl: (url) => set({ miniBrowserUrl: url }),
+      setMiniBrowserDocked: (v) => set({ miniBrowserDocked: v }),
+      setMiniBrowserDockedWidth: (w) => set({ miniBrowserDockedWidth: Math.max(300, Math.min(600, w)) }),
+      setRightSidebarHidden: (v) => set({ rightSidebarHidden: v }),
+      toggleRightSidebarHidden: () => set((s) => ({ rightSidebarHidden: !s.rightSidebarHidden })),
       queuePanelPrompt: (panelId, prompt) =>
         set((state) => ({
           pendingPanelPrompts: {
@@ -113,7 +138,7 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: 'ui-store',
-      partialize: (state) => ({ sidebarOpen: state.sidebarOpen, sidebarWidth: state.sidebarWidth, terminalHeight: state.terminalHeight }),
+      partialize: (state) => ({ sidebarOpen: state.sidebarOpen, sidebarWidth: state.sidebarWidth, terminalHeight: state.terminalHeight, hermesTerminalOpen: state.hermesTerminalOpen, hermesTerminalHeight: state.hermesTerminalHeight }),
     }
   )
 );

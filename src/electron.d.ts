@@ -9,7 +9,7 @@ export interface ElectronAPI {
   notifyAttentionRequest?: (payload?: { title?: string; body?: string }) => Promise<void>
   clearAttentionRequest?: () => Promise<void>
   terminal?: {
-    spawn: (cwd?: string) => Promise<{ id: string }>
+    spawn: (options?: { cwd?: string; command?: string } | string) => Promise<{ id: string }>
     write: (id: string, data: string) => void
     resize: (id: string, cols: number, rows: number) => void
     kill: (id: string) => void
@@ -25,6 +25,7 @@ export interface ElectronAPI {
     resize: (bounds: { x: number; y: number; width: number; height: number }) => Promise<void>
     show: () => Promise<void>
     hide: () => Promise<void>
+    onForceResize: (callback: () => void) => () => void
   }
   onNewChat?: (callback: () => void) => () => void
 }

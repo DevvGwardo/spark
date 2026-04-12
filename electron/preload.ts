@@ -14,7 +14,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   notifyAttentionRequest: (payload?: { title?: string; body?: string }) => ipcRenderer.invoke('app:notify-attention', payload),
   clearAttentionRequest: () => ipcRenderer.invoke('app:clear-attention'),
   terminal: {
-    spawn: (cwd?: string) => ipcRenderer.invoke('terminal:spawn', cwd),
+    spawn: (options?: { cwd?: string; command?: string } | string) =>
+      ipcRenderer.invoke('terminal:spawn', typeof options === 'string' ? { cwd: options } : options),
     write: (id: string, data: string) => ipcRenderer.send('terminal:write', id, data),
     resize: (id: string, cols: number, rows: number) => ipcRenderer.send('terminal:resize', id, cols, rows),
     kill: (id: string) => ipcRenderer.send('terminal:kill', id),
@@ -38,6 +39,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     resize: (bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.invoke('browser:resize', bounds),
     show: () => ipcRenderer.invoke('browser:show'),
     hide: () => ipcRenderer.invoke('browser:hide'),
+    onForceResize: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on('browser:force-resize', handler);
+      return () => { ipcRenderer.removeListener('browser:force-resize', handler); };
+    },
   },
   onNewChat: (callback: () => void) => {
     const handler = () => callback()

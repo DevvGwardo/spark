@@ -1,14 +1,25 @@
 import React, { useRef, useEffect, useCallback, useState } from 'react';
 import { ArrowUp, Square, Plus, ChevronDown, Mic, CornerDownLeft, Bot } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useUIStore } from '@/stores/ui-store';
+
+// Commands that switch to a sidebar sub-tab — after running, open the sidebar
+const SUBTAB_NAV_COMMANDS = new Set([
+  'overview', 'cron', 'memories', 'skills', 'usage', 'chats', 'threads',
+]);
+
+// Commands that switch to a main app tab
+const MAINTAB_NAV_COMMANDS = new Set([
+  'github', 'analyzer', 'knowledge',
+]);
 import { useSettingsStore } from '@/stores/settings-store';
 import { PROVIDERS, REASONING_EFFORTS, getVisibleModelOptions, supportsReasoningEffort } from '@/lib/providers';
 import type { QueuedMessage } from '@/lib/chat-queue';
 import { StreamingStatusBar } from './StreamingStatusBar';
 import { ContextUsageBar } from './ContextUsageBar';
 import { QueuedMessageTray } from './QueuedMessageTray';
-import { CommandSuggestions } from './CommandSuggestions';
-import { parseCommand, findCommand, type CommandContext } from '@/lib/hermes-commands';
+import { CommandSuggestions, commandTakesArgs } from './CommandSuggestions';
+import { parseCommand, findCommand, filterCommands, type CommandContext } from '@/lib/hermes-commands';
 import { useCommandCallbacks } from '@/contexts/CommandCallbacksContext';
 import {
   DropdownMenu,
@@ -59,6 +70,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [showCommandSuggestions, setShowCommandSuggestions] = useState(false);
+  const [selectedIndex, setSelectedIndex] = useState(0);
   const { activeProvider: selectedProvider, providers, availableModels, updateProviderConfig } = useSettingsStore();
   const config = providers[selectedProvider];
   const providerInfo = PROVIDERS[selectedProvider];
@@ -70,6 +82,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const reasoningSupported = supportsReasoningEffort(selectedProvider, config.model);
   const reasoningLabel = REASONING_EFFORT_LABELS[config.reasoningEffort];
   const commandCallbacks = useCommandCallbacks();
+
+  // Real UI store actions for command context
+  const setActiveSubTab = useUIStore((s) => s.setActiveSubTab);
+  const setMiniBrowserOpen = useUIStore((s) => s.setMiniBrowserOpen);
+  const setMiniBrowserUrl = useUIStore((s) => s.setMiniBrowserUrl);
+  const setSidebarOpen = useUIStore((s) => s.setSidebarOpen);
+  const setActiveTab = useUIStore((s) => s.setActiveTab);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -89,20 +108,36 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     if (!cmd) return false;
 
     const context: CommandContext = {
-      setActiveSubTab: () => {},
-      setMiniBrowserOpen: () => {},
-      setMiniBrowserUrl: () => {},
+      setActiveSubTab,
+      setActiveTab,
+      setMiniBrowserOpen,
+      setMiniBrowserUrl,
       ...commandCallbacks,
     };
 
     try {
       const result = await cmd.handler(parsed.args, context);
-      onChange(result);
+
+      // Navigation commands need the sidebar open to show their result
+      // Subtab nav commands (overview, cron, etc.) — open the chat sidebar
+      if (SUBTAB_NAV_COMMANDS.has(parsed.command)) {
+        setActiveTab('chat');
+        setSidebarOpen(true);
+      }
+      // Main-tab nav commands (github, analyzer, knowledge) — no extra action needed,
+      // setActiveTab was already called inside the handler via context.setActiveTab().
+
+      // Only show result text for commands with actual feedback to display
+      if (result && !result.startsWith('Switched to ')) {
+        onChange(result);
+      } else {
+        onChange('');
+      }
     } catch {
       onChange(`Error executing /${parsed.command}.`);
     }
     return true;
-  }, [commandCallbacks, onChange]);
+  }, [commandCallbacks, onChange, setActiveSubTab, setMiniBrowserOpen, setMiniBrowserUrl, setSidebarOpen, setActiveTab]);
 
   const handleSendOrCommand = useCallback(async () => {
     if (!safeValue.trim()) return;
@@ -115,20 +150,70 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (safeValue.trim()) handleSendOrCommand();
+      if (showCommandSuggestions) {
+        handleCommandSelectAtIndex(selectedIndex);
+      } else if (safeValue.trim()) {
+        handleSendOrCommand();
+      }
+      return;
     }
     if (e.key === 'Escape') {
       setShowCommandSuggestions(false);
+      return;
+    }
+    if (showCommandSuggestions) {
+      const filtered = filterCommands(safeValue);
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelectedIndex((i) => Math.min(i + 1, filtered.length - 1));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelectedIndex((i) => Math.max(i - 1, 0));
+        return;
+      }
     }
   };
 
-  const handleCommandSelect = useCallback((command: string) => {
-    if (command) {
-      onChange(command + ' ');
-    }
+  // Select a command by index from the filtered list (used for Enter key + click)
+  // No-arg commands execute immediately; arg commands fill the input.
+  const handleCommandSelectAtIndex = useCallback(async (index: number) => {
+    const filtered = filterCommands(safeValue);
+    const cmd = filtered[index];
+    if (!cmd) return;
+
     setShowCommandSuggestions(false);
-    setTimeout(() => textareaRef.current?.focus(), 0);
-  }, [onChange]);
+    setSelectedIndex(0);
+
+    if (commandTakesArgs(cmd)) {
+      // Fill command into input so user can type the args
+      onChange('/' + cmd.name + ' ');
+      setTimeout(() => textareaRef.current?.focus(), 0);
+    } else {
+      // Execute immediately — clear input and run the command
+      onChange('');
+      await executeCommand('/' + cmd.name);
+    }
+  }, [safeValue, onChange, executeCommand]);
+
+  // Select a command by name (used when clicking a suggestion)
+  const handleCommandSelect = useCallback(async (name: string) => {
+    if (!name) return;
+    const cmd = findCommand(name);
+    if (!cmd) return;
+
+    setShowCommandSuggestions(false);
+    setSelectedIndex(0);
+
+    if (commandTakesArgs(cmd)) {
+      onChange('/' + cmd.name + ' ');
+      setTimeout(() => textareaRef.current?.focus(), 0);
+    } else {
+      onChange('');
+      await executeCommand('/' + cmd.name);
+    }
+  }, [onChange, executeCommand]);
 
   const hasContent = messages.length > 0;
   const hasQueuedMessages = queuedMessages.length > 0;
@@ -150,7 +235,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
         <div
           className={cn(
-            'relative overflow-hidden border border-[#3F3F3F] bg-[#222222]',
+            'relative overflow-visible border border-[#3F3F3F] bg-[#222222]',
             hasQueuedMessages ? 'rounded-b-[10px] rounded-t-none border-t-0' : 'rounded-[10px]',
           )}
         >
@@ -167,7 +252,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               <CommandSuggestions
                 query={safeValue}
                 visible={showCommandSuggestions}
+                selectedIndex={selectedIndex}
                 onSelect={handleCommandSelect}
+                onSelectIndex={setSelectedIndex}
               />
             </div>
           )}

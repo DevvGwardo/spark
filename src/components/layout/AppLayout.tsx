@@ -23,7 +23,7 @@ import { PROVIDERS } from '@/lib/providers';
 import { getChatScopeId } from '@/lib/chat-scope';
 import { PanelLeft, GitPullRequest, MoreHorizontal, Circle, Pin, Pencil, Archive, Copy, PanelRight, Plus, FileCode2, MessageSquare, TerminalSquare, Globe } from 'lucide-react';
 import { TerminalPanel } from '@/components/terminal/TerminalPanel';
-import { MiniBrowser, MiniBrowserToggle } from '@/components/browser/MiniBrowser';
+import { MiniBrowser, MiniBrowserToggle, DockedMiniBrowser } from '@/components/browser/MiniBrowser';
 import { SlotNumber } from '@/components/ui/SlotNumber';
 import { cn } from '@/lib/utils';
 
@@ -44,6 +44,9 @@ export const AppLayout: React.FC = () => {
     toggleTerminal,
     selectedCronJobId,
     selectedSessionId,
+    miniBrowserDocked,
+    rightSidebarHidden,
+    setRightSidebarHidden,
   } = useUIStore();
   const { isSetupComplete, activeProvider, providers } = useSettingsStore(
     useShallow((s) => ({ isSetupComplete: s.isSetupComplete, activeProvider: s.activeProvider, providers: s.providers })),
@@ -431,11 +434,24 @@ const headerSecondaryLabel = selectedCronJobId
                     chromeIconButtonClass,
                     terminalOpen && 'border-primary/30 bg-primary/10 text-foreground'
                   )}
-                  title="Toggle terminal"
+                  title="Toggle terminal (Ctrl+`)"
                 >
                   <TerminalSquare className="h-3.5 w-3.5" />
                 </button>
-                <MiniBrowserToggle className={chromeIconButtonClass} />
+                {miniBrowserDocked && rightSidebarHidden ? (
+                  <button
+                    onClick={() => setRightSidebarHidden(false)}
+                    className={cn(
+                      chromeIconButtonClass,
+                      'border-primary/30 bg-primary/10 text-primary'
+                    )}
+                    title="Show browser"
+                  >
+                    <Globe className="h-3.5 w-3.5" />
+                  </button>
+                ) : (
+                  <MiniBrowserToggle className={chromeIconButtonClass} />
+                )}
               </div>
 
               {/* Commit button — only in single-panel mode (multi-panel has per-panel commit) */}
@@ -499,6 +515,7 @@ const headerSecondaryLabel = selectedCronJobId
                 <div className={cn(activeTab !== 'chat' && 'hidden')} aria-hidden={activeTab !== 'chat'}>
                   <PreviewSidebar />
                 </div>
+                <DockedMiniBrowser />
               </div>
               <TerminalPanel cwd={activeRepo?.name ? undefined : undefined} />
             </main>

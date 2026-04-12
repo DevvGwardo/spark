@@ -112,7 +112,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   onClose,
   onOpenPR,
 }) => {
-  const { setConversationForPanel, panels, openPanel } = usePanelStore();
+  const { setConversationForPanel, panels, openPanel, dockPanel } = usePanelStore();
   const activities = useActivityStore((s) => s.activities);
   const conversations = useChatStore((s) => s.conversations);
   const deleteConversation = useChatStore((s) => s.deleteConversation);
@@ -341,6 +341,17 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                           </button>
                         </>
                       )}
+                      <div className="my-1 border-t border-border" />
+                      <button
+                        onClick={() => {
+                          dockPanel(panelId, activeConv.id);
+                          setMenuOpen(false);
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3 py-1.5 hover:bg-muted transition-colors duration-100"
+                      >
+                        <PanelRight className="h-3.5 w-3.5 text-muted-foreground" />
+                        <span className="flex-1 text-left">Pop out to sidebar</span>
+                      </button>
                     </>
                   ) : (
                     <div className="px-3 py-2 text-muted-foreground text-center text-[11px]">
@@ -350,6 +361,20 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 </div>
               )}
             </div>
+
+            {/* Pop out to sidebar button */}
+            {conversationId && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  dockPanel(panelId, conversationId);
+                }}
+                className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors duration-100 shrink-0"
+                title="Pop out to sidebar"
+              >
+                <PanelRight className="h-3 w-3" />
+              </button>
+            )}
 
             {/* Close panel button */}
             <button

@@ -140,6 +140,25 @@ async function createWindow() {
   mainWindow.on('show', () => {
     clearAttentionRequest()
   })
+
+  // When the app enters or exits fullscreen, force the renderer to recalculate
+  // BrowserView bounds by sending it a synthetic resize event.
+  // HTML5 fullscreen (e.g. a video element going fullscreen)
+  mainWindow.on('enter-html-full-screen', () => {
+    mainWindow?.webContents.send('browser:force-resize')
+  })
+  mainWindow.on('leave-html-full-screen', () => {
+    mainWindow?.webContents.send('browser:force-resize')
+  })
+  // Native macOS fullscreen (green traffic light button) — separate events from HTML5 fullscreen.
+  // Without these, the BrowserView overlay keeps stale bounds after entering/exiting fullscreen,
+  // causing the right sidebar to not stick to the right edge.
+  mainWindow.on('enter-full-screen', () => {
+    mainWindow?.webContents.send('browser:force-resize')
+  })
+  mainWindow.on('leave-full-screen', () => {
+    mainWindow?.webContents.send('browser:force-resize')
+  })
 }
 
 function applyAppIcon() {
@@ -314,7 +333,7 @@ ipcMain.handle('browser:resize', (_event, bounds: { x: number; y: number; width:
   // Just clamp to stay below toolbar area and within window.
   const TOOLBAR_HEIGHT = 36;
   const clamped = {
-    x: Math.max(0, Math.min(bounds.x, winBounds.width - 100)),
+    x: Math.max(0, Math.min(bounds.x, winBounds.width - bounds.width)),
     y: Math.max(TOOLBAR_HEIGHT, Math.min(bounds.y, winBounds.height - 100)),
     width: Math.max(200, Math.min(bounds.width, winBounds.width)),
     height: Math.max(150, Math.min(bounds.height, winBounds.height - TOOLBAR_HEIGHT)),
@@ -348,17 +367,32 @@ async function getPty() {
   return ptyModule
 }
 
-ipcMain.handle('terminal:spawn', async (_event, cwd?: string) => {
+ipcMain.handle('terminal:spawn', async (_event, options?: { cwd?: string; command?: string }) => {
   const pty = await getPty()
   const id = `term-${++terminalIdCounter}`
   const shellPath = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/zsh'
-  const term = pty.spawn(shellPath, [], {
-    name: 'xterm-256color',
-    cols: 80,
-    rows: 24,
-    cwd: cwd || app.getPath('home'),
-    env: { ...process.env } as Record<string, string>,
-  })
+  const cwd = options?.cwd || app.getPath('home')
+
+  let term: import('node-pty').IPty
+  if (options?.command) {
+    // Spawn a shell with a specific command (e.g. hermes bridge)
+    term = pty.spawn(shellPath, ['-c', options.command], {
+      name: 'xterm-256color',
+      cols: 80,
+      rows: 24,
+      cwd,
+      env: { ...process.env } as Record<string, string>,
+    })
+  } else {
+    // Default: interactive shell
+    term = pty.spawn(shellPath, [], {
+      name: 'xterm-256color',
+      cols: 80,
+      rows: 24,
+      cwd,
+      env: { ...process.env } as Record<string, string>,
+    })
+  }
 
   terminals.set(id, term)
 

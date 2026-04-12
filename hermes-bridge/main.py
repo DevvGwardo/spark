@@ -1332,10 +1332,6 @@ MINIMAX_KEY = os.environ.get("HERMES_MINIMAX_KEY", "")
 DEFAULT_TOOLSETS = os.environ.get("HERMES_TOOLSETS", "web,browser")
 DEFAULT_MODEL = os.environ.get("HERMES_DEFAULT_MODEL", "meta-llama/llama-4-maverick")
 
-# MiniMax direct routing — models matching this prefix bypass OpenRouter
-MINIMAX_BASE_URL = "https://api.minimax.io/v1"
-MINIMAX_MODEL_PREFIX = "MiniMax-"
-
 # ------------------------------------------------------------------
 # Circuit breaker for upstream API calls
 # ------------------------------------------------------------------
@@ -1377,7 +1373,13 @@ class CircuitBreaker:
 # Circuit breakers per upstream provider
 _openrouter_circuit = CircuitBreaker(failure_threshold=5, recovery_timeout=30.0)
 _minimax_circuit = CircuitBreaker(failure_threshold=5, recovery_timeout=30.0)
+_nous_circuit = CircuitBreaker(failure_threshold=5, recovery_timeout=30.0)
 _brain_circuit = CircuitBreaker(failure_threshold=3, recovery_timeout=15.0)
+
+# Model prefix constants for routing
+MINIMAX_MODEL_PREFIX = "MiniMax-"
+NOUS_MODEL_PREFIX = "nousresearch/"
+NOUS_BASE_URL = "https://inference-api.nousresearch.com/v1"
 
 # ------------------------------------------------------------------
 # Retry helper for brain gateway calls
@@ -1406,8 +1408,9 @@ def _retry_brain_call(func, *args, retries: int = 2, backoff: float = 0.5, **kwa
 # ------------------------------------------------------------------
 def _no_api_key_error(provider: str) -> JSONResponse:
     messages = {
-        "openrouter": "No API key provided. Set HERMES_OPENROUTER_KEY, pass Authorization: Bearer <key> header, or run the local OpenClaw gateway.",
+        "openrouter": "No API key provided. Set HERMES_OPENROUTER_KEY, pass Authorization: Bearer *** header, or run the local OpenClaw gateway.",
         "minimax": "MiniMax API key required. Set HERMES_MINIMAX_KEY, configure a MiniMax key in Settings, or run the local OpenClaw gateway.",
+        "nous": "Nous API key required. Configure a Nous agent key in ~/.hermes/auth.json or run `hermes auth login --provider nous`.",
         "github": "GitHub token required for repository operations. Provide x-hermes-github-pat header or configure a GitHub token in Settings.",
     }
     return JSONResponse(
@@ -1537,6 +1540,61 @@ def _get_local_gateway_key() -> Optional[str]:
         token = config.get("gateway", {}).get("auth", {}).get("token")
         if token and isinstance(token, str) and len(token) > 0:
             return token
+    except Exception:
+        pass
+    return None
+
+
+def _get_openrouter_key_from_hermes_creds() -> Optional[str]:
+    """Read OpenRouter API keys from ~/.hermes/auth.json credential_pool.
+
+    Returns the highest-priority (lowest priority number) OpenRouter API key.
+    Returns None if auth.json doesn't exist or has no OpenRouter credentials.
+    """
+    auth_path = os.path.expanduser("~/.hermes/auth.json")
+    try:
+        with open(auth_path, "r") as f:
+            auth = json.load(f)
+        pool = auth.get("credential_pool", {}).get("openrouter", [])
+        if not pool:
+            return None
+        # Sort by priority (lower = higher priority), pick first with a key
+        sorted_creds = sorted(pool, key=lambda c: c.get("priority", 99))
+        for cred in sorted_creds:
+            key = cred.get("access_token", "")
+            if key and key != "***" and len(key) > 0:
+                return key
+    except Exception:
+        pass
+    return None
+
+
+def _get_nous_agent_key() -> Optional[str]:
+    """Read Nous inference agent key from ~/.hermes/auth.json.
+
+    Returns the agent_key from the nous provider entry.
+    Returns None if auth.json doesn't exist or has no Nous credentials.
+    """
+    auth_path = os.path.expanduser("~/.hermes/auth.json")
+    try:
+        with open(auth_path, "r") as f:
+            auth = json.load(f)
+        nous = auth.get("providers", {}).get("nous", {})
+        key = nous.get("agent_key", "")
+        if key and len(key) > 0:
+            return key
+    except Exception:
+        pass
+    return None
+
+
+def _get_active_provider() -> Optional[str]:
+    """Read the active_provider from ~/.hermes/auth.json."""
+    auth_path = os.path.expanduser("~/.hermes/auth.json")
+    try:
+        with open(auth_path, "r") as f:
+            auth = json.load(f)
+        return auth.get("active_provider")
     except Exception:
         pass
     return None
@@ -1803,6 +1861,7 @@ async def _passthrough_chat_completions(
     body: ChatCompletionRequest,
     api_key: str,
     *,
+    base_url: str = "https://openrouter.ai/api/v1",
     finalize_request=None,
 ):
     payload = _build_passthrough_payload(body)
@@ -1826,9 +1885,10 @@ async def _passthrough_chat_completions(
             await maybe_awaitable
 
     try:
+        upstream_url = f"{base_url.rstrip('/')}/chat/completions"
         request = client.build_request(
             "POST",
-            "https://openrouter.ai/api/v1/chat/completions",
+            upstream_url,
             headers=request_headers,
             json=payload,
         )
@@ -1839,6 +1899,8 @@ async def _passthrough_chat_completions(
             await _close_client()
             if "minimax" in body.model.lower():
                 _minimax_circuit.record_failure()
+            elif body.model.startswith(NOUS_MODEL_PREFIX):
+                _nous_circuit.record_failure()
             else:
                 _openrouter_circuit.record_failure()
             await _finalize(False)
@@ -1846,6 +1908,8 @@ async def _passthrough_chat_completions(
 
         if "minimax" in body.model.lower():
             _minimax_circuit.record_success()
+        elif body.model.startswith(NOUS_MODEL_PREFIX):
+            _nous_circuit.record_success()
         else:
             _openrouter_circuit.record_success()
 
@@ -1900,6 +1964,14 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
                     "code": "REQUEST_TIMEOUT",
                 }
             },
+        )
+    except Exception as e:
+        import traceback as _tb
+        tb_str = _tb.format_exc()
+        print(f"[hermes-bridge] UNHANDLED ERROR in chat_completions: {e}\n{tb_str}", flush=True)
+        return JSONResponse(
+            status_code=500,
+            content={"error": {"message": str(e), "traceback": tb_str}},
         )
 
 
@@ -1980,20 +2052,22 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
         has_repo_tools = True
 
     # Key priority: 1. Explicit Authorization header, 2. HERMES_OPENROUTER_KEY env var,
-    # 3. Local gateway token fallback.
+    # 3. OpenRouter keys from hermes auth.json credential pool, 4. Local gateway token fallback.
     auth_header = request.headers.get("authorization", "")
     api_key = (
         (auth_header[7:] if auth_header.startswith("Bearer ") else "")
         or OPENROUTER_KEY
+        or _get_openrouter_key_from_hermes_creds()
         or _get_local_gateway_key()
     )
 
-    # MiniMax direct routing: when model starts with "MiniMax-", route to
-    # the MiniMax API instead of OpenRouter.  Key priority:
-    #   1. X-Hermes-Minimax-Key header (forwarded from user's settings)
-    #   2. HERMES_MINIMAX_KEY env var
-    #   3. Local gateway token fallback
+    # Routing by model prefix:
+    #   MiniMax-*  → MiniMax direct API
+    #   nousresearch/* or active_provider=nous → Nous inference API
+    #   everything else → OpenRouter
     is_minimax_model = body.model.startswith(MINIMAX_MODEL_PREFIX)
+    active_provider = _get_active_provider()
+    is_nous_model = body.model.startswith(NOUS_MODEL_PREFIX) or active_provider == "nous"
     if is_minimax_model:
         if not _minimax_circuit.is_available():
             return _circuit_open_error("MiniMax")
@@ -2006,6 +2080,14 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
             return _no_api_key_error("minimax")
         agent_base_url = MINIMAX_BASE_URL
         agent_api_key = minimax_key
+    elif is_nous_model:
+        if not _nous_circuit.is_available():
+            return _circuit_open_error("Nous")
+        nous_key = _get_nous_agent_key()
+        if not nous_key:
+            return _no_api_key_error("nous")
+        agent_base_url = NOUS_BASE_URL
+        agent_api_key = nous_key
     else:
         if not _openrouter_circuit.is_available():
             return _circuit_open_error("OpenRouter")
@@ -2041,7 +2123,8 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
         )
         return await _passthrough_chat_completions(
             body,
-            agent_api_key if is_minimax_model else api_key,
+            agent_api_key if (is_minimax_model or is_nous_model) else api_key,
+            base_url=agent_base_url if (is_minimax_model or is_nous_model) else "https://openrouter.ai/api/v1",
             finalize_request=lambda success: (
                 _finalize_session(success),
                 _mark_request_finished(

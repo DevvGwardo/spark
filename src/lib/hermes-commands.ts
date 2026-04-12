@@ -1,5 +1,6 @@
 export interface CommandContext {
   setActiveSubTab: (tab: 'overview' | 'threads' | 'chats' | 'cron' | 'memories' | 'skills' | 'usage') => void;
+  setActiveTab: (tab: 'chat' | 'github' | 'analyzer' | 'knowledge') => void;
   setMiniBrowserOpen: (open: boolean) => void;
   setMiniBrowserUrl: (url: string) => void;
   newConversation?: () => void;
@@ -107,6 +108,42 @@ const COMMANDS: HermesCommand[] = [
     handler: async (_args, context) => {
       context.setActiveSubTab('chats');
       return 'Switched to Sessions tab.';
+    },
+  },
+  {
+    name: 'threads',
+    description: 'Switch to Threads tab',
+    usage: '/threads',
+    handler: async (_args, context) => {
+      context.setActiveSubTab('threads');
+      return 'Switched to Threads tab.';
+    },
+  },
+  {
+    name: 'github',
+    description: 'Switch to GitHub tab',
+    usage: '/github',
+    handler: async (_args, context) => {
+      context.setActiveTab('github');
+      return 'Switched to GitHub tab.';
+    },
+  },
+  {
+    name: 'analyzer',
+    description: 'Switch to Analyzer tab',
+    usage: '/analyzer',
+    handler: async (_args, context) => {
+      context.setActiveTab('analyzer');
+      return 'Switched to Analyzer tab.';
+    },
+  },
+  {
+    name: 'knowledge',
+    description: 'Switch to Knowledge tab',
+    usage: '/knowledge',
+    handler: async (_args, context) => {
+      context.setActiveTab('knowledge');
+      return 'Switched to Knowledge tab.';
     },
   },
   {
