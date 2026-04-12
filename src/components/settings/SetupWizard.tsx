@@ -413,7 +413,7 @@ export const SetupWizard: React.FC = () => {
     : '';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F0F0F]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background">
       <div className="w-[380px] mx-4">
         <div className="text-center mb-6">
           <h1 className="text-lg font-bold tracking-tight text-foreground">CloudChat</h1>

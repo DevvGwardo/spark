@@ -71,7 +71,7 @@ import { useUIStore } from '@/stores/ui-store';
 
 // ─── Design tokens ───────────────────────────────────────────
 const V4 = {
-  bgPage: '#0B0B0E',
+  bgPage: '#1A1A1A',
   bgCard: '#16161A',
   bgElevated: '#1A1A1E',
   bgDetail: '#0F0F12',

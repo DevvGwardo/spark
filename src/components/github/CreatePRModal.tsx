@@ -713,7 +713,7 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/70 backdrop-blur-md" onClick={onClose} />
-      <div className="relative mx-4 flex max-h-[88vh] w-full max-w-[620px] flex-col overflow-hidden rounded-[20px] border border-[#1E1E22] bg-[#0B0B0E] shadow-2xl">
+      <div className="relative mx-4 flex max-h-[88vh] w-full max-w-[620px] flex-col overflow-hidden rounded-[20px] border border-[#1E1E22] bg-background shadow-2xl">
         {/* Header */}
         <div className="flex items-center gap-3 border-b border-[#1E1E22] px-6 py-[18px]">
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#16161A]">
@@ -739,7 +739,7 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
           {!createdPr ? (
             <form id={createFormId} onSubmit={handleSubmit}>
               {/* Top Section */}
-              <div className="space-y-5 bg-[#0B0B0E] p-6">
+              <div className="space-y-5 bg-background p-6">
                 {/* Branch Info */}
                 <div className="flex items-center gap-2.5 rounded-xl border border-[#1E1E22] bg-[#111115] p-3.5">
                   <span className="inline-flex items-center gap-1.5 rounded-full border border-[#2A2A2E] bg-[#16161A] px-3 py-1.5 text-[13px] font-medium text-[#FAFAF9]">
