@@ -40,6 +40,74 @@ Hermes is an autonomous AI agent that goes beyond chat. It has a tool loop — i
 - **Themes** — 6 themes (Default, Ayu, Dracula, Gruvbox, IntelliJ, Terminal) with 10 accent colors, light/dark/system modes
 - **Desktop App** — Native macOS Electron app with global hotkey (Cmd+Shift+Space), tray menu, and auto-updates
 
+## How to Use
+
+### Basic Chat
+
+1. Open CloudChat (web or Electron app)
+2. Pick a provider and model from the model selector in the chat bar
+3. Type your message and hit Enter
+4. That's it — standard AI chat with streaming responses
+
+### Using Hermes Agent Mode
+
+Hermes is what makes CloudChat different. It's not just a chat — it's an agent that can *do things*.
+
+1. Select **Hermes Agent** as the provider in Settings
+2. Pick a model (any model works — Hermes handles the tool loop regardless of provider)
+3. Enable the toolsets you want:
+   - **web** — Search the web for current information
+   - **browser** — Open and interact with web pages
+   - **terminal** — Run shell commands on your machine
+   - **files** — Read and write local files
+   - **code_execution** — Run code snippets
+   - **vision** — Analyze images
+4. Ask Hermes to do something — it will plan, use tools, and iterate until done
+
+**Example prompts:**
+- "Search for the latest React 19 changes and summarize them"
+- "Read my package.json and tell me which dependencies are outdated"
+- "Create a new React component that renders a sortable table"
+- "Find and fix the bug in src/api/routes.ts"
+
+Hermes shows its work — you'll see tool calls, their results, and how it's reasoning through the problem in real time.
+
+### Working with GitHub Repos
+
+1. Add a GitHub Personal Access Token in Settings → GitHub
+2. Open the GitHub panel (sidebar icon)
+3. Browse your repos and issues
+4. Click an issue to start an issue-focused chat — Hermes gets the full context
+5. Ask Hermes to make changes — it reads the repo, proposes edits, and stages them in the Changeset panel
+6. Review changes with inline diffs in the Workspace sidebar
+7. Stage/unstage individual files
+8. Click **Create PR** to open a pull request with auto-generated title and description
+
+**Tips:**
+- Start with "read-only" prompts to let Hermes explore before making changes
+- Use batch edits — "update all imports from old-api to new-api across these files"
+- The Changeset panel shows exactly what changed before anything hits GitHub
+
+### Orchestrator Mode
+
+For complex tasks that benefit from parallel work:
+
+1. Enable Orchestrator in Settings
+2. Configure: planning model, code model, fallback model, max sub-agents
+3. Send a complex request — the orchestrator breaks it into sub-tasks, runs them in parallel, and synthesizes the results
+
+**Good for:** multi-file refactors, generating tests + implementation, researching multiple topics at once.
+
+### Switching Providers
+
+CloudChat supports 17 providers. To use any non-Hermes provider:
+
+1. Open Settings → Providers
+2. Enter your API key for the provider you want
+3. Select it as active in the model selector
+
+Your API keys stay in the browser — they never hit our servers.
+
 ## Getting Started
 
 ### 1. Start the API Server
