@@ -257,20 +257,12 @@ export const useSettingsStore = create<SettingsState>()(
           },
         })),
       setAvailableModels: (p, models) =>
-        set((state) => {
-          if (p === 'hermes') {
-            const nextAvailableModels = { ...state.availableModels };
-            delete nextAvailableModels.hermes;
-            return { availableModels: nextAvailableModels };
-          }
-
-          return {
-            availableModels: {
-              ...state.availableModels,
-              [p]: [...new Set(models.filter((model) => typeof model === 'string' && model.length > 0))],
-            },
-          };
-        }),
+        set((state) => ({
+          availableModels: {
+            ...state.availableModels,
+            [p]: [...new Set(models.filter((model) => typeof model === 'string' && model.length > 0))],
+          },
+        })),
       setTheme: (t) => set({ theme: t }),
       setColorTheme: (id) => set({ colorTheme: id }),
       setAccentColor: (hsl) => set({ accentColor: hsl }),

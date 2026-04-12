@@ -30,6 +30,34 @@ app.post('/functions/v1/validate-key', async (req, res) => {
     }
 
     if (provider === 'hermes') {
+      // Helper: fetch models from bridge's /v1/models endpoint
+      async function fetchBridgeModels(bridgeUrl: string): Promise<string[]> {
+        try {
+          const modelsUrl = `${bridgeUrl}/models`;
+          const mr = await fetch(modelsUrl, { signal: AbortSignal.timeout(5000) });
+          if (mr.ok) {
+            const md = await mr.json() as { data?: Array<{ id?: string }> };
+            const ids = (md.data ?? []).map(m => m.id).filter((id): id is string => !!id);
+            if (ids.length > 0) return ids;
+          }
+        } catch { /* fall through */ }
+        // Fallback to hardcoded list
+        return [...HERMES_TOOL_CAPABLE_MODELS];
+      }
+
+      // Helper: get bridge default model from health endpoint
+      async function fetchBridgeDefaultModel(bridgeUrl: string): Promise<string | undefined> {
+        try {
+          const healthUrl = `${bridgeUrl.replace('/v1', '')}/health`;
+          const hr = await fetch(healthUrl, { signal: AbortSignal.timeout(3000) });
+          if (hr.ok) {
+            const hd = await hr.json() as { hermes_default_model?: string };
+            return hd.hermes_default_model;
+          }
+        } catch { /* ignore */ }
+        return undefined;
+      }
+
       // Hermes bridge handles its own credential fallback
       // If no api_key provided, check if bridge is running with local credentials
       if (!api_key) {
@@ -55,11 +83,12 @@ app.post('/functions/v1/validate-key', async (req, res) => {
             hermes_provider?: string;
           };
 
-          // Use the bridge's configured model if available, fall back to hardcoded list
+          // Fetch models from bridge dynamically
+          const bridgeModels = await fetchBridgeModels(bridgeUrl);
           const bridgeModel = healthData.hermes_default_model;
-          const models = bridgeModel
-            ? [bridgeModel, ...HERMES_TOOL_CAPABLE_MODELS.filter(m => m !== bridgeModel)]
-            : [...HERMES_TOOL_CAPABLE_MODELS];
+          const models = bridgeModel && !bridgeModels.includes(bridgeModel)
+            ? [bridgeModel, ...bridgeModels]
+            : bridgeModels;
 
           if (!healthData.has_openrouter_creds && !healthData.has_minimax_creds) {
             return sendJson(res, 200, {
@@ -92,20 +121,12 @@ app.post('/functions/v1/validate-key', async (req, res) => {
         });
 
         if (modelListResponse.ok) {
-          // Also fetch health to get the bridge's configured model
-          let bridgeModel: string | undefined;
-          try {
-            const healthUrl2 = `${bridgeUrl.replace('/v1', '')}/health`;
-            const hr = await fetch(healthUrl2, { signal: AbortSignal.timeout(3000) });
-            if (hr.ok) {
-              const hd = await hr.json() as { hermes_default_model?: string };
-              bridgeModel = hd.hermes_default_model;
-            }
-          } catch { /* ignore health fetch failure */ }
-
-          const models = bridgeModel
-            ? [bridgeModel, ...HERMES_TOOL_CAPABLE_MODELS.filter(m => m !== bridgeModel)]
-            : [...HERMES_TOOL_CAPABLE_MODELS];
+          // Fetch models dynamically from bridge
+          const bridgeModels = await fetchBridgeModels(bridgeUrl);
+          const bridgeModel = await fetchBridgeDefaultModel(bridgeUrl);
+          const models = bridgeModel && !bridgeModels.includes(bridgeModel)
+            ? [bridgeModel, ...bridgeModels]
+            : bridgeModels;
           return sendJson(res, 200, {
             valid: true,
             defaultModel: bridgeModel || models[0],

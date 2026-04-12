@@ -22,6 +22,7 @@ export const HERMES_RECOMMENDED_MODELS = [
   'google/gemini-3.1-flash-lite-preview',
   'MiniMax-M2.7',
   'MiniMax-M2.7-highspeed',
+  'xiaomi/mimo-v2-pro',
   'deepseek/deepseek-v3.2',
   'meta-llama/llama-4-maverick',
   'openai/gpt-4.1-mini',

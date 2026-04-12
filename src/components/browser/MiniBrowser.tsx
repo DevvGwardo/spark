@@ -507,7 +507,7 @@ export const DockedMiniBrowser: React.FC = () => {
       className="flex flex-col h-full border-l border-border/60 bg-background flex-shrink-0 transition-none"
       style={{
         width: rightSidebarHidden ? 0 : miniBrowserDockedWidth,
-        overflow: rightSidebarHidden ? 'hidden' : 'visible',
+        overflow: 'hidden',
         minWidth: rightSidebarHidden ? 0 : miniBrowserDockedWidth,
       }}
     >

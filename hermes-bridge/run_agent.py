@@ -1368,25 +1368,46 @@ class AIAgent:
         )
         return new_messages
 
+    @staticmethod
+    def _parse_next_link(link_header: str) -> str | None:
+        """Parse GitHub's Link header to find the next page URL."""
+        if not link_header:
+            return None
+        for part in link_header.split(","):
+            if 'rel="next"' in part:
+                url = part.split(";")[0].strip().strip("<>")
+                return url
+        return None
+
     def _list_user_repos(self) -> str:
         """List all repos accessible with the current GitHub token."""
         if not self.github_pat:
             return "Error: No GitHub token configured. Cannot list repositories."
         try:
-            url = "https://api.github.com/user/repos?sort=updated&per_page=50&affiliation=owner,collaborator,organization_member"
+            url = "https://api.github.com/user/repos?sort=updated&per_page=100&affiliation=owner,collaborator,organization_member"
             headers = {
                 "Authorization": f"Bearer {self.github_pat}",
                 "Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": "2022-11-28",
                 "User-Agent": "Hermes-Agent",
             }
+            all_repos = []
             with httpx.Client(timeout=15) as client:
-                resp = client.get(url, headers=headers)
-                if resp.status_code == 401:
-                    return "Error: GitHub token is invalid or expired. The user should update their token in Settings."
-                resp.raise_for_status()
-            repos = resp.json()
-            if not isinstance(repos, list) or not repos:
+                while url:
+                    resp = client.get(url, headers=headers)
+                    if resp.status_code == 401:
+                        return "Error: GitHub token is invalid or expired. The user should update their token in Settings."
+                    if resp.status_code == 429:
+                        retry_after = int(resp.headers.get("Retry-After", "5"))
+                        time.sleep(retry_after)
+                        continue
+                    resp.raise_for_status()
+                    page = resp.json()
+                    if isinstance(page, list):
+                        all_repos.extend(page)
+                    url = self._parse_next_link(resp.headers.get("Link", ""))
+            repos = all_repos
+            if not repos:
                 return "No repositories found for this GitHub token."
             lines = []
             for repo in repos:

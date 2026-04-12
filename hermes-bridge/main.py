@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Optional
 import httpx
 from fastapi import FastAPI, Request, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 
@@ -1330,7 +1331,38 @@ HERMES_PORT = int(os.environ.get("HERMES_PORT", "3002"))
 OPENROUTER_KEY = os.environ.get("HERMES_OPENROUTER_KEY", "")
 MINIMAX_KEY = os.environ.get("HERMES_MINIMAX_KEY", "")
 DEFAULT_TOOLSETS = os.environ.get("HERMES_TOOLSETS", "web,browser")
-DEFAULT_MODEL = os.environ.get("HERMES_DEFAULT_MODEL", "meta-llama/llama-4-maverick")
+
+def _load_cli_default_model() -> str | None:
+    """Read model.default from ~/.hermes/config.yaml (Hermes CLI config)."""
+    try:
+        config_path = Path.home() / ".hermes" / "config.yaml"
+        if not config_path.is_file():
+            return None
+        try:
+            import yaml
+            with open(config_path) as f:
+                cfg = yaml.safe_load(f)
+            return cfg.get("model", {}).get("default") if isinstance(cfg, dict) else None
+        except ImportError:
+            # Fallback: simple regex parse for "default: <model>" under model section
+            text = config_path.read_text()
+            in_model = False
+            for line in text.splitlines():
+                stripped = line.strip()
+                if stripped == "model:":
+                    in_model = True
+                    continue
+                if in_model:
+                    if not line.startswith(" ") and not line.startswith("\t"):
+                        break
+                    if stripped.startswith("default:"):
+                        return stripped.split("default:", 1)[1].strip().strip('"').strip("'")
+    except Exception:
+        pass
+    return None
+
+_cli_default_model = _load_cli_default_model()
+DEFAULT_MODEL = os.environ.get("HERMES_DEFAULT_MODEL", _cli_default_model or "meta-llama/llama-4-maverick")
 
 # ------------------------------------------------------------------
 # Circuit breaker for upstream API calls
@@ -1617,8 +1649,12 @@ PASSTHROUGH_TIMEOUT_SECONDS = _read_positive_int_env(
 )
 REQUEST_TIMEOUT_SECONDS = _read_positive_int_env("HERMES_REQUEST_TIMEOUT_SECONDS", 600)
 
-AGENT_MODELS = [
-    # Paid models
+# ── Dynamic model discovery from OpenRouter ─────────────────────────────────
+# Fetches available models from OpenRouter API and caches them.
+# Falls back to a hardcoded list if the fetch fails.
+
+_FALLBACK_AGENT_MODELS = [
+    # Paid models (curated defaults)
     {"id": "anthropic/claude-sonnet-4", "object": "model", "owned_by": "anthropic"},
     {"id": "openai/gpt-4.1-mini", "object": "model", "owned_by": "openai"},
     {"id": "MiniMax-M2.7", "object": "model", "owned_by": "minimax"},
@@ -1636,19 +1672,95 @@ AGENT_MODELS = [
     {"id": "meta-llama/llama-3.3-70b-instruct:free", "object": "model", "owned_by": "meta"},
     {"id": "qwen/qwen3-next-80b-a3b-instruct:free", "object": "model", "owned_by": "qwen"},
     {"id": "mistralai/mistral-small-3.1-24b-instruct:free", "object": "model", "owned_by": "mistral"},
+    # Nous Research models
+    {"id": "xiaomi/mimo-v2-pro", "object": "model", "owned_by": "xiaomi"},
 ]
 
+# MiniMax models aren't on OpenRouter — always include them
+_MINIMAX_MODELS = [
+    {"id": "MiniMax-M2.7", "object": "model", "owned_by": "minimax"},
+    {"id": "MiniMax-M2.7-highspeed", "object": "model", "owned_by": "minimax"},
+]
+
+_MODEL_CACHE_TTL_SECONDS = 3600  # 1 hour
+_model_cache: Optional[list[dict]] = None
+_model_cache_time: float = 0
+
+
+async def _fetch_openrouter_models() -> list[dict]:
+    """Fetch all available models from OpenRouter and format as OpenAI-style model list."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get("https://openrouter.ai/api/v1/models")
+            resp.raise_for_status()
+            data = resp.json()
+            models = []
+            for m in data.get("data", []):
+                mid = m.get("id", "")
+                if not mid:
+                    continue
+                # Determine owner from model ID prefix
+                owner = mid.split("/")[0] if "/" in mid else "unknown"
+                models.append({"id": mid, "object": "model", "owned_by": owner})
+            return models
+    except Exception as e:
+        print(f"[bridge] OpenRouter model fetch failed: {e}", file=sys.stderr)
+        return []
+
+
+async def _get_agent_models() -> list[dict]:
+    """Return the model list, fetching from OpenRouter if cache is stale."""
+    global _model_cache, _model_cache_time
+    now = time.time()
+    if _model_cache is not None and (now - _model_cache_time) < _MODEL_CACHE_TTL_SECONDS:
+        return _model_cache
+
+    openrouter_models = await _fetch_openrouter_models()
+    if openrouter_models:
+        # Merge: OpenRouter models + always-include MiniMax models
+        model_ids = {m["id"] for m in openrouter_models}
+        for mm in _MINIMAX_MODELS:
+            if mm["id"] not in model_ids:
+                openrouter_models.append(mm)
+        _model_cache = openrouter_models
+        _model_cache_time = now
+        print(f"[bridge] Loaded {len(openrouter_models)} models from OpenRouter", file=sys.stderr)
+        return _model_cache
+
+    # Fallback to hardcoded list
+    _model_cache = list(_FALLBACK_AGENT_MODELS)
+    _model_cache_time = now
+    print(f"[bridge] Using fallback model list ({len(_model_cache)} models)", file=sys.stderr)
+    return _model_cache
+
 app = FastAPI(title="Hermes Bridge", lifespan=_brain_lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "brain_initialized": _brain_initialized, "active_requests": _bridge_active_requests}
+    has_openrouter = bool(OPENROUTER_KEY or _get_openrouter_key_from_hermes_creds() or _get_local_gateway_key())
+    has_minimax = bool(MINIMAX_KEY or _get_local_gateway_key())
+    return {
+        "status": "ok",
+        "has_openrouter_creds": has_openrouter,
+        "has_minimax_creds": has_minimax,
+        "brain_initialized": _brain_initialized,
+        "active_requests": _bridge_active_requests,
+        "hermes_default_model": DEFAULT_MODEL,
+    }
 
 
 @app.get("/v1/models")
 async def list_models():
-    return {"object": "list", "data": AGENT_MODELS}
+    models = await _get_agent_models()
+    return {"object": "list", "data": models}
 
 
 class ChatMessage(BaseModel):

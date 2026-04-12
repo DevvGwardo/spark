@@ -13,6 +13,7 @@ ImportError and uses the custom run_agent.py instead.
 import json
 import os
 import sys
+import time
 import httpx
 from typing import Optional, Callable
 from urllib.parse import quote
@@ -317,23 +318,44 @@ class RepoToolProvider:
 
     # --- Tool handlers (signature: handler(args_dict, **kwargs) -> str) ---
 
+    @staticmethod
+    def _parse_next_link(link_header: str) -> str | None:
+        """Parse GitHub's Link header to find the next page URL."""
+        if not link_header:
+            return None
+        for part in link_header.split(","):
+            if 'rel="next"' in part:
+                url = part.split(";")[0].strip().strip("<>")
+                return url
+        return None
+
     def _handle_list_user_repos(self, args: dict, **kwargs) -> str:
         if not self.github_pat:
             return "Error: No GitHub token configured."
         try:
-            url = "https://api.github.com/user/repos?sort=updated&per_page=50&affiliation=owner,collaborator,organization_member"
+            url = "https://api.github.com/user/repos?sort=updated&per_page=100&affiliation=owner,collaborator,organization_member"
             headers = {
                 "Authorization": f"Bearer {self.github_pat}",
                 "Accept": "application/vnd.github+json",
                 "User-Agent": "Hermes-Agent",
             }
+            all_repos = []
             with httpx.Client(timeout=15) as client:
-                resp = client.get(url, headers=headers)
-                if resp.status_code == 401:
-                    return "Error: GitHub token is invalid or expired."
-                resp.raise_for_status()
-            repos = resp.json()
-            if not isinstance(repos, list) or not repos:
+                while url:
+                    resp = client.get(url, headers=headers)
+                    if resp.status_code == 401:
+                        return "Error: GitHub token is invalid or expired."
+                    if resp.status_code == 429:
+                        retry_after = int(resp.headers.get("Retry-After", "5"))
+                        time.sleep(retry_after)
+                        continue
+                    resp.raise_for_status()
+                    page = resp.json()
+                    if isinstance(page, list):
+                        all_repos.extend(page)
+                    url = self._parse_next_link(resp.headers.get("Link", ""))
+            repos = all_repos
+            if not repos:
                 return "No repositories found."
             lines = []
             for repo in repos:

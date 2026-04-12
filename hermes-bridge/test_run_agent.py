@@ -1242,12 +1242,13 @@ class ListUserReposToolTests(unittest.TestCase):
 
         class FakeReposResponse:
             status_code = 200
+            def __init__(self, repos, link_header=None):
+                self._repos = repos
+                self.headers = {"Link": link_header} if link_header else {}
+
             def json(self):
-                return [
-                    {"full_name": "octo/project-a", "description": "Frontend app", "private": False},
-                    {"full_name": "octo/project-b", "description": "Backend API", "private": True},
-                    {"full_name": "octo/project-c", "description": None, "private": False},
-                ]
+                return self._repos
+
             def raise_for_status(self):
                 return None
 
@@ -1255,7 +1256,11 @@ class ListUserReposToolTests(unittest.TestCase):
             def __init__(self, *a, **kw): pass
             def __enter__(self): return self
             def __exit__(self, *a): return False
-            def get(self, *a, **kw): return FakeReposResponse()
+            def get(self, *a, **kw): return FakeReposResponse([
+                {"full_name": "octo/project-a", "description": "Frontend app", "private": False},
+                {"full_name": "octo/project-b", "description": "Backend API", "private": True},
+                {"full_name": "octo/project-c", "description": None, "private": False},
+            ])
 
         original = run_agent.httpx.Client
         run_agent.httpx.Client = FakeClient
@@ -1270,6 +1275,68 @@ class ListUserReposToolTests(unittest.TestCase):
         self.assertIn("octo/project-b", result)
         self.assertIn("(private)", result)
         self.assertIn("octo/project-c", result)
+
+    def test_list_user_repos_handles_pagination(self):
+        """Verifies that _list_user_repos follows Link headers across multiple pages."""
+        agent = AIAgent(
+            base_url="https://example.com",
+            api_key="test-key",
+            model="meta-llama/llama-4-maverick",
+            repo_mode=True,
+            repo_edit_intent=False,
+            github_pat="test-pat",
+            github_repo_owner="octo",
+            github_repo_name="repo",
+        )
+
+        page1_repos = [{"full_name": "octo/project-a", "description": "First page", "private": False}]
+        page2_repos = [{"full_name": "octo/project-b", "description": "Second page", "private": True}]
+
+        # First response includes a Link header pointing to page 2; second does not.
+        call_count = [0]
+
+        class FakePage1Response:
+            status_code = 200
+            headers = {"Link": '<https://api.github.com/user/repos?page=2>; rel="next"'}
+
+            def json(self):
+                return page1_repos
+
+            def raise_for_status(self):
+                return None
+
+        class FakePage2Response:
+            status_code = 200
+            headers = {}
+
+            def json(self):
+                return page2_repos
+
+            def raise_for_status(self):
+                return None
+
+        class FakeClient:
+            def __init__(self, *a, **kw): pass
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def get(self, *a, **kw):
+                call_count[0] += 1
+                if call_count[0] == 1:
+                    return FakePage1Response()
+                return FakePage2Response()
+
+        original = run_agent.httpx.Client
+        run_agent.httpx.Client = FakeClient
+        try:
+            result = agent._list_user_repos()
+        finally:
+            run_agent.httpx.Client = original
+
+        self.assertIn("Found 2 accessible repositories", result)
+        self.assertIn("octo/project-a", result)
+        self.assertIn("octo/project-b", result)
+        self.assertIn("First page", result)
+        self.assertIn("Second page", result)
 
     def test_list_user_repos_handles_401(self):
         agent = AIAgent(
