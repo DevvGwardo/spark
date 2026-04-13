@@ -213,18 +213,21 @@ export const HermesPTYPanel = forwardRef<HermesPTYPanelHandle, { maximized?: boo
 HermesPTYPanel.displayName = 'HermesPTYPanel';
 
 export const MiniBrowserToggle: React.FC<{ className?: string }> = ({ className }) => {
-  const { miniBrowserOpen, setMiniBrowserOpen, setMiniBrowserUrl } = useUIStore();
+  const { miniBrowserOpen, setMiniBrowserOpen, setMiniBrowserDocked, setMiniBrowserUrl, setRightSidebarHidden } = useUIStore();
 
   const handleToggle = useCallback(() => {
     if (miniBrowserOpen) {
       window.electronAPI?.browser?.close();
       setMiniBrowserOpen(false);
+      setMiniBrowserDocked(false);
     } else {
       setMiniBrowserUrl('about:blank');
+      setMiniBrowserDocked(true);
       setMiniBrowserOpen(true);
+      setRightSidebarHidden(false);
       window.electronAPI?.browser?.create('about:blank');
     }
-  }, [miniBrowserOpen, setMiniBrowserOpen, setMiniBrowserUrl]);
+  }, [miniBrowserOpen, setMiniBrowserOpen, setMiniBrowserDocked, setMiniBrowserUrl, setRightSidebarHidden]);
 
   return (
     <button
