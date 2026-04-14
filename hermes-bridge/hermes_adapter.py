@@ -82,15 +82,24 @@ sys.modules["run_agent"] = _run_agent_mod
 _run_agent_spec.loader.exec_module(_run_agent_mod)
 RealAIAgent = _run_agent_mod.AIAgent
 
-# Also load tools.registry from hermes-agent
-_tools_spec = importlib.util.spec_from_file_location(
-    "tools.registry",
-    os.path.join(_HERMES_AGENT_DIR, "tools", "registry.py"),
-)
-_tools_mod = importlib.util.module_from_spec(_tools_spec)
-sys.modules["tools.registry"] = _tools_mod
-_tools_spec.loader.exec_module(_tools_mod)
-registry = _tools_mod.registry
+# Reuse the tools.registry module already loaded by run_agent.py's import chain
+# (run_agent → toolsets → tools.registry). Creating a second module instance
+# with importlib.util gives a DIFFERENT ToolRegistry — tools registered in it
+# are invisible to validate_toolset() which uses the original from step 1.
+# See: _get_plugin_toolset_names() does `from tools.registry import registry`.
+if "tools.registry" in sys.modules:
+    _tools_mod = sys.modules["tools.registry"]
+    registry = _tools_mod.registry
+else:
+    # Fallback: run_agent import didn't pull in tools.registry (unexpected)
+    _tools_spec = importlib.util.spec_from_file_location(
+        "tools.registry",
+        os.path.join(_HERMES_AGENT_DIR, "tools", "registry.py"),
+    )
+    _tools_mod = importlib.util.module_from_spec(_tools_spec)
+    sys.modules["tools.registry"] = _tools_mod
+    _tools_spec.loader.exec_module(_tools_mod)
+    registry = _tools_mod.registry
 
 print(f"[hermes-adapter] Loaded real Hermes agent from {_HERMES_AGENT_DIR}", flush=True)
 
@@ -521,6 +530,55 @@ class RepoToolProvider:
         except Exception as e:
             return f"Error reading '{path}': {e}"
 
+    def _load_brain_memories(self) -> str:
+        """Load relevant memories from brain via brain_recall for injection into system prompt.
+
+        Uses brain_recall (via _brain_call_async RPC) to search the brain's persistent
+        memory store for repo-specific and global memories. Falls back to _brain_safe_get
+        (HTTP-based) if the async call isn't available.
+        """
+        import main as _main_mod
+        memories = []
+
+        # Try brain_recall (proper brain MCP memory search) first
+        try:
+            import asyncio as _asyncio
+
+            async def _recall_async():
+                if hasattr(_main_mod, "_brain_call_async"):
+                    return await _main_mod._brain_call_async("brain_recall", {"query": f"{self.owner}/{self.name}"})
+                return None
+
+            result = _asyncio.run(_recall_async()) if _asyncio.get_event_loop().is_running() else None
+            if result and isinstance(result, dict):
+                content = result.get("content") or ""
+                if isinstance(content, list):
+                    for item in content:
+                        if isinstance(item, dict) and item.get("type") == "text":
+                            memories.append(item.get("text", ""))
+                elif isinstance(content, str) and content.strip():
+                    memories.append(content.strip())
+        except Exception:
+            pass  # Fall back to _brain_safe_get
+
+        # Fallback: load known memory keys via HTTP brain cache
+        if not memories:
+            repo_prefix = f"memory:repo:{self.owner}/{self.name}:"
+            for topic in ["conventions", "gotchas", "preferences", "api-quirks"]:
+                key = f"{repo_prefix}{topic}"
+                val = _brain_safe_get(key)
+                if val:
+                    memories.append(f"- {topic}: {val}")
+            for topic in ["user-preferences", "coding-style"]:
+                key = f"memory:global:{topic}"
+                val = _brain_safe_get(key)
+                if val:
+                    memories.append(f"- {topic}: {val}")
+
+        if not memories:
+            return ""
+        return "\n## Known Patterns & Preferences\n" + "\n".join(memories) + "\n"
+
     def build_repo_system_prompt(self) -> str:
         """Build the repo context system prompt with pooled brain cache (TTL=600)."""
         repo_full = f"{self.owner}/{self.name}"
@@ -552,13 +610,18 @@ class RepoToolProvider:
                 + "\n\n"
             )
 
+        memories_section = self._load_brain_memories()
+
         if not self.github_pat:
             return (
                 f"You are working on the GitHub repository {repo_full}.\n"
                 "GitHub API access is not available (no token configured).\n"
                 "Answer based on available context (file tree, issue text, conversation history).\n"
                 f"{file_tree_section}"
+                f"{memories_section}"
             )
+
+        memories_section = self._load_brain_memories()
 
         return (
             f"You are working on the GitHub repository {repo_full}.\n"
@@ -569,6 +632,7 @@ class RepoToolProvider:
             "- For read-only requests, inspect files and answer directly.\n"
             "- Only enter the edit workflow when the user explicitly asks for changes.\n\n"
             f"{file_tree_section}"
+            f"{memories_section}"
             "WORKFLOW FOR CHANGE REQUESTS:\n"
             "1. Use read_repo_file to understand the codebase.\n"
             "2. Use batch_edit_repo_files to apply changes.\n"

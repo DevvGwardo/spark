@@ -235,7 +235,7 @@ const headerSecondaryLabel = selectedCronJobId
         />
       )}
 
-      <div className="h-[100dvh] flex flex-col bg-[hsl(var(--frame-bg))] p-0 gap-0">
+      <div className="h-screen flex flex-col bg-[hsl(var(--frame-bg))] p-0 gap-0">
         <div className="flex-1 flex min-h-0 gap-0 overflow-hidden">
           {/* Sidebar + resize handle wrapper */}
           <div className="flex-shrink-0 relative" style={sidebarOpen ? { width: sidebarWidth } : { width: 0 }}>
@@ -510,7 +510,7 @@ const headerSecondaryLabel = selectedCronJobId
             </header>
 
             {/* Content — switches based on active tab */}
-            <main className="flex-1 overflow-hidden flex flex-col">
+            <main className="flex-1 min-h-0 overflow-hidden flex flex-col">
               <div className="flex-1 overflow-hidden flex min-h-0">
                 <div className="flex-1 overflow-hidden">
                   <div

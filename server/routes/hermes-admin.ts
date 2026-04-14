@@ -138,4 +138,64 @@ export function registerHermesAdminRoute(app: Express) {
   app.get('/api/hermes/workspace/skills/content', async (req: Request, res: Response) => {
     await proxyTo(res, `/workspace/skills/content${getQuerySuffix(req)}`);
   });
+
+  app.delete('/api/hermes/workspace/skills', async (req: Request, res: Response) => {
+    await proxyTo(res, '/workspace/skills', {
+      method: 'DELETE',
+      body: JSON.stringify(req.body),
+    });
+  });
+
+  // ─── Messaging Platforms ──────────────────────────────────────────────
+
+  app.get('/api/hermes/messaging/platforms', async (_req: Request, res: Response) => {
+    await proxyTo(res, '/messaging/platforms');
+  });
+
+  app.get('/api/hermes/messaging/platforms/:id', async (req: Request, res: Response) => {
+    await proxyTo(res, `/messaging/platforms/${encodeURIComponent(req.params.id)}`);
+  });
+
+  app.put('/api/hermes/messaging/platforms/:id/env', async (req: Request, res: Response) => {
+    await proxyTo(res, `/messaging/platforms/${encodeURIComponent(req.params.id)}/env`, {
+      method: 'PUT',
+      body: JSON.stringify(req.body),
+    });
+  });
+
+  app.put('/api/hermes/messaging/platforms/:id/config', async (req: Request, res: Response) => {
+    await proxyTo(res, `/messaging/platforms/${encodeURIComponent(req.params.id)}/config`, {
+      method: 'PUT',
+      body: JSON.stringify(req.body),
+    });
+  });
+
+  app.delete('/api/hermes/messaging/platforms/:id', async (req: Request, res: Response) => {
+    await proxyTo(res, `/messaging/platforms/${encodeURIComponent(req.params.id)}`, {
+      method: 'DELETE',
+    });
+  });
+
+  app.post('/api/hermes/messaging/platforms/:id/test', async (req: Request, res: Response) => {
+    await proxyTo(res, `/messaging/platforms/${encodeURIComponent(req.params.id)}/test`, {
+      method: 'POST',
+    });
+  });
+
+  app.post('/api/hermes/messaging/platforms/:id/restart-gateway', async (req: Request, res: Response) => {
+    await proxyTo(res, `/messaging/platforms/${encodeURIComponent(req.params.id)}/restart-gateway`, {
+      method: 'POST',
+    });
+  });
+
+  app.get('/api/hermes/messaging/platforms/:id/oauth', async (req: Request, res: Response) => {
+    await proxyTo(res, `/messaging/platforms/${encodeURIComponent(req.params.id)}/oauth`);
+  });
+
+  app.post('/api/hermes/messaging/platforms/:id/oauth/complete', async (req: Request, res: Response) => {
+    await proxyTo(res, `/messaging/platforms/${encodeURIComponent(req.params.id)}/oauth/complete`, {
+      method: 'POST',
+      body: JSON.stringify(req.body),
+    });
+  });
 }

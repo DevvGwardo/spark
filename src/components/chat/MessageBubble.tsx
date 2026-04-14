@@ -184,6 +184,101 @@ function stripHermesActivityText(content: string): string {
   return filteredLines.trim();
 }
 
+/**
+ * Detect Hermes tool-start activity lines (e.g. "> **Reading file** — `path`").
+ * These mark where a tool call begins in the content stream.
+ */
+function isHermesToolStartLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('>')) return false;
+  const normalized = trimmed
+    .replace(/^>\s*/, '')
+    .replace(/[*_`]/g, '')
+    .replace(/[""]/g, '"')
+    .replace(/['']/g, "'")
+    .trim();
+  if (!normalized) return false;
+  return /^"?(?:reading file|editing files?|creating file|deleting file|proposing changes|searching the web|reading webpage|running command|writing file|running python|listing repositories)/i.test(normalized);
+}
+
+/**
+ * Detect Hermes activity end/status lines (e.g. "> *Done — read 1,234 chars*").
+ */
+function isHermesEndOrStatusLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('>')) return false;
+  const normalized = trimmed
+    .replace(/^>\s*/, '')
+    .replace(/[*_`]/g, '')
+    .replace(/[""]/g, '"')
+    .replace(/['']/g, "'")
+    .trim();
+  if (!normalized) return true;
+  return (
+    /^"?thinking\.\.\."?$/i.test(normalized) ||
+    /^"?done\s+[—-]\s+read\s+\d+\s+chars"?$/i.test(normalized) ||
+    /^"?done\s*[—-]:?\s*.+$/i.test(normalized) ||
+    /^"?failed:?\s*.+$/i.test(normalized) ||
+    /^"?found\s+\d+\s+results?"?$/i.test(normalized) ||
+    /^"?fetched\s+\d+\s+chars"?$/i.test(normalized) ||
+    /^"?search complete"?$/i.test(normalized)
+  );
+}
+
+/**
+ * Split raw content into interleaved text and tool-invocation parts based on
+ * Hermes activity markers. Returns null if no markers are found (not a Hermes response).
+ */
+function buildInterleavedHermesParts(
+  rawContent: string,
+  toolInvocations: ToolInvocation[],
+): MessagePart[] | null {
+  if (!rawContent || toolInvocations.length === 0) return null;
+
+  const lines = rawContent.split('\n');
+  let hasAnyToolStart = false;
+  for (const line of lines) {
+    if (isHermesToolStartLine(line)) {
+      hasAnyToolStart = true;
+      break;
+    }
+  }
+  if (!hasAnyToolStart) return null;
+
+  const result: MessagePart[] = [];
+  let textBuffer: string[] = [];
+  let toolIdx = 0;
+
+  for (const line of lines) {
+    if (isHermesToolStartLine(line)) {
+      const text = textBuffer.join('\n').trim();
+      if (text) {
+        result.push({ type: 'text', text });
+      }
+      textBuffer = [];
+      if (toolIdx < toolInvocations.length) {
+        result.push({ type: 'tool-invocation', toolInvocation: toolInvocations[toolIdx] });
+        toolIdx++;
+      }
+    } else if (isHermesEndOrStatusLine(line)) {
+      // Skip completion/status lines — they pair with tool starts
+    } else {
+      textBuffer.push(line);
+    }
+  }
+
+  const remainingText = textBuffer.join('\n').trim();
+  if (remainingText) {
+    result.push({ type: 'text', text: remainingText });
+  }
+  while (toolIdx < toolInvocations.length) {
+    result.push({ type: 'tool-invocation', toolInvocation: toolInvocations[toolIdx] });
+    toolIdx++;
+  }
+
+  return result;
+}
+
 function sanitizeAssistantTextContent(content: string, isStreaming: boolean): string {
   if (!content) {
     return '';
@@ -1035,36 +1130,84 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function M
     const normalizedParts = Array.isArray(parts) ? [...parts] : [];
     const hasTextPart = normalizedParts.some((part) => part.type === 'text' && part.text?.trim());
     const hasReasoningPart = normalizedParts.some((part) => part.type === 'reasoning' && part.reasoning?.trim());
+    const hasToolPart = normalizedParts.some((part) => part.type === 'tool-invocation');
 
     if (!hasReasoningPart && effectiveReasoning) {
       normalizedParts.unshift({ type: 'reasoning', reasoning: effectiveReasoning });
     }
 
+    // If parts already has tool invocations (from AI SDK streaming), they're interleaved
+    if (hasToolPart) {
+      if (!hasTextPart && displayContent) {
+        normalizedParts.push({ type: 'text', text: displayContent });
+      }
+      return dedupeAssistantParts(normalizedParts);
+    }
+
+    // Determine which fallback tool invocations to use (priority order)
+    const fallbackTools = pseudoToolInvocations.length > 0
+      ? pseudoToolInvocations
+      : (toolInvocations && toolInvocations.length > 0)
+        ? toolInvocations
+        : synthesizedToolInvocations;
+
+    // Try to interleave tool invocations with text using Hermes activity markers
+    if (fallbackTools.length > 0 && !hasTextPart) {
+      const interleaved = buildInterleavedHermesParts(rawContent, fallbackTools);
+      if (interleaved) {
+        normalizedParts.push(...interleaved);
+        return dedupeAssistantParts(normalizedParts);
+      }
+    }
+
+    // Fallback: interleave text parts with tool invocations.
+    // If parts contains multiple text entries (from AI SDK streaming that splits
+    // text at tool call boundaries), use them to reconstruct interleaved order.
+    // Otherwise, fall back to text-first-then-tools.
+    const textPartsFromParts = normalizedParts.filter(
+      (part): part is { type: 'text'; text: string } =>
+        part.type === 'text' && typeof part.text === 'string',
+    );
+
+    if (fallbackTools.length > 0 && textPartsFromParts.length > 1) {
+      // Multiple text entries in parts — they represent text segments split at
+      // tool call boundaries during streaming.  Reconstruct interleaved order:
+      // text₁, tool₁, text₂, tool₂, …, remaining text, remaining tools.
+      const result: MessagePart[] = [];
+      let toolIdx = 0;
+      for (const textPart of textPartsFromParts) {
+        result.push(textPart);
+        if (toolIdx < fallbackTools.length) {
+          result.push({ type: 'tool-invocation', toolInvocation: fallbackTools[toolIdx] });
+          toolIdx++;
+        }
+      }
+      // Append any trailing text from displayContent not yet in parts
+      // (can happen during streaming when text arrives after the last tool)
+      if (displayContent) {
+        const partsText = textPartsFromParts.map((p) => p.text).join('');
+        if (displayContent.length > partsText.length) {
+          const trailing = displayContent.slice(partsText.length).trim();
+          if (trailing) {
+            result.push({ type: 'text', text: trailing });
+          }
+        }
+      }
+      while (toolIdx < fallbackTools.length) {
+        result.push({ type: 'tool-invocation', toolInvocation: fallbackTools[toolIdx] });
+        toolIdx++;
+      }
+      return dedupeAssistantParts(result);
+    }
+
+    // Simple fallback: text first, then tools
     if (!hasTextPart && displayContent) {
       normalizedParts.push({ type: 'text', text: displayContent });
     }
 
-    if (!normalizedParts.some((part) => part.type === 'tool-invocation') && pseudoToolInvocations.length) {
+    if (fallbackTools.length > 0) {
       normalizedParts.push(
-        ...pseudoToolInvocations.map((toolInvocation) => ({
-          type: 'tool-invocation' as const,
-          toolInvocation,
-        })),
-      );
-    }
-
-    if (!normalizedParts.some((part) => part.type === 'tool-invocation') && toolInvocations?.length) {
-      normalizedParts.push(
-        ...toolInvocations.map((toolInvocation) => ({
-          type: 'tool-invocation' as const,
-          toolInvocation,
-        }))
-      );
-    }
-
-    if (!normalizedParts.some((part) => part.type === 'tool-invocation') && synthesizedToolInvocations.length) {
-      normalizedParts.push(
-        ...synthesizedToolInvocations.map((toolInvocation) => ({
+        ...fallbackTools.map((toolInvocation) => ({
           type: 'tool-invocation' as const,
           toolInvocation,
         })),
@@ -1072,7 +1215,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function M
     }
 
     return dedupeAssistantParts(normalizedParts);
-  }, [displayContent, effectiveReasoning, isUser, parts, pseudoToolInvocations, synthesizedToolInvocations, toolInvocations]);
+  }, [displayContent, effectiveReasoning, isUser, parts, pseudoToolInvocations, rawContent, synthesizedToolInvocations, toolInvocations]);
 
   const lastToolIndex = React.useMemo(() =>
     orderedParts.reduce((last, p, i) => (p.type === 'tool-invocation' ? i : last), -1),

@@ -41,11 +41,16 @@ elif not hasattr(sys.modules["httpx"], "AsyncClient"):
 
 if "fastapi" not in sys.modules:
     fastapi_stub = types.ModuleType("fastapi")
+    middleware_stub = types.ModuleType("fastapi.middleware")
+    cors_stub = types.ModuleType("fastapi.middleware.cors")
     responses_stub = types.ModuleType("fastapi.responses")
 
     class _FastAPI:
         def __init__(self, *args, **kwargs):
             pass
+
+        def add_middleware(self, *args, **kwargs):
+            return None
 
         def get(self, *args, **kwargs):
             def decorator(fn):
@@ -96,9 +101,12 @@ if "fastapi" not in sys.modules:
     fastapi_stub.FastAPI = _FastAPI
     fastapi_stub.HTTPException = _HTTPException
     fastapi_stub.Request = _Request
+    cors_stub.CORSMiddleware = type("CORSMiddleware", (), {})
     responses_stub.StreamingResponse = _StreamingResponse
     responses_stub.JSONResponse = _JSONResponse
     sys.modules["fastapi"] = fastapi_stub
+    sys.modules["fastapi.middleware"] = middleware_stub
+    sys.modules["fastapi.middleware.cors"] = cors_stub
     sys.modules["fastapi.responses"] = responses_stub
 
 if "pydantic" not in sys.modules:
@@ -938,6 +946,39 @@ class SwarmEndpointTests(unittest.TestCase):
         """The swarm contract in brain lifespan includes /v1/swarm."""
         source = open(os.path.join(os.path.dirname(__file__), "main.py")).read()
         self.assertIn('"/v1/swarm"', source)
+
+
+class MiniMaxAgentLoopRoutingTests(unittest.TestCase):
+    def test_minimax_agent_loop_passes_explicit_base_url_to_real_agent(self):
+        class _FakeHermesAgentAdapter:
+            last_init = None
+
+            def __init__(self, **kwargs):
+                _FakeHermesAgentAdapter.last_init = kwargs
+                self.on_thinking = None
+                self.on_reasoning = None
+
+            def run_conversation(self, user_message, conversation_history):
+                return None
+
+        fake_module = types.SimpleNamespace(HermesAgentAdapter=_FakeHermesAgentAdapter)
+        body = main.ChatCompletionRequest.model_validate({
+            "model": "MiniMax-M2.7",
+            "messages": [{"role": "user", "content": "test"}],
+            "stream": True,
+        })
+        request = _FakeRequest({
+            "authorization": "Bearer openrouter-test-key",
+            "x-hermes-minimax-key": "minimax-test-key",
+        })
+
+        with patch.dict(sys.modules, {"hermes_adapter": fake_module}):
+            response = asyncio.run(main.chat_completions(request, body))
+            asyncio.run(_read_streaming_response(response))
+
+        self.assertIsNotNone(_FakeHermesAgentAdapter.last_init)
+        self.assertEqual(_FakeHermesAgentAdapter.last_init["api_key"], "minimax-test-key")
+        self.assertEqual(_FakeHermesAgentAdapter.last_init["base_url"], main.MINIMAX_BASE_URL)
 
 
 class CronBridgeMappingTests(unittest.TestCase):

@@ -431,7 +431,8 @@ function createTray() {
     icon = nativeImage.createFromPath(trayIconPath)
     if (process.platform === 'darwin' && trayIconPath === trayTemplatePath) {
       icon.setTemplateImage(true)
-      icon = icon.resize({ height: 18 })
+      // Let macOS size the template image natively for both 1x and 2x menu bar.
+      // The 64px source provides enough resolution; resizing to 18 made it too small.
     }
   } catch {
     icon = nativeImage.createEmpty()

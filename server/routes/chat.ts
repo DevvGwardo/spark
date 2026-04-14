@@ -387,7 +387,8 @@ app.post('/functions/v1/chat', async (req, res) => {
 
     // Build system prompt, appending repo context if activeRepo is present
     let effectiveSystemPrompt = system_prompt || '';
-    if (activeRepo) {
+    const hasRepoAccess = !!(activeRepo && (githubPAT || resolvedLocalRepoPath));
+    if (activeRepo && hasRepoAccess) {
       const repoFileTree = sanitizeFileTree(repo_file_tree);
       const repoEditIntent = !!repo_edit_intent;
       const repoTreeSummary = summarizeRepoTreeForPrompt(repoFileTree);
@@ -437,6 +438,15 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
           repoFullName: `${activeRepo.owner}/${activeRepo.name}`,
         })}`;
       }
+    }
+
+    if (activeRepo && !hasRepoAccess) {
+      // Repo selected but no PAT and no local clone — tell the agent about the
+      // repo but do NOT promise tools it won't have.
+      const limitedContext = `You are discussing the GitHub repository ${activeRepo.owner}/${activeRepo.name}. GitHub file access is not available for this request (no valid token configured). Answer based on any context provided by the user. Do not attempt to read files or use repo tools.`;
+      effectiveSystemPrompt = effectiveSystemPrompt
+        ? `${effectiveSystemPrompt}\n\n${limitedContext}`
+        : limitedContext;
     }
 
     const normalizedChatInput = normalizeChatMessages(messages, effectiveSystemPrompt);

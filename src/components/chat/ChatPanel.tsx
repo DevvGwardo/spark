@@ -389,7 +389,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             </button>
           </div>
         )}
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 min-h-0 overflow-hidden">
           <StandardChatRuntime
             panelId={panelId}
             conversationId={conversationId}

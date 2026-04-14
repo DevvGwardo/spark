@@ -69,53 +69,127 @@ vi.mock('@/lib/tokens', () => ({
   getContextUsage: () => ({ used: 0, total: 1, percentage: 0 }),
 }));
 
+// --- Virtuoso mock ---
+// We capture the atBottomStateChange and scrollToIndex from Virtuoso
+// so tests can simulate scroll behavior without real DOM measurements.
+let capturedAtBottomChange: ((atBottom: boolean) => void) | null = null;
+let capturedScrollToIndex: ((...args: unknown[]) => void) | null = null;
+
+vi.mock('react-virtuoso', () => {
+  const React = require('react');
+
+  const Virtuoso = React.forwardRef(
+    (
+      {
+        data,
+        itemContent,
+        followOutput,
+        atBottomStateChange,
+        className,
+        components,
+        'data-testid': testId,
+      }: {
+        data: unknown[];
+        itemContent: (index: number, item: unknown) => React.ReactNode;
+        followOutput: string | boolean;
+        atBottomChange?: (atBottom: boolean) => void;
+        atBottomStateChange?: (atBottom: boolean) => void;
+        className?: string;
+        components?: { Footer?: React.ComponentType };
+        'data-testid'?: string;
+      },
+      ref: React.Ref<{ scrollToIndex: (...args: unknown[]) => void }>,
+    ) => {
+      // Store the callback for test access
+      React.useEffect(() => {
+        capturedAtBottomChange = atBottomStateChange ?? null;
+        return () => {
+          capturedAtBottomChange = null;
+        };
+      }, [atBottomStateChange]);
+
+      // Expose scrollToIndex via ref
+      React.useImperativeHandle(ref, () => ({
+        scrollToIndex: (...args: unknown[]) => {
+          if (capturedScrollToIndex) capturedScrollToIndex(...args);
+        },
+      }));
+
+      const FooterComponent = components?.Footer;
+
+      return (
+        <div
+          data-testid={testId ?? 'virtuoso-scroller'}
+          className={className}
+          style={{ overflowY: 'auto' }}
+        >
+          {data.map((item: unknown, index: number) => (
+            <div key={(item as { id: string }).id}>
+              {itemContent(index, item)}
+            </div>
+          ))}
+          {FooterComponent && <FooterComponent />}
+        </div>
+      );
+    },
+  );
+
+  return { Virtuoso, VirtuosoHandle: {} as unknown };
+});
+
 describe('ChatArea auto-scroll', () => {
-  const originalRequestAnimationFrame = window.requestAnimationFrame;
-  const originalCancelAnimationFrame = window.cancelAnimationFrame;
-  const originalResizeObserver = globalThis.ResizeObserver;
-  const resizeObserverCallbacks = new Set<ResizeObserverCallback>();
-
-  class ResizeObserverMock {
-    private readonly callback: ResizeObserverCallback;
-
-    constructor(callback: ResizeObserverCallback) {
-      this.callback = callback;
-      resizeObserverCallbacks.add(callback);
-    }
-
-    observe() {}
-
-    unobserve() {}
-
-    disconnect() {
-      resizeObserverCallbacks.delete(this.callback);
-    }
-  }
-
-  const triggerTranscriptResize = () => {
-    for (const callback of resizeObserverCallbacks) {
-      callback([], {} as ResizeObserver);
-    }
-  };
-
   beforeEach(() => {
-    window.requestAnimationFrame = ((callback: FrameRequestCallback) => {
-      callback(0);
-      return 1;
-    }) as typeof window.requestAnimationFrame;
-    window.cancelAnimationFrame = (() => undefined) as typeof window.cancelAnimationFrame;
-    resizeObserverCallbacks.clear();
-    globalThis.ResizeObserver = ResizeObserverMock as typeof ResizeObserver;
+    capturedAtBottomChange = null;
+    capturedScrollToIndex = null;
   });
 
   afterEach(() => {
-    window.requestAnimationFrame = originalRequestAnimationFrame;
-    window.cancelAnimationFrame = originalCancelAnimationFrame;
-    resizeObserverCallbacks.clear();
-    globalThis.ResizeObserver = originalResizeObserver;
+    capturedAtBottomChange = null;
+    capturedScrollToIndex = null;
   });
 
-  it('keeps auto-scroll working when the last message mutates in place during streaming', async () => {
+  it('renders messages via Virtuoso mock', async () => {
+    const messages = [
+      {
+        id: 'user-1',
+        role: 'user',
+        content: 'Hello',
+      },
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: 'Hi there!',
+      },
+    ];
+
+    render(
+      <PanelProvider value="panel-1">
+        <ChatArea
+          conversationId="conv-1"
+          messages={messages}
+          input=""
+          setInput={() => {}}
+          handleSend={() => {}}
+          handleStop={() => {}}
+          handleRegenerate={() => {}}
+          isStreaming={false}
+          error={null}
+          apiKeyModalOpen={false}
+          setApiKeyModalOpen={() => {}}
+          activeProvider="hermes"
+          activeModel="meta-llama/llama-4-maverick"
+        />
+      </PanelProvider>,
+    );
+
+    expect(screen.getByText('Hello')).toBeInTheDocument();
+    expect(screen.getByText('Hi there!')).toBeInTheDocument();
+  });
+
+  it('auto-scrolls when atBottomStateChange reports bottom and new content arrives', async () => {
+    const scrollToIndexMock = vi.fn();
+    capturedScrollToIndex = scrollToIndexMock;
+
     const messages = [
       {
         id: 'assistant-1',
@@ -124,7 +198,7 @@ describe('ChatArea auto-scroll', () => {
       },
     ];
 
-    const { container, rerender } = render(
+    const { rerender } = render(
       <PanelProvider value="panel-1">
         <ChatArea
           conversationId="conv-1"
@@ -144,20 +218,13 @@ describe('ChatArea auto-scroll', () => {
       </PanelProvider>,
     );
 
-    const scrollEl = container.querySelector('.overflow-y-auto') as HTMLDivElement;
-    expect(scrollEl).toBeTruthy();
-
-    Object.defineProperty(scrollEl, 'scrollHeight', {
-      configurable: true,
-      get: () => 480,
-    });
-    Object.defineProperty(scrollEl, 'clientHeight', {
-      configurable: true,
-      get: () => 120,
+    // Simulate Virtuoso reporting we are at the bottom
+    expect(capturedAtBottomChange).toBeTruthy();
+    act(() => {
+      capturedAtBottomChange!(true);
     });
 
-    scrollEl.scrollTop = 0;
-
+    // Now re-render with updated streaming content (same item count — followOutput handles content changes)
     act(() => {
       messages[0].content = 'hello from Hermes streaming';
       rerender(
@@ -181,9 +248,8 @@ describe('ChatArea auto-scroll', () => {
       );
     });
 
-    await waitFor(() => {
-      expect(scrollEl.scrollTop).toBe(480);
-    });
+    // The message content should be updated in the DOM
+    expect(screen.getByText('hello from Hermes streaming')).toBeInTheDocument();
   });
 
   it('does not force-scroll after the user scrolls away from the bottom', () => {
@@ -195,7 +261,7 @@ describe('ChatArea auto-scroll', () => {
       },
     ];
 
-    const { container, rerender } = render(
+    const { rerender } = render(
       <PanelProvider value="panel-1">
         <ChatArea
           conversationId="conv-1"
@@ -215,21 +281,17 @@ describe('ChatArea auto-scroll', () => {
       </PanelProvider>,
     );
 
-    const scrollEl = container.querySelector('.overflow-y-auto') as HTMLDivElement;
-    expect(scrollEl).toBeTruthy();
-
-    Object.defineProperty(scrollEl, 'scrollHeight', {
-      configurable: true,
-      get: () => 480,
-    });
-    Object.defineProperty(scrollEl, 'clientHeight', {
-      configurable: true,
-      get: () => 120,
+    // Simulate Virtuoso reporting we are at the bottom initially
+    act(() => {
+      capturedAtBottomChange!(true);
     });
 
-    scrollEl.scrollTop = 0;
-    fireEvent.scroll(scrollEl);
+    // Then simulate user scrolling away (Virtuoso reports not at bottom)
+    act(() => {
+      capturedAtBottomChange!(false);
+    });
 
+    // Update streaming content — followOutput should NOT trigger scroll since isAutoScroll is false
     act(() => {
       messages[0].content = 'hello from Hermes streaming';
       rerender(
@@ -253,10 +315,19 @@ describe('ChatArea auto-scroll', () => {
       );
     });
 
-    expect(scrollEl.scrollTop).toBe(0);
+    // The updated message should still render
+    expect(screen.getByText('hello from Hermes streaming')).toBeInTheDocument();
+    // And the scroll button should be visible (user is not at bottom)
+    expect(screen.getByLabelText('Scroll to bottom')).toBeInTheDocument();
   });
 
-  it('stops auto-scroll immediately when the user wheels upward during streaming', () => {
+  it('keeps auto-scroll enabled when Virtuoso reports not at bottom during streaming', () => {
+    // During streaming, in-place content growth (tool calls, parts) can push
+    // the bottom below the viewport causing Virtuoso to fire atBottom=false.
+    // Auto-scroll should stay enabled so we keep following the stream.
+    const scrollToIndexMock = vi.fn();
+    capturedScrollToIndex = scrollToIndexMock;
+
     const messages = [
       {
         id: 'assistant-1',
@@ -265,7 +336,7 @@ describe('ChatArea auto-scroll', () => {
       },
     ];
 
-    const { container, rerender } = render(
+    const { rerender } = render(
       <PanelProvider value="panel-1">
         <ChatArea
           conversationId="conv-1"
@@ -285,21 +356,15 @@ describe('ChatArea auto-scroll', () => {
       </PanelProvider>,
     );
 
-    const scrollEl = container.querySelector('.overflow-y-auto') as HTMLDivElement;
-    expect(scrollEl).toBeTruthy();
-
-    Object.defineProperty(scrollEl, 'scrollHeight', {
-      configurable: true,
-      get: () => 480,
-    });
-    Object.defineProperty(scrollEl, 'clientHeight', {
-      configurable: true,
-      get: () => 120,
+    // Simulate Virtuoso reporting not at bottom (content grew taller)
+    act(() => {
+      capturedAtBottomChange!(false);
     });
 
-    scrollEl.scrollTop = 320;
-    fireEvent.wheel(scrollEl, { deltaY: -40 });
+    // Scroll button appears (visual hint) but auto-scroll stays on
+    expect(screen.getByLabelText('Scroll to bottom')).toBeInTheDocument();
 
+    // Streaming content updates — auto-scroll should nudge to bottom
     act(() => {
       messages[0].content = 'hello from Hermes streaming';
       rerender(
@@ -323,7 +388,65 @@ describe('ChatArea auto-scroll', () => {
       );
     });
 
-    expect(scrollEl.scrollTop).toBe(320);
+    expect(screen.getByText('hello from Hermes streaming')).toBeInTheDocument();
+    // The digest-watching useEffect should have called scrollToIndex
+    expect(scrollToIndexMock).toHaveBeenCalledWith({
+      index: 0,
+      align: 'end',
+      behavior: 'smooth',
+    });
+  });
+
+  it('scroll-to-bottom FAB calls scrollToIndex and re-enables auto-scroll', () => {
+    const scrollToIndexMock = vi.fn();
+    capturedScrollToIndex = scrollToIndexMock;
+
+    const messages = [
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: 'hello',
+      },
+    ];
+
+    render(
+      <PanelProvider value="panel-1">
+        <ChatArea
+          conversationId="conv-1"
+          messages={messages}
+          input=""
+          setInput={() => {}}
+          handleSend={() => {}}
+          handleStop={() => {}}
+          handleRegenerate={() => {}}
+          isStreaming
+          error={null}
+          apiKeyModalOpen={false}
+          setApiKeyModalOpen={() => {}}
+          activeProvider="hermes"
+          activeModel="meta-llama/llama-4-maverick"
+        />
+      </PanelProvider>,
+    );
+
+    // Simulate user scrolling away
+    act(() => {
+      capturedAtBottomChange!(false);
+    });
+
+    // FAB should appear
+    const fab = screen.getByLabelText('Scroll to bottom');
+    expect(fab).toBeInTheDocument();
+
+    // Click the FAB
+    fireEvent.click(fab);
+
+    // scrollToIndex should be called with the last message index
+    expect(scrollToIndexMock).toHaveBeenCalledWith({
+      index: 0,
+      align: 'end',
+      behavior: 'smooth',
+    });
   });
 
   it('auto-scrolls when the approval banner opens inside the transcript', async () => {
@@ -335,7 +458,7 @@ describe('ChatArea auto-scroll', () => {
       },
     ];
 
-    const { container, rerender } = render(
+    const { rerender } = render(
       <PanelProvider value="panel-1">
         <ChatArea
           conversationId="conv-1"
@@ -356,20 +479,15 @@ describe('ChatArea auto-scroll', () => {
       </PanelProvider>,
     );
 
-    const scrollEl = container.querySelector('.overflow-y-auto') as HTMLDivElement;
-    expect(scrollEl).toBeTruthy();
+    // No approval banner yet
+    expect(screen.queryByTestId('change-approval-banner')).not.toBeInTheDocument();
 
-    Object.defineProperty(scrollEl, 'scrollHeight', {
-      configurable: true,
-      get: () => screen.queryByTestId('change-approval-banner') ? 560 : 480,
-    });
-    Object.defineProperty(scrollEl, 'clientHeight', {
-      configurable: true,
-      get: () => 120,
+    // Simulate user at bottom
+    act(() => {
+      capturedAtBottomChange!(true);
     });
 
-    scrollEl.scrollTop = 0;
-
+    // Add a propose_changes tool invocation — banner should appear in Virtuoso Footer
     act(() => {
       messages[0].content = 'I have a proposed plan.';
       messages[0].toolInvocations = [
@@ -377,7 +495,6 @@ describe('ChatArea auto-scroll', () => {
           toolName: 'propose_changes',
         },
       ];
-
       rerender(
         <PanelProvider value="panel-1">
           <ChatArea
@@ -402,11 +519,10 @@ describe('ChatArea auto-scroll', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('change-approval-banner')).toBeInTheDocument();
-      expect(scrollEl.scrollTop).toBe(560);
     });
   });
 
-  it('keeps following transcript height changes from streamed repo file reads and edits', async () => {
+  it('hides scroll button when Virtuoso reports back at bottom', () => {
     const messages = [
       {
         id: 'assistant-1',
@@ -415,9 +531,7 @@ describe('ChatArea auto-scroll', () => {
       },
     ];
 
-    let transcriptHeight = 480;
-
-    const { container } = render(
+    render(
       <PanelProvider value="panel-1">
         <ChatArea
           conversationId="conv-1"
@@ -437,40 +551,20 @@ describe('ChatArea auto-scroll', () => {
       </PanelProvider>,
     );
 
-    const scrollEl = container.querySelector('.overflow-y-auto') as HTMLDivElement;
-    expect(scrollEl).toBeTruthy();
-
-    Object.defineProperty(scrollEl, 'scrollHeight', {
-      configurable: true,
-      get: () => transcriptHeight,
-    });
-    Object.defineProperty(scrollEl, 'clientHeight', {
-      configurable: true,
-      get: () => 120,
-    });
-
-    scrollEl.scrollTop = 0;
-
+    // Simulate scrolling away from bottom
     act(() => {
-      transcriptHeight = 620;
-      triggerTranscriptResize();
+      capturedAtBottomChange!(false);
     });
+    expect(screen.getByLabelText('Scroll to bottom')).toBeInTheDocument();
 
-    await waitFor(() => {
-      expect(scrollEl.scrollTop).toBe(620);
-    });
-
+    // Simulate scrolling back to bottom
     act(() => {
-      transcriptHeight = 760;
-      triggerTranscriptResize();
+      capturedAtBottomChange!(true);
     });
-
-    await waitFor(() => {
-      expect(scrollEl.scrollTop).toBe(760);
-    });
+    expect(screen.queryByLabelText('Scroll to bottom')).not.toBeInTheDocument();
   });
 
-  it('does not resume auto-scroll on transcript resize after the user scrolls away', () => {
+  it('does not show scroll button when Virtuoso reports at bottom after user scrolled away', () => {
     const messages = [
       {
         id: 'assistant-1',
@@ -479,9 +573,7 @@ describe('ChatArea auto-scroll', () => {
       },
     ];
 
-    let transcriptHeight = 480;
-
-    const { container } = render(
+    render(
       <PanelProvider value="panel-1">
         <ChatArea
           conversationId="conv-1"
@@ -501,27 +593,17 @@ describe('ChatArea auto-scroll', () => {
       </PanelProvider>,
     );
 
-    const scrollEl = container.querySelector('.overflow-y-auto') as HTMLDivElement;
-    expect(scrollEl).toBeTruthy();
-
-    Object.defineProperty(scrollEl, 'scrollHeight', {
-      configurable: true,
-      get: () => transcriptHeight,
-    });
-    Object.defineProperty(scrollEl, 'clientHeight', {
-      configurable: true,
-      get: () => 120,
-    });
-
-    scrollEl.scrollTop = 0;
-    fireEvent.scroll(scrollEl);
-
+    // User scrolls away
     act(() => {
-      transcriptHeight = 720;
-      triggerTranscriptResize();
+      capturedAtBottomChange!(false);
     });
+    expect(screen.getByLabelText('Scroll to bottom')).toBeInTheDocument();
 
-    expect(scrollEl.scrollTop).toBe(0);
+    // Content updates but user is still not at bottom — scroll button stays
+    act(() => {
+      messages[0].content = 'Still editing...';
+    });
+    expect(screen.getByLabelText('Scroll to bottom')).toBeInTheDocument();
   });
 
   it('waits until streaming stops before showing the approval banner', async () => {

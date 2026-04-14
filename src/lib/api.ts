@@ -519,3 +519,171 @@ export async function translateText(
   const data = await res.json();
   return data.translated;
 }
+
+// ─── Messaging Platforms ──────────────────────────────────────────────
+
+export interface MessagingPlatformField {
+  value: string;
+  is_set: boolean;
+  is_secret: boolean;
+  required: boolean;
+  label: string;
+  placeholder?: string;
+  type?: string;
+}
+
+export interface MessagingPlatform {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  features: string[];
+  docs_url: string;
+  setup_note?: string;
+  configured_fields: number;
+  total_required: number;
+  is_connected: boolean;
+  gateway_active: boolean;
+  gateway_running: boolean;
+  has_secrets: boolean;
+  fields: Record<string, MessagingPlatformField>;
+}
+
+export async function fetchMessagingPlatforms(): Promise<MessagingPlatform[]> {
+  const res = await fetch(`${getApiBaseUrl()}/api/hermes/messaging/platforms`);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Failed to fetch platforms (${res.status})`);
+  }
+  const data = await res.json();
+  return data.platforms;
+}
+
+export async function fetchMessagingPlatform(id: string): Promise<MessagingPlatform> {
+  const res = await fetch(`${getApiBaseUrl()}/api/hermes/messaging/platforms/${encodeURIComponent(id)}`);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Failed to fetch platform (${res.status})`);
+  }
+  const data = await res.json();
+  return data.platform;
+}
+
+export async function updatePlatformEnv(
+  id: string,
+  env: Record<string, string>,
+): Promise<MessagingPlatform> {
+  const res = await fetch(
+    `${getApiBaseUrl()}/api/hermes/messaging/platforms/${encodeURIComponent(id)}/env`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ env }),
+    },
+  );
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Failed to update platform (${res.status})`);
+  }
+  const data = await res.json();
+  return data.platform;
+}
+
+export async function updatePlatformConfig(
+  id: string,
+  config: Record<string, unknown>,
+): Promise<MessagingPlatform> {
+  const res = await fetch(
+    `${getApiBaseUrl()}/api/hermes/messaging/platforms/${encodeURIComponent(id)}/config`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config }),
+    },
+  );
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Failed to update config (${res.status})`);
+  }
+  const data = await res.json();
+  return data.platform;
+}
+
+export async function disconnectPlatform(id: string): Promise<MessagingPlatform> {
+  const res = await fetch(
+    `${getApiBaseUrl()}/api/hermes/messaging/platforms/${encodeURIComponent(id)}`,
+    { method: 'DELETE' },
+  );
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Failed to disconnect platform (${res.status})`);
+  }
+  const data = await res.json();
+  return data.platform;
+}
+
+export async function testPlatformConnection(id: string): Promise<{
+  success: boolean;
+  message?: string;
+  error?: string;
+  status?: Record<string, unknown>;
+}> {
+  const res = await fetch(
+    `${getApiBaseUrl()}/api/hermes/messaging/platforms/${encodeURIComponent(id)}/test`,
+    { method: 'POST' },
+  );
+  const data = await res.json();
+  if (!res.ok) {
+    return { success: false, error: data.error || `Test failed (${res.status})` };
+  }
+  return data;
+}
+
+export async function restartPlatformGateway(id: string): Promise<{ success: boolean; error?: string }> {
+  const res = await fetch(
+    `${getApiBaseUrl()}/api/hermes/messaging/platforms/${encodeURIComponent(id)}/restart-gateway`,
+    { method: 'POST' },
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    return { success: false, error: data.error || `Restart failed (${res.status})` };
+  }
+  return { success: true };
+}
+
+export interface OAuthStatus {
+  available: boolean;
+  auth_url?: string;
+  platform?: string;
+  error?: string;
+}
+
+export async function getOAuthStatus(platformId: string): Promise<OAuthStatus> {
+  const res = await fetch(
+    `${getApiBaseUrl()}/api/hermes/messaging/platforms/${encodeURIComponent(platformId)}/oauth`,
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    return { available: false, error: data.error || `Failed (${res.status})` };
+  }
+  return data as OAuthStatus;
+}
+
+export async function completeOAuth(
+  platformId: string,
+  code: string,
+): Promise<{ success: boolean; message?: string; error?: string }> {
+  const res = await fetch(
+    `${getApiBaseUrl()}/api/hermes/messaging/platforms/${encodeURIComponent(platformId)}/oauth/complete`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code }),
+    },
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    return { success: false, error: data.error || `OAuth failed (${res.status})` };
+  }
+  return data as { success: boolean; message?: string; error?: string };
+}

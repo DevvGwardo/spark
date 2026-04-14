@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { X, Eye, EyeOff, Search, Check, Zap, ChevronDown, ChevronRight, ArrowLeft, ExternalLink, Github, Code2, Network, Info, TerminalSquare, RefreshCw, LayoutGrid, BookOpen, Settings, Plus, Trash2 } from 'lucide-react';
+import { X, Eye, EyeOff, Search, Check, Zap, ChevronDown, ChevronRight, ArrowLeft, ExternalLink, Github, Code2, Network, Info, TerminalSquare, RefreshCw, LayoutGrid, BookOpen, Settings, Plus, Trash2, MessageSquare } from 'lucide-react';
 import { useSettingsStore, type Provider, type Language } from '@/stores/settings-store';
 import { COLOR_THEMES, ACCENT_COLORS } from '@/lib/themes';
 import { useHermesStore, type HermesToolsets, type MCPServer, type MCPTool } from '@/stores/hermes-store';
@@ -10,6 +10,7 @@ import { validateApiKey, listGitHubRepos, type GitHubRepoSummary } from '@/lib/a
 import { PROVIDER_KEY_URLS } from '@/components/chat/ApiKeyModal';
 import { cn } from '@/lib/utils';
 import { getLocalProviderRuntimeDetails, parseLocalProviderRuntimeError } from '@/lib/local-provider-runtime';
+import MessagingTab from './MessagingTab';
 import packageJson from '../../../package.json';
 
 const PROVIDER_COLORS: Partial<Record<Provider, string>> = {
@@ -35,8 +36,11 @@ const PROVIDER_COLORS: Partial<Record<Provider, string>> = {
 
 const navSections = [
   { label: 'PROVIDERS', items: [{ id: 'providers' as const, label: 'Providers', icon: LayoutGrid }] },
-  { label: 'MANAGEMENT', items: [
+  { label: 'INTEGRATIONS', items: [
+    { id: 'messaging' as const, label: 'Messaging', icon: MessageSquare },
     { id: 'github' as const, label: 'GitHub', icon: Github },
+  ]},
+  { label: 'MANAGEMENT', items: [
     { id: 'knowledge' as const, label: 'Knowledge', icon: BookOpen },
     { id: 'general' as const, label: 'General', icon: Settings },
   ]},
@@ -452,7 +456,7 @@ export const SettingsModal: React.FC = () => {
       setSyncingRepos(false);
     }
   }, [githubPAT]);
-  const [tab, setTab] = useState<'providers' | 'github' | 'knowledge' | 'general'>('providers');
+  const [tab, setTab] = useState<'providers' | 'messaging' | 'github' | 'knowledge' | 'general'>('providers');
   const [search, setSearch] = useState('');
   const [providerView, setProviderView] = useState<'list' | 'detail'>('list');
   const [localRuntimeStatus, setLocalRuntimeStatus] = useState<string | null>(null);
@@ -1514,6 +1518,8 @@ export const SettingsModal: React.FC = () => {
                 )}
               </div>
             )}
+
+            {tab === 'messaging' && <MessagingTab />}
 
             {tab === 'knowledge' && <KnowledgeTab />}
 

@@ -942,6 +942,10 @@ try:
     _brain_reader_task: asyncio.Task = None
     _brain_pending: dict[int, asyncio.Future] = {}
     _brain_msg_id: int = 0
+    _main_event_loop: Optional[asyncio.AbstractEventLoop] = None
+    _heartbeat_task: Optional[asyncio.Task] = None
+    _claimed_resources: set = set()
+    _claimed_resources_lock = threading.Lock()
 
     async def _brain_reader():
         """Read JSON-RPC responses from brain-mcp and resolve pending futures."""
@@ -979,6 +983,31 @@ try:
         except Exception:
             _brain_pending.pop(mid, None)
             return None
+
+    async def _bridge_heartbeat():
+        """Background task: pulse brain with bridge health every 30 seconds."""
+        while True:
+            try:
+                await asyncio.sleep(30)
+                uptime = int(time.time() - _bridge_start_time) if _bridge_start_time > 0 else 0
+                # Use a local lock to snapshot active count for the pulse message
+                with _claimed_resources_lock:
+                    active = _bridge_active_requests
+                    claimed = len(_claimed_resources)
+                pulse_msg = f"uptime={uptime}s active={active} claimed={claimed}"
+                _brain_pulse("working", pulse_msg)
+                health = {
+                    "uptime": uptime,
+                    "active_requests": _bridge_active_requests,
+                    "total_requests": _bridge_total_requests,
+                    "error_count": _bridge_error_count,
+                    "claimed_resources": claimed,
+                }
+                _brain_set("bridge:health", json.dumps(health))
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                pass  # Silently continue on errors
 
     async def _brain_lifespan(app):
         """FastAPI lifespan — spawns brain-mcp as async subprocess, shuts down cleanly."""
@@ -1095,6 +1124,12 @@ try:
             except Exception:
                 pass
             _brain_initialized = True
+            # Capture the running event loop for thread-safe brain calls
+            global _main_event_loop
+            _main_event_loop = asyncio.get_running_loop()
+            # Start background heartbeat task
+            global _heartbeat_task
+            _heartbeat_task = asyncio.create_task(_bridge_heartbeat())
             print(f"[hermes-bridge] Brain MCP connected PID={_brain_proc.pid}", flush=True)
         except Exception as e:
             print(f"[hermes-bridge] Brain MCP init failed: {e}", flush=True)
@@ -1102,6 +1137,12 @@ try:
 
         yield
 
+        if _heartbeat_task:
+            _heartbeat_task.cancel()
+            try:
+                await asyncio.wait_for(_heartbeat_task, timeout=2)
+            except Exception:
+                pass
         if _brain_reader_task:
             _brain_reader_task.cancel()
         if _brain_proc:
@@ -1117,16 +1158,19 @@ try:
         return await _brain_rpc("tools/call", {"name": tool, "arguments": args})
 
     def _brain_get(key: str, scope: str = "global") -> Optional[str]:
-        """Helper to read brain state text synchronously when no event loop is running."""
+        """Helper to read brain state text. Thread-safe via run_coroutine_threadsafe."""
         if not _brain_initialized or _brain_proc is None:
             return None
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                return None
-            result = loop.run_until_complete(
-                _brain_call_async("brain_get", {"key": key, "scope": scope})
-            )
+            if _main_event_loop and _main_event_loop.is_running():
+                # Use run_coroutine_threadsafe to schedule on the main event loop
+                future = asyncio.run_coroutine_threadsafe(
+                    _brain_call_async("brain_get", {"key": key, "scope": scope}),
+                    _main_event_loop,
+                )
+                result = future.result(timeout=5)
+            else:
+                result = None
         except Exception:
             return None
         if isinstance(result, dict):
@@ -1140,107 +1184,116 @@ try:
         return None
 
     def _brain_set(key: str, value: str, scope: str = "global"):
-        """Helper to set brain state, silently fails if brain unavailable."""
+        """Helper to set brain state. Thread-safe via run_coroutine_threadsafe."""
         if not _brain_initialized or _brain_proc is None:
             return
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.create_task(_brain_call_async("brain_set", {"key": key, "value": value, "scope": scope}))
-            else:
-                loop.run_until_complete(_brain_call_async("brain_set", {"key": key, "value": value, "scope": scope}))
+            if _main_event_loop and _main_event_loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    _brain_call_async("brain_set", {"key": key, "value": value, "scope": scope}),
+                    _main_event_loop,
+                )
         except Exception:
             pass
 
     def _brain_post(content: str, channel: str = "general"):
-        """Helper to post to brain channel, silently fails if brain unavailable."""
+        """Helper to post to brain channel. Thread-safe via run_coroutine_threadsafe."""
         if not _brain_initialized or _brain_proc is None:
             return
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.create_task(_brain_call_async("brain_post", {"content": content, "channel": channel}))
-            else:
-                loop.run_until_complete(_brain_call_async("brain_post", {"content": content, "channel": channel}))
+            if _main_event_loop and _main_event_loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    _brain_call_async("brain_post", {"content": content, "channel": channel}),
+                    _main_event_loop,
+                )
         except Exception:
             pass
 
     def _brain_pulse(status: str = "working", progress: str = ""):
-        """Helper to send brain pulse, silently fails if brain unavailable."""
+        """Helper to send brain pulse. Thread-safe via run_coroutine_threadsafe."""
         if not _brain_initialized or _brain_proc is None:
             return
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.create_task(_brain_call_async("brain_pulse", {"status": status, "progress": progress}))
-            else:
-                loop.run_until_complete(_brain_call_async("brain_pulse", {"status": status, "progress": progress}))
+            if _main_event_loop and _main_event_loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    _brain_call_async("brain_pulse", {"status": status, "progress": progress}),
+                    _main_event_loop,
+                )
         except Exception:
             pass
 
     def _brain_claim(resource: str, ttl: int = 60):
-        """Helper to claim a brain resource, returns task or None."""
+        """Helper to claim a brain resource. Thread-safe via run_coroutine_threadsafe.
+        Also tracks the resource in _claimed_resources for bulk cleanup."""
         if not _brain_initialized or _brain_proc is None:
             return None
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                return loop.create_task(_brain_call_async("brain_claim", {"resource": resource, "ttl": ttl}))
-            else:
-                return loop.run_until_complete(_brain_call_async("brain_claim", {"resource": resource, "ttl": ttl}))
+            with _claimed_resources_lock:
+                _claimed_resources.add(resource)
+            if _main_event_loop and _main_event_loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    _brain_call_async("brain_claim", {"resource": resource, "ttl": ttl}),
+                    _main_event_loop,
+                )
+                return True  # Fire-and-forget from threads; claim will auto-expire via TTL
         except Exception:
             return None
+        return None
 
     def _brain_release(resource: str):
-        """Helper to release a brain resource."""
+        """Helper to release a brain resource. Thread-safe via run_coroutine_threadsafe."""
         if not _brain_initialized or _brain_proc is None:
             return
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.create_task(_brain_call_async("brain_release", {"resource": resource}))
-            else:
-                loop.run_until_complete(_brain_call_async("brain_release", {"resource": resource}))
+            with _claimed_resources_lock:
+                _claimed_resources.discard(resource)
+            if _main_event_loop and _main_event_loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    _brain_call_async("brain_release", {"resource": resource}),
+                    _main_event_loop,
+                )
         except Exception:
             pass
 
     def _brain_dm(target: str, content: str):
-        """Helper to send a direct message to another agent via brain DM."""
+        """Helper to send a direct message to another agent via brain DM. Thread-safe."""
         if not _brain_initialized or _brain_proc is None:
             return
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.create_task(_brain_call_async("brain_dm", {"target": target, "content": content}))
-            else:
-                loop.run_until_complete(_brain_call_async("brain_dm", {"target": target, "content": content}))
+            if _main_event_loop and _main_event_loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    _brain_call_async("brain_dm", {"target": target, "content": content}),
+                    _main_event_loop,
+                )
         except Exception:
             pass
 
     def _brain_contract_set(key: str, value: str, scope: str = "global"):
-        """Helper to publish a bridge contract, silently fails if brain unavailable."""
+        """Helper to publish a bridge contract. Thread-safe."""
         if not _brain_initialized or _brain_proc is None:
             return
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.create_task(_brain_call_async("brain_contract_set", {"key": key, "value": value, "scope": scope}))
-            else:
-                loop.run_until_complete(_brain_call_async("brain_contract_set", {"key": key, "value": value, "scope": scope}))
+            if _main_event_loop and _main_event_loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    _brain_call_async("brain_contract_set", {"key": key, "value": value, "scope": scope}),
+                    _main_event_loop,
+                )
         except Exception:
             pass
 
     def _brain_contract_get(key: str, scope: str = "global") -> Optional[str]:
-        """Helper to read a published contract, returns value or None."""
+        """Helper to read a published contract, returns value or None. Thread-safe."""
         if not _brain_initialized or _brain_proc is None:
             return None
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                return None
-            result = loop.run_until_complete(
-                _brain_call_async("brain_contract_get", {"key": key, "scope": scope})
-            )
+            if _main_event_loop and _main_event_loop.is_running():
+                future = asyncio.run_coroutine_threadsafe(
+                    _brain_call_async("brain_contract_get", {"key": key, "scope": scope}),
+                    _main_event_loop,
+                )
+                result = future.result(timeout=5)
+            else:
+                result = None
         except Exception:
             return None
         if isinstance(result, dict):
@@ -1410,6 +1463,8 @@ _brain_circuit = CircuitBreaker(failure_threshold=3, recovery_timeout=15.0)
 
 # Model prefix constants for routing
 MINIMAX_MODEL_PREFIX = "MiniMax-"
+import os
+MINIMAX_BASE_URL = os.environ.get("MINIMAX_BASE_URL", "https://api.minimax.io/anthropic")
 NOUS_MODEL_PREFIX = "nousresearch/"
 NOUS_BASE_URL = "https://inference-api.nousresearch.com/v1"
 
@@ -2190,6 +2245,11 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
         )
         if not minimax_key:
             return _no_api_key_error("minimax")
+        # The real Hermes agent only treats gateway-supplied credentials as
+        # explicit when it receives both api_key and base_url. Passing only the
+        # key makes it fall back to ~/.hermes/config.yaml provider resolution,
+        # which can emit a misleading "no API key found" error even though the
+        # bridge already forwarded a request-scoped MiniMax key.
         agent_base_url = MINIMAX_BASE_URL
         agent_api_key = minimax_key
     elif is_nous_model:
@@ -2236,7 +2296,7 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
         return await _passthrough_chat_completions(
             body,
             agent_api_key if (is_minimax_model or is_nous_model) else api_key,
-            base_url=agent_base_url if (is_minimax_model or is_nous_model) else "https://openrouter.ai/api/v1",
+            base_url=MINIMAX_BASE_URL if is_minimax_model else (agent_base_url if is_nous_model else "https://openrouter.ai/api/v1"),
             finalize_request=lambda success: (
                 _finalize_session(success),
                 _mark_request_finished(
@@ -2464,6 +2524,22 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
             _update_bridge_metrics(success=False, decrement_active=True)
             _finalize_session(False, error_message=error_message)
         finally:
+            # Brain MCP: clean up per-request state to prevent zombies
+            try:
+                # Delete the active request key for this chunk
+                _brain_set(f"bridge:active-request:{chunk_id}", "")
+                # Release all claimed resources for this request's repo prefix
+                # (TTL=120 auto-releases on crash; explicit release on clean exit)
+                repo_prefix = f"hermes-bridge:repo:{repo_owner}/{repo_name}:" if repo_owner and repo_name else None
+                with _claimed_resources_lock:
+                    to_release = [r for r in list(_claimed_resources) if repo_prefix is None or r.startswith(repo_prefix)]
+                    for r in to_release:
+                        _claimed_resources.discard(r)
+                        _brain_release(r)
+                # Pulse done status
+                _brain_pulse("done", f"completed chunk={chunk_id}")
+            except Exception:
+                pass  # Best-effort cleanup
             loop.call_soon_threadsafe(done_event.set)
 
     async def event_stream():
@@ -3269,6 +3345,211 @@ async def workspace_skill_uninstall(request: Request):
         return JSONResponse(status_code=500, content={"error": "hermes command not found"})
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+# ------------------------------------------------------------------
+# Messaging Platform Configuration
+# ------------------------------------------------------------------
+
+from messaging_platforms import (
+    list_platforms as _list_platforms,
+    get_platform as _get_platform,
+    update_platform_env as _update_platform_env,
+    update_platform_config as _update_platform_config,
+    disconnect_platform as _disconnect_platform,
+    test_platform_connection as _test_platform_connection,
+    get_oauth_status as _get_oauth_status,
+    complete_oauth as _complete_oauth,
+)
+
+
+@app.get("/messaging/platforms")
+async def messaging_list_platforms():
+    try:
+        return JSONResponse(content={"platforms": _list_platforms()})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/messaging/platforms/{platform_id}")
+async def messaging_get_platform(platform_id: str):
+    result = _get_platform(platform_id)
+    if not result:
+        return JSONResponse(status_code=404, content={"error": f"Platform '{platform_id}' not found"})
+    return JSONResponse(content={"platform": result})
+
+
+@app.put("/messaging/platforms/{platform_id}/env")
+async def messaging_update_env(platform_id: str, request: Request):
+    try:
+        body = await request.json()
+        updates = body.get("env", {})
+        if not isinstance(updates, dict):
+            return JSONResponse(status_code=400, content={"error": "'env' must be a dict"})
+        result = _update_platform_env(platform_id, updates)
+        return JSONResponse(content={"platform": result})
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.put("/messaging/platforms/{platform_id}/config")
+async def messaging_update_config(platform_id: str, request: Request):
+    try:
+        body = await request.json()
+        updates = body.get("config", {})
+        if not isinstance(updates, dict):
+            return JSONResponse(status_code=400, content={"error": "'config' must be a dict"})
+        result = _update_platform_config(platform_id, updates)
+        return JSONResponse(content={"platform": result})
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.delete("/messaging/platforms/{platform_id}")
+async def messaging_disconnect_platform(platform_id: str):
+    try:
+        result = _disconnect_platform(platform_id)
+        return JSONResponse(content={"platform": result})
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/messaging/platforms/{platform_id}/test")
+async def messaging_test_platform(platform_id: str):
+    try:
+        result = _test_platform_connection(platform_id)
+        return JSONResponse(content=result)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/messaging/platforms/{platform_id}/restart-gateway")
+async def messaging_restart_gateway(platform_id: str):
+    """Restart the gateway for a specific platform."""
+    try:
+        result = subprocess.run(
+            ["hermes", "gateway", "restart", "--platform", platform_id],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            return JSONResponse(
+                status_code=500,
+                content={"error": f"restart failed: {result.stderr.strip()}"},
+            )
+        return JSONResponse(content={"success": True, "message": f"Gateway restarted for platform {platform_id}"})
+    except subprocess.TimeoutExpired:
+        return JSONResponse(status_code=504, content={"error": "restart timed out"})
+    except FileNotFoundError:
+        return JSONResponse(status_code=500, content={"error": "hermes command not found"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+# ─── OAuth 1-Click Setup ──────────────────────────────────────────────────
+
+@app.get("/messaging/platforms/{platform_id}/oauth")
+async def messaging_oauth_status(platform_id: str):
+    """Return OAuth setup status and auth URL for a platform."""
+    try:
+        result = _get_oauth_status(platform_id)
+        return JSONResponse(content=result)
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/messaging/platforms/{platform_id}/oauth/complete")
+async def messaging_oauth_complete(platform_id: str, request: Request):
+    """Exchange an OAuth code for tokens and save them."""
+    try:
+        body = await request.json()
+        code = body.get("code")
+        if not code:
+            return JSONResponse(status_code=400, content={"error": "Missing 'code' in request body"})
+        result = _complete_oauth(platform_id, code)
+        return JSONResponse(content=result)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+# ─── OAuth Callback (used when user clicks "Authorize" in popup) ───────────
+# This route is hit by the OAuth provider after the user authorizes.
+# It exchanges the code for tokens server-side and shows a success page
+# that closes the popup and signals the opener.
+
+@app.get("/discord/callback")
+async def discord_oauth_callback(request: Request):
+    from fastapi.responses import HTMLResponse
+    code = request.query_params.get("code")
+    error = request.query_params.get("error")
+    if error or not code:
+        return HTMLResponse(
+            status_code=400,
+            content="<html><body><h2>Discord authorization failed</h2>"
+            f"<p>{error or 'No code received'}</p>"
+            "<script>window.close()</script></body></html>",
+        )
+    try:
+        _complete_oauth("discord", code)
+        return HTMLResponse(
+            status_code=200,
+            content="<html><body>"
+            "<h2> Discord connected!</h2>"
+            "<p>You can close this window now.</p>"
+            "<script>"
+            "if (window.opener) { window.opener.postMessage('oauth-success:discord', '*'); }"
+            "setTimeout(() => window.close(), 1500);"
+            "</script></body></html>",
+        )
+    except Exception as e:
+        return HTMLResponse(
+            status_code=500,
+            content=f"<html><body><h2>Error</h2><p>{str(e)}</p>"
+            "<script>setTimeout(() => window.close(), 3000)</script></body></html>",
+        )
+
+
+@app.get("/slack/callback")
+async def slack_oauth_callback(request: Request):
+    from fastapi.responses import HTMLResponse
+    code = request.query_params.get("code")
+    error = request.query_params.get("error")
+    if error or not code:
+        return HTMLResponse(
+            status_code=400,
+            content="<html><body><h2>Slack authorization failed</h2>"
+            f"<p>{error or 'No code received'}</p>"
+            "<script>window.close()</script></body></html>",
+        )
+    try:
+        _complete_oauth("slack", code)
+        return HTMLResponse(
+            status_code=200,
+            content="<html><body>"
+            "<h2> Slack connected!</h2>"
+            "<p>You can close this window now.</p>"
+            "<script>"
+            "if (window.opener) { window.opener.postMessage('oauth-success:slack', '*'); }"
+            "setTimeout(() => window.close(), 1500);"
+            "</script></body></html>",
+        )
+    except Exception as e:
+        return HTMLResponse(
+            status_code=500,
+            content=f"<html><body><h2>Error</h2><p>{str(e)}</p>"
+            "<script>setTimeout(() => window.close(), 3000)</script></body></html>",
+        )
 
 
 # ------------------------------------------------------------------

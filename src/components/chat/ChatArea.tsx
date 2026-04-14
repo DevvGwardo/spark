@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useCallback, useState, useMemo } from 'react';
+import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 import { ArrowDown, ArrowRight, MessageSquare, Settings, Wrench } from 'lucide-react';
 import { MessageBubble } from './MessageBubble';
 import { ChatInput } from './ChatInput';
@@ -203,10 +204,6 @@ function allowPseudoRepoWritesForAssistant(messages: ChatMessageLike[], assistan
   return previousUserMessage ? isRepoWriteMessage(previousUserMessage.content) : false;
 }
 
-function isNearBottom(element: HTMLDivElement, threshold = 100) {
-  return element.scrollHeight - element.scrollTop - element.clientHeight < threshold;
-}
-
 function IssueNextStepCallout({
   issueNumber,
   issueTitle,
@@ -321,11 +318,10 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 }) => {
   const panelId = usePanelId();
   const scopeId = useChatScopeId();
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const transcriptContentRef = useRef<HTMLDivElement>(null);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
   const isAutoScroll = useRef(true);
-  const scrollAnimationFrameRef = useRef<number | null>(null);
-  const touchStartYRef = useRef<number | null>(null);
+  const isStreamingRef = useRef(false);
+  isStreamingRef.current = isStreaming;
   const pendingProposalCacheRef = useRef<{ digest: string; proposal: ReturnType<typeof findPendingProposal> }>({
     digest: '',
     proposal: null,
@@ -411,58 +407,21 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     [activeToolActivity, lastAssistantAllowsPseudoRepoWrites, lastAssistantMessage],
   );
 
-  const scheduleScrollToBottom = useCallback(() => {
-    if (!isAutoScroll.current || !scrollRef.current) {
-      return;
+  const handleAtBottomChange = useCallback((atBottom: boolean) => {
+    // During streaming, Virtuoso fires atBottom=false when in-place content
+    // growth (tool calls, streaming parts) pushes the bottom below the
+    // viewport.  Don't disable auto-scroll for that — only honour an
+    // explicit user-scroll-away when NOT streaming.
+    if (atBottom) {
+      isAutoScroll.current = true;
+    } else if (!isStreamingRef.current) {
+      isAutoScroll.current = false;
     }
-
-    if (scrollAnimationFrameRef.current !== null) {
-      window.cancelAnimationFrame(scrollAnimationFrameRef.current);
-    }
-
-    scrollAnimationFrameRef.current = window.requestAnimationFrame(() => {
-      scrollAnimationFrameRef.current = null;
-      if (!isAutoScroll.current || !scrollRef.current) {
-        return;
-      }
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    setShowScrollButton((prev) => {
+      const next = !atBottom;
+      return prev === next ? prev : next;
     });
   }, []);
-
-  useEffect(() => {
-    scheduleScrollToBottom();
-  }, [
-    conversationId,
-    isStreaming,
-    lastMessageDigest,
-    scheduleScrollToBottom,
-    toolActivityDigest,
-    messages.length,
-    showInlineApprovalBanner,
-  ]);
-
-  useEffect(() => () => {
-    if (scrollAnimationFrameRef.current !== null) {
-      window.cancelAnimationFrame(scrollAnimationFrameRef.current);
-      scrollAnimationFrameRef.current = null;
-    }
-  }, []);
-
-  useEffect(() => {
-    const transcriptContent = transcriptContentRef.current;
-    if (!transcriptContent || typeof ResizeObserver === 'undefined') {
-      return;
-    }
-
-    const observer = new ResizeObserver(() => {
-      scheduleScrollToBottom();
-    });
-
-    observer.observe(transcriptContent);
-    return () => {
-      observer.disconnect();
-    };
-  }, [scheduleScrollToBottom]);
 
   useEffect(() => {
     const hasMessageHistory = messages.some((message) => message.content.trim().length > 0);
@@ -496,59 +455,34 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     setDismissedError(null);
   }, [lastUserMessageId]);
 
-  const handleScroll = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const near = isNearBottom(el);
-    isAutoScroll.current = near;
-    // Only update state when it actually changes to avoid re-renders during auto-scroll
-    setShowScrollButton((prev) => {
-      const next = !near;
-      return prev === next ? prev : next;
-    });
-  }, []);
-
-  const handleWheelCapture = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
-    if (event.deltaY < 0) {
-      isAutoScroll.current = false;
-      setShowScrollButton(true);
-    }
-  }, []);
-
-  const handleTouchStart = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
-    const touch = event.touches[0];
-    if (!touch) return;
-    touchStartYRef.current = touch.clientY;
-  }, []);
-
-  const handleTouchMove = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
-    const touch = event.touches[0];
-    if (!touch) return;
-
-    if (touchStartYRef.current !== null && touch.clientY > touchStartYRef.current) {
-      isAutoScroll.current = false;
-      setShowScrollButton(true);
-    }
-  }, []);
-
-  const handleTouchEnd = useCallback(() => {
-    touchStartYRef.current = null;
-  }, []);
-
   const scrollToBottom = useCallback(() => {
-    const el = scrollRef.current;
-    if (el) {
-      el.scrollTop = el.scrollHeight;
-    }
+    if (messages.length === 0) return;
+    virtuosoRef.current?.scrollToIndex({
+      index: messages.length - 1,
+      align: 'end',
+      behavior: 'smooth',
+    });
     isAutoScroll.current = true;
     setShowScrollButton(false);
-  }, []);
+  }, [messages.length]);
 
   const handleSendWithScroll = useCallback(() => {
     isAutoScroll.current = true;
     setShowScrollButton(false);
     handleSend();
   }, [handleSend]);
+
+  // When streaming content grows in-place (tool calls injected into the last
+  // message, text appended to parts), the Virtuoso data array length doesn't
+  // change so followOutput won't fire.  Nudge the scroll position ourselves.
+  useEffect(() => {
+    if (!isStreaming || !isAutoScroll.current || messages.length === 0) return;
+    virtuosoRef.current?.scrollToIndex({
+      index: messages.length - 1,
+      align: 'end',
+      behavior: 'smooth',
+    });
+  }, [isStreaming, lastMessageDigest, toolActivityDigest, messages.length]);
 
   useEffect(() => {
     if (
@@ -721,52 +655,49 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div
-        ref={scrollRef}
-        onScroll={handleScroll}
-        onWheelCapture={handleWheelCapture}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
-        onTouchCancel={handleTouchEnd}
-        className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden"
-      >
-        <div ref={transcriptContentRef} className="max-w-[720px] mx-auto px-20 py-6">
-          {messages.map((msg, i) => {
-            const isLastAssistantStreaming =
-              isStreaming && msg.role === 'assistant' && i === messages.length - 1;
-            const allowPseudoRepoWrites = msg.role === 'assistant'
-              ? allowPseudoRepoWritesForAssistant(messages, i)
-              : false;
-            const parts = getAssistantParts(msg);
+      <Virtuoso
+        ref={virtuosoRef}
+        data={messages}
+        followOutput={() => isAutoScroll.current ? 'smooth' : false}
+        atBottomStateChange={handleAtBottomChange}
+        className="min-h-0 flex-1"
+        data-testid="virtuoso-scroller"
+        itemContent={(index, msg) => {
+          const isLastAssistantStreaming =
+            isStreaming && msg.role === 'assistant' && index === messages.length - 1;
+          const allowPseudoRepoWrites = msg.role === 'assistant'
+            ? allowPseudoRepoWritesForAssistant(messages, index)
+            : false;
+          const parts = getAssistantParts(msg);
 
-            // Extract reasoning from message parts
-            const reasoning = msg.role === 'assistant'
-              ? parts
-                  .filter((p) => p.type === 'reasoning')
-                  .map((p: ChatPartLike) => p.reasoning)
-                  .join('\n') || undefined
-              : undefined;
+          // Extract reasoning from message parts
+          const reasoning = msg.role === 'assistant'
+            ? parts
+                .filter((p) => p.type === 'reasoning')
+                .map((p: ChatPartLike) => p.reasoning)
+                .join('\n') || undefined
+            : undefined;
 
-            // Extract tool invocations from message parts and/or toolInvocations field
-            const partsToolInvocations = msg.role === 'assistant'
-              ? parts
-                  .filter((p: ChatPartLike) => p.type === 'tool-invocation')
-                  .map((p: ChatPartLike) => p.toolInvocation) || []
-              : [];
-            const directToolInvocations = msg.toolInvocations || [];
-            const toolInvocations = partsToolInvocations.length > 0 ? partsToolInvocations : directToolInvocations;
+          // Extract tool invocations from message parts and/or toolInvocations field
+          const partsToolInvocations = msg.role === 'assistant'
+            ? parts
+                .filter((p: ChatPartLike) => p.type === 'tool-invocation')
+                .map((p: ChatPartLike) => p.toolInvocation) || []
+            : [];
+          const directToolInvocations = msg.toolInvocations || [];
+          const toolInvocations = partsToolInvocations.length > 0 ? partsToolInvocations : directToolInvocations;
 
-            // Reasoning is streaming if we're streaming, have reasoning content, but no text content yet (or still accumulating)
-            const isReasoningStreaming = isLastAssistantStreaming && !!reasoning && !msg.content;
+          // Reasoning is streaming if we're streaming, have reasoning content, but no text content yet (or still accumulating)
+          const isReasoningStreaming = isLastAssistantStreaming && !!reasoning && !msg.content;
 
-            // Only the currently-streaming assistant message should receive
-            // 'current' tool activity. Other messages use their migrated
-            // message-specific activity (keyed by msg.id) or nothing.
-            const messageToolActivity = toolActivityMap?.[msg.id]
-              || (isLastAssistantStreaming ? toolActivityMap?.['current'] : undefined);
+          // Only the currently-streaming assistant message should receive
+          // 'current' tool activity. Other messages use their migrated
+          // message-specific activity (keyed by msg.id) or nothing.
+          const messageToolActivity = toolActivityMap?.[msg.id]
+            || (isLastAssistantStreaming ? toolActivityMap?.['current'] : undefined);
 
-            return (
+          return (
+            <div className="max-w-[720px] mx-auto px-20 py-6">
               <MessageBubble
                 key={msg.id}
                 message={{
@@ -785,34 +716,52 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 toolActivity={messageToolActivity}
                 allowPseudoRepoWrites={allowPseudoRepoWrites}
                 onRegenerate={
-                  msg.role === 'assistant' && i === messages.length - 1 && !isStreaming
+                  msg.role === 'assistant' && index === messages.length - 1 && !isStreaming
                     ? handleRegenerate
                     : undefined
                 }
               />
-            );
-          })}
-          {showInlineApprovalBanner && (
-            <ChangeApprovalModal
-              open={approvalModalOpen}
-              onOpenChange={setApprovalModalOpen}
-              proposal={pendingProposal}
-              onAccept={handleAcceptProposal}
-              onAcceptAlways={handleAcceptAlways}
-              disabled={!handleQuickSend || isStreaming || acceptingProposalId === pendingProposal.messageId}
-            />
-          )}
-          {showIssueNextStepCallout && issueContext && (
-            <IssueNextStepCallout
-              issueNumber={issueContext.number}
-              issueTitle={issueContext.title}
-              onUpdateIssue={handleIssueUpdate}
-              onFix={handleIssueFix}
-              disabled={repoComposerLocked}
-            />
-          )}
-        </div>
-      </div>
+            </div>
+          );
+        }}
+        components={{
+          Footer: React.memo(() => (
+            <>
+              {showInlineApprovalBanner && (
+                <div className="max-w-[720px] mx-auto px-20">
+                  <ChangeApprovalModal
+                    open={approvalModalOpen}
+                    onOpenChange={setApprovalModalOpen}
+                    proposal={pendingProposal}
+                    onAccept={handleAcceptProposal}
+                    onAcceptAlways={handleAcceptAlways}
+                    disabled={!handleQuickSend || isStreaming || acceptingProposalId === pendingProposal.messageId}
+                  />
+                </div>
+              )}
+              {showIssueNextStepCallout && issueContext && (
+                <div className="max-w-[720px] mx-auto px-20 pb-6">
+                  <IssueNextStepCallout
+                    issueNumber={issueContext.number}
+                    issueTitle={issueContext.title}
+                    onUpdateIssue={handleIssueUpdate}
+                    onFix={handleIssueFix}
+                    disabled={repoComposerLocked}
+                  />
+                </div>
+              )}
+              {showFooterActivity && (
+                <ActivityIndicator
+                  isStreaming={isStreaming}
+                  messages={messages}
+                  toolActivity={toolActivityMap?.current}
+                  statusLabel={agentStatus?.label}
+                />
+              )}
+            </>
+          )),
+        }}
+      />
       {showScrollButton && isStreaming && (
         <div className="flex justify-center py-1">
           <button
@@ -828,14 +777,6 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       <div className="px-4">
         {errorBanner}
       </div>
-      {showFooterActivity && (
-        <ActivityIndicator
-          isStreaming={isStreaming}
-          messages={messages}
-          toolActivity={toolActivityMap?.current}
-          statusLabel={agentStatus?.label}
-        />
-      )}
       <ContextualSuggestions
         messages={messages}
         isStreaming={isStreaming}
