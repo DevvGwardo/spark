@@ -1134,7 +1134,7 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
                       href={createdPr.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-2 rounded-[10px] bg-primary px-3 py-2 text-sm font-semibold text-[#0B0B0E] shadow-[0_6px_20px_rgba(255,132,0,0.25)] transition-opacity hover:opacity-90"
+                      className="inline-flex items-center gap-2 rounded-[10px] border border-[#1E1E22] px-3 py-2 text-sm font-medium text-[#6B6B70] transition-colors hover:bg-[#16161A] hover:text-[#FAFAF9]"
                     >
                       View on GitHub
                       <ExternalLink className="h-4 w-4" />
@@ -1143,7 +1143,7 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
                 </div>
               </div>
 
-              <div className="grid gap-5 xl:grid-cols-[1.2fr_0.85fr]">
+              <div className="grid gap-5">
                 <div className="space-y-4">
                   <section className="rounded-xl border border-[#1E1E22] bg-[#111115] p-5">
                     <div className="flex items-center justify-between gap-4">
@@ -1257,31 +1257,33 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
                       Merge Controls
                     </div>
                     <div className="mt-4 space-y-4">
-                      <div>
-                        <label className="mb-2 block text-[13px] font-medium text-[#6B6B70]">
-                          Merge strategy
-                        </label>
-                        <select
-                          value={mergeMethod}
-                          onChange={(event) => setMergeMethod(event.target.value as MergeMethod)}
-                          className="w-full rounded-xl border border-[#1E1E22] bg-[#16161A] px-3 py-3 text-sm text-[#FAFAF9] focus:outline-none focus:border-[#2A2A2E]"
-                        >
-                          <option value="squash">Squash and merge</option>
-                          <option value="merge">Create merge commit</option>
-                          <option value="rebase">Rebase and merge</option>
-                        </select>
-                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="mb-2 block text-[13px] font-medium text-[#6B6B70]">
+                            Merge strategy
+                          </label>
+                          <select
+                            value={mergeMethod}
+                            onChange={(event) => setMergeMethod(event.target.value as MergeMethod)}
+                            className="w-full rounded-xl border border-[#1E1E22] bg-[#16161A] px-3 py-3 text-sm text-[#FAFAF9] focus:outline-none focus:border-[#2A2A2E]"
+                          >
+                            <option value="squash">Squash and merge</option>
+                            <option value="merge">Create merge commit</option>
+                            <option value="rebase">Rebase and merge</option>
+                          </select>
+                        </div>
 
-                      <div>
-                        <label className="mb-2 block text-[13px] font-medium text-[#6B6B70]">
-                          Commit message
-                        </label>
-                        <input
-                          type="text"
-                          value={mergeTitle}
-                          onChange={(event) => setMergeTitle(event.target.value)}
-                          className="w-full rounded-xl border border-[#1E1E22] bg-[#16161A] px-3 py-3 text-sm text-[#FAFAF9] focus:outline-none focus:border-[#2A2A2E]"
-                        />
+                        <div>
+                          <label className="mb-2 block text-[13px] font-medium text-[#6B6B70]">
+                            Commit message
+                          </label>
+                          <input
+                            type="text"
+                            value={mergeTitle}
+                            onChange={(event) => setMergeTitle(event.target.value)}
+                            className="w-full rounded-xl border border-[#1E1E22] bg-[#16161A] px-3 py-3 text-sm text-[#FAFAF9] focus:outline-none focus:border-[#2A2A2E]"
+                          />
+                        </div>
                       </div>
 
                       <div>
