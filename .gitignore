@@ -51,3 +51,6 @@ __pycache__/
 
 # Bundle analysis
 stats.html
+
+# Hermes bridge runtime data
+hermes-bridge/data/*.json
