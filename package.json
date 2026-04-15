@@ -2,6 +2,7 @@
   "name": "cloudchat",
   "private": true,
   "version": "1.0.0",
+  "license": "PolyForm-Shield-1.0.0",
   "main": "out/main/index.js",
   "type": "module",
   "scripts": {

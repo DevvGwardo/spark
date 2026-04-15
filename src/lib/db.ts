@@ -12,6 +12,9 @@ export interface Conversation {
   pinned?: boolean;
   linesAdded?: number;
   linesRemoved?: number;
+  parentConversationId?: string;
+  forkPointMessageId?: string;
+  forkNumber?: number;
 }
 
 export interface Message {

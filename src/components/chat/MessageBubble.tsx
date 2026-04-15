@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
-import { Copy, Check, RotateCcw, Pencil, ChevronDown, Loader2, Wrench, FileCode, FileCode2, FilePlus, FileX, FileSearch, GitPullRequestDraft, CheckCircle2, ArrowRight } from 'lucide-react';
+import { Copy, Check, RotateCcw, Pencil, ChevronDown, Loader2, Wrench, FileCode, FileCode2, FilePlus, FileX, FileSearch, GitPullRequestDraft, CheckCircle2, ArrowRight, GitBranch } from 'lucide-react';
 import { GhostIcon } from './GhostIcon';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { useChangesetStore } from '@/stores/changeset-store';
@@ -123,6 +123,7 @@ interface MessageBubbleProps {
   allowPseudoRepoWrites?: boolean;
   onRegenerate?: () => void;
   onEdit?: (content: string) => void;
+  onRewind?: () => void;
 }
 
 function parseToolActivityArgs(input: string): Record<string, unknown> {
@@ -1035,6 +1036,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function M
   allowPseudoRepoWrites = true,
   onRegenerate,
   onEdit,
+  onRewind,
 }) {
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -1376,6 +1378,15 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function M
                 title="Regenerate"
               >
                 <RotateCcw className="h-3.5 w-3.5" />
+              </button>
+            )}
+            {!isUser && onRewind && (
+              <button
+                onClick={onRewind}
+                className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors duration-100"
+                title="Rewind to here"
+              >
+                <GitBranch className="h-3.5 w-3.5" />
               </button>
             )}
           </div>

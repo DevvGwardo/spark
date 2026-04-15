@@ -455,6 +455,9 @@ export const ChatSidebar: React.FC = () => {
                                 }}
                               >
                                 {conv.title}
+                                {conv.parentConversationId && (
+                                  <GitFork className="inline-block ml-1 h-3 w-3 text-muted-foreground opacity-60" />
+                                )}
                               </span>
                               <span className="shrink-0 text-[11px] tabular-nums text-[hsl(var(--text-dim))] transition-opacity duration-200 ease-out group-hover:opacity-70">
                                 {relativeTime(conv.updatedAt || conv.createdAt)}

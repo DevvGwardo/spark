@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useCallback, useState, useMemo } from 'react';
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
-import { ArrowDown, ArrowRight, MessageSquare, Settings, Wrench } from 'lucide-react';
+import { ArrowDown, ArrowRight, MessageSquare, Settings, Wrench, ClipboardList } from 'lucide-react';
 import { MessageBubble } from './MessageBubble';
 import { ChatInput } from './ChatInput';
 import { ContextualSuggestions } from './ContextualSuggestions';
@@ -13,6 +13,7 @@ import { ChangeApprovalModal } from './ChangeApprovalModal';
 import { ChatErrorBanner } from './ChatErrorBanner';
 import { getProviderLabel } from '@/lib/providers';
 import type { Provider } from '@/stores/settings-store';
+import { useChatStore } from '@/stores/chat-store';
 import { getErrorMessage } from '@/lib/errors';
 import {
   buildIssueFixFollowUpPrompt,
@@ -35,6 +36,7 @@ import { getContextUsage } from '@/lib/tokens';
 import type { QueuedMessage } from '@/lib/chat-queue';
 import type { ToolActivityEvent } from './AgentActivity';
 import { useSettingsStore } from '@/stores/settings-store';
+import { useChatStore } from '@/stores/chat-store';
 import { useContextUsageStore } from '@/stores/context-usage-store';
 import { useUIStore } from '@/stores/ui-store';
 import { useChangesetStore } from '@/stores/changeset-store';
@@ -339,6 +341,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const setSettingsOpen = useUIStore((state) => state.setSettingsOpen);
   const queuePanelPrompt = useUIStore((state) => state.queuePanelPrompt);
   const changeset = useChangesetStore((state) => state.getChangeset(scopeId));
+  const planMode = useChatStore((state) => state.planMode);
   const repoComposerLocked = changeset.isRepoMode && changeset.repoFileTreeStatus === 'loading';
   const disabledPlaceholder = repoComposerLocked
     ? `Loading ${changeset.activeRepo?.fullName || 'repository'} files...`
@@ -541,6 +544,16 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     setDismissedError(errorMessage);
   }, [errorMessage]);
 
+  const handleRewind = useCallback(async (messageId: string) => {
+    if (!conversationId) return;
+    const rewindConversation = useChatStore.getState().rewindConversation;
+    const forkId = await rewindConversation(conversationId, messageId);
+    if (forkId) {
+      const selectConversation = useChatStore.getState().selectConversation;
+      selectConversation(forkId);
+    }
+  }, [conversationId]);
+
   const handleOpenSettings = useCallback(() => {
     setSettingsOpen(true);
   }, [setSettingsOpen]);
@@ -612,6 +625,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   if (!conversationId && messages.length === 0) {
     return (
       <div className="flex flex-col h-full px-4">
+        {planMode && (
+          <div className="flex items-center gap-2 rounded-md bg-purple-500/10 px-3 py-1.5 text-xs text-purple-400 ring-1 ring-purple-500/20 mx-auto mt-2">
+            <ClipboardList className="h-3.5 w-3.5" />
+            <span>Plan Mode — read-only exploration, no file edits</span>
+          </div>
+        )}
         <div className="flex-1" />
         <WelcomeScreen onSendMessage={(message) => {
           if (handleQuickSend) {
@@ -655,6 +674,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {planMode && (
+        <div className="flex items-center gap-2 rounded-md bg-purple-500/10 px-3 py-1.5 text-xs text-purple-400 ring-1 ring-purple-500/20 mx-20 mt-2">
+          <ClipboardList className="h-3.5 w-3.5" />
+          <span>Plan Mode — read-only exploration, no file edits</span>
+        </div>
+      )}
       <Virtuoso
         ref={virtuosoRef}
         data={messages}
@@ -718,6 +743,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 onRegenerate={
                   msg.role === 'assistant' && index === messages.length - 1 && !isStreaming
                     ? handleRegenerate
+                    : undefined
+                }
+                onRewind={
+                  msg.role === 'assistant' && !isLastAssistantStreaming && msg.id
+                    ? () => handleRewind(msg.id)
                     : undefined
                 }
               />

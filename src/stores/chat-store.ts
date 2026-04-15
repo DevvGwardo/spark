@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import { db, type Conversation } from '@/lib/db';
 
 interface ChatState {
+  planMode: boolean;
+  setPlanMode: (enabled: boolean) => void;
   conversations: Conversation[];
   activeConversationId: string | null;
   searchQuery: string;
@@ -15,9 +17,15 @@ interface ChatState {
   deleteOldConversations: (olderThanDays: number) => Promise<number>;
   setSearchQuery: (q: string) => void;
   clearActiveConversation: () => void;
+
+  // Fork/Rewind
+  rewindConversation: (conversationId: string, messageId: string) => Promise<string | null>;
+  getForks: (parentId: string) => Promise<Conversation[]>;
 }
 
 export const useChatStore = create<ChatState>()((set, get) => ({
+  planMode: false,
+  setPlanMode: (enabled) => set({ planMode: enabled }),
   conversations: [],
   activeConversationId: null,
   searchQuery: '',
@@ -91,4 +99,75 @@ export const useChatStore = create<ChatState>()((set, get) => ({
 
   setSearchQuery: (q) => set({ searchQuery: q }),
   clearActiveConversation: () => set({ activeConversationId: null }),
+
+  // Fork/Rewind
+  rewindConversation: async (conversationId, messageId) => {
+    try {
+      // Load the original conversation
+      const conversations = get().conversations;
+      const original = conversations.find((c) => c.id === conversationId);
+      if (!original) return null;
+
+      // Load messages up to and including the fork point
+      const allMessages = await db.messages.getByConversation(conversationId);
+      const forkIndex = allMessages.findIndex((m) => m.id === messageId);
+      if (forkIndex === -1) return null;
+      const messagesUpToFork = allMessages.slice(0, forkIndex + 1);
+
+      // Determine fork number
+      const existingForks = conversations.filter((c) => c.parentConversationId === conversationId);
+      const forkNumber = existingForks.length + 1;
+      const forkTitle = `${original.title} (fork${forkNumber > 1 ? ` ${forkNumber}` : ''})`;
+
+      // Create forked conversation
+      const forkId = crypto.randomUUID();
+      const now = new Date().toISOString();
+      const forkedConversation: Conversation = {
+        id: forkId,
+        title: forkTitle,
+        provider: original.provider,
+        model: original.model,
+        systemPrompt: original.systemPrompt,
+        createdAt: now,
+        updatedAt: now,
+        parentConversationId: conversationId,
+        forkPointMessageId: messageId,
+        forkNumber,
+      };
+      await db.conversations.add(forkedConversation);
+
+      // Copy messages up to fork point
+      for (const msg of messagesUpToFork) {
+        await db.messages.add({
+          ...msg,
+          id: crypto.randomUUID(),
+          conversationId: forkId,
+        });
+      }
+
+      // Copy conversation files state
+      const files = await db.conversationFiles.get(conversationId);
+      if (files) {
+        await db.conversationFiles.save({
+          ...files,
+          conversationId: forkId,
+        });
+      }
+
+      // Reload conversations list
+      await get().loadConversations();
+
+      return forkId;
+    } catch (e) {
+      console.error('Failed to rewind conversation:', e);
+      return null;
+    }
+  },
+
+  getForks: async (parentId) => {
+    const conversations = get().conversations;
+    return conversations
+      .filter((c) => c.parentConversationId === parentId)
+      .sort((a, b) => (a.forkNumber ?? 0) - (b.forkNumber ?? 0));
+  },
 }));
