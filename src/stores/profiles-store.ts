@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { getApiBaseUrl } from '@/lib/api';
+import { useSettingsStore } from '@/stores/settings-store';
 
 export interface Profile {
   name: string;
@@ -44,6 +45,14 @@ export const useProfilesStore = create<ProfilesState>()((set, get) => ({
     try {
       const data = await apiFetch('/api/hermes/profiles');
       set({ profiles: data.profiles, activeProfile: data.activeProfile });
+      // Sync the active profile's provider into settings store
+      const active = data.profiles.find((p: Profile) => p.active);
+      if (active?.provider) {
+        useSettingsStore.getState().setActiveProvider(active.provider);
+        if (active.model) {
+          useSettingsStore.getState().updateProviderConfig(active.provider, { model: active.model });
+        }
+      }
     } catch (e) {
       console.error('Failed to fetch profiles:', e);
     } finally {
