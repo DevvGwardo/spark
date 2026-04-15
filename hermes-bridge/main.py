@@ -4004,4 +4004,7 @@ async def _start_cron_scheduler():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=HERMES_PORT)
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=HERMES_PORT)
+    except KeyboardInterrupt:
+        pass
