@@ -1,39 +1,13 @@
 import { type Express } from 'express';
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
-
-function getHermesRoot(): string {
-  return path.join(os.homedir(), '.hermes');
-}
-
-function getProfilesRoot(): string {
-  return path.join(getHermesRoot(), 'profiles');
-}
-
-function getActiveProfilePath(): string {
-  return path.join(getHermesRoot(), 'active_profile');
-}
-
-function getActiveProfileName(): string {
-  const activePath = getActiveProfilePath();
-  if (!fs.existsSync(activePath)) return 'default';
-  try {
-    return fs.readFileSync(activePath, 'utf-8').trim() || 'default';
-  } catch {
-    return 'default';
-  }
-}
-
-function validateProfileName(name: string): string {
-  const trimmed = name.trim();
-  if (!trimmed) throw new Error('Profile name is required');
-  if (trimmed === 'default') throw new Error('Default profile cannot be modified');
-  if (trimmed.includes('/') || trimmed.includes('\\') || trimmed.includes('..')) {
-    throw new Error('Invalid profile name');
-  }
-  return trimmed;
-}
+import {
+  getActiveProfileName,
+  getActiveProfilePath,
+  getHermesRoot,
+  getProfilesRoot,
+  validateProfileName,
+} from '../lib/hermes-profiles';
 
 function readYamlConfig(configPath: string): Record<string, unknown> {
   if (!fs.existsSync(configPath)) return {};

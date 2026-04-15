@@ -273,6 +273,7 @@ export async function proxyHermesAgentLoopToDataStream(input: {
   hermesMiniMaxKey?: string;
   repoFileTree?: string[];
   customTools?: unknown[];
+  activeProfile?: string;
 }) {
   const bridgeUrl = `${OPENAI_COMPATIBLE.hermes}/chat/completions`;
   const abortController = new AbortController();
@@ -302,6 +303,7 @@ export async function proxyHermesAgentLoopToDataStream(input: {
         'Content-Type': 'application/json',
         ...(input.hermesToolsets ? { 'X-Hermes-Toolsets': input.hermesToolsets } : {}),
         'X-Hermes-Execution-Mode': 'agent-loop',
+        ...(input.activeProfile ? { 'X-Hermes-Profile': input.activeProfile } : {}),
         ...(input.activeRepo?.owner && input.activeRepo?.name
           ? {
               'X-Hermes-Repo-Owner': input.activeRepo.owner,
@@ -384,6 +386,7 @@ export async function proxyHermesSwarmToDataStream(input: {
   githubPAT?: string;
   repoFileTree?: string[];
   customTools?: unknown[];
+  activeProfile?: string;
 }) {
   const bridgeUrl = `${OPENAI_COMPATIBLE.hermes}/swarm`;
   const abortController = new AbortController();
@@ -409,6 +412,7 @@ export async function proxyHermesSwarmToDataStream(input: {
         'Content-Type': 'application/json',
         ...(input.hermesToolsets ? { 'X-Hermes-Toolsets': input.hermesToolsets } : {}),
         'X-Hermes-Execution-Mode': 'swarm',
+        ...(input.activeProfile ? { 'X-Hermes-Profile': input.activeProfile } : {}),
         ...(input.activeRepo?.owner && input.activeRepo?.name
           ? {
               'X-Hermes-Repo-Owner': input.activeRepo.owner,

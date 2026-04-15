@@ -1,19 +1,8 @@
 import net from 'net'
-import { startServer } from '../server/index'
+import { HEALTH_ROUTES, startServer } from '../server/index'
 
 const PREFERRED_PORT = 3001
-const REQUIRED_SERVER_ROUTES = [
-  '/functions/v1/chat',
-  '/functions/v1/chat-store/conversations',
-  '/functions/v1/chat-store/messages',
-  '/functions/v1/validate-key',
-  '/api/hermes/cron',
-  '/api/hermes/sessions',
-  '/api/hermes/workspace/overview',
-  '/api/hermes/workspace/usage',
-  '/api/hermes/workspace/files',
-  '/api/hermes/workspace/skills',
-] as const
+const REQUIRED_SERVER_ROUTES = HEALTH_ROUTES
 
 function hasRequiredRoutes(routes: unknown): boolean {
   if (!Array.isArray(routes)) {

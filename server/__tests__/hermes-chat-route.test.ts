@@ -15,6 +15,10 @@ const providerConfigMocks = vi.hoisted(() => ({
   createProviderModel: vi.fn(),
 }))
 
+const hermesProfileMocks = vi.hoisted(() => ({
+  getActiveProfileName: vi.fn(() => 'agent-two'),
+}))
+
 vi.mock('ai', async () => {
   const actual = await vi.importActual<typeof import('ai')>('ai')
   return {
@@ -30,6 +34,14 @@ vi.mock('../provider-config', async () => {
   return {
     ...actual,
     createProviderModel: providerConfigMocks.createProviderModel,
+  }
+})
+
+vi.mock('../lib/hermes-profiles', async () => {
+  const actual = await vi.importActual<typeof import('../lib/hermes-profiles')>('../lib/hermes-profiles')
+  return {
+    ...actual,
+    getActiveProfileName: hermesProfileMocks.getActiveProfileName,
   }
 })
 
@@ -117,6 +129,7 @@ describe('Hermes chat route', () => {
       // Verify the agent-loop proxy sends repo headers
       const headers = init?.headers as Record<string, string> ?? {}
       expect(headers['X-Hermes-Execution-Mode']).toBe('agent-loop')
+      expect(headers['X-Hermes-Profile']).toBe('agent-two')
       expect(headers['X-Hermes-Repo-Owner']).toBe('octo')
       expect(headers['X-Hermes-Repo-Name']).toBe('cloudchat')
       expect(headers['X-Hermes-Github-PAT']).toBe('ghp_test')
@@ -250,6 +263,7 @@ describe('Hermes chat route', () => {
 
       const headers = init?.headers as Record<string, string> ?? {}
       expect(headers['X-Hermes-Execution-Mode']).toBe('agent-loop')
+      expect(headers['X-Hermes-Profile']).toBe('agent-two')
       expect(headers['X-Hermes-Repo-Owner']).toBeUndefined()
       expect(headers['X-Hermes-Repo-Name']).toBeUndefined()
       expect(headers['X-Hermes-Github-PAT']).toBeUndefined()

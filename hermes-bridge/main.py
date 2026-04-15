@@ -37,7 +37,9 @@ def _iso_to_unix(iso_str: str) -> float:
 def _save_session_to_db(session: dict) -> None:
     """Persist a session row to hermes state.db. Skips if DB doesn't exist."""
     try:
-        if not _HERMES_STATE_DB.exists():
+        profile_name = str(session.get("profile") or "").strip() or _read_active_profile_name()
+        state_db_path = _state_db_path(_resolve_hermes_home(profile_name))
+        if not state_db_path.exists():
             return
         started_at = _iso_to_unix(session.get("created_at", ""))
         ended_at_raw = session.get("updated_at")
@@ -48,7 +50,7 @@ def _save_session_to_db(session: dict) -> None:
             end_reason = "completed"
         elif status == "error":
             end_reason = "error"
-        with sqlite3.connect(str(_HERMES_STATE_DB)) as conn:
+        with sqlite3.connect(str(state_db_path)) as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO sessions (id, source, model, started_at, ended_at, end_reason, message_count, title) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
@@ -149,30 +151,82 @@ def _append_session_chat_chunk(session_id: str, role: str, text: str):
 def _session_summary(session: dict) -> dict:
     summary = dict(session)
     summary.pop("chat", None)
+    summary.pop("profile", None)
     return summary
 
 
 # --- Hermes workspace inspection/editing ---
 _HERMES_HOME = Path(os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes")))
-_HERMES_STATE_DB = _HERMES_HOME / "state.db"
-_HERMES_SKILLS_DIR = _HERMES_HOME / "skills"
-_HERMES_CANONICAL_FILES: dict[str, dict[str, object]] = {
-    "soul": {
-        "label": "SOUL.md",
-        "description": "System identity and operating posture",
-        "path": _HERMES_HOME / "SOUL.md",
-    },
-    "user": {
-        "label": "USER.md",
-        "description": "User-facing working memory",
-        "path": _HERMES_HOME / "memories" / "USER.md",
-    },
-    "memory": {
-        "label": "MEMORY.md",
-        "description": "Shared durable memory",
-        "path": _HERMES_HOME / "memories" / "MEMORY.md",
-    },
-}
+_PROFILE_MANAGER_HOME = Path(os.path.expanduser("~/.hermes"))
+_PROFILES_ROOT = _PROFILE_MANAGER_HOME / "profiles"
+_ACTIVE_PROFILE_PATH = _PROFILE_MANAGER_HOME / "active_profile"
+
+
+def _normalize_profile_name(value: Optional[object]) -> str:
+    if value is None:
+        return "default"
+    text = str(value).strip()
+    if "/" in text or "\\" in text or ".." in text:
+        return "default"
+    return text if text and text != "default" else "default"
+
+
+def _read_active_profile_name() -> str:
+    if not _ACTIVE_PROFILE_PATH.exists():
+        return "default"
+    try:
+        return _normalize_profile_name(_ACTIVE_PROFILE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return "default"
+
+
+def _resolve_profile_name(request: Optional[Request] = None) -> str:
+    if request is not None:
+        try:
+            header_value = request.headers.get("x-hermes-profile")
+        except Exception:
+            header_value = None
+        normalized = _normalize_profile_name(header_value)
+        if header_value is not None and str(header_value).strip():
+            return normalized
+    return _read_active_profile_name()
+
+
+def _resolve_hermes_home(profile_name: Optional[object] = None) -> Path:
+    normalized = _normalize_profile_name(profile_name)
+    if normalized == "default":
+        return _PROFILE_MANAGER_HOME
+
+    candidate = _PROFILES_ROOT / normalized
+    return candidate if candidate.exists() else _PROFILE_MANAGER_HOME
+
+
+def _state_db_path(hermes_home: Path) -> Path:
+    return hermes_home / "state.db"
+
+
+def _skills_dir(hermes_home: Path) -> Path:
+    return hermes_home / "skills"
+
+
+def _canonical_files(hermes_home: Path) -> dict[str, dict[str, object]]:
+    return {
+        "soul": {
+            "label": "SOUL.md",
+            "description": "System identity and operating posture",
+            "path": hermes_home / "SOUL.md",
+        },
+        "user": {
+            "label": "USER.md",
+            "description": "User-facing working memory",
+            "path": hermes_home / "memories" / "USER.md",
+        },
+        "memory": {
+            "label": "MEMORY.md",
+            "description": "Shared durable memory",
+            "path": hermes_home / "memories" / "MEMORY.md",
+        },
+    }
 
 
 def _iso_from_unix(timestamp: Optional[float]) -> Optional[str]:
@@ -252,8 +306,14 @@ def _parse_frontmatter(text: str) -> dict[str, str]:
     return metadata
 
 
-def _canonical_file_entry(file_key: str, *, include_content: bool = False) -> Optional[dict]:
-    config = _HERMES_CANONICAL_FILES.get(file_key)
+def _canonical_file_entry(
+    file_key: str,
+    *,
+    hermes_home: Optional[Path] = None,
+    include_content: bool = False,
+) -> Optional[dict]:
+    resolved_home = hermes_home or _HERMES_HOME
+    config = _canonical_files(resolved_home).get(file_key)
     if not config:
         return None
 
@@ -277,19 +337,25 @@ def _canonical_file_entry(file_key: str, *, include_content: bool = False) -> Op
     return payload
 
 
-def _list_canonical_files() -> list[dict]:
+def _list_canonical_files(*, hermes_home: Optional[Path] = None) -> list[dict]:
     return [
         entry
         for key in ("soul", "user", "memory")
-        if (entry := _canonical_file_entry(key)) is not None
+        if (entry := _canonical_file_entry(key, hermes_home=hermes_home)) is not None
     ]
 
 
-def _query_state_db(query: str, params: tuple = ()) -> list[sqlite3.Row]:
-    if not _HERMES_STATE_DB.exists():
+def _query_state_db(
+    query: str,
+    params: tuple = (),
+    *,
+    hermes_home: Optional[Path] = None,
+) -> list[sqlite3.Row]:
+    state_db_path = _state_db_path(hermes_home or _HERMES_HOME)
+    if not state_db_path.exists():
         return []
 
-    connection = sqlite3.connect(str(_HERMES_STATE_DB))
+    connection = sqlite3.connect(str(state_db_path))
     connection.row_factory = sqlite3.Row
     try:
         return connection.execute(query, params).fetchall()
@@ -297,11 +363,12 @@ def _query_state_db(query: str, params: tuple = ()) -> list[sqlite3.Row]:
         connection.close()
 
 
-def _load_state_db_sessions() -> list[dict]:
+def _load_state_db_sessions(*, hermes_home: Optional[Path] = None) -> list[dict]:
     """Load sessions from hermes-agent's state.db and map to HermesSession dicts."""
     rows = _query_state_db(
         "SELECT id, source, model, started_at, ended_at, end_reason, message_count, title "
-        "FROM sessions ORDER BY started_at DESC"
+        "FROM sessions ORDER BY started_at DESC",
+        hermes_home=hermes_home,
     )
     results: list[dict] = []
     for row in rows:
@@ -330,21 +397,27 @@ def _load_state_db_sessions() -> list[dict]:
     return results
 
 
-def _query_state_db_row(query: str, params: tuple = ()) -> Optional[sqlite3.Row]:
-    rows = _query_state_db(query, params)
+def _query_state_db_row(
+    query: str,
+    params: tuple = (),
+    *,
+    hermes_home: Optional[Path] = None,
+) -> Optional[sqlite3.Row]:
+    rows = _query_state_db(query, params, hermes_home=hermes_home)
     return rows[0] if rows else None
 
 
-def _list_skills() -> list[dict]:
-    if not _HERMES_SKILLS_DIR.exists():
+def _list_skills(*, hermes_home: Optional[Path] = None) -> list[dict]:
+    skills_dir = _skills_dir(hermes_home or _HERMES_HOME)
+    if not skills_dir.exists():
         return []
 
     skills: list[dict] = []
-    for skill_path in sorted(_HERMES_SKILLS_DIR.rglob("SKILL.md")):
+    for skill_path in sorted(skills_dir.rglob("SKILL.md")):
         content = _read_text(skill_path)
         metadata = _parse_frontmatter(content)
-        relative_path = skill_path.relative_to(_HERMES_SKILLS_DIR).as_posix()
-        parts = skill_path.relative_to(_HERMES_SKILLS_DIR).parts
+        relative_path = skill_path.relative_to(skills_dir).as_posix()
+        parts = skill_path.relative_to(skills_dir).parts
         skills.append(
             {
                 "id": relative_path,
@@ -363,13 +436,14 @@ def _list_skills() -> list[dict]:
     return skills
 
 
-def _skill_detail(skill_id: str) -> Optional[dict]:
+def _skill_detail(skill_id: str, *, hermes_home: Optional[Path] = None) -> Optional[dict]:
     if not skill_id:
         return None
 
+    skills_dir = _skills_dir(hermes_home or _HERMES_HOME)
     try:
-        candidate = (_HERMES_SKILLS_DIR / skill_id).resolve()
-        candidate.relative_to(_HERMES_SKILLS_DIR.resolve())
+        candidate = (skills_dir / skill_id).resolve()
+        candidate.relative_to(skills_dir.resolve())
     except Exception:
         return None
 
@@ -381,9 +455,9 @@ def _skill_detail(skill_id: str) -> Optional[dict]:
 
     content = _read_text(candidate)
     metadata = _parse_frontmatter(content)
-    parts = candidate.relative_to(_HERMES_SKILLS_DIR).parts
+    parts = candidate.relative_to(skills_dir).parts
     return {
-        "id": candidate.relative_to(_HERMES_SKILLS_DIR).as_posix(),
+        "id": candidate.relative_to(skills_dir).as_posix(),
         "name": metadata.get("name") or candidate.parent.name,
         "summary": metadata.get("description") or _collapse_excerpt(content, 180),
         "category": parts[0] if len(parts) > 1 else candidate.parent.name,
@@ -405,7 +479,7 @@ def _cron_job_count() -> int:
     return len(_cron_jobs)
 
 
-def _workspace_overview_payload() -> dict:
+def _workspace_overview_payload(*, hermes_home: Path, profile_name: str) -> dict:
     totals = _query_state_db_row(
         """
         select
@@ -415,7 +489,8 @@ def _workspace_overview_payload() -> dict:
             coalesce(sum(output_tokens), 0) as output_tokens,
             max(started_at) as last_started_at
         from sessions
-        """
+        """,
+        hermes_home=hermes_home,
     )
     top_models = _query_state_db(
         """
@@ -428,19 +503,26 @@ def _workspace_overview_payload() -> dict:
         group by 1
         order by (coalesce(sum(input_tokens), 0) + coalesce(sum(output_tokens), 0)) desc, session_count desc
         limit 4
-        """
+        """,
+        hermes_home=hermes_home,
     )
-    skill_summaries = _list_skills()
+    skill_summaries = _list_skills(hermes_home=hermes_home)
 
     with _sessions_lock:
-        live_sessions = len(_sessions)
+        live_sessions = len(
+            [
+                session
+                for session in _sessions.values()
+                if _normalize_profile_name(session.get("profile")) == profile_name
+            ]
+        )
 
     return {
-        "hermes_home": str(_HERMES_HOME),
+        "hermes_home": str(hermes_home),
         "session_source": {
             "kind": "sqlite",
-            "path": str(_HERMES_STATE_DB),
-            "available": _HERMES_STATE_DB.exists(),
+            "path": str(_state_db_path(hermes_home)),
+            "available": _state_db_path(hermes_home).exists(),
         },
         "cron_backend": "hermes" if _HERMES_CRON_AVAILABLE else "bridge-local",
         "counts": {
@@ -453,7 +535,7 @@ def _workspace_overview_payload() -> dict:
             "skills": len(skill_summaries),
         },
         "last_session_started_at": _iso_from_unix(float(totals["last_started_at"])) if totals and totals["last_started_at"] is not None else None,
-        "files": _list_canonical_files(),
+        "files": _list_canonical_files(hermes_home=hermes_home),
         "top_models": [
             {
                 "model": row["model"],
@@ -467,7 +549,7 @@ def _workspace_overview_payload() -> dict:
     }
 
 
-def _workspace_usage_payload() -> dict:
+def _workspace_usage_payload(*, hermes_home: Path) -> dict:
     totals = _query_state_db_row(
         """
         select
@@ -480,7 +562,8 @@ def _workspace_usage_payload() -> dict:
             min(started_at) as first_started_at,
             max(started_at) as last_started_at
         from sessions
-        """
+        """,
+        hermes_home=hermes_home,
     )
     top_models = _query_state_db(
         """
@@ -494,7 +577,8 @@ def _workspace_usage_payload() -> dict:
         group by 1
         order by (coalesce(sum(input_tokens), 0) + coalesce(sum(output_tokens), 0)) desc, session_count desc
         limit 8
-        """
+        """,
+        hermes_home=hermes_home,
     )
 
     recent_rows = _query_state_db(
@@ -510,6 +594,7 @@ def _workspace_usage_payload() -> dict:
         order by day asc
         """,
         (time.time() - 13 * 86400,),
+        hermes_home=hermes_home,
     )
     recent_map = {
         str(row["day"]): {
@@ -541,7 +626,7 @@ def _workspace_usage_payload() -> dict:
         )
 
     return {
-        "state_db_available": _HERMES_STATE_DB.exists(),
+        "state_db_available": _state_db_path(hermes_home).exists(),
         "session_count": int(totals["session_count"]) if totals else 0,
         "message_count": int(totals["message_count"]) if totals else 0,
         "tool_call_count": int(totals["tool_call_count"]) if totals else 0,
@@ -2146,6 +2231,7 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
     toolsets_header = request.headers.get("x-hermes-toolsets", DEFAULT_TOOLSETS)
     enabled_toolsets = [t.strip() for t in toolsets_header.split(",") if t.strip()]
     execution_mode = request.headers.get("x-hermes-execution-mode", "agent-loop").strip().lower() or "agent-loop"
+    request_profile = _resolve_profile_name(request)
     repo_owner = request.headers.get("x-hermes-repo-owner", "")
     repo_name = request.headers.get("x-hermes-repo-name", "")
     github_pat = request.headers.get("x-hermes-github-pat", "")
@@ -2173,6 +2259,7 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
     with _sessions_lock:
         _sessions[session_id] = {
             "id": session_id,
+            "profile": request_profile,
             "model": body.model,
             "status": "active",
             "created_at": created_at,
@@ -3164,11 +3251,17 @@ async def get_cron_history(job_id: str):
 # ------------------------------------------------------------------
 
 @app.get("/sessions")
-async def list_sessions():
+async def list_sessions(request: Request):
+    profile_name = _resolve_profile_name(request)
+    hermes_home = _resolve_hermes_home(profile_name)
     with _sessions_lock:
-        summaries = [_session_summary(session) for session in _sessions.values()]
+        summaries = [
+            _session_summary(session)
+            for session in _sessions.values()
+            if _normalize_profile_name(session.get("profile")) == profile_name
+        ]
     # Merge in sessions from state.db (CLI / cron sessions)
-    db_sessions = _load_state_db_sessions()
+    db_sessions = _load_state_db_sessions(hermes_home=hermes_home)
     in_memory_ids = {s["id"] for s in summaries}
     for db_session in db_sessions:
         if db_session["id"] not in in_memory_ids:
@@ -3178,16 +3271,21 @@ async def list_sessions():
 
 
 @app.get("/sessions/{session_id}")
-async def get_session(session_id: str):
+async def get_session(session_id: str, request: Request):
+    profile_name = _resolve_profile_name(request)
+    hermes_home = _resolve_hermes_home(profile_name)
     with _sessions_lock:
         session = _sessions.get(session_id)
-        if session:
-            return JSONResponse(content=dict(session))
+        if session and _normalize_profile_name(session.get("profile")) == profile_name:
+            payload = dict(session)
+            payload.pop("profile", None)
+            return JSONResponse(content=payload)
     # Fall back to state.db for CLI / cron sessions
     rows = _query_state_db(
         "SELECT id, source, model, started_at, ended_at, end_reason, message_count, title "
         "FROM sessions WHERE id = ?",
         (session_id,),
+        hermes_home=hermes_home,
     )
     if not rows:
         return JSONResponse(status_code=404, content={"error": "not found"})
@@ -3212,7 +3310,7 @@ async def get_session(session_id: str):
         "toolsets": [f"source:{row.get('source') or 'cli'}"],
         "repo": None,
         "firstUserMessage": row.get("title") or "",
-        "chat": _load_session_messages(session_id),
+        "chat": _load_session_messages(session_id, hermes_home=hermes_home),
     }
     return JSONResponse(content=payload)
 
@@ -3220,13 +3318,14 @@ async def get_session(session_id: str):
 _MAX_SESSION_CHAT_MESSAGES = 200
 
 
-def _load_session_messages(session_id: str) -> list[dict]:
+def _load_session_messages(session_id: str, *, hermes_home: Optional[Path] = None) -> list[dict]:
     """Load messages for a session from state.db, mapped to HermesSessionMessage format."""
     rows = _query_state_db(
         "SELECT role, content FROM messages "
         "WHERE session_id = ? ORDER BY timestamp ASC "
         "LIMIT ?",
         (session_id, _MAX_SESSION_CHAT_MESSAGES),
+        hermes_home=hermes_home,
     )
     return [
         {"role": row["role"], "content": row["content"] or ""}
@@ -3235,9 +3334,12 @@ def _load_session_messages(session_id: str) -> list[dict]:
 
 
 @app.delete("/sessions/{session_id}")
-async def delete_session(session_id: str):
+async def delete_session(session_id: str, request: Request):
+    profile_name = _resolve_profile_name(request)
     with _sessions_lock:
-        _sessions.pop(session_id, None)
+        session = _sessions.get(session_id)
+        if session and _normalize_profile_name(session.get("profile")) == profile_name:
+            _sessions.pop(session_id, None)
     return JSONResponse(content={"ok": True})
 
 
@@ -3246,31 +3348,37 @@ async def delete_session(session_id: str):
 # ------------------------------------------------------------------
 
 @app.get("/workspace/overview")
-async def workspace_overview():
-    return JSONResponse(content=_workspace_overview_payload())
+async def workspace_overview(request: Request):
+    profile_name = _resolve_profile_name(request)
+    hermes_home = _resolve_hermes_home(profile_name)
+    return JSONResponse(content=_workspace_overview_payload(hermes_home=hermes_home, profile_name=profile_name))
 
 
 @app.get("/workspace/usage")
-async def workspace_usage():
-    return JSONResponse(content=_workspace_usage_payload())
+async def workspace_usage(request: Request):
+    hermes_home = _resolve_hermes_home(_resolve_profile_name(request))
+    return JSONResponse(content=_workspace_usage_payload(hermes_home=hermes_home))
 
 
 @app.get("/workspace/files")
-async def workspace_files():
-    return JSONResponse(content={"files": _list_canonical_files()})
+async def workspace_files(request: Request):
+    hermes_home = _resolve_hermes_home(_resolve_profile_name(request))
+    return JSONResponse(content={"files": _list_canonical_files(hermes_home=hermes_home)})
 
 
 @app.get("/workspace/files/{file_key}")
-async def workspace_file_detail(file_key: str):
-    entry = _canonical_file_entry(file_key.lower(), include_content=True)
+async def workspace_file_detail(file_key: str, request: Request):
+    hermes_home = _resolve_hermes_home(_resolve_profile_name(request))
+    entry = _canonical_file_entry(file_key.lower(), hermes_home=hermes_home, include_content=True)
     if not entry:
         return JSONResponse(status_code=404, content={"error": "unsupported file"})
     return JSONResponse(content={"file": entry})
 
 
 @app.put("/workspace/files/{file_key}")
-async def workspace_file_update(file_key: str, payload: HermesWorkspaceFileUpdate):
-    entry = _canonical_file_entry(file_key.lower(), include_content=True)
+async def workspace_file_update(file_key: str, payload: HermesWorkspaceFileUpdate, request: Request):
+    hermes_home = _resolve_hermes_home(_resolve_profile_name(request))
+    entry = _canonical_file_entry(file_key.lower(), hermes_home=hermes_home, include_content=True)
     if not entry:
         return JSONResponse(status_code=404, content={"error": "unsupported file"})
 
@@ -3281,25 +3389,27 @@ async def workspace_file_update(file_key: str, payload: HermesWorkspaceFileUpdat
             content={"error": "File changed on disk. Refresh and try again.", "file": entry},
         )
 
-    config = _HERMES_CANONICAL_FILES[file_key.lower()]
+    config = _canonical_files(hermes_home)[file_key.lower()]
     path = config["path"]
     assert isinstance(path, Path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(payload.content, encoding="utf-8")
 
-    updated = _canonical_file_entry(file_key.lower(), include_content=True)
+    updated = _canonical_file_entry(file_key.lower(), hermes_home=hermes_home, include_content=True)
     return JSONResponse(content={"file": updated})
 
 
 @app.get("/workspace/skills")
-async def workspace_skills():
-    return JSONResponse(content={"skills": _list_skills()})
+async def workspace_skills(request: Request):
+    hermes_home = _resolve_hermes_home(_resolve_profile_name(request))
+    return JSONResponse(content={"skills": _list_skills(hermes_home=hermes_home)})
 
 
 @app.get("/workspace/skills/content")
 async def workspace_skill_detail(request: Request):
     skill_id = request.query_params.get("id", "")
-    detail = _skill_detail(skill_id)
+    hermes_home = _resolve_hermes_home(_resolve_profile_name(request))
+    detail = _skill_detail(skill_id, hermes_home=hermes_home)
     if not detail:
         return JSONResponse(status_code=404, content={"error": "skill not found"})
     return JSONResponse(content={"skill": detail})
@@ -3312,9 +3422,11 @@ async def workspace_skill_uninstall(request: Request):
     if not skill_id:
         return JSONResponse(status_code=400, content={"error": "skill id is required"})
 
+    hermes_home = _resolve_hermes_home(_resolve_profile_name(request))
+    skills_dir = _skills_dir(hermes_home)
     try:
-        skill_path = (_HERMES_SKILLS_DIR / skill_id).resolve()
-        skill_path.relative_to(_HERMES_SKILLS_DIR.resolve())
+        skill_path = (skills_dir / skill_id).resolve()
+        skill_path.relative_to(skills_dir.resolve())
     except Exception:
         return JSONResponse(status_code=404, content={"error": "skill not found"})
 
@@ -3327,11 +3439,14 @@ async def workspace_skill_uninstall(request: Request):
     # Use hermes skills uninstall command
     skill_name = skill_path.parent.name
     try:
+        command_env = os.environ.copy()
+        command_env["HERMES_HOME"] = str(hermes_home)
         result = subprocess.run(
             ["hermes", "skills", "uninstall", skill_name],
             capture_output=True,
             text=True,
             timeout=60,
+            env=command_env,
         )
         if result.returncode != 0:
             return JSONResponse(
