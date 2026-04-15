@@ -95,10 +95,30 @@ function getToolOutputMessage(result: unknown): string | null {
   }
 
   if (result && typeof result === 'object') {
-    const output = (result as { output?: unknown }).output;
-    if (typeof output === 'string' && output.trim()) {
-      return output;
+    const r = result as Record<string, unknown>;
+    // Hermes tools return { content: [...] } or { output: "..." } or { message: "..." }
+    if (typeof r.output === 'string' && r.output.trim()) {
+      return r.output;
     }
+    if (typeof r.message === 'string' && r.message.trim()) {
+      return r.message;
+    }
+    if (Array.isArray(r.content)) {
+      const textParts = r.content
+        .filter((c: unknown) => typeof c === 'object' && c && (c as Record<string, unknown>).type === 'text')
+        .map((c: unknown) => ((c as Record<string, unknown>).text as string) || '')
+        .filter(Boolean);
+      if (textParts.length > 0) return textParts.join('\n');
+    }
+    if (typeof r.result === 'string' && r.result.trim()) {
+      return r.result;
+    }
+    // If the result is an object but we can't find a text representation, show it as JSON
+    // but only if it's small enough to be useful
+    try {
+      const json = JSON.stringify(r, null, 2);
+      if (json.length < 2000) return json;
+    } catch { /* ignore circular refs */ }
   }
 
   return null;
@@ -773,7 +793,17 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
   const hasError = !!errorMessage;
   const isExecTool = invocation.toolName === 'run_command' || invocation.toolName === 'terminal' || invocation.toolName === 'execute_python';
   const outputMessage = getToolOutputMessage(invocation.result);
-  const hasOutput = isComplete && !hasError && isExecTool && !!outputMessage && outputMessage !== '(no output)';
+  const hasOutput = isComplete && !hasError && !!outputMessage && outputMessage !== '(no output)';
+
+  // Auto-expand when tool completes with meaningful content
+  const hasContentPreview = (invocation.toolName === 'write_file' || invocation.toolName === 'create_repo_file') && !!invocation.args?.content;
+  const hasEditPreview = invocation.toolName === 'edit_repo_file' && !!invocation.args?.old_string;
+  const shouldAutoExpand = isComplete && (hasError || hasOutput || hasContentPreview || hasEditPreview);
+  useEffect(() => {
+    if (shouldAutoExpand) {
+      setExpanded(true);
+    }
+  }, [shouldAutoExpand]);
   const progressLabel = invocation.toolName === 'read_repo_file' || invocation.toolName === 'read_file' ? 'Reading...'
     : invocation.toolName === 'run_command' || invocation.toolName === 'terminal' ? 'Running...'
     : invocation.toolName === 'execute_python' ? 'Executing...'
@@ -980,12 +1010,41 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
             </div>
           )}
 
-          {/* Command/execution output */}
+          {/* Command/execution output and tool result text */}
           {hasOutput && (
             <div>
               <pre className="text-[11px] font-mono text-foreground/80 bg-muted/30 rounded-md px-2.5 py-2 max-h-[200px] overflow-auto whitespace-pre-wrap break-all">
                 {outputMessage}
               </pre>
+            </div>
+          )}
+
+          {/* Written content preview — shows what was written/created */}
+          {isComplete && !hasError && !hasOutput && (invocation.toolName === 'write_file' || invocation.toolName === 'create_repo_file') && invocation.args?.content && (
+            <div>
+              <div className="text-[10px] text-muted-foreground/60 mb-1">Content written:</div>
+              <pre className="text-[11px] font-mono text-foreground/80 bg-muted/30 rounded-md px-2.5 py-2 max-h-[200px] overflow-auto whitespace-pre-wrap break-all">
+                {typeof invocation.args.content === 'string'
+                  ? invocation.args.content.length > 3000
+                    ? invocation.args.content.slice(0, 3000) + '\n\n[... truncated]'
+                    : invocation.args.content
+                  : JSON.stringify(invocation.args.content, null, 2)}
+              </pre>
+            </div>
+          )}
+
+          {/* Edit diff preview — shows old → new strings */}
+          {isComplete && !hasError && invocation.toolName === 'edit_repo_file' && invocation.args?.old_string && invocation.args?.new_string && (
+            <div className="space-y-1">
+              <div className="text-[10px] text-muted-foreground/60">Diff:</div>
+              <div className="text-[11px] font-mono bg-muted/30 rounded-md px-2.5 py-2 max-h-[200px] overflow-auto">
+                <div className="text-red-400/80 whitespace-pre-wrap break-all">
+                  {`- ${String(invocation.args.old_string).slice(0, 1500)}${String(invocation.args.old_string).length > 1500 ? '\n  [... truncated]' : ''}`}
+                </div>
+                <div className="text-green-400/80 whitespace-pre-wrap break-all mt-1">
+                  {`+ ${String(invocation.args.new_string).slice(0, 1500)}${String(invocation.args.new_string).length > 1500 ? '\n  [... truncated]' : ''}`}
+                </div>
+              </div>
             </div>
           )}
 
