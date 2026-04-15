@@ -794,16 +794,6 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
   const isExecTool = invocation.toolName === 'run_command' || invocation.toolName === 'terminal' || invocation.toolName === 'execute_python';
   const outputMessage = getToolOutputMessage(invocation.result);
   const hasOutput = isComplete && !hasError && !!outputMessage && outputMessage !== '(no output)';
-
-  // Auto-expand when tool completes with meaningful content
-  const hasContentPreview = (invocation.toolName === 'write_file' || invocation.toolName === 'create_repo_file') && !!invocation.args?.content;
-  const hasEditPreview = invocation.toolName === 'edit_repo_file' && !!invocation.args?.old_string;
-  const shouldAutoExpand = isComplete && (hasError || hasOutput || hasContentPreview || hasEditPreview);
-  useEffect(() => {
-    if (shouldAutoExpand) {
-      setExpanded(true);
-    }
-  }, [shouldAutoExpand]);
   const progressLabel = invocation.toolName === 'read_repo_file' || invocation.toolName === 'read_file' ? 'Reading...'
     : invocation.toolName === 'run_command' || invocation.toolName === 'terminal' ? 'Running...'
     : invocation.toolName === 'execute_python' ? 'Executing...'
