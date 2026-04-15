@@ -32,8 +32,26 @@ import {
 } from '../lib/hermes';
 import { buildLocalExecutionTools, parseAgentToolsets, getLocalToolsSystemPromptFragment } from '../local-tools';
 import { MAX_AGENT_STEPS } from '../config';
+import { getActiveProfileName } from '../lib/hermes-profiles';
 
 // ─── /functions/v1/chat ──────────────────────────────────────────────────────
+
+const PLAN_MODE_SYSTEM_PROMPT = `You are operating in PLAN MODE (read-only exploration).
+
+RULES (strict):
+- You MAY: read files, search code, analyze structure, inspect configs, run read-only commands
+- You MAY NOT: write files, edit files, delete files, run mutating commands, apply patches
+- You MAY NOT: use write_file, patch, or execute_code tools
+- For the terminal tool, only run read-only commands (ls, cat, grep, find, git log, git diff, git status, etc.)
+- Do NOT use shell redirects (>, >>) or destructive commands (rm, mv, chmod)
+
+YOUR GOAL:
+- Explore the codebase to understand the current state
+- Produce a clear, actionable implementation plan
+- Your plan should be "decision complete" — detailed enough for another engineer to implement without asking questions
+- Structure your plan with: goal, files to modify, specific changes, and expected outcome
+
+When you are done exploring and ready to present your plan, clearly mark it with a section header like "## Implementation Plan".`;
 
 // Filter out problematic stream lines (e.g. empty error entries from some providers)
 const REPO_PROMPT_FILE_TREE_LIMIT = 200;
@@ -271,11 +289,14 @@ app.post('/functions/v1/chat', async (req, res) => {
       hermes_toolsets,
       hermes_minimax_key,
       hermes_swarm_mode,
+      planMode: rawPlanMode,
       repo_file_cache,
       repo_file_tree,
       agent_toolsets,
       custom_tools,
     } = req.body;
+
+    const planMode = rawPlanMode === true || rawPlanMode === 'true';
 
     const sanitizeFileTree = (tree: unknown): string[] =>
       Array.isArray(tree)
@@ -449,6 +470,11 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
         : limitedContext;
     }
 
+    // STEP 4: Prepend plan mode system prompt when active
+    if (planMode) {
+      effectiveSystemPrompt = PLAN_MODE_SYSTEM_PROMPT + '\n\n' + effectiveSystemPrompt;
+    }
+
     const normalizedChatInput = normalizeChatMessages(messages, effectiveSystemPrompt);
 
     if (provider === 'openclaw') {
@@ -558,6 +584,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
     // githubPAT was already extracted and validated above (before system prompt building)
     const hasServerRepoContext = !!(activeRepo && githubPAT);
     const shouldForwardHermesRepoContext = provider === 'hermes' && !!(activeRepo && githubPAT);
+    const activeHermesProfile = provider === 'hermes' ? getActiveProfileName() : null;
     const runtimeProvider = resolveRuntimeProvider(provider, { activeRepo });
     const hermesExecutionMode =
       provider === 'hermes' && runtimeProvider === 'hermes'
@@ -572,11 +599,21 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
 
     // Build local execution tools (terminal, files, code_execution) for any provider
     const localToolsets = parseAgentToolsets(agent_toolsets);
-    const localTools = buildLocalExecutionTools(localToolsets);
+    let localTools = buildLocalExecutionTools(localToolsets);
+    const planModeFileTools = planMode
+      ? { create_html_file: fileTools.create_html_file }
+      : fileTools;
+
+    // STEP 3: Filter mutating tools when plan mode is active
+    if (planMode && Object.keys(localTools).length > 0) {
+      const { write_file, execute_python, run_command, ...readOnlyTools } = localTools;
+      localTools = readOnlyTools as typeof localTools;
+    }
+
     const hasLocalTools = Object.keys(localTools).length > 0;
 
-    // Append local tools context to system prompt
-    if (hasLocalTools) {
+    // Append local tools context to system prompt (only for non-plan mode or read-only tools)
+    if (hasLocalTools && !planMode) {
       const localToolsFragment = getLocalToolsSystemPromptFragment(localToolsets);
       if (localToolsFragment) {
         effectiveSystemPrompt = effectiveSystemPrompt
@@ -599,6 +636,22 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
           emitToolEvent,
         )
       : {};
+    const filteredRepoTools = planMode
+      ? (() => {
+          const {
+            edit_repo_file,
+            create_repo_file,
+            delete_repo_file,
+            batch_edit_repo_files,
+            ...planModeRepoTools
+          } = repoTools;
+          void edit_repo_file;
+          void create_repo_file;
+          void delete_repo_file;
+          void batch_edit_repo_files;
+          return planModeRepoTools;
+        })()
+      : repoTools;
 
     console.log(
       `[chat] provider=${provider} runtime=${runtimeProvider} model=${model} activeRepo=${activeRepo?.owner}/${activeRepo?.name || '-'} serverRepoTools=${hasServerRepoContext} hermesExecutionMode=${hermesExecutionMode ?? '-'} msgs=${messages?.length}`,
@@ -624,6 +677,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
         githubPAT: shouldForwardHermesRepoContext ? githubPAT : undefined,
         repoFileTree: shouldForwardHermesRepoContext ? sanitizeFileTree(repo_file_tree) : undefined,
         customTools: Array.isArray(custom_tools) ? custom_tools : undefined,
+        activeProfile: activeHermesProfile ?? undefined,
       });
       return;
     }
@@ -646,11 +700,12 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
         hermesMiniMaxKey: hermes_minimax_key,
         repoFileTree: shouldForwardHermesRepoContext ? sanitizeFileTree(repo_file_tree) : undefined,
         customTools: Array.isArray(custom_tools) ? custom_tools : undefined,
+        activeProfile: activeHermesProfile ?? undefined,
       });
       return;
     }
 
-    if (shouldDirectProxyCompatibleProvider(provider, hasServerRepoContext) && !hasLocalTools) {
+    if (shouldDirectProxyCompatibleProvider(provider, hasServerRepoContext) && !hasLocalTools && !planMode) {
       console.log(`[chat] Proxying ${provider} directly to AI SDK data stream. model=${model}`);
       await proxyCompatibleProviderToDataStream({
         req,
@@ -674,6 +729,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
           ? {
               ...(hermes_toolsets ? { 'X-Hermes-Toolsets': hermes_toolsets } : {}),
               ...(hermesExecutionMode ? { 'X-Hermes-Execution-Mode': hermesExecutionMode } : {}),
+              ...(activeHermesProfile ? { 'X-Hermes-Profile': activeHermesProfile } : {}),
               // Always send repo owner/name when a repo is active so the
               // hermes-bridge can provide proper error messages even without a PAT.
               ...(hermesExecutionMode === 'agent-loop' && activeRepo
@@ -720,10 +776,10 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
     // when there's an active server repo context (agentic mode) or local
     // tools are enabled, since those are explicitly opted-in by the user.
     const isToolSafeProvider = usesFirstPartyProviderSdk(provider);
-    const includeBaseTools = hasServerRepoContext || isToolSafeProvider || hasLocalTools;
+    const includeBaseTools = hasServerRepoContext || isToolSafeProvider || hasLocalTools || planMode;
     const allTools = {
-      ...(includeBaseTools ? fileTools : {}),
-      ...repoTools,
+      ...(includeBaseTools ? planModeFileTools : {}),
+      ...filteredRepoTools,
       ...localTools,
     };
     const useServerAgentLoop = hasServerRepoContext || hasLocalTools;
@@ -741,9 +797,17 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
       // Bound agent steps to prevent runaway tool-call loops. The cap is
       // configurable via the MAX_AGENT_STEPS env var (default 50).
       ...(hasTools && useServerAgentLoop ? { maxSteps: MAX_AGENT_STEPS } : {}),
-      onFinish: () => {
+      onFinish: (finishResult) => {
         if (requestTimeout) {
           clearTimeout(requestTimeout);
+        }
+        if (finishResult.usage) {
+          console.log(JSON.stringify({
+            type: 'usage',
+            promptTokens: finishResult.usage.promptTokens,
+            completionTokens: finishResult.usage.completionTokens,
+            totalTokens: finishResult.usage.totalTokens,
+          }));
         }
       },
     });
