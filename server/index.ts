@@ -7,8 +7,11 @@ import { registerValidateRoute } from './routes/validate';
 import { registerProxyRoute } from './routes/proxy';
 import { registerTranslateRoute } from './routes/translate';
 import { registerHermesAdminRoute } from './routes/hermes-admin';
+import { registerHermesUpdateRoute } from './routes/hermes-update';
+import { registerProfilesRoutes } from './routes/profiles';
 import { sendJson } from './lib/helpers';
 import { MAX_BODY_SIZE } from './config';
+import { workspaceIndex } from './workspace-indexer';
 
 // Re-export for external consumers
 export { shouldDirectProxyCompatibleProvider } from './lib/hermes';
@@ -30,6 +33,9 @@ const HEALTH_ROUTES = [
   '/api/hermes/workspace/usage',
   '/api/hermes/workspace/files',
   '/api/hermes/workspace/skills',
+  '/api/hermes/update/status',
+  '/api/hermes/update',
+  '/api/hermes/profiles',
 ] as const;
 
 export function createApp() {
@@ -44,6 +50,28 @@ export function createApp() {
   registerProxyRoute(app);
   registerTranslateRoute(app);
   registerHermesAdminRoute(app);
+  registerHermesUpdateRoute(app);
+  registerProfilesRoutes(app);
+
+  // ─── Workspace search ───────────────────────────────────────────────────────
+  app.get('/functions/v1/workspace/search', async (req, res) => {
+    try {
+      const rootPath = req.query.path as string;
+      const query = req.query.q as string;
+      const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+
+      if (!rootPath || !query) {
+        return sendJson(res, 400, { error: 'Missing required query params: path, q' });
+      }
+
+      const entries = await workspaceIndex.scan(rootPath);
+      const results = workspaceIndex.search(query, entries, limit);
+
+      sendJson(res, 200, { results, total: entries.length, cached: true });
+    } catch (err: any) {
+      sendJson(res, 500, { error: err.message });
+    }
+  });
 
   // ─── Health check ──────────────────────────────────────────────────────────
   app.get('/functions/v1/health', (_req, res) => {

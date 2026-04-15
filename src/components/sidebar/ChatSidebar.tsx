@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork, Search, ChevronRight, Zap, Clock, House, BookOpen, Sparkles, BarChart3 } from 'lucide-react';
+import { Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork, Search, ChevronRight, Zap, Clock, House, BookOpen, Sparkles, BarChart3, User } from 'lucide-react';
 import { Github } from 'lucide-react';
 import { GhostIcon } from '@/components/chat/GhostIcon';
 import { useChatStore } from '@/stores/chat-store';
@@ -16,6 +16,7 @@ import { CronJobsPanel } from '@/components/sidebar/CronJobsPanel';
 import { HermesChatsPanel } from '@/components/sidebar/HermesChatsPanel';
 import { HermesOverviewPanel } from '@/components/sidebar/HermesOverviewPanel';
 import { HermesMemoriesPanel } from '@/components/sidebar/HermesMemoriesPanel';
+import { ProfilesPanel } from '@/components/sidebar/ProfilesPanel';
 import { HermesSkillsPanel } from '@/components/sidebar/HermesSkillsPanel';
 import { HermesUsagePanel } from '@/components/sidebar/HermesUsagePanel';
 import type { Conversation } from '@/lib/db';
@@ -70,6 +71,7 @@ const HERMES_SUB_TABS: Array<{ key: SubTab; label: string; icon: React.Component
   { key: 'overview', label: 'Overview', icon: House },
   { key: 'threads', label: 'Threads', icon: MessageSquare },
   { key: 'chats', label: 'Sessions', icon: Zap },
+  { key: 'profiles', label: 'Profiles', icon: User },
   { key: 'cron', label: 'Cron', icon: Clock },
   { key: 'memories', label: 'Memories', icon: BookOpen },
   { key: 'skills', label: 'Skills', icon: Sparkles },
@@ -537,6 +539,8 @@ export const ChatSidebar: React.FC = () => {
         <HermesOverviewPanel />
       ) : activeSubTab === 'chats' ? (
         <HermesChatsPanel />
+      ) : activeSubTab === 'profiles' ? (
+        <ProfilesPanel />
       ) : activeSubTab === 'memories' ? (
         <HermesMemoriesPanel />
       ) : activeSubTab === 'skills' ? (
