@@ -2549,6 +2549,7 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
             return _circuit_open_error("MiniMax")
         minimax_key = (
             request.headers.get("x-hermes-minimax-key", "").strip()
+            or getattr(body, "hermes_minimax_key", "").strip()
             or MINIMAX_KEY
             or _get_local_gateway_key()
         )
