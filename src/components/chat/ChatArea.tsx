@@ -106,10 +106,6 @@ function getToolActivityDigest(toolActivity: ToolActivityEvent[] = []) {
 }
 
 function getToolInvocationKey(invocation: ProposalToolInvocationLike, fallbackIndex: number): string {
-  if (invocation.toolCallId) {
-    return invocation.toolCallId;
-  }
-
   const path = typeof invocation.args?.path === 'string' ? invocation.args.path : '';
   const filename = typeof invocation.args?.filename === 'string' ? invocation.args.filename : '';
   const batchPaths = Array.isArray(invocation.args?.changes)
@@ -122,7 +118,72 @@ function getToolInvocationKey(invocation: ProposalToolInvocationLike, fallbackIn
         .join('|')
     : '';
 
-  return `${invocation.toolName}:${path}:${filename}:${batchPaths || fallbackIndex}`;
+  if (invocation.toolName && (path || filename || batchPaths)) {
+    return `${invocation.toolName}:${path}:${filename}:${batchPaths}`;
+  }
+
+  if (invocation.toolCallId) {
+    return `${invocation.toolName ?? ''}:${invocation.toolCallId}`;
+  }
+
+  return `${invocation.toolName}:${JSON.stringify(invocation.args ?? {}) || fallbackIndex}`;
+}
+
+function getMessageToolInvocations(message?: ChatMessageLike | null): ProposalToolInvocationLike[] {
+  const merged: ProposalToolInvocationLike[] = [];
+  const seen = new Set<string>();
+
+  const appendInvocation = (invocation: ProposalToolInvocationLike | undefined | null) => {
+    if (!invocation) {
+      return;
+    }
+
+    const key = getToolInvocationKey(invocation, merged.length);
+    if (seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+    merged.push(invocation);
+  };
+
+  getAssistantParts(message)
+    .filter((part): part is ChatPartLike & { toolInvocation: ProposalToolInvocationLike } =>
+      part.type === 'tool-invocation' && !!part.toolInvocation,
+    )
+    .forEach((part) => appendInvocation(part.toolInvocation));
+
+  if (Array.isArray(message?.toolInvocations)) {
+    message.toolInvocations.forEach((invocation) => appendInvocation(invocation));
+  }
+
+  return merged;
+}
+
+function mergeAssistantPartsWithToolInvocations(
+  parts: ChatPartLike[],
+  toolInvocations: ProposalToolInvocationLike[],
+): ChatPartLike[] {
+  const merged = [...parts];
+  const seen = new Set(
+    parts
+      .filter((part): part is ChatPartLike & { toolInvocation: ProposalToolInvocationLike } =>
+        part.type === 'tool-invocation' && !!part.toolInvocation,
+      )
+      .map((part, index) => getToolInvocationKey(part.toolInvocation, index)),
+  );
+
+  toolInvocations.forEach((invocation, index) => {
+    const key = getToolInvocationKey(invocation, parts.length + index);
+    if (seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+    merged.push({ type: 'tool-invocation', toolInvocation: invocation });
+  });
+
+  return merged;
 }
 
 function countUniqueToolInvocations(invocations: ProposalToolInvocationLike[] = []) {
@@ -160,16 +221,7 @@ function getVisibleAssistantToolCount(
   }
 
   const parts = getAssistantParts(message);
-  const structuredParts = parts
-    .filter((part): part is ChatPartLike & { toolInvocation: ProposalToolInvocationLike } =>
-      part.type === 'tool-invocation' && !!part.toolInvocation,
-    )
-    .map((part) => part.toolInvocation);
-  const directInvocations = Array.isArray(message.toolInvocations) ? message.toolInvocations : [];
-
-  const structuredCount = countUniqueToolInvocations(
-    structuredParts.length > 0 ? structuredParts : directInvocations,
-  );
+  const structuredCount = countUniqueToolInvocations(getMessageToolInvocations(message));
   if (structuredCount > 0) {
     return structuredCount;
   }
@@ -693,23 +745,20 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             ? allowPseudoRepoWritesForAssistant(messages, index)
             : false;
           const parts = getAssistantParts(msg);
+          const toolInvocations = msg.role === 'assistant'
+            ? getMessageToolInvocations(msg)
+            : [];
+          const displayParts = msg.role === 'assistant'
+            ? mergeAssistantPartsWithToolInvocations(parts, toolInvocations)
+            : parts;
 
           // Extract reasoning from message parts
           const reasoning = msg.role === 'assistant'
-            ? parts
+            ? displayParts
                 .filter((p) => p.type === 'reasoning')
                 .map((p: ChatPartLike) => p.reasoning)
                 .join('\n') || undefined
             : undefined;
-
-          // Extract tool invocations from message parts and/or toolInvocations field
-          const partsToolInvocations = msg.role === 'assistant'
-            ? parts
-                .filter((p: ChatPartLike) => p.type === 'tool-invocation')
-                .map((p: ChatPartLike) => p.toolInvocation) || []
-            : [];
-          const directToolInvocations = msg.toolInvocations || [];
-          const toolInvocations = partsToolInvocations.length > 0 ? partsToolInvocations : directToolInvocations;
 
           // Reasoning is streaming if we're streaming, have reasoning content, but no text content yet (or still accumulating)
           const isReasoningStreaming = isLastAssistantStreaming && !!reasoning && !msg.content;
@@ -733,7 +782,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 }}
                 isStreaming={isLastAssistantStreaming}
                 streamingContent={isLastAssistantStreaming ? msg.content : undefined}
-                parts={parts as React.ComponentProps<typeof MessageBubble>['parts']}
+                parts={displayParts as React.ComponentProps<typeof MessageBubble>['parts']}
                 reasoning={reasoning}
                 isReasoningStreaming={isReasoningStreaming}
                 toolInvocations={toolInvocations as React.ComponentProps<typeof MessageBubble>['toolInvocations']}

@@ -4,8 +4,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatArea } from '@/components/chat/ChatArea';
 import { PanelProvider } from '@/contexts/PanelContext';
 
+const renderedBubbles: Array<{ parts?: unknown[]; toolInvocations?: unknown[] }> = [];
+
 vi.mock('@/components/chat/MessageBubble', () => ({
-  MessageBubble: ({ message }: { message: { content: string } }) => <div>{message.content}</div>,
+  MessageBubble: ({
+    message,
+    parts,
+    toolInvocations,
+  }: {
+    message: { content: string };
+    parts?: unknown[];
+    toolInvocations?: unknown[];
+  }) => {
+    renderedBubbles.push({ parts, toolInvocations });
+    return <div>{message.content}</div>;
+  },
 }));
 
 vi.mock('@/components/chat/ChatInput', () => ({
@@ -48,9 +61,52 @@ vi.mock('@/lib/tokens', () => ({
   getContextUsage: () => ({ used: 0, total: 1, percentage: 0 }),
 }));
 
+vi.mock('react-virtuoso', () => {
+  const React = require('react');
+
+  const Virtuoso = React.forwardRef(
+    (
+      {
+        data,
+        itemContent,
+        className,
+        components,
+        'data-testid': testId,
+      }: {
+        data: unknown[];
+        itemContent: (index: number, item: unknown) => React.ReactNode;
+        className?: string;
+        components?: { Footer?: React.ComponentType };
+        'data-testid'?: string;
+      },
+      ref: React.Ref<{ scrollToIndex: (...args: unknown[]) => void }>,
+    ) => {
+      React.useImperativeHandle(ref, () => ({
+        scrollToIndex: () => {},
+      }));
+
+      const FooterComponent = components?.Footer;
+
+      return (
+        <div data-testid={testId ?? 'virtuoso-scroller'} className={className}>
+          {data.map((item: unknown, index: number) => (
+            <div key={(item as { id: string }).id}>
+              {itemContent(index, item)}
+            </div>
+          ))}
+          {FooterComponent && <FooterComponent />}
+        </div>
+      );
+    },
+  );
+
+  return { Virtuoso, VirtuosoHandle: {} as unknown };
+});
+
 describe('ChatArea streaming tool count', () => {
   beforeEach(() => {
     window.localStorage.clear();
+    renderedBubbles.length = 0;
   });
 
   it('counts visible Hermes tool activity rows while the assistant is streaming', () => {
@@ -91,6 +147,66 @@ describe('ChatArea streaming tool count', () => {
     );
 
     expect(screen.getByTestId('chat-input')).toHaveAttribute('data-tool-count', '1');
+  });
+
+  it('merges tool invocations from assistant parts and the top-level toolInvocations field', () => {
+    render(
+      <PanelProvider value="panel-1">
+        <ChatArea
+          conversationId="conv-1"
+          messages={[
+            {
+              id: 'assistant-mixed-tools',
+              role: 'assistant',
+              content: 'Plan ready.',
+              parts: [
+                {
+                  type: 'tool-invocation',
+                  toolInvocation: {
+                    toolName: 'read_repo_file',
+                    state: 'result',
+                    args: { path: 'src/App.tsx' },
+                  },
+                },
+              ],
+              toolInvocations: [
+                {
+                  toolName: 'edit_repo_file',
+                  state: 'result',
+                  args: { path: 'src/styles.css', content: 'body { color: red; }' },
+                },
+              ],
+            },
+          ]}
+          input=""
+          setInput={() => {}}
+          handleSend={() => {}}
+          handleStop={() => {}}
+          handleRegenerate={() => {}}
+          isStreaming={false}
+          error={null}
+          apiKeyModalOpen={false}
+          setApiKeyModalOpen={() => {}}
+          activeProvider="openai"
+          activeModel="gpt-5.2"
+        />
+      </PanelProvider>,
+    );
+
+    expect(renderedBubbles.at(-1)?.toolInvocations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ toolName: 'read_repo_file' }),
+      expect.objectContaining({ toolName: 'edit_repo_file' }),
+    ]));
+    expect(renderedBubbles.at(-1)?.parts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'tool-invocation',
+        toolInvocation: expect.objectContaining({ toolName: 'read_repo_file' }),
+      }),
+      expect.objectContaining({
+        type: 'tool-invocation',
+        toolInvocation: expect.objectContaining({ toolName: 'edit_repo_file' }),
+      }),
+    ]));
   });
 
   it('counts live Hermes tool activity before the first assistant message exists', () => {

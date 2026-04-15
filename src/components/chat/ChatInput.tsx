@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useCallback, useState } from 'react';
-import { ArrowUp, Square, Plus, ChevronDown, Mic, CornerDownLeft, Bot } from 'lucide-react';
+import { ArrowUp, Square, Plus, ChevronDown, Mic, CornerDownLeft, Bot, ClipboardList } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUIStore } from '@/stores/ui-store';
 
@@ -16,9 +16,11 @@ import { useSettingsStore } from '@/stores/settings-store';
 import { PROVIDERS, REASONING_EFFORTS, getVisibleModelOptions, supportsReasoningEffort } from '@/lib/providers';
 import type { QueuedMessage } from '@/lib/chat-queue';
 import { StreamingStatusBar } from './StreamingStatusBar';
+import { useChatStore } from '@/stores/chat-store';
 import { ContextUsageBar } from './ContextUsageBar';
 import { QueuedMessageTray } from './QueuedMessageTray';
 import { CommandSuggestions, commandTakesArgs } from './CommandSuggestions';
+import { HermesUpdateButton } from './HermesUpdateButton';
 import { parseCommand, findCommand, filterCommands, type CommandContext } from '@/lib/hermes-commands';
 import { useCommandCallbacks } from '@/contexts/CommandCallbacksContext';
 import {
@@ -81,6 +83,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const displayModel = config.model.split('/').pop() || config.model;
   const reasoningSupported = supportsReasoningEffort(selectedProvider, config.model);
   const reasoningLabel = REASONING_EFFORT_LABELS[config.reasoningEffort];
+  const planMode = useChatStore((s) => s.planMode);
+  const setPlanMode = useChatStore((s) => s.setPlanMode);
   const commandCallbacks = useCommandCallbacks();
 
   // Real UI store actions for command context
@@ -340,6 +344,30 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
+
+            {/* Plan mode toggle */}
+            <button
+              onClick={() => setPlanMode(!planMode)}
+              className={cn(
+                'inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors',
+                planMode
+                  ? 'bg-purple-500/15 text-purple-400 ring-1 ring-purple-500/30'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+              )}
+              title={planMode ? 'Exit Plan Mode' : 'Enter Plan Mode (read-only exploration)'}
+            >
+              <ClipboardList className="h-3.5 w-3.5" />
+              <span>Plan</span>
+            </button>
+
+            {/* Agent info + update */}
+            <div className="flex items-center gap-2 ml-1">
+              <span className="text-[11px] text-muted-foreground/60 truncate">
+                {selectedProvider === 'hermes' ? 'hermes agent' : providerInfo?.label?.toLowerCase() || selectedProvider}
+                {displayModel && ` — ${displayModel}`}
+              </span>
+              {selectedProvider === 'hermes' && <HermesUpdateButton />}
+            </div>
 
             <div className="flex-1" />
 

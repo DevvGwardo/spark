@@ -71,6 +71,157 @@ import {
 } from './chat-utils';
 export type { AgentStatusEvent } from './chat-utils';
 
+const TOOL_INVOCATION_STATE_PRIORITY: Record<string, number> = {
+  'partial-call': 0,
+  call: 1,
+  result: 2,
+};
+
+function asUnknownArray(value: unknown): unknown[] | undefined {
+  return Array.isArray(value) ? value as unknown[] : undefined;
+}
+
+function getPersistedToolInvocationKey(invocation: Record<string, unknown>, fallbackIndex: number): string {
+  const toolName = typeof invocation.toolName === 'string' ? invocation.toolName : '';
+  const args = invocation.args && typeof invocation.args === 'object'
+    ? invocation.args as Record<string, unknown>
+    : {};
+  const path = typeof args.path === 'string' ? args.path : '';
+  const filename = typeof args.filename === 'string' ? args.filename : '';
+  const batchPaths = Array.isArray(args.changes)
+    ? args.changes
+        .map((change) =>
+          change && typeof change === 'object'
+            ? `${typeof (change as { action?: unknown }).action === 'string' ? (change as { action: string }).action : ''}:${typeof (change as { path?: unknown }).path === 'string' ? (change as { path: string }).path : ''}`
+            : '',
+        )
+        .join('|')
+    : '';
+
+  if (toolName && (path || filename || batchPaths)) {
+    return `${toolName}:${path}:${filename}:${batchPaths}`;
+  }
+
+  const toolCallId = typeof invocation.toolCallId === 'string' ? invocation.toolCallId : '';
+  if (toolCallId) {
+    return `${toolName}:${toolCallId}`;
+  }
+
+  const argsDigest = Object.keys(args).length > 0 ? JSON.stringify(args) : '';
+  return `${toolName}:${argsDigest || fallbackIndex}`;
+}
+
+function mergePersistedToolInvocation(
+  current: Record<string, unknown>,
+  incoming: Record<string, unknown>,
+): Record<string, unknown> {
+  const currentPriority = TOOL_INVOCATION_STATE_PRIORITY[
+    typeof current.state === 'string' ? current.state : ''
+  ] ?? 0;
+  const incomingPriority = TOOL_INVOCATION_STATE_PRIORITY[
+    typeof incoming.state === 'string' ? incoming.state : ''
+  ] ?? 0;
+  const preferred = incomingPriority >= currentPriority ? incoming : current;
+  const fallback = preferred === incoming ? current : incoming;
+
+  return {
+    ...fallback,
+    ...preferred,
+    args: preferred.args ?? fallback.args,
+    result: preferred.result ?? fallback.result,
+  };
+}
+
+function mergePersistedToolInvocations(
+  ...groups: Array<unknown[] | undefined>
+): Array<Record<string, unknown>> {
+  const merged: Array<Record<string, unknown>> = [];
+  const indexByKey = new Map<string, number>();
+
+  for (const group of groups) {
+    for (const invocation of group ?? []) {
+      if (!invocation || typeof invocation !== 'object') {
+        continue;
+      }
+
+      const record = invocation as Record<string, unknown>;
+      const key = getPersistedToolInvocationKey(record, merged.length);
+      const existingIndex = indexByKey.get(key);
+
+      if (existingIndex === undefined) {
+        indexByKey.set(key, merged.length);
+        merged.push(record);
+        continue;
+      }
+
+      merged[existingIndex] = mergePersistedToolInvocation(merged[existingIndex], record);
+    }
+  }
+
+  return merged;
+}
+
+function pickPreferredArray(primary?: unknown[], secondary?: unknown[]): unknown[] | undefined {
+  if ((secondary?.length ?? 0) > (primary?.length ?? 0)) {
+    return secondary;
+  }
+
+  return primary ?? secondary;
+}
+
+function buildAssistantSnapshotForPersistence(params: {
+  message?: Record<string, unknown>;
+  streamedMessage?: Record<string, unknown>;
+  toolActivity?: ToolActivityEvent[];
+  serverToolEvents?: ServerToolEvent[];
+  fallbackId?: string;
+  fallbackTimestamp?: string;
+}): Record<string, unknown> | undefined {
+  const source = params.message ?? {};
+  const streamed = params.streamedMessage ?? {};
+  const parts = pickPreferredArray(asUnknownArray(source.parts), asUnknownArray(streamed.parts));
+  const sourceContent = typeof source.content === 'string' ? source.content : undefined;
+  const streamedContent = typeof streamed.content === 'string' ? streamed.content : undefined;
+  const toolInvocations = mergePersistedToolInvocations(
+    asUnknownArray(source.toolInvocations),
+    asUnknownArray(streamed.toolInvocations),
+    synthesizeToolInvocationsForPersistence(
+      params.toolActivity ?? [],
+      params.serverToolEvents ?? [],
+    ),
+  );
+  const id = typeof source.id === 'string' && source.id
+    ? source.id
+    : typeof streamed.id === 'string' && streamed.id
+      ? streamed.id
+      : params.fallbackId;
+
+  if (!id) {
+    return undefined;
+  }
+
+  const timestamp = typeof source.timestamp === 'string' && source.timestamp
+    ? source.timestamp
+    : typeof streamed.timestamp === 'string' && streamed.timestamp
+      ? streamed.timestamp
+      : params.fallbackTimestamp ?? new Date().toISOString();
+
+  return {
+    id,
+    role: typeof source.role === 'string'
+      ? source.role
+      : typeof streamed.role === 'string'
+        ? streamed.role
+        : 'assistant',
+    content: sourceContent && sourceContent.length > 0
+      ? sourceContent
+      : (streamedContent ?? sourceContent ?? ''),
+    timestamp,
+    ...(parts ? { parts } : {}),
+    ...(toolInvocations.length > 0 ? { toolInvocations } : {}),
+  };
+}
+
 export function useChat(
   conversationId: string | null,
   onConversationCreated?: (id: string) => void,
@@ -344,42 +495,48 @@ When the user asks you to make changes:
     },
   ) => {
     const messageId = typeof message.id === 'string' && message.id ? message.id : crypto.randomUUID();
-    const parts = Array.isArray(message.parts) ? message.parts as unknown[] : undefined;
-    const toolInvocations = Array.isArray(message.toolInvocations) ? message.toolInvocations as unknown[] : undefined;
     const timestamp = typeof message.timestamp === 'string' && message.timestamp
       ? message.timestamp
       : new Date().toISOString();
-    const hasStructuredToolInvocations = Boolean(
-      toolInvocations?.length ||
-      parts?.some((part) =>
-        !!part &&
-        typeof part === 'object' &&
-        (part as { type?: unknown }).type === 'tool-invocation',
-      ),
-    );
-    const synthesizedToolInvocations = !hasStructuredToolInvocations
-      ? synthesizeToolInvocationsForPersistence(
-          fallback?.toolActivity ?? [],
-          fallback?.serverToolEvents ?? [],
-        )
-      : [];
+    const streamedMessage = messagesRef.current.find((entry) => entry.id === messageId) as
+      | (AIMessage & { timestamp?: string })
+      | undefined;
+    const snapshot = buildAssistantSnapshotForPersistence({
+      message: {
+        ...message,
+        id: messageId,
+        timestamp,
+      },
+      streamedMessage: streamedMessage as unknown as Record<string, unknown> | undefined,
+      toolActivity: fallback?.toolActivity,
+      serverToolEvents: fallback?.serverToolEvents,
+      fallbackId: messageId,
+      fallbackTimestamp: timestamp,
+    });
+
+    if (!snapshot) {
+      return;
+    }
+
+    const parts = asUnknownArray(snapshot.parts);
+    const toolInvocations = asUnknownArray(snapshot.toolInvocations);
 
     await upsertStoredMessage({
       id: messageId,
       conversationId: convId,
       role: 'assistant',
-      content: typeof message.content === 'string' ? message.content : '',
-      timestamp,
+      content: typeof snapshot.content === 'string' ? snapshot.content : '',
+      timestamp: typeof snapshot.timestamp === 'string' ? snapshot.timestamp : timestamp,
       parts,
       toolInvocations: toolInvocations && toolInvocations.length > 0
         ? toolInvocations
-        : (synthesizedToolInvocations.length > 0 ? synthesizedToolInvocations : undefined),
+        : undefined,
     });
     await db.conversations.update(convId, { updatedAt: new Date().toISOString() });
     await loadConversations();
   }, [loadConversations]);
 
-  const hermesStreamFetch = useCallback(async (url: string, init?: RequestInit) => {
+  const chatStreamFetch = useCallback(async (url: string, init?: RequestInit) => {
     // Cancel any previous streaming request
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -404,7 +561,7 @@ When the user asks you to make changes:
       }
       throw new Error(`Request failed with status ${response.status}`);
     }
-    if (effectiveProvider !== 'hermes' || !response.body) return response;
+    if (!response.body) return response;
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -627,7 +784,7 @@ When the user asks you to make changes:
       status: response.status,
       statusText: response.statusText,
     });
-  }, [effectiveProvider, scopeId]);
+  }, [scopeId]);
 
   const ensureRepoFileTreeLoaded = useCallback(async (): Promise<string[]> => {
     const currentChangeset = useChangesetStore.getState().getChangeset(scopeId);
@@ -723,6 +880,8 @@ When the user asks you to make changes:
         : {}),
       ...(conversationIdForRequest ? { conversation_id: conversationIdForRequest } : {}),
       ...(continuingApprovedProposal ? { continuing_approved_proposal: true } : {}),
+      // STEP 7: Pass planMode in the request body
+      ...(useChatStore.getState().planMode ? { planMode: true } : {}),
     };
   }, [
     agentToolsets,
@@ -759,7 +918,7 @@ When the user asks you to make changes:
     error,
   } = useAIChat({
     api: `${apiBaseUrl}/functions/v1/chat`,
-    fetch: hermesStreamFetch,
+    fetch: chatStreamFetch,
     body: requestBody,
     experimental_prepareRequestBody: ({ id, messages: requestMessages, requestData, requestBody: perRequestBody }) => ({
       id,
@@ -844,6 +1003,18 @@ When the user asks you to make changes:
       const messageServerToolEvents = finishedMessageId
         ? serverToolEventsRef.current[finishedMessageId] || []
         : currentServerToolEvents;
+      const persistedFinishedMessage = finishedMessage
+        ? buildAssistantSnapshotForPersistence({
+            message: finishedMessage,
+            streamedMessage: finishedMessageId
+              ? messagesRef.current.find((entry) => entry.id === finishedMessageId) as Record<string, unknown> | undefined
+              : undefined,
+            toolActivity: messageToolActivity,
+            serverToolEvents: messageServerToolEvents,
+            fallbackId: finishedMessageId ?? undefined,
+            fallbackTimestamp: finishedTimestamp,
+          })
+        : undefined;
       const finishedMessageParts = Array.isArray(finishedMessage?.parts) ? finishedMessage.parts as unknown[] : undefined;
       const finishedMessageToolInvocations = Array.isArray(finishedMessage?.toolInvocations)
         ? finishedMessage.toolInvocations as unknown[]
@@ -859,16 +1030,21 @@ When the user asks you to make changes:
           messageServerToolEvents.length > 0
         );
 
-      if (shouldInjectFinishedMessage && finishedMessage) {
+      if (shouldInjectFinishedMessage && (persistedFinishedMessage || finishedMessage)) {
+        const injectedMessage = (persistedFinishedMessage ?? finishedMessage) as Record<string, unknown>;
+        const injectedParts = Array.isArray(injectedMessage.parts) ? injectedMessage.parts as unknown[] : undefined;
+        const injectedToolInvocations = Array.isArray(injectedMessage.toolInvocations)
+          ? injectedMessage.toolInvocations as unknown[]
+          : undefined;
         const nextMessages = [
           ...messagesRef.current,
           {
             id: finishedMessageId,
-            role: (typeof finishedMessage.role === 'string' ? finishedMessage.role : 'assistant') as AIMessage['role'],
-            content: typeof finishedMessage.content === 'string' ? finishedMessage.content : '',
-            ...(typeof finishedMessage.timestamp === 'string' ? { timestamp: finishedMessage.timestamp } : {}),
-            ...(finishedMessageParts ? { parts: finishedMessageParts } : {}),
-            ...(finishedMessageToolInvocations ? { toolInvocations: finishedMessageToolInvocations } : {}),
+            role: (typeof injectedMessage.role === 'string' ? injectedMessage.role : 'assistant') as AIMessage['role'],
+            content: typeof injectedMessage.content === 'string' ? injectedMessage.content : '',
+            ...(typeof injectedMessage.timestamp === 'string' ? { timestamp: injectedMessage.timestamp } : {}),
+            ...(injectedParts ? { parts: injectedParts } : {}),
+            ...(injectedToolInvocations ? { toolInvocations: injectedToolInvocations } : {}),
           } as AIMessage,
         ];
         messagesRef.current = nextMessages;
@@ -876,8 +1052,8 @@ When the user asks you to make changes:
       }
 
       // Persist assistant message (including parts and tool invocations)
-      if (!finishedMessage) return;
-      await persistAssistantSnapshot(finishedMessage, convId, {
+      if (!finishedMessage && !persistedFinishedMessage) return;
+      await persistAssistantSnapshot((persistedFinishedMessage ?? finishedMessage) as Record<string, unknown>, convId, {
         toolActivity: messageToolActivity,
         serverToolEvents: messageServerToolEvents,
       });
@@ -2019,6 +2195,8 @@ When the user asks you to make changes:
       activeRequestBodyRef.current = null;
     } finally {
       isSendingRef.current = false;
+      // STEP 9: Auto-clear plan mode after sending
+      useChatStore.getState().setPlanMode(false);
     }
 
     if (createdConversationId && pendingConversationIdRef.current === createdConversationId) {

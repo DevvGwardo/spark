@@ -1572,6 +1572,89 @@ body { color: white; }
     );
   });
 
+  it('persists streamed server tool events for non-Hermes providers when onFinish omits tool invocations', async () => {
+    renderHook(() => useChat('conv-1'));
+
+    const fetchInterceptor = latestUseChatOptions?.fetch as ((url: string, init?: RequestInit) => Promise<Response>) | undefined;
+    const onFinish = latestUseChatOptions?.onFinish as
+      | ((message?: {
+          id?: string;
+          role?: string;
+          content?: string;
+          toolInvocations?: unknown[];
+          parts?: unknown[];
+        }, options?: { finishReason?: string }) => Promise<void>)
+      | undefined;
+
+    expect(fetchInterceptor).toBeDefined();
+    expect(onFinish).toBeDefined();
+
+    const payload = [
+      formatDataStreamPart('data', [{
+        type: 'repo_file_read',
+        path: 'README.md',
+        content: '# CloudChat',
+      }]),
+      formatDataStreamPart('finish_message', {
+        finishReason: 'stop',
+        usage: { promptTokens: 1, completionTokens: 1 },
+      }),
+    ].join('');
+
+    const originalFetch = global.fetch;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(payload));
+            controller.close();
+          },
+        }),
+        { status: 200 },
+      ),
+    ));
+
+    try {
+      await act(async () => {
+        const intercepted = await fetchInterceptor?.('http://localhost:3001/functions/v1/chat');
+        expect(intercepted).toBeDefined();
+        await intercepted?.text();
+      });
+    } finally {
+      vi.stubGlobal('fetch', originalFetch);
+    }
+
+    dbMock.messages.add.mockClear();
+
+    await act(async () => {
+      await onFinish?.(
+        {
+          id: 'assistant-openai-tool-fallback',
+          role: 'assistant',
+          content: '',
+          toolInvocations: [],
+        },
+        { finishReason: 'stop' },
+      );
+    });
+
+    expect(dbMock.messages.add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'assistant-openai-tool-fallback',
+        conversationId: 'conv-1',
+        role: 'assistant',
+        content: '',
+        toolInvocations: [
+          expect.objectContaining({
+            toolName: 'read_repo_file',
+            state: 'result',
+            args: { path: 'README.md' },
+          }),
+        ],
+      }),
+    );
+  });
+
   it('auto-continues read-only Hermes repo analysis after a server-side repo read ends with an unknown finish', async () => {
     aiChatState.append.mockResolvedValue(undefined);
 
