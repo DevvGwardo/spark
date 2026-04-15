@@ -13,7 +13,6 @@ import { ChangeApprovalModal } from './ChangeApprovalModal';
 import { ChatErrorBanner } from './ChatErrorBanner';
 import { getProviderLabel } from '@/lib/providers';
 import type { Provider } from '@/stores/settings-store';
-import { useChatStore } from '@/stores/chat-store';
 import { getErrorMessage } from '@/lib/errors';
 import {
   buildIssueFixFollowUpPrompt,
