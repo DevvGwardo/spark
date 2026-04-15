@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from 'express';
 import { sendJson } from '../lib/helpers';
+import { getActiveProfileName } from '../lib/hermes-profiles';
 
 const HERMES_BRIDGE_URL = process.env.HERMES_BRIDGE_URL || 'http://localhost:3002';
 
@@ -13,6 +14,7 @@ async function proxyTo(
       ...options,
       headers: {
         'Content-Type': 'application/json',
+        'X-Hermes-Profile': getActiveProfileName(),
         ...options?.headers,
       },
     });
@@ -142,6 +144,17 @@ export function registerHermesAdminRoute(app: Express) {
   app.delete('/api/hermes/workspace/skills', async (req: Request, res: Response) => {
     await proxyTo(res, '/workspace/skills', {
       method: 'DELETE',
+      body: JSON.stringify(req.body),
+    });
+  });
+
+  app.get('/api/hermes/workspace/skills/hub', async (_req: Request, res: Response) => {
+    await proxyTo(res, '/workspace/skills/hub');
+  });
+
+  app.post('/api/hermes/workspace/skills/hub/install', async (req: Request, res: Response) => {
+    await proxyTo(res, '/workspace/skills/hub/install', {
+      method: 'POST',
       body: JSON.stringify(req.body),
     });
   });

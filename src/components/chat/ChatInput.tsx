@@ -20,7 +20,6 @@ import { useChatStore } from '@/stores/chat-store';
 import { ContextUsageBar } from './ContextUsageBar';
 import { QueuedMessageTray } from './QueuedMessageTray';
 import { CommandSuggestions, commandTakesArgs } from './CommandSuggestions';
-import { HermesUpdateButton } from './HermesUpdateButton';
 import { parseCommand, findCommand, filterCommands, type CommandContext } from '@/lib/hermes-commands';
 import { useCommandCallbacks } from '@/contexts/CommandCallbacksContext';
 import {
@@ -366,7 +365,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 {selectedProvider === 'hermes' ? 'hermes agent' : providerInfo?.label?.toLowerCase() || selectedProvider}
                 {displayModel && ` — ${displayModel}`}
               </span>
-              {selectedProvider === 'hermes' && <HermesUpdateButton />}
             </div>
 
             <div className="flex-1" />

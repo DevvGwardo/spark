@@ -114,6 +114,14 @@ export interface HermesSkillDetail extends HermesSkillSummary {
   content: string;
 }
 
+export interface HubSkill {
+  name: string;
+  description: string;
+  category: string;
+  source: 'built-in' | 'optional' | 'community' | 'anthropic' | 'lobehub';
+  installed: boolean;
+}
+
 export interface HermesUsageModelBreakdown {
   model: string;
   session_count: number;
@@ -323,5 +331,17 @@ export async function deleteHermesSkill(skillId: string): Promise<void> {
   await hermesFetch('/workspace/skills', {
     method: 'DELETE',
     body: JSON.stringify({ id: skillId }),
+  });
+}
+
+export async function fetchSkillsHub(): Promise<HubSkill[]> {
+  const data = await hermesFetch<{ skills: HubSkill[] }>('/workspace/skills/hub');
+  return data.skills ?? [];
+}
+
+export async function installHubSkill(skillName: string): Promise<void> {
+  await hermesFetch('/workspace/skills/hub/install', {
+    method: 'POST',
+    body: JSON.stringify({ name: skillName }),
   });
 }

@@ -26,6 +26,7 @@ import { TerminalPanel } from '@/components/terminal/TerminalPanel';
 import { MiniBrowser, MiniBrowserToggle, DockedMiniBrowser, HermesPTYPanel, type HermesPTYPanelHandle } from '@/components/browser/MiniBrowser';
 import { DockedChatSidebar } from '@/components/chat/DockedChatSidebar';
 import { SlotNumber } from '@/components/ui/SlotNumber';
+import { HermesUpdateButton } from '@/components/chat/HermesUpdateButton';
 import { cn } from '@/lib/utils';
 
 export const AppLayout: React.FC = () => {
@@ -544,7 +545,10 @@ const headerSecondaryLabel = selectedCronJobId
 
         {/* Chat area status bar */}
         {activeTab === 'chat' && (
-          <div className="flex items-center justify-end h-8 px-5 border-t border-[hsl(var(--border))] flex-shrink-0">
+          <div className="flex items-center justify-between h-8 px-5 border-t border-[hsl(var(--border))] flex-shrink-0">
+            <div className="flex items-center gap-2">
+              {activeProvider === 'hermes' && <HermesUpdateButton />}
+            </div>
             <div className="flex items-center gap-2.5 min-w-0">
               <span className="text-[11px] text-[hsl(var(--text-faint))] truncate">
                 {footerProviderInfo?.label ?? footerProvider} · {footerDisplayModel}

@@ -46,7 +46,6 @@ export const ModelSelector: React.FC = () => {
           })}
         </DropdownMenuContent>
       </DropdownMenu>
-
       <button
         onClick={() => setSettingsOpen(true)}
         className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors duration-100"

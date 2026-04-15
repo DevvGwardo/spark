@@ -16,7 +16,7 @@ import { workspaceIndex } from './workspace-indexer';
 // Re-export for external consumers
 export { shouldDirectProxyCompatibleProvider } from './lib/hermes';
 
-const HEALTH_ROUTES = [
+export const HEALTH_ROUTES = [
   '/functions/v1/chat',
   '/functions/v1/chat-store/conversations',
   '/functions/v1/chat-store/messages',
@@ -33,6 +33,8 @@ const HEALTH_ROUTES = [
   '/api/hermes/workspace/usage',
   '/api/hermes/workspace/files',
   '/api/hermes/workspace/skills',
+  '/api/hermes/workspace/skills/hub',
+  '/api/hermes/workspace/skills/hub/install',
   '/api/hermes/update/status',
   '/api/hermes/update',
   '/api/hermes/profiles',

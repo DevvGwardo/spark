@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  fetchSkillsHub,
   fetchHermesSkillDetail,
+  installHubSkill,
   updateHermesWorkspaceFile,
 } from '@/lib/hermes-api';
 
@@ -62,5 +64,40 @@ describe('hermes workspace api', () => {
     const payload = JSON.parse(String(init.body));
     expect(payload.expected_version).toBe('abc123');
     expect(payload.content).toBe('hello');
+  });
+
+  it('loads the skills hub catalog from the hub endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(mockJsonResponse({
+      skills: [
+        {
+          name: 'duckduckgo-search',
+          description: 'Search skill',
+          category: 'research',
+          source: 'optional',
+          installed: false,
+        },
+      ],
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const skills = await fetchSkillsHub();
+
+    expect(skills).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toContain('/api/hermes/workspace/skills/hub');
+  });
+
+  it('posts a hub install request by skill name', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(mockJsonResponse({ success: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await installHubSkill('duckduckgo-search');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toContain('/api/hermes/workspace/skills/hub/install');
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const payload = JSON.parse(String(init.body));
+    expect(payload.name).toBe('duckduckgo-search');
+    expect(init.method).toBe('POST');
   });
 });

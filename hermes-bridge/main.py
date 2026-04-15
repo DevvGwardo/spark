@@ -469,6 +469,40 @@ def _skill_detail(skill_id: str, *, hermes_home: Optional[Path] = None) -> Optio
     }
 
 
+def _list_skills_hub(*, hermes_home: Optional[Path] = None) -> list[dict]:
+    resolved_home = hermes_home or _HERMES_HOME
+    result = _run_hermes_skills_hub_helper(resolved_home)
+    skills = result.get("skills", [])
+    return skills if isinstance(skills, list) else []
+
+
+def _install_hub_skill(skill_name: str, *, hermes_home: Optional[Path] = None) -> dict:
+    normalized = str(skill_name or "").strip()
+    if not normalized:
+        raise ValueError("skill name is required")
+
+    resolved_home = hermes_home or _HERMES_HOME
+    command_env = os.environ.copy()
+    command_env["HERMES_HOME"] = str(resolved_home)
+
+    result = subprocess.run(
+        ["hermes", "skills", "install", normalized, "--yes"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=command_env,
+    )
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        stdout = result.stdout.strip()
+        raise RuntimeError(stderr or stdout or f"install failed for {normalized}")
+
+    return {
+        "success": True,
+        "message": f"Installed '{normalized}'",
+    }
+
+
 def _cron_job_count() -> int:
     if _HERMES_CRON_AVAILABLE:
         try:
@@ -656,6 +690,10 @@ class HermesWorkspaceFileUpdate(BaseModel):
     expected_version: Optional[str] = None
 
 
+class HermesHubSkillInstallRequest(BaseModel):
+    name: str = Field(default="")
+
+
 # --- Hermes cron backend integration ---
 _HERMES_AGENT_DIR = os.environ.get(
     "HERMES_AGENT_DIR",
@@ -671,6 +709,7 @@ _HERMES_CRON_OUTPUT_DIR = (
     / "cron"
     / "output"
 )
+_HERMES_SKILLS_HUB_RESULT_PREFIX = "__HERMES_SKILLS_HUB_RESULT__="
 
 if _HERMES_AGENT_DIR not in sys.path:
     sys.path.insert(0, _HERMES_AGENT_DIR)
@@ -714,6 +753,159 @@ else:
 print("{_HERMES_CRON_RESULT_PREFIX}" + json.dumps({{"result": result}}, default=str))
 """
 
+_HERMES_SKILLS_HUB_HELPER_CODE = f"""
+import json
+import os
+import sys
+from pathlib import Path
+
+agent_dir = sys.argv[1]
+payload = json.loads(sys.argv[2]) if len(sys.argv) > 2 else {{}}
+hermes_home = payload.get("hermes_home") or os.environ.get("HERMES_HOME") or str(Path.home() / ".hermes")
+if agent_dir not in sys.path:
+    sys.path.insert(0, agent_dir)
+os.environ["HERMES_HOME"] = hermes_home
+
+from tools.skills_hub import GitHubAuth, create_source_router, parallel_search_sources
+
+_TRUST_RANK = {{"builtin": 3, "trusted": 2, "community": 1}}
+_PER_SOURCE_LIMIT = {{
+    "official": 200,
+    "skills-sh": 200,
+    "well-known": 50,
+    "github": 200,
+    "clawhub": 500,
+    "claude-marketplace": 100,
+    "lobehub": 500,
+}}
+
+def _parse_frontmatter_name(skill_md: Path) -> str:
+    try:
+        content = skill_md.read_text(encoding="utf-8")
+    except Exception:
+        return skill_md.parent.name
+
+    if not content.startswith("---"):
+        return skill_md.parent.name
+
+    end_marker = content.find("\\n---\\n", 4)
+    if end_marker == -1:
+        return skill_md.parent.name
+
+    try:
+        import yaml
+        parsed = yaml.safe_load(content[4:end_marker])
+    except Exception:
+        return skill_md.parent.name
+
+    if isinstance(parsed, dict):
+        name = parsed.get("name")
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+
+    return skill_md.parent.name
+
+def _installed_skill_names(home: str) -> set[str]:
+    names: set[str] = set()
+    skills_dir = Path(home) / "skills"
+    if not skills_dir.exists():
+        return names
+
+    for skill_md in skills_dir.rglob("SKILL.md"):
+        if ".hub" in skill_md.parts or "__pycache__" in skill_md.parts:
+            continue
+        names.add(skill_md.parent.name.strip().lower())
+        parsed_name = _parse_frontmatter_name(skill_md)
+        if parsed_name:
+            names.add(parsed_name.lower())
+
+    return names
+
+def _skill_category(meta) -> str:
+    extra = getattr(meta, "extra", {{}}) or {{}}
+    category = extra.get("category")
+    if isinstance(category, str) and category.strip():
+        return category.strip()
+
+    path = getattr(meta, "path", None)
+    if isinstance(path, str) and path.strip():
+        parts = [part for part in path.replace("\\\\", "/").split("/") if part]
+        if len(parts) >= 2:
+            return parts[-2]
+        if len(parts) == 1:
+            return parts[0]
+
+    identifier = str(getattr(meta, "identifier", "") or "")
+    parts = [part for part in identifier.split("/") if part]
+    if len(parts) >= 2:
+        return parts[-2]
+
+    return "general"
+
+def _skill_source(meta) -> str:
+    source = str(getattr(meta, "source", "") or "").strip().lower()
+    if source == "official":
+        return "optional"
+    if source == "claude-marketplace":
+        return "anthropic"
+    if source == "lobehub":
+        return "lobehub"
+    if source == "builtin":
+        return "built-in"
+    return "community"
+
+auth = GitHubAuth()
+sources = create_source_router(auth)
+all_results, _, _ = parallel_search_sources(
+    sources,
+    query="",
+    per_source_limits=_PER_SOURCE_LIMIT,
+    source_filter="all",
+    overall_timeout=15,
+)
+
+seen = {{}}
+for result in all_results:
+    name = str(getattr(result, "name", "") or "").strip()
+    if not name:
+        continue
+    rank = _TRUST_RANK.get(str(getattr(result, "trust_level", "") or "").strip().lower(), 0)
+    current = seen.get(name.lower())
+    current_rank = -1
+    if current is not None:
+        current_rank = _TRUST_RANK.get(
+            str(getattr(current, "trust_level", "") or "").strip().lower(),
+            0,
+        )
+    if current is None or rank > current_rank:
+        seen[name.lower()] = result
+
+installed_names = _installed_skill_names(hermes_home)
+skills = []
+for result in sorted(
+    seen.values(),
+    key=lambda item: (
+        -_TRUST_RANK.get(str(getattr(item, "trust_level", "") or "").strip().lower(), 0),
+        str(getattr(item, "source", "") or "").strip().lower() != "official",
+        str(getattr(item, "name", "") or "").strip().lower(),
+    ),
+):
+    name = str(getattr(result, "name", "") or "").strip()
+    if not name:
+        continue
+    skills.append(
+        {{
+            "name": name,
+            "description": str(getattr(result, "description", "") or "").strip(),
+            "category": _skill_category(result),
+            "source": _skill_source(result),
+            "installed": name.lower() in installed_names,
+        }}
+    )
+
+print("{_HERMES_SKILLS_HUB_RESULT_PREFIX}" + json.dumps({{"skills": skills}}, ensure_ascii=False))
+"""
+
 
 def _run_hermes_cron_helper(action: str, payload: Optional[dict] = None):
     completed = subprocess.run(
@@ -742,6 +934,36 @@ def _run_hermes_cron_helper(action: str, payload: Optional[dict] = None):
             return json.loads(payload_text).get("result")
 
     raise RuntimeError(f"Hermes cron helper returned no result for {action}")
+
+
+def _run_hermes_skills_hub_helper(hermes_home: Path) -> dict:
+    completed = subprocess.run(
+        [
+            _HERMES_CRON_HELPER_PYTHON,
+            "-c",
+            _HERMES_SKILLS_HUB_HELPER_CODE,
+            _HERMES_AGENT_DIR,
+            json.dumps({"hermes_home": str(hermes_home)}),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    if completed.returncode != 0:
+        stderr = completed.stderr.strip()
+        stdout = completed.stdout.strip()
+        raise RuntimeError(
+            stderr or stdout or "Hermes skills hub helper failed"
+        )
+
+    for line in reversed((completed.stdout or "").splitlines()):
+        if line.startswith(_HERMES_SKILLS_HUB_RESULT_PREFIX):
+            payload_text = line[len(_HERMES_SKILLS_HUB_RESULT_PREFIX):]
+            result = json.loads(payload_text)
+            return result if isinstance(result, dict) else {}
+
+    raise RuntimeError("Hermes skills hub helper returned no result")
 
 try:
     from cron.jobs import (
@@ -3413,6 +3635,34 @@ async def workspace_skill_detail(request: Request):
     if not detail:
         return JSONResponse(status_code=404, content={"error": "skill not found"})
     return JSONResponse(content={"skill": detail})
+
+
+@app.get("/workspace/skills/hub")
+async def workspace_skills_hub(request: Request):
+    hermes_home = _resolve_hermes_home(_resolve_profile_name(request))
+    try:
+        skills = _list_skills_hub(hermes_home=hermes_home)
+        return JSONResponse(content={"skills": skills})
+    except subprocess.TimeoutExpired:
+        return JSONResponse(status_code=504, content={"error": "skills hub request timed out"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/workspace/skills/hub/install")
+async def workspace_skill_install(payload: HermesHubSkillInstallRequest, request: Request):
+    hermes_home = _resolve_hermes_home(_resolve_profile_name(request))
+    try:
+        result = _install_hub_skill(payload.name, hermes_home=hermes_home)
+        return JSONResponse(content=result)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    except subprocess.TimeoutExpired:
+        return JSONResponse(status_code=504, content={"error": "skill install timed out"})
+    except FileNotFoundError:
+        return JSONResponse(status_code=500, content={"error": "hermes command not found"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 @app.delete("/workspace/skills")
