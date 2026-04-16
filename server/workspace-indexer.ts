@@ -1,6 +1,6 @@
 import { readdir, stat } from 'fs/promises';
 import { join } from 'path';
-import { execFile } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 
 const execFileAsync = promisify(execFile);
@@ -133,11 +133,20 @@ export class WorkspaceIndex {
 
   private async runCheckIgnore(rootPath: string, paths: string[], ignoredSet: Set<string>): Promise<void> {
     try {
-      const { stdout } = await execFileAsync(
-        'git',
-        ['check-ignore', '--stdin'],
-        { cwd: rootPath, input: paths.join('\n') }
-      );
+      const stdout = await new Promise<string>((resolve, reject) => {
+        const proc = spawn('git', ['check-ignore', '--stdin'], { cwd: rootPath });
+        let out = '';
+        let err = '';
+        proc.stdout.on('data', (d) => { out += d.toString(); });
+        proc.stderr.on('data', (d) => { err += d.toString(); });
+        proc.on('error', reject);
+        proc.on('close', (code) => {
+          // git check-ignore exit codes: 0 = matches found, 1 = no matches, >1 = error
+          if (code === 0 || code === 1) resolve(out);
+          else reject(Object.assign(new Error(err || `git check-ignore exited ${code}`), { code }));
+        });
+        proc.stdin.end(paths.join('\n'));
+      });
       for (const line of stdout.trim().split('\n')) {
         if (line) ignoredSet.add(line);
       }
