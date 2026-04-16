@@ -33,6 +33,19 @@ export function getHubSelectedProfileName(): string {
   }
 }
 
+// Writes the hub-selected profile file. Pass null to reset to the default
+// profile (removes the file so getHubSelectedProfileName returns 'default').
+export function setHubSelectedProfile(name: string | null): void {
+  const activePath = getActiveProfilePath();
+  if (name === null) {
+    if (fs.existsSync(activePath)) fs.unlinkSync(activePath);
+    return;
+  }
+  const validated = validateProfileName(name);
+  fs.mkdirSync(path.dirname(activePath), { recursive: true });
+  fs.writeFileSync(activePath, validated, 'utf-8');
+}
+
 export function validateProfileName(name: string): string {
   const trimmed = name.trim();
   if (!trimmed) throw new Error('Profile name is required');
