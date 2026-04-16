@@ -19,7 +19,7 @@ export function getActiveProfilePath(): string {
   return path.join(getHermesRoot(), 'cloudchat_active_profile');
 }
 
-export function getActiveProfileName(): string {
+export function getHubSelectedProfileName(): string {
   const activePath = getActiveProfilePath();
   if (!fs.existsSync(activePath)) return 'default';
   try {
