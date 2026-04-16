@@ -3,6 +3,9 @@ productName: CloudChat
 directories:
   buildResources: build
   output: release
+# Signs the bundled python-runtime binaries before electron-builder's main
+# signing pass. See build/afterPack.cjs for the rationale.
+afterPack: build/afterPack.cjs
 files:
   - "out/**"
   - "server/**"
