@@ -1,9 +1,116 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Plus, X, Pause, Play, PlayCircle, Trash2, Clock, AlertCircle, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
+import {
+  Plus, X, Pause, Play, PlayCircle, Trash2, Clock, AlertCircle, CheckCircle2,
+  XCircle, Loader2, Zap, GitPullRequest, Shield, Activity, FileSearch,
+  BookOpen, ChevronLeft, Pencil, type LucideIcon,
+} from 'lucide-react';
 import { useCronStore, type CronJob, type CronRun } from '@/stores/cron-store';
 import { useUIStore } from '@/stores/ui-store';
 import { cn } from '@/lib/utils';
 import { relativeTime } from '@/lib/relative-time';
+
+// ─── Predefined Cron Templates ────────────────────────────────────────────────
+
+interface CronTemplate {
+  id: string;
+  name: string;
+  description: string;
+  schedule: string;
+  prompt: string;
+  category: 'github' | 'quality' | 'security' | 'monitoring';
+}
+
+const CATEGORY_META: Record<CronTemplate['category'], { label: string; icon: LucideIcon; color: string }> = {
+  github: { label: 'GitHub', icon: GitPullRequest, color: 'text-purple-400' },
+  quality: { label: 'Code Quality', icon: FileSearch, color: 'text-blue-400' },
+  security: { label: 'Security', icon: Shield, color: 'text-amber-400' },
+  monitoring: { label: 'Monitoring', icon: Activity, color: 'text-green-400' },
+};
+
+const CRON_TEMPLATES: CronTemplate[] = [
+  {
+    id: 'daily-standup',
+    name: 'Daily Standup Prep',
+    description: 'Summarize recent commits, open PRs, and pending reviews',
+    schedule: '0 9 * * 1-5',
+    prompt: 'Summarize my recent git activity: list commits from the last 24 hours, open pull requests and their review status, and any issues assigned to me. Format as a concise standup update.',
+    category: 'github',
+  },
+  {
+    id: 'pr-review-check',
+    name: 'PR Review Reminder',
+    description: 'Flag stale PRs waiting on review for more than 24h',
+    schedule: '0 10 * * 1-5',
+    prompt: 'Check all open pull requests in the repo. List any that have been waiting for review for more than 24 hours, who the reviewers are, and whether CI checks have passed. Prioritize by age.',
+    category: 'github',
+  },
+  {
+    id: 'issue-triage',
+    name: 'Issue Triage',
+    description: 'Review new issues and suggest priority labels',
+    schedule: '0 */6 * * *',
+    prompt: 'Review all GitHub issues created or updated in the last 6 hours. For each, suggest a priority (critical/high/medium/low), identify if it is a bug or feature, and recommend which team member should be assigned based on the affected area of code.',
+    category: 'github',
+  },
+  {
+    id: 'dep-audit',
+    name: 'Dependency Audit',
+    description: 'Check for outdated or vulnerable packages',
+    schedule: '0 8 * * 1',
+    prompt: 'Run a dependency audit: check for outdated packages, known security vulnerabilities, and deprecated dependencies. Summarize findings by severity and recommend which updates to prioritize.',
+    category: 'security',
+  },
+  {
+    id: 'security-scan',
+    name: 'Security Scan',
+    description: 'Scan codebase for common vulnerability patterns',
+    schedule: '0 3 * * *',
+    prompt: 'Scan the codebase for common security issues: hardcoded secrets, SQL injection risks, XSS vectors, insecure dependencies, and exposed API keys. Report findings with file paths and severity ratings.',
+    category: 'security',
+  },
+  {
+    id: 'build-monitor',
+    name: 'Build Monitor',
+    description: 'Check CI/CD pipeline status and report failures',
+    schedule: '*/30 * * * *',
+    prompt: 'Check the current CI/CD pipeline status. Report any failed builds or tests, which commits triggered them, and suggest likely causes based on the changed files. Include the build duration trend.',
+    category: 'monitoring',
+  },
+  {
+    id: 'repo-health',
+    name: 'Repo Health Check',
+    description: 'Stale branches, TODO counts, test coverage trends',
+    schedule: '0 8 * * 1',
+    prompt: 'Run a repository health check: count stale branches (no activity in 30+ days), aggregate TODO/FIXME/HACK comments with file locations, check test coverage percentage, and flag any files over 500 lines. Provide a brief health score summary.',
+    category: 'quality',
+  },
+  {
+    id: 'changelog-draft',
+    name: 'Changelog Draft',
+    description: 'Generate release notes from recent commits',
+    schedule: '0 17 * * 5',
+    prompt: 'Draft changelog entries from all commits since the last tag or release. Group by category (features, fixes, chores, breaking changes). Use conventional commit messages where available. Format as markdown suitable for a CHANGELOG.md entry.',
+    category: 'github',
+  },
+  {
+    id: 'notifications-digest',
+    name: 'Notifications Digest',
+    description: 'Summarize unread GitHub notifications',
+    schedule: '0 9,14 * * 1-5',
+    prompt: 'Summarize my unread GitHub notifications. Group by type (review requests, mentions, CI failures, issue updates). Highlight anything that needs immediate action vs informational. Mark the most urgent items first.',
+    category: 'monitoring',
+  },
+  {
+    id: 'code-quality-report',
+    name: 'Code Quality Report',
+    description: 'Lint results, complexity hotspots, and type coverage',
+    schedule: '0 7 * * 1-5',
+    prompt: 'Generate a code quality report: run linting and report error/warning counts by rule, identify the top 5 most complex functions by cyclomatic complexity, check TypeScript type coverage, and list any files with declining quality trends over the past week.',
+    category: 'quality',
+  },
+];
+
+// ─── Schedule Presets ─────────────────────────────────────────────────────────
 
 const SCHEDULE_PRESETS = [
   { label: 'Every 5 min', cron: '*/5 * * * *' },
@@ -100,6 +207,138 @@ function statusClasses(job: CronJob) {
 function scheduleLabel(job: CronJob): string {
   return job.schedule_display ?? cronToHuman(job.schedule) ?? job.schedule;
 }
+
+// ─── Template Components ──────────────────────────────────────────────────────
+
+function TemplateCard({
+  template,
+  onLaunch,
+  onCustomize,
+  launching,
+}: {
+  template: CronTemplate;
+  onLaunch: () => void;
+  onCustomize: () => void;
+  launching: boolean;
+}) {
+  const meta = CATEGORY_META[template.category];
+  const Icon = meta.icon;
+  const human = cronToHuman(template.schedule);
+
+  return (
+    <div className="group rounded-lg border border-border/40 hover:border-border/70 bg-background/30 hover:bg-background/50 transition-colors">
+      <div className="px-3 py-2.5">
+        <div className="flex items-start gap-2">
+          <Icon className={cn('h-3.5 w-3.5 mt-0.5 flex-shrink-0', meta.color)} />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[12px] font-medium truncate">{template.name}</span>
+              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-muted/50 text-muted-foreground/60 font-medium flex-shrink-0">
+                {meta.label}
+              </span>
+            </div>
+            <p className="text-[11px] text-muted-foreground/60 mt-0.5 line-clamp-2">
+              {template.description}
+            </p>
+            <p className="text-[10px] text-muted-foreground/40 mt-1 font-mono">
+              {human ?? template.schedule}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-border/30">
+          <button
+            onClick={onLaunch}
+            disabled={launching}
+            className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded bg-primary/10 text-primary hover:bg-primary/20 disabled:opacity-40 transition-colors"
+          >
+            {launching ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Zap className="h-3 w-3" />
+            )}
+            Launch
+          </button>
+          <button
+            onClick={onCustomize}
+            className="flex items-center gap-1 px-2 py-1 text-[10px] rounded text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30 transition-colors"
+          >
+            <Pencil className="h-3 w-3" />
+            Customize
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TemplatesBrowser({
+  onLaunch,
+  onCustomize,
+  launchingId,
+}: {
+  onLaunch: (template: CronTemplate) => void;
+  onCustomize: (template: CronTemplate) => void;
+  launchingId: string | null;
+}) {
+  const [filterCategory, setFilterCategory] = useState<CronTemplate['category'] | null>(null);
+  const filtered = filterCategory
+    ? CRON_TEMPLATES.filter((t) => t.category === filterCategory)
+    : CRON_TEMPLATES;
+
+  const categories = Object.entries(CATEGORY_META) as [CronTemplate['category'], typeof CATEGORY_META[CronTemplate['category']]][];
+
+  return (
+    <div className="flex flex-col gap-2">
+      {/* Category filter chips */}
+      <div className="flex flex-wrap gap-1 px-3">
+        <button
+          onClick={() => setFilterCategory(null)}
+          className={cn(
+            'px-2 py-0.5 text-[10px] rounded-full border transition-colors',
+            !filterCategory
+              ? 'border-primary/50 bg-primary/10 text-primary'
+              : 'border-border/40 text-muted-foreground/50 hover:bg-muted/30',
+          )}
+        >
+          All
+        </button>
+        {categories.map(([key, meta]) => {
+          const Icon = meta.icon;
+          return (
+            <button
+              key={key}
+              onClick={() => setFilterCategory(filterCategory === key ? null : key)}
+              className={cn(
+                'flex items-center gap-1 px-2 py-0.5 text-[10px] rounded-full border transition-colors',
+                filterCategory === key
+                  ? 'border-primary/50 bg-primary/10 text-primary'
+                  : 'border-border/40 text-muted-foreground/50 hover:bg-muted/30',
+              )}
+            >
+              <Icon className="h-2.5 w-2.5" />
+              {meta.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Template cards */}
+      <div className="space-y-1.5 px-3">
+        {filtered.map((t) => (
+          <TemplateCard
+            key={t.id}
+            template={t}
+            onLaunch={() => onLaunch(t)}
+            onCustomize={() => onCustomize(t)}
+            launching={launchingId === t.id}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Panel Props ──────────────────────────────────────────────────────────────
 
 export interface CronJobsPanelProps {
   conversationId?: string | null;
@@ -285,11 +524,13 @@ function CronJobRow({
 export function CronJobsPanel({ conversationId = null, conversationTitle = null }: CronJobsPanelProps) {
   const { jobs, loading, error, fetchJobs, createJob } = useCronStore();
   const [showForm, setShowForm] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
   const [name, setName] = useState('');
   const [schedule, setSchedule] = useState('');
   const [customMode, setCustomMode] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [creating, setCreating] = useState(false);
+  const [launchingTemplateId, setLaunchingTemplateId] = useState<string | null>(null);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [showAllJobs, setShowAllJobs] = useState(false);
 
@@ -335,20 +576,57 @@ export function CronJobsPanel({ conversationId = null, conversationTitle = null 
     }
   };
 
+  const handleTemplateLaunch = async (template: CronTemplate) => {
+    setLaunchingTemplateId(template.id);
+    try {
+      await createJob(
+        template.schedule,
+        template.prompt,
+        template.name,
+        { conversationId, conversationTitle },
+      );
+      setShowTemplates(false);
+    } catch {
+      // error is in store
+    } finally {
+      setLaunchingTemplateId(null);
+    }
+  };
+
+  const handleTemplateCustomize = (template: CronTemplate) => {
+    setName(template.name);
+    setSchedule(template.schedule);
+    setPrompt(template.prompt);
+    setCustomMode(false);
+    setShowTemplates(false);
+    setShowForm(true);
+  };
+
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2">
-        <div className="min-w-0">
-          <span className="text-[12px] font-semibold text-muted-foreground uppercase tracking-wide">Cron Jobs</span>
-          {showingConversationScope && conversationTitle && (
+        <div className="min-w-0 flex items-center gap-1.5">
+          {showTemplates ? (
+            <button
+              onClick={() => setShowTemplates(false)}
+              className="p-0.5 rounded hover:bg-[hsl(var(--sidebar-active))] transition-colors"
+              title="Back to jobs"
+            >
+              <ChevronLeft className="h-3.5 w-3.5 text-muted-foreground/70" />
+            </button>
+          ) : null}
+          <span className="text-[12px] font-semibold text-muted-foreground uppercase tracking-wide">
+            {showTemplates ? 'Templates' : 'Cron Jobs'}
+          </span>
+          {!showTemplates && showingConversationScope && conversationTitle && (
             <p className="text-[11px] text-muted-foreground/50 truncate mt-0.5">
               Showing jobs for {conversationTitle}
             </p>
           )}
         </div>
         <div className="flex items-center gap-1">
-          {conversationId && (
+          {!showTemplates && conversationId && (
             <button
               onClick={() => setShowAllJobs((current) => !current)}
               className="px-2 py-1 text-[10px] rounded hover:bg-[hsl(var(--sidebar-active))] text-muted-foreground/70"
@@ -357,13 +635,24 @@ export function CronJobsPanel({ conversationId = null, conversationTitle = null 
               {showingConversationScope ? 'All' : 'This chat'}
             </button>
           )}
-          <button
-            onClick={() => setShowForm(!showForm)}
-            className="p-1 rounded hover:bg-[hsl(var(--sidebar-active))] transition-colors"
-            title={showForm ? 'Cancel' : 'Create job'}
-          >
-            {showForm ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-          </button>
+          {!showTemplates && (
+            <button
+              onClick={() => { setShowTemplates(true); setShowForm(false); }}
+              className="p-1 rounded hover:bg-[hsl(var(--sidebar-active))] transition-colors"
+              title="Browse templates"
+            >
+              <BookOpen className="h-4 w-4 text-muted-foreground/70" />
+            </button>
+          )}
+          {!showTemplates && (
+            <button
+              onClick={() => { setShowForm(!showForm); setShowTemplates(false); }}
+              className="p-1 rounded hover:bg-[hsl(var(--sidebar-active))] transition-colors"
+              title={showForm ? 'Cancel' : 'Create job'}
+            >
+              {showForm ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+            </button>
+          )}
         </div>
       </div>
 
@@ -464,36 +753,56 @@ export function CronJobsPanel({ conversationId = null, conversationTitle = null 
         </div>
       )}
 
+      {/* Templates browser */}
+      {showTemplates && (
+        <div className="flex-1 overflow-y-auto py-1">
+          <TemplatesBrowser
+            onLaunch={handleTemplateLaunch}
+            onCustomize={handleTemplateCustomize}
+            launchingId={launchingTemplateId}
+          />
+        </div>
+      )}
+
       {/* Job list */}
-      <div className="flex-1 overflow-y-auto px-1">
-        {loading && visibleJobs.length === 0 ? (
-          <div className="flex items-center justify-center py-8">
-            <span className="text-[12px] text-muted-foreground/50">Loading...</span>
-          </div>
-        ) : visibleJobs.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-8 px-4">
-            <Clock className="h-8 w-8 text-muted-foreground/30 mb-2" />
-            <p className="text-[12px] text-muted-foreground/50 text-center">
-              {showingConversationScope ? 'No cron jobs linked to this chat yet' : 'No cron jobs yet'}
-            </p>
-            <p className="text-[11px] text-muted-foreground/40 text-center mt-1">
-              Click + to create one
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-0.5">
-            {visibleJobs.map((job) => (
-              <CronJobRow
-                key={job.id}
-                job={job}
-                expanded={selectedJobId === job.id}
-                highlightConversation={!!conversationId && job.conversation_id === conversationId}
-                onToggle={() => useUIStore.getState().setSelectedCronJobId(job.id)}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+      {!showTemplates && (
+        <div className="flex-1 overflow-y-auto px-1">
+          {loading && visibleJobs.length === 0 ? (
+            <div className="flex items-center justify-center py-8">
+              <span className="text-[12px] text-muted-foreground/50">Loading...</span>
+            </div>
+          ) : visibleJobs.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-8 px-4">
+              <Clock className="h-8 w-8 text-muted-foreground/30 mb-2" />
+              <p className="text-[12px] text-muted-foreground/50 text-center">
+                {showingConversationScope ? 'No cron jobs linked to this chat yet' : 'No cron jobs yet'}
+              </p>
+              <p className="text-[11px] text-muted-foreground/40 text-center mt-1">
+                Click + to create one, or start from a template
+              </p>
+              <button
+                onClick={() => setShowTemplates(true)}
+                className="flex items-center gap-1.5 mt-3 px-3 py-1.5 text-[11px] font-medium rounded-md bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+              >
+                <BookOpen className="h-3.5 w-3.5" />
+                Browse Templates
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-0.5">
+              {visibleJobs.map((job) => (
+                <CronJobRow
+                  key={job.id}
+                  job={job}
+                  expanded={selectedJobId === job.id}
+                  highlightConversation={!!conversationId && job.conversation_id === conversationId}
+                  onToggle={() => useUIStore.getState().setSelectedCronJobId(job.id)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
