@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from 'express';
 import { sendJson } from '../lib/helpers';
-import { getActiveProfileName } from '../lib/hermes-profiles';
+import { getHubSelectedProfileName } from '../lib/hermes-profiles';
 
 const HERMES_BRIDGE_URL = process.env.HERMES_BRIDGE_URL || 'http://localhost:3002';
 
@@ -14,7 +14,7 @@ async function proxyTo(
       ...options,
       headers: {
         'Content-Type': 'application/json',
-        'X-Hermes-Profile': getActiveProfileName(),
+        'X-Hermes-Profile': getHubSelectedProfileName(),
         ...options?.headers,
       },
     });

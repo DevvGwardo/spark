@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Download, Cloud, Check, Loader2 } from 'lucide-react';
+import { Download, Check, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getApiBaseUrl } from '@/lib/api';
 
@@ -98,17 +98,17 @@ export const HermesUpdateButton: React.FC = () => {
         ) : hasUpdate ? (
           <Download className="h-3.5 w-3.5" />
         ) : (
-          <Cloud className="h-3.5 w-3.5" />
+          <Check className="h-3.5 w-3.5" />
         )}
-        {(updating || justUpdated || hasUpdate) && (
-          <span>
-            {updating
-              ? 'Updating...'
-              : justUpdated
-                ? 'Updated!'
-                : `Update (${status.commitsBehind})`}
-          </span>
-        )}
+        <span>
+          {updating
+            ? 'Updating...'
+            : justUpdated
+              ? 'Updated!'
+              : hasUpdate
+                ? `Update (${status.commitsBehind})`
+                : 'Up to date'}
+        </span>
       </button>
 
       {error && (

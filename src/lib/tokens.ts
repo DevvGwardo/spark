@@ -15,9 +15,17 @@ export function estimateMessagesTokens(messages: { role: string; content: string
   }, 3); // 3 tokens for chat format priming
 }
 
-export function getContextUsage(messages: { role: string; content: string }[], model: string) {
+export function getContextUsage(
+  messages: { role: string; content: string }[],
+  model: string,
+  realUsage?: { promptTokens: number; completionTokens: number; totalTokens: number },
+) {
   const total = getModelContextWindow(model);
-  const used = messages.length > 0 ? estimateMessagesTokens(messages) : 0;
+  const used = realUsage
+    ? realUsage.totalTokens
+    : messages.length > 0
+      ? estimateMessagesTokens(messages)
+      : 0;
   const percentage = total > 0 ? Math.min((used / total) * 100, 100) : 0;
   return { used, total, percentage };
 }

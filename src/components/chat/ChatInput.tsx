@@ -293,7 +293,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               <Plus className="h-4 w-4" />
             </button>
 
-            {/* Model selector */}
+            {/* Model selector — hidden for hermes (model comes from active profile) */}
+            {selectedProvider !== 'hermes' && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button className="flex items-center gap-1 px-2 py-1 rounded-[6px] text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors duration-100">
@@ -317,8 +318,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 })}
               </DropdownMenuContent>
             </DropdownMenu>
+            )}
 
-            {reasoningSupported && (
+            {selectedProvider !== 'hermes' && reasoningSupported && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button
@@ -359,13 +361,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               <span>Plan</span>
             </button>
 
-            {/* Agent info + update */}
-            <div className="flex items-center gap-2 ml-1">
-              <span className="text-[11px] text-muted-foreground/60 truncate">
-                {selectedProvider === 'hermes' ? 'hermes agent' : providerInfo?.label?.toLowerCase() || selectedProvider}
-                {displayModel && ` — ${displayModel}`}
-              </span>
-            </div>
 
             <div className="flex-1" />
 

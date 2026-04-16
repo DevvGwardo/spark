@@ -2,8 +2,8 @@ import { type Express } from 'express';
 import fs from 'fs';
 import path from 'path';
 import {
-  getActiveProfileName,
-  getActiveProfilePath,
+  getHubSelectedProfileName,
+  setHubSelectedProfile,
   getHermesRoot,
   getProfilesRoot,
   validateProfileName,
@@ -49,7 +49,7 @@ export function registerProfilesRoutes(app: Express) {
   app.get('/api/hermes/profiles', (_req, res) => {
     try {
       const profilesRoot = getProfilesRoot();
-      const activeProfile = getActiveProfileName();
+      const hubProfile = getHubSelectedProfileName();
       const results: Array<{
         name: string; path: string; active: boolean; model?: string;
         provider?: string; skillCount: number; sessionCount: number; hasEnv: boolean;
@@ -64,7 +64,7 @@ export function registerProfilesRoutes(app: Express) {
           const profilePath = path.join(profilesRoot, name);
           const config = readYamlConfig(path.join(profilePath, 'config.yaml'));
           results.push({
-            name, path: profilePath, active: name === activeProfile,
+            name, path: profilePath, active: name === hubProfile,
             model: config.model as string | undefined,
             provider: config.provider as string | undefined,
             skillCount: countFilesRecursive(path.join(profilePath, 'skills'), (p) => path.basename(p) === 'SKILL.md'),
@@ -77,7 +77,7 @@ export function registerProfilesRoutes(app: Express) {
       const root = getHermesRoot();
       const defaultConfig = readYamlConfig(path.join(root, 'config.yaml'));
       results.unshift({
-        name: 'default', path: root, active: activeProfile === 'default',
+        name: 'default', path: root, active: hubProfile === 'default',
         model: defaultConfig.model as string | undefined,
         provider: defaultConfig.provider as string | undefined,
         skillCount: countFilesRecursive(path.join(root, 'skills'), (p) => path.basename(p) === 'SKILL.md'),
@@ -91,26 +91,24 @@ export function registerProfilesRoutes(app: Express) {
         return a.name.localeCompare(b.name);
       });
 
-      res.json({ profiles: results, activeProfile });
+      res.json({ profiles: results, activeProfile: hubProfile });
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to list profiles' });
     }
   });
 
-  // POST /api/hermes/profiles/activate - switch active profile
+  // POST /api/hermes/profiles/activate - switch active profile (hub-only, does not affect CLI)
   app.post('/api/hermes/profiles/activate', (req, res) => {
     try {
       const { name } = req.body;
       if (!name) return res.status(400).json({ error: 'Profile name required' });
       if (name === 'default') {
-        const activePath = getActiveProfilePath();
-        if (fs.existsSync(activePath)) fs.unlinkSync(activePath);
+        setHubSelectedProfile(null); // null = default
       } else {
         const normalized = validateProfileName(name);
         const profilePath = path.join(getProfilesRoot(), normalized);
         if (!fs.existsSync(profilePath)) return res.status(404).json({ error: 'Profile not found' });
-        fs.mkdirSync(getHermesRoot(), { recursive: true });
-        fs.writeFileSync(getActiveProfilePath(), `${normalized}\n`, 'utf-8');
+        setHubSelectedProfile(normalized);
       }
       res.json({ ok: true, activeProfile: name });
     } catch (error) {
@@ -153,7 +151,7 @@ export function registerProfilesRoutes(app: Express) {
       const { name } = req.body;
       if (!name) return res.status(400).json({ error: 'Profile name required' });
       const normalized = validateProfileName(name);
-      if (normalized === getActiveProfileName()) {
+      if (normalized === getHubSelectedProfileName()) {
         return res.status(400).json({ error: 'Cannot delete the active profile' });
       }
       const profilePath = path.join(getProfilesRoot(), normalized);

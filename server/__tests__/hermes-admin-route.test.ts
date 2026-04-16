@@ -3,14 +3,14 @@ import type { AddressInfo } from 'net'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const hermesProfileMocks = vi.hoisted(() => ({
-  getActiveProfileName: vi.fn(() => 'agent-two'),
+  getHubSelectedProfileName: vi.fn(() => 'agent-two'),
 }))
 
 vi.mock('../lib/hermes-profiles', async () => {
   const actual = await vi.importActual<typeof import('../lib/hermes-profiles')>('../lib/hermes-profiles')
   return {
     ...actual,
-    getActiveProfileName: hermesProfileMocks.getActiveProfileName,
+    getHubSelectedProfileName: hermesProfileMocks.getHubSelectedProfileName,
   }
 })
 

@@ -91,7 +91,7 @@ const V4 = {
   accentRed: '#EF4444',
   accentPurple: '#8B5CF6',
   accentBlue: '#3178C6',
-  fontHeading: "'Fraunces', serif",
+  fontHeading: "'DM Sans', sans-serif",
   fontBody: "'DM Sans', sans-serif",
 } as const;
 
@@ -703,7 +703,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
             <Sparkles className="h-[18px] w-[18px]" style={{ color: V4.bgPage }} />
           </div>
           <div>
-            <h2 className="text-[17px] font-semibold leading-tight" style={{ fontFamily: V4.fontHeading, color: V4.textPrimary }}>Repo Issues</h2>
+            <h2 className="text-[17px] font-semibold leading-tight" style={{ fontFamily: V4.fontBody, color: V4.textPrimary }}>Repo Issues</h2>
             <p className="text-[11px]" style={{ color: V4.textSecondary }}>Browse and manage repository issues</p>
           </div>
           <div className="flex-1" />
@@ -751,7 +751,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
               {/* Activity */}
               {activityLoading && !activityData && (
                 <div className="flex flex-col gap-1.5 px-4 pb-3">
-                  <span className="text-[11px] font-semibold uppercase tracking-[1px]" style={{ fontFamily: V4.fontHeading, color: V4.textSecondary }}>Activity</span>
+                  <span className="text-[11px] font-semibold uppercase tracking-[1px]" style={{ fontFamily: V4.fontBody, color: V4.textSecondary }}>Activity</span>
                   <div className="flex h-[52px] items-end gap-[2px] rounded-xl border p-2" style={{ background: V4.bgCard, borderColor: V4.borderSubtle }}>
                     {Array.from({ length: 30 }, (_, i) => (
                       <div key={i} className="flex-1 animate-pulse rounded-[2px]" style={{ height: Math.max(4, Math.round(Math.random() * 30)), backgroundColor: '#F59E0B18', minWidth: 3 }} />
@@ -762,7 +762,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
               {activityError && !activityLoading && !activityData && (
                 <div className="flex flex-col gap-1.5 px-4 pb-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-semibold uppercase tracking-[1px]" style={{ fontFamily: V4.fontHeading, color: V4.textSecondary }}>Activity</span>
+                    <span className="text-[11px] font-semibold uppercase tracking-[1px]" style={{ fontFamily: V4.fontBody, color: V4.textSecondary }}>Activity</span>
                     <button onClick={() => setActivityRetryNonce((n) => n + 1)} className="text-[10px] transition-colors" style={{ color: V4.accentAmber }}>Retry</button>
                   </div>
                   <div className="flex h-[52px] items-center justify-center rounded-xl border" style={{ background: V4.bgCard, borderColor: V4.borderSubtle }}>
@@ -773,7 +773,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
               {activityData && activityData.days.length > 0 && (
                 <div className="flex flex-col gap-1.5 px-4 pb-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-semibold uppercase tracking-[1px]" style={{ fontFamily: V4.fontHeading, color: V4.textSecondary }}>Activity</span>
+                    <span className="text-[11px] font-semibold uppercase tracking-[1px]" style={{ fontFamily: V4.fontBody, color: V4.textSecondary }}>Activity</span>
                     <span className="text-[10px]" style={{ color: V4.textTertiary }}>30d</span>
                   </div>
                   <div className="flex h-[52px] items-end gap-[2px] rounded-xl border p-2" style={{ background: V4.bgCard, borderColor: V4.borderSubtle }}>
@@ -803,7 +803,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
               )}
 
               <div className="px-4 pb-2">
-                <p className="text-[11px] font-semibold uppercase tracking-[1.2px]" style={{ fontFamily: V4.fontHeading, color: V4.textTertiary }}>
+                <p className="text-[11px] font-semibold uppercase tracking-[1.2px]" style={{ fontFamily: V4.fontBody, color: V4.textTertiary }}>
                   {deferredRepoQuery ? 'Search Results' : 'Recent'}
                 </p>
               </div>
@@ -980,7 +980,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                                 style={{ background: V4.bgCard, borderColor: V4.borderSubtle, boxShadow: '0 12px 32px rgba(0,0,0,0.37)' }}
                               >
                                 <div className="px-3 py-2">
-                                  <span className="text-[15px] font-semibold" style={{ fontFamily: V4.fontHeading, color: V4.textPrimary }}>Sort by</span>
+                                  <span className="text-[15px] font-semibold" style={{ fontFamily: V4.fontBody, color: V4.textPrimary }}>Sort by</span>
                                 </div>
                                 {issueSortOptions.map((option) => {
                                   const key = `${option.value}:${option.direction}`;

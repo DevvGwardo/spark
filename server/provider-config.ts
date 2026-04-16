@@ -401,6 +401,36 @@ export function supportsReasoningEffort(provider: string, model?: string): boole
   return normalizedModel.startsWith('gpt-5') || normalizedModel.startsWith('o');
 }
 
+export const CONTEXT_WINDOW_SIZES: Record<string, number> = {
+  'claude-sonnet-4': 200_000,
+  'claude-sonnet-4-20250514': 200_000,
+  'claude-opus-4': 200_000,
+  'claude-haiku-4': 200_000,
+  'claude-haiku-4-5': 200_000,
+  'gpt-4.1': 1_047_576,
+  'gpt-4.1-mini': 1_047_576,
+  'gpt-4.1-nano': 1_047_576,
+  'gpt-4o': 128_000,
+  'gpt-4o-mini': 128_000,
+  'gpt-5.4': 128_000,
+  'gpt-5.2': 128_000,
+  'gemini-2.5-flash': 1_048_576,
+  'gemini-2.5-pro': 1_048_576,
+  'gemini-3.1-flash-lite-preview': 1_048_576,
+  'deepseek/deepseek-v3.2': 128_000,
+  'deepseek/deepseek-chat-v3.1': 128_000,
+  'meta-llama/llama-4-maverick': 128_000,
+  'meta-llama/llama-4-scout': 128_000,
+  'MiniMax-M2.7': 4_000_000,
+  'MiniMax-M2.7-highspeed': 4_000_000,
+};
+
+export function getContextWindow(modelName: string): number {
+  if (CONTEXT_WINDOW_SIZES[modelName]) return CONTEXT_WINDOW_SIZES[modelName];
+  const shortName = modelName.includes('/') ? modelName.split('/').pop()! : modelName;
+  return CONTEXT_WINDOW_SIZES[shortName] ?? 200_000;
+}
+
 export function getReasoningProviderOptions(
   provider: string,
   model: string,
