@@ -16,24 +16,62 @@ files:
   - "!**/*.map"
   - "!**/*.test.*"
   - "!**/__tests__/**"
+extraResources:
+  # Bridge source — spawned by electron/bridge.ts at runtime.
+  # CI also writes a python-runtime/ directory here per platform; on dev
+  # machines that directory is absent and bridge.ts falls back to system Python.
+  - from: "hermes-bridge"
+    to: "hermes-bridge"
+    filter:
+      - "**/*.py"
+      - "requirements.txt"
+      - "data/**"
+      - "!__pycache__/**"
+      - "!venv/**"
+      - "!.venv/**"
+      - "!**/*.pyc"
+      - "!**/*.pyo"
+      - "!test_*.py"
+      - "!*_test.py"
+      - "!update.log"
+  - from: "resources/python-runtime"
+    to: "python-runtime"
 mac:
   icon: build/icon.icns
+  # Beta ships arm64-only because the bundled Python runtime is arm64.
+  # Intel-Mac testers can still install Python themselves and the bridge
+  # will fall back to system Python. Add x64 here later if demand exists.
   target:
     - target: dmg
-      arch: [universal]
+      arch: [arm64]
     - target: zip
-      arch: [universal]
+      arch: [arm64]
   category: public.app-category.developer-tools
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   hardenedRuntime: true
   gatekeeperAssess: false
+win:
+  # TODO: replace with build/icon.ico for a proper Windows icon
+  icon: build/icon.png
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: "CloudChat-${version}-win.${ext}"
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: CloudChat
 dmg:
   artifactName: "CloudChat-${version}-mac.${ext}"
 publish:
   provider: github
-  owner: devgwardo
+  owner: DevvGwardo
   repo: cloud-chat-hub
+  private: true
 npmRebuild: false
 asar: true
 asarUnpack:

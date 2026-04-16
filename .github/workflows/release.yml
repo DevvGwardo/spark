@@ -1,0 +1,90 @@
+name: Release
+
+# Triggers a build whenever a version tag is pushed.
+# Use prerelease tags for beta builds: v1.0.0-beta.1, v1.0.0-beta.2, ...
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. v1.0.0-beta.1)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            build_cmd: npm run electron:publish
+          - os: windows-latest
+            build_cmd: npm run electron:publish:win
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Download python-build-standalone for the current runner so the
+      # bundled app ships a self-contained Python interpreter. Pinned to a
+      # known release of indygreg/python-build-standalone.
+      - name: Download bundled Python (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          PY_VERSION="3.12.7"
+          BUILD_DATE="20241016"
+          # Universal2 isn't published; ship arch-specific runtime keyed on host.
+          # macos-latest is arm64.
+          TARBALL="cpython-${PY_VERSION}+${BUILD_DATE}-aarch64-apple-darwin-install_only.tar.gz"
+          URL="https://github.com/indygreg/python-build-standalone/releases/download/${BUILD_DATE}/${TARBALL}"
+          mkdir -p resources/python-runtime
+          curl -fsSL "$URL" -o /tmp/python.tar.gz
+          tar -xzf /tmp/python.tar.gz -C /tmp
+          # tarball extracts to /tmp/python with bin/, lib/, etc. — move contents up.
+          cp -R /tmp/python/. resources/python-runtime/
+          ls resources/python-runtime/bin
+
+      - name: Download bundled Python (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $PyVersion = "3.12.7"
+          $BuildDate = "20241016"
+          $Tarball = "cpython-${PyVersion}+${BuildDate}-x86_64-pc-windows-msvc-install_only.tar.gz"
+          $Url = "https://github.com/indygreg/python-build-standalone/releases/download/${BuildDate}/${Tarball}"
+          New-Item -ItemType Directory -Force -Path resources\python-runtime | Out-Null
+          Invoke-WebRequest -Uri $Url -OutFile $env:TEMP\python.tar.gz
+          tar -xzf $env:TEMP\python.tar.gz -C $env:TEMP
+          # Tarball extracts to %TEMP%\python\ — copy contents up.
+          Copy-Item -Path "$env:TEMP\python\*" -Destination "resources\python-runtime\" -Recurse -Force
+          Get-ChildItem resources\python-runtime
+
+      - name: Build & publish
+        env:
+          # GITHUB_TOKEN: provided automatically by Actions, used by electron-builder
+          # at PUBLISH time to upload artifacts to the release.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # CLOUDCHAT_UPDATE_TOKEN: fine-grained PAT (contents: read) baked into
+          # the built app so end users can fetch updates from this private repo.
+          # See docs/BETA-TESTING.md for setup. If unset, auto-update is disabled
+          # in shipped builds — they still install fine, just won't self-update.
+          CLOUDCHAT_UPDATE_TOKEN: ${{ secrets.CLOUDCHAT_UPDATE_TOKEN }}
+          # Mark prereleases automatically when tag contains a hyphen (e.g. -beta.1)
+          EP_PRE_RELEASE: ${{ contains(github.ref_name, '-') }}
+        run: ${{ matrix.build_cmd }}

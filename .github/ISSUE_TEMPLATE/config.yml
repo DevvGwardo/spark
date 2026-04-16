@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Beta Tester Guide
+    url: https://github.com/DevvGwardo/cloud-chat-hub/blob/main/docs/BETA-TESTING.md
+    about: How to install, report issues, and contribute as a beta tester.

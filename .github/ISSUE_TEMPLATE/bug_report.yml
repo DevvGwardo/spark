@@ -1,0 +1,79 @@
+name: Bug Report
+description: Something isn't working as expected.
+title: "[Bug] "
+labels: ["bug", "beta"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! The more detail, the faster we can fix it.
+        The "Report Issue" button inside CloudChat pre-fills most of this for you.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug.
+      placeholder: When I clicked X, I expected Y but got Z.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open CloudChat
+        2. Click '...'
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: false
+
+  - type: input
+    id: app-version
+    attributes:
+      label: CloudChat version
+      placeholder: "e.g. 1.0.0-beta.1 (find in Settings → About)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Windows 11
+        - Windows 10
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: provider
+    attributes:
+      label: Provider / model in use (if relevant)
+      placeholder: "e.g. Hermes Agent + meta-llama/llama-4-maverick"
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / console output
+      description: Open DevTools (Cmd/Ctrl+Shift+I) → Console, paste anything red.
+      render: shell
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing issues and didn't find a duplicate.
+          required: true

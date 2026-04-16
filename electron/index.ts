@@ -3,6 +3,14 @@ import { existsSync } from 'fs'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { startEmbeddedServer } from './server'
+import {
+  startBridge,
+  stopBridge,
+  getBridgeSetupStatus,
+  installBridgeDeps,
+  installHermesAgent,
+  writeAuthJson,
+} from './bridge'
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
@@ -247,6 +255,24 @@ ipcMain.handle('app:clear-attention', () => {
   clearAttentionRequest()
 })
 
+ipcMain.handle('app:get-version', () => app.getVersion())
+
+// ── Hermes Bridge & first-run setup ────────────────────────────────────────
+ipcMain.handle('bridge:status', () => getBridgeSetupStatus())
+ipcMain.handle('bridge:start', () => startBridge())
+ipcMain.handle('bridge:install-deps', () => installBridgeDeps())
+ipcMain.handle('bridge:install-hermes-agent', async (event) => {
+  const send = (line: string) =>
+    event.sender.send('bridge:install-progress', line)
+  return installHermesAgent(send)
+})
+ipcMain.handle('bridge:write-auth', (_event, input: {
+  provider: string
+  apiKey: string
+  baseUrl?: string
+  active?: boolean
+}) => writeAuthJson(input))
+
 // ── Mini Browser (BrowserView) management ───────────────────────────
 ipcMain.handle('browser:create', (_event, url?: string) => {
   if (!mainWindow) return
@@ -485,6 +511,12 @@ app.whenReady().then(async () => {
   setupDockMenu()
   registerGlobalShortcut()
 
+  // Fire-and-forget bridge startup. The renderer's first-run wizard polls
+  // bridge:status and surfaces failures; we don't block window display on it.
+  startBridge()
+    .then((r) => console.log('[bridge] startup result:', r.status, r.message ?? ''))
+    .catch((err) => console.warn('[bridge] startup threw', err))
+
   // Auto-updates (skip in dev)
   if (!is.dev) {
     const { setupAutoUpdater } = await import('./updater')
@@ -526,5 +558,7 @@ app.on('before-quit', () => {
     term.kill()
   }
   terminals.clear()
+  // Tear down the Hermes bridge cleanly
+  stopBridge()
   process.emit('SIGINT', 'SIGINT')
 })

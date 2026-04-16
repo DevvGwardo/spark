@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   platform: process.platform,
   apiPort,
+  getAppVersion: (): Promise<string> => ipcRenderer.invoke('app:get-version'),
   notifyAttentionRequest: (payload?: { title?: string; body?: string }) => ipcRenderer.invoke('app:notify-attention', payload),
   clearAttentionRequest: () => ipcRenderer.invoke('app:clear-attention'),
   terminal: {
@@ -49,5 +50,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const handler = () => callback()
     ipcRenderer.on('new-chat', handler)
     return () => { ipcRenderer.removeListener('new-chat', handler) }
+  },
+  bridge: {
+    status: () => ipcRenderer.invoke('bridge:status'),
+    start: () => ipcRenderer.invoke('bridge:start'),
+    installDeps: () => ipcRenderer.invoke('bridge:install-deps'),
+    installHermesAgent: () => ipcRenderer.invoke('bridge:install-hermes-agent'),
+    writeAuth: (input: { provider: string; apiKey: string; baseUrl?: string; active?: boolean }) =>
+      ipcRenderer.invoke('bridge:write-auth', input),
+    onInstallProgress: (callback: (line: string) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, line: string) => callback(line)
+      ipcRenderer.on('bridge:install-progress', handler)
+      return () => { ipcRenderer.removeListener('bridge:install-progress', handler) }
+    },
   },
 })

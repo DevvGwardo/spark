@@ -1,0 +1,23 @@
+name: Beta Feedback
+description: General reactions, friction, things that surprised you.
+title: "[Feedback] "
+labels: ["feedback", "beta"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Anything goes — UX gripes, things that delighted you, comparisons to other tools,
+        workflows that broke down, half-formed ideas. This is the catch-all.
+
+  - type: textarea
+    id: feedback
+    attributes:
+      label: Your feedback
+    validations:
+      required: true
+
+  - type: input
+    id: app-version
+    attributes:
+      label: CloudChat version
+      placeholder: "e.g. 1.0.0-beta.1"

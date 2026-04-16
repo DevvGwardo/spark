@@ -5,6 +5,21 @@ export function setupAutoUpdater(mainWindow: BrowserWindow) {
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = true
 
+  // Private repo: a fine-grained read-only PAT is baked into the build at
+  // CI time via the CLOUDCHAT_UPDATE_TOKEN env var (see .github/workflows/release.yml).
+  // electron-updater needs it set on the GitHub provider to fetch releases.
+  // For local dev / unsigned builds without the token, updates silently no-op.
+  const updateToken = process.env.CLOUDCHAT_UPDATE_TOKEN
+  if (updateToken) {
+    autoUpdater.setFeedURL({
+      provider: 'github',
+      owner: 'DevvGwardo',
+      repo: 'cloud-chat-hub',
+      private: true,
+      token: updateToken,
+    })
+  }
+
   autoUpdater.on('update-available', (info) => {
     console.log(`Update available: ${info.version}`)
   })

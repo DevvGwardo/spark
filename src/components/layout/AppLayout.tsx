@@ -27,6 +27,8 @@ import { MiniBrowser, MiniBrowserToggle, DockedMiniBrowser, HermesPTYPanel, type
 import { DockedChatSidebar } from '@/components/chat/DockedChatSidebar';
 import { SlotNumber } from '@/components/ui/SlotNumber';
 import { HermesUpdateButton } from '@/components/chat/HermesUpdateButton';
+import { FeedbackButton } from '@/components/feedback/FeedbackButton';
+import { BridgeSetupModal } from '@/components/setup/BridgeSetupModal';
 import { cn } from '@/lib/utils';
 
 export const AppLayout: React.FC = () => {
@@ -184,6 +186,48 @@ const headerSecondaryLabel = selectedCronJobId
     setPreviewOpen(scopeId, true);
   }, [setPreviewOpen, setPreviewView]);
 
+  // First-run bridge setup modal: shown when running inside Electron AND the
+  // bridge is not reachable AND the user hasn't manually dismissed it.
+  // Polls `bridge:status` on mount; auto-hides when the bridge comes up.
+  const [bridgeSetupVisible, setBridgeSetupVisible] = useState(false);
+  const [bridgeSetupDismissed, setBridgeSetupDismissed] = useState(false);
+  useEffect(() => {
+    const bridge = window.electronAPI?.bridge;
+    if (!bridge) return; // browser/dev mode without Electron — N/A
+    let cancelled = false;
+    let poller: ReturnType<typeof setTimeout> | null = null;
+
+    const check = async () => {
+      try {
+        const s = await bridge.status();
+        if (cancelled) return;
+        const needsSetup = !s.bridgeReachable && (!s.pythonPath || !s.bridgeDepsInstalled || !s.hermesAgentPresent);
+        // If the bridge is reachable, no setup needed.
+        if (s.bridgeReachable) {
+          setBridgeSetupVisible(false);
+          return;
+        }
+        // If something's missing AND user hasn't dismissed, show modal.
+        if (needsSetup && !bridgeSetupDismissed) {
+          setBridgeSetupVisible(true);
+          return;
+        }
+        // Bridge isn't up yet but everything looks installable — wait & retry.
+        poller = setTimeout(check, 2000);
+      } catch {
+        // ignore IPC errors and retry
+        poller = setTimeout(check, 4000);
+      }
+    };
+
+    // Slight delay so the bridge has a chance to come up on its own first
+    poller = setTimeout(check, 1500);
+    return () => {
+      cancelled = true;
+      if (poller) clearTimeout(poller);
+    };
+  }, [bridgeSetupDismissed]);
+
   // Sidebar resize handling
   const isResizing = useRef(false);
   const handleResizeStart = useCallback(
@@ -217,6 +261,14 @@ const headerSecondaryLabel = selectedCronJobId
 
   return (
     <>
+      {bridgeSetupVisible && (
+        <BridgeSetupModal
+          onComplete={() => {
+            setBridgeSetupVisible(false);
+            setBridgeSetupDismissed(true);
+          }}
+        />
+      )}
       {!isSetupComplete && <SetupWizard />}
       <SettingsModal />
       <RepoIssueBrowser isOpen={repoBrowserOpen} onClose={() => setRepoBrowserOpen(false)} />
@@ -548,6 +600,7 @@ const headerSecondaryLabel = selectedCronJobId
           <div className="flex items-center justify-between h-8 px-5 border-t border-[hsl(var(--border))] flex-shrink-0">
             <div className="flex items-center gap-2">
               {activeProvider === 'hermes' && <HermesUpdateButton />}
+              <FeedbackButton />
             </div>
             <div className="flex items-center gap-2.5 min-w-0">
               <span className="text-[11px] text-[hsl(var(--text-faint))] truncate">
