@@ -91,6 +91,36 @@ jobs:
           chmod 600 "$HOME/apple-secrets/AuthKey.p8"
           echo "APPLE_API_KEY=$HOME/apple-secrets/AuthKey.p8" >> "$GITHUB_ENV"
 
+      # Import the Developer ID Application cert into a dedicated keychain
+      # that exists for the whole job. This lets our afterPack hook find the
+      # signing identity (it runs *before* electron-builder's main signing
+      # pass, which would otherwise be the only step to import CSC_LINK).
+      # Once the keychain has the cert, electron-builder auto-discovers it
+      # without needing CSC_LINK, so we don't pass CSC_LINK downstream.
+      - name: Set up signing keychain (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          CSC_LINK_B64: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PATH="$RUNNER_TEMP/cloudchat-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          CERT_PATH="$RUNNER_TEMP/cert.p12"
+          printf '%s' "$CSC_LINK_B64" | base64 -d > "$CERT_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$CSC_KEY_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          # Prepend our keychain to the user search list so `security find-identity`
+          # (without -k flag) sees it. Quoting keeps multi-word keychain names intact.
+          EXISTING_KEYCHAINS=$(security list-keychains -d user | sed -E 's/^[[:space:]]*"?//; s/"?$//' | tr '\n' ' ')
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $EXISTING_KEYCHAINS
+          security find-identity -v -p codesigning
+          rm "$CERT_PATH"
+
       - name: Build & publish
         env:
           # GITHUB_TOKEN: provided automatically by Actions, used by electron-builder
@@ -103,12 +133,10 @@ jobs:
           CLOUDCHAT_UPDATE_TOKEN: ${{ secrets.CLOUDCHAT_UPDATE_TOKEN }}
           # Mark prereleases automatically when tag contains a hyphen (e.g. -beta.1)
           EP_PRE_RELEASE: ${{ contains(github.ref_name, '-') }}
-          # macOS Developer ID signing + App Store Connect notarization.
-          # Empty-string on Windows so electron-builder doesn't try to use the
-          # Apple cert to sign the Windows installer. APPLE_API_KEY is injected
-          # via $GITHUB_ENV by the Decode step above on the macOS job only.
-          CSC_LINK: ${{ runner.os == 'macOS' && secrets.CSC_LINK || '' }}
-          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.CSC_KEY_PASSWORD || '' }}
+          # macOS App Store Connect notarization. APPLE_API_KEY (path) is injected
+          # via $GITHUB_ENV by the Decode step. The Developer ID cert is in the
+          # keychain set up by the previous step, so electron-builder auto-finds
+          # the signing identity — no CSC_LINK needed here.
           APPLE_API_KEY_ID: ${{ runner.os == 'macOS' && secrets.APPLE_API_KEY_ID || '' }}
           APPLE_API_ISSUER: ${{ runner.os == 'macOS' && secrets.APPLE_API_KEY_ISSUER_ID || '' }}
           APPLE_TEAM_ID: ${{ runner.os == 'macOS' && secrets.APPLE_TEAM_ID || '' }}
