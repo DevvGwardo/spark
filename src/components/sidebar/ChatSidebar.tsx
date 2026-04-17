@@ -82,6 +82,7 @@ export const ChatSidebar: React.FC = () => {
   const {
     conversations,
     loadConversations,
+    createConversation,
     deleteConversation,
     deleteOldConversations,
     renameConversation,
@@ -90,7 +91,7 @@ export const ChatSidebar: React.FC = () => {
 
   const { panels, focusedPanelId, setConversationForPanel, openPanel } = usePanelStore();
   const { activeTab, setActiveTab, setSettingsOpen, setRepoBrowserOpen, sidebarWidth, activeSubTab, setActiveSubTab } = useUIStore();
-  const { activeProvider } = useSettingsStore();
+  const { activeProvider, providers, defaultSystemPrompt } = useSettingsStore();
   const activities = useActivityStore((s) => s.activities);
   const getLineTotals = useChangesetStore((s) => s.getLineTotals);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -127,19 +128,24 @@ export const ChatSidebar: React.FC = () => {
 
   const focusedConvId = focusedPanel?.conversationId;
 
-  const handleNew = () => {
+  const handleNew = async () => {
     setActiveTab('chat');
-    setConversationForPanel(focusedPanelId, null);
+    const model = providers[activeProvider]?.model ?? '';
+    const id = await createConversation(activeProvider, model, defaultSystemPrompt);
+    setConversationForPanel(focusedPanelId, id);
   };
 
   // Listen for "New Chat" from Electron tray/dock menu
   useEffect(() => {
     const cleanup = window.electronAPI?.onNewChat?.(() => {
       setActiveTab('chat');
-      setConversationForPanel(focusedPanelId, null);
+      const model = providers[activeProvider]?.model ?? '';
+      createConversation(activeProvider, model, defaultSystemPrompt).then((id) => {
+        setConversationForPanel(focusedPanelId, id);
+      });
     });
     return () => { cleanup?.(); };
-  }, [focusedPanelId, setActiveTab, setConversationForPanel]);
+  }, [focusedPanelId, setActiveTab, setConversationForPanel, activeProvider, providers, defaultSystemPrompt, createConversation]);
 
   const handleRename = async (id: string) => {
     if (editTitle.trim()) await renameConversation(id, editTitle.trim());
