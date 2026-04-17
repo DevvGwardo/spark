@@ -1071,7 +1071,14 @@ When the user asks you to make changes:
           } as AIMessage,
         ];
         messagesRef.current = nextMessages;
-        setMessages(nextMessages);
+        // Only update the visible message buffer if the user is still viewing
+        // the conversation that this stream belongs to. If they navigated away,
+        // persistAssistantSnapshot already saved the message to the correct
+        // conversation in IndexedDB. Calling setMessages here would clobber
+        // the currently visible conversation's buffer with a different thread's response.
+        if (convId === convIdRef.current) {
+          setMessages(nextMessages);
+        }
       }
 
       // Persist assistant message (including parts and tool invocations)
@@ -1982,14 +1989,26 @@ When the user asks you to make changes:
     // until the next conversation is assigned. This prevents losing streaming responses.
 
     // If the user navigates to a different conversation while one is streaming,
-    // abort the stream. The stream's partial result is already being persisted
-    // to IndexedDB via onFinish/onToolCall, so nothing is lost.
+    // abort the stream and clear the message buffer immediately so the user
+    // doesn't see the old conversation's streaming chunks in the new one.
+    // The stream's partial result is already being persisted to IndexedDB
+    // via onFinish/onToolCall, so nothing is lost.
     const prevConvId = prevConversationIdRef.current;
     if (isStreaming && prevConvId !== null && conversationId !== prevConvId) {
       stop();
-      // Return early and let the stop() cascade handle cleanup.
-      // When isStreaming becomes false, this effect will re-run and
-      // perform the full conversation switch (save files, hydrate messages).
+      // Immediately clear the message buffer. safeSetMessages would silently
+      // drop this due to isStreamingRef.current, but the stream is being
+      // aborted so clobbering its buffer is the correct behavior.
+      // Use force=true to bypass the streaming guard.
+      safeSetMessages([], true);
+      // Kick off async hydration of the new conversation — by the time the
+      // IndexedDB read resolves, isStreaming will likely be false and
+      // safeSetMessages will accept the result.
+      if (conversationId !== null) {
+        hydrateConversationMessages(conversationId);
+      }
+      // Still return early — the full switch (save files, reset state) runs
+      // when isStreaming becomes false and the effect re-runs.
       return;
     }
 
