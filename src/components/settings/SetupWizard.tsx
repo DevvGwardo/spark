@@ -4,10 +4,11 @@ import { useSettingsStore, type Provider } from '@/stores/settings-store';
 import { PROVIDERS, PROVIDER_ORDER } from '@/lib/providers';
 import { validateApiKey } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import { getLocalProviderRuntimeDetails, parseLocalProviderRuntimeError } from '@/lib/local-provider-runtime';
-import { detectHermesBridge, hermesHasLocalCredentials, type HermesBridgeStatus } from '@/lib/detect-hermes';
+import { parseLocalProviderRuntimeError } from '@/lib/local-provider-runtime';
+import { detectHermesBridge, type HermesBridgeStatus } from '@/lib/detect-hermes';
 
 const STEP_LABELS = ['Provider', 'API Key', 'Finish'] as const;
+const HERMES_AGENT_DOCS_URL = 'https://hermes-agent.nousresearch.com/docs/getting-started/quickstart';
 
 const PROVIDER_HELP_URLS: Partial<Record<Provider, string>> = {
   openai: 'platform.openai.com/api-keys',
@@ -21,6 +22,7 @@ const PROVIDER_HELP_URLS: Partial<Record<Provider, string>> = {
   cerebras: 'cloud.cerebras.ai/platform',
   openrouter: 'openrouter.ai/keys',
   sambanova: 'cloud.sambanova.ai/apis',
+  hermes: 'openrouter.ai/keys',
 };
 
 export const SetupWizard: React.FC = () => {
@@ -29,15 +31,22 @@ export const SetupWizard: React.FC = () => {
   const [step, setStep] = useState(0);
   const [direction, setDirection] = useState<'forward' | 'backward'>('forward');
   const [isAnimating, setIsAnimating] = useState(false);
+  const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [selectedProvider, setSelectedProvider] = useState<Provider>('hermes');
   const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [selectedModel, setSelectedModel] = useState(PROVIDERS.hermes.defaultModel);
   const [validatedModels, setValidatedModels] = useState<string[]>([]);
   const [validating, setValidating] = useState(false);
+  const [oauthLoading, setOauthLoading] = useState(false);
   const [validationError, setValidationError] = useState('');
   const [hermesBridgeStatus, setHermesBridgeStatus] = useState<HermesBridgeStatus | null>(null);
+  const [bridgeDetectionAttempts, setBridgeDetectionAttempts] = useState(0);
   const [showOtherProviders, setShowOtherProviders] = useState(false);
+  const [showManualKeyEntry, setShowManualKeyEntry] = useState(false);
+  const [installingHermesAgent, setInstallingHermesAgent] = useState(false);
+  const [hermesInstallLog, setHermesInstallLog] = useState<string[]>([]);
+  const [hermesInstallError, setHermesInstallError] = useState('');
 
   const contentRef = useRef<HTMLDivElement>(null);
   const [contentHeight, setContentHeight] = useState<number | undefined>(undefined);
@@ -55,24 +64,133 @@ export const SetupWizard: React.FC = () => {
     measureHeight();
     window.addEventListener('resize', measureHeight);
     return () => window.removeEventListener('resize', measureHeight);
-  }, [step, measureHeight, validatedModels, validationError, showOtherProviders]);
+  }, [step, measureHeight, validatedModels, validationError, showOtherProviders, showManualKeyEntry, oauthLoading, installingHermesAgent, hermesInstallError, hermesInstallLog]);
 
   useEffect(() => {
     const t = setTimeout(measureHeight, 20);
     return () => clearTimeout(t);
-  }, [step, measureHeight, showOtherProviders]);
+  }, [step, measureHeight, showOtherProviders, showManualKeyEntry, oauthLoading, installingHermesAgent, hermesInstallError, hermesInstallLog]);
 
-  if (isSetupComplete) return null;
+  useEffect(() => {
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const runDetection = async (): Promise<HermesBridgeStatus | null> => {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (cancelled) return null;
+        const result = await detectHermesBridge();
+        if (result !== null) return result;
+        if (attempt < 2 && !cancelled) {
+          await new Promise(r => { retryTimer = setTimeout(r, 1500); });
+        }
+      }
+      return null;
+    };
+
+    const bootstrapWizard = async () => {
+      if (isSetupComplete) {
+        if (!cancelled) {
+          setIsBootstrapping(false);
+        }
+        return;
+      }
+
+      const bridgeStatus = await runDetection();
+      if (cancelled) {
+        return;
+      }
+
+      setBridgeDetectionAttempts(prev => prev + 1);
+      setHermesBridgeStatus(bridgeStatus);
+      if (bridgeStatus?.hermesDefaultModel) {
+        setSelectedModel(bridgeStatus.hermesDefaultModel);
+      }
+
+      if (bridgeStatus?.hasOpenRouterCreds) {
+        setActiveProvider('hermes');
+        updateProviderConfig('hermes', {
+          apiKey: '',
+          autoDetected: true,
+          model: bridgeStatus.hermesDefaultModel || PROVIDERS.hermes.defaultModel,
+        });
+        completeSetup();
+        return;
+      }
+
+      setIsBootstrapping(false);
+    };
+
+    void bootstrapWizard();
+
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+    };
+  }, [completeSetup, isSetupComplete, setActiveProvider, updateProviderConfig]);
+
+  const retryBridgeDetection = useCallback(async () => {
+    setHermesBridgeStatus(null);
+    const result = await detectHermesBridge();
+    setBridgeDetectionAttempts(prev => prev + 1);
+    setHermesBridgeStatus(result);
+    if (result?.hermesDefaultModel) {
+      setSelectedModel(result.hermesDefaultModel);
+    }
+    if (result?.hasOpenRouterCreds) {
+      setActiveProvider('hermes');
+      updateProviderConfig('hermes', {
+        apiKey: '',
+        autoDetected: true,
+        model: result.hermesDefaultModel || PROVIDERS.hermes.defaultModel,
+      });
+      completeSetup();
+    }
+  }, [completeSetup, setActiveProvider, updateProviderConfig]);
+
+  useEffect(() => {
+    const bridge = window.electronAPI?.bridge;
+    if (!bridge?.onInstallProgress) {
+      return;
+    }
+
+    return bridge.onInstallProgress((line) => {
+      const nextLines = line
+        .split(/\r?\n/)
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+
+      if (nextLines.length === 0) {
+        return;
+      }
+
+      setHermesInstallLog((prev) => [...prev, ...nextLines].slice(-6));
+    });
+  }, []);
+
+  if (isSetupComplete || isBootstrapping) return null;
 
   const providerInfo = PROVIDERS[selectedProvider];
   const needsApiKey = providerInfo.needsApiKey;
+  const hasHermesBridgeCreds = Boolean(hermesBridgeStatus?.hasOpenRouterCreds || hermesBridgeStatus?.hasMiniMaxCreds);
+  const shouldOfferOpenRouterOAuth = selectedProvider === 'openrouter' || (selectedProvider === 'hermes' && hermesBridgeStatus !== null && !hasHermesBridgeCreds);
+  const shouldShowHermesInstallFlow = selectedProvider === 'hermes' && hermesBridgeStatus === null;
+
+  const getHermesMissingCredentialMessage = (status: HermesBridgeStatus) => {
+    const missingSources = [
+      !status.credentialSources.authJson && '~/.hermes/auth.json',
+      !status.credentialSources.env && 'env',
+      !status.credentialSources.openclawGateway && '~/.openclaw/openclaw.json',
+    ].filter(Boolean).join(', ');
+
+    return `Bridge is running — no OpenRouter credential in ${missingSources}. Continue with OpenRouter to finish setup.`;
+  };
 
   const goToStep = (next: number) => {
     if (isAnimating) return;
     setDirection(next > step ? 'forward' : 'backward');
     setIsAnimating(true);
     setStep(next);
-    setTimeout(() => setIsAnimating(false), 400);
+    setTimeout(() => setIsAnimating(false), 200);
   };
 
   const handleProviderSelect = (p: Provider) => {
@@ -82,10 +200,16 @@ export const SetupWizard: React.FC = () => {
     setApiKey('');
     setValidationError('');
     setHermesBridgeStatus(null);
+    setShowManualKeyEntry(false);
+    setHermesInstallError('');
+    setHermesInstallLog([]);
   };
 
   const handleContinueFromProvider = () => {
     setValidationError('');
+    setHermesInstallError('');
+    setHermesInstallLog([]);
+    setShowManualKeyEntry(false);
 
     if (selectedProvider === 'openclaw') {
       void (async () => {
@@ -114,15 +238,16 @@ export const SetupWizard: React.FC = () => {
           const bridgeStatus = await detectHermesBridge();
           setHermesBridgeStatus(bridgeStatus);
           if (!bridgeStatus) {
-            setValidationError('Hermes bridge is not running. Start hermes-bridge/main.py to use Hermes Agent.');
-            return;
-          }
-          if (!bridgeStatus.hasOpenRouterCreds && !bridgeStatus.hasMiniMaxCreds) {
-            setValidationError('Hermes bridge has no API credentials. Set HERMES_OPENROUTER_KEY or HERMES_MINIMAX_KEY env var.');
+            goToStep(1);
             return;
           }
           if (bridgeStatus.hermesDefaultModel) {
             setSelectedModel(bridgeStatus.hermesDefaultModel);
+          }
+          if (!bridgeStatus.hasOpenRouterCreds && !bridgeStatus.hasMiniMaxCreds) {
+            setValidationError('');
+            goToStep(1);
+            return;
           }
           goToStep(2);
         } catch (error) {
@@ -135,13 +260,14 @@ export const SetupWizard: React.FC = () => {
     goToStep(needsApiKey ? 1 : 2);
   };
 
-  const handleValidateAndContinue = async () => {
-    if (!apiKey.trim()) return;
+  const validateAndContinue = async (nextKey: string) => {
+    if (!nextKey.trim()) return;
     setValidating(true);
     setValidationError('');
     try {
-      const result = await validateApiKey(selectedProvider, apiKey.trim());
+      const result = await validateApiKey(selectedProvider, nextKey.trim());
       if (result.valid) {
+        setApiKey(nextKey.trim());
         const nextModels = result.models?.filter(Boolean) || [];
         setValidatedModels(nextModels);
         setAvailableModels(selectedProvider, nextModels);
@@ -159,9 +285,93 @@ export const SetupWizard: React.FC = () => {
     }
   };
 
+  const handleValidateAndContinue = async () => {
+    await validateAndContinue(apiKey);
+  };
+
+  const handleContinueWithOpenRouter = async () => {
+    const openrouterOAuth = window.electronAPI?.openrouterOAuth;
+    if (!openrouterOAuth) {
+      setValidationError('OpenRouter sign-in is only available in the desktop app.');
+      return;
+    }
+
+    setOauthLoading(true);
+    setValidationError('');
+    try {
+      const nextKey = await openrouterOAuth();
+      setOauthLoading(false);
+      await validateAndContinue(nextKey);
+    } catch (error) {
+      setValidationError(error instanceof Error ? error.message : 'OpenRouter sign-in failed.');
+    } finally {
+      setOauthLoading(false);
+    }
+  };
+
+  const handleInstallHermes = async () => {
+    const bridge = window.electronAPI?.bridge;
+    if (!bridge?.installHermesAgent) {
+      setHermesInstallError('Hermes Agent install is only available in the desktop app.');
+      return;
+    }
+
+    setInstallingHermesAgent(true);
+    setValidationError('');
+    setHermesInstallError('');
+    setHermesInstallLog(['Starting Hermes Agent install…']);
+
+    try {
+      const result = await bridge.installHermesAgent();
+      if (!result.ok) {
+        const message = (result.message || 'Hermes Agent install failed.').trim();
+        const lines = message.split(/\r?\n/).filter(Boolean);
+        setHermesInstallError(lines[lines.length - 1] || message);
+        return;
+      }
+
+      const startResult = await bridge.start();
+      if (startResult.status === 'failed') {
+        const message = (startResult.message || 'Hermes bridge failed to start.').trim();
+        const lines = message.split(/\r?\n/).filter(Boolean);
+        setHermesInstallError(lines[lines.length - 1] || message);
+        return;
+      }
+
+      const bridgeStatus = await detectHermesBridge();
+      setHermesBridgeStatus(bridgeStatus);
+
+      if (!bridgeStatus) {
+        setHermesInstallError('Hermes Agent installed, but the bridge is still unavailable.');
+        return;
+      }
+
+      if (bridgeStatus.hermesDefaultModel) {
+        setSelectedModel(bridgeStatus.hermesDefaultModel);
+      }
+
+      if (bridgeStatus.hasOpenRouterCreds || bridgeStatus.hasMiniMaxCreds) {
+        goToStep(2);
+        return;
+      }
+
+      setValidationError('');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Hermes Agent install failed.';
+      const lines = message.split(/\r?\n/).filter(Boolean);
+      setHermesInstallError(lines[lines.length - 1] || message);
+    } finally {
+      setInstallingHermesAgent(false);
+    }
+  };
+
   const handleComplete = () => {
     setActiveProvider(selectedProvider);
-    updateProviderConfig(selectedProvider, { apiKey, model: selectedModel });
+    updateProviderConfig(selectedProvider, {
+      apiKey,
+      autoDetected: selectedProvider === 'hermes' && !apiKey.trim() && hasHermesBridgeCreds,
+      model: selectedModel,
+    });
     completeSetup();
   };
 
@@ -178,7 +388,7 @@ export const SetupWizard: React.FC = () => {
           <div
             key={label}
             className={cn(
-              'h-1.5 rounded-full transition-all duration-300',
+              'h-1.5 rounded-full transition-all duration-200',
               isActive ? 'w-6 bg-primary' : 'w-1.5',
               isCompleted ? 'bg-primary/50' : !isActive && 'bg-[#2A2A2A]'
             )}
@@ -311,67 +521,217 @@ export const SetupWizard: React.FC = () => {
   };
 
   // --- Step 1: API key ---
-  const renderApiKeyStep = () => (
-    <div key="apikey" data-step-content className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <h2 className="text-[13px] font-semibold tracking-tight text-foreground">API key</h2>
-        <button onClick={() => goToStep(0)} className="text-[11px] font-medium text-primary hover:underline flex items-center gap-1">
-          <ArrowLeft className="h-3 w-3" /> Change provider
-        </button>
-      </div>
+  const renderApiKeyStep = () => {
+    const oauthBusy = oauthLoading || validating;
 
-      <div className="flex items-center gap-2">
-        <ProviderIcon provider={selectedProvider} size={22} />
-        <span className="text-[13px] font-medium text-foreground">{providerInfo.label}</span>
-      </div>
+    return (
+      <div key="apikey" data-step-content className="flex flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-[13px] font-semibold tracking-tight text-foreground">
+            {shouldShowHermesInstallFlow ? 'Hermes Agent' : 'API key'}
+          </h2>
+          <button onClick={() => goToStep(0)} className="text-[11px] font-medium text-primary hover:underline flex items-center gap-1">
+            <ArrowLeft className="h-3 w-3" /> Change provider
+          </button>
+        </div>
 
-      <div className="relative">
-        <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#555]" />
-        <input
-          type={showKey ? 'text' : 'password'}
-          value={apiKey}
-          onChange={(e) => { setApiKey(e.target.value); setValidationError(''); }}
-          placeholder="sk-..."
-          autoFocus
-          className="w-full h-10 pl-9 pr-10 rounded-xl border border-[#2A2A2A] bg-[#161616] text-[13px] font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 transition-all duration-200 placeholder:text-[#444]"
-        />
-        <button onClick={() => setShowKey(!showKey)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#555] hover:text-foreground transition-colors">
-          {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-        </button>
-      </div>
+        <div className="flex items-center gap-2">
+          <ProviderIcon provider={selectedProvider} size={22} />
+          <span className="text-[13px] font-medium text-foreground">{providerInfo.label}</span>
+        </div>
 
-      {PROVIDER_HELP_URLS[selectedProvider] && (
-        <span className="text-[10px] text-[#555]">
-          Get your key at <span className="text-[#888]">{PROVIDER_HELP_URLS[selectedProvider]}</span>
-        </span>
-      )}
+        {shouldShowHermesInstallFlow ? (
+          <div className="flex flex-col gap-3">
+            <div className="rounded-xl border border-[#2A2A2A] bg-[#141414] px-3.5 py-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[11px] leading-relaxed text-[#666]">
+                  Hermes bridge is offline. Install Hermes Agent locally and CloudChat will start the bridge for this launch.
+                </p>
+                <button
+                  onClick={retryBridgeDetection}
+                  className="shrink-0 text-[11px] font-medium text-primary hover:underline"
+                  title="Re-check bridge status"
+                >
+                  Refresh
+                </button>
+              </div>
+            </div>
 
-      {validationError && (
-        <p className="text-[11px] text-destructive animate-in fade-in slide-in-from-top-1 duration-200">{validationError}</p>
-      )}
+            {(installingHermesAgent || hermesInstallLog.length > 0) && (
+              <div className="rounded-xl border border-[#2A2A2A] bg-[#111111] px-3 py-2.5">
+                <div className="flex flex-col gap-1 font-mono text-[10px] leading-[1.45] text-[#8A8A8A]">
+                  {hermesInstallLog.map((line, index) => (
+                    <span key={`${line}-${index}`} className="truncate">{line}</span>
+                  ))}
+                </div>
+              </div>
+            )}
 
-      <button
-        onClick={handleValidateAndContinue}
-        disabled={!apiKey.trim() || validating}
-        className={cn(
-          'w-full flex items-center justify-center gap-2 h-11 rounded-xl text-[13px] font-medium transition-all duration-200 active:scale-[0.98]',
-          apiKey.trim() && !validating
-            ? 'bg-primary text-primary-foreground hover:opacity-90'
-            : 'bg-[#222] text-[#555] cursor-not-allowed'
+            {hermesInstallError && (
+              <p className="text-[11px] text-destructive animate-in fade-in slide-in-from-top-1 duration-200">
+                {hermesInstallError}{' '}
+                <a
+                  href={HERMES_AGENT_DOCS_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-primary hover:underline"
+                >
+                  View docs
+                </a>
+              </p>
+            )}
+
+            <button
+              onClick={handleInstallHermes}
+              disabled={installingHermesAgent}
+              className={cn(
+                'w-full flex items-center justify-center gap-2 h-11 rounded-xl text-[13px] font-medium transition-all duration-200 active:scale-[0.98]',
+                installingHermesAgent
+                  ? 'bg-[#222] text-[#909090]'
+                  : 'bg-primary text-primary-foreground hover:opacity-90'
+              )}
+            >
+              {installingHermesAgent
+                ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Installing Hermes Agent…</>
+                : <>Install Hermes Agent · ~30s <ArrowRight className="h-3.5 w-3.5" /></>
+              }
+            </button>
+          </div>
+        ) : shouldOfferOpenRouterOAuth ? (
+          <div className="flex flex-col gap-3">
+            <div className="rounded-xl border border-[#2A2A2A] bg-[#141414] px-3.5 py-3">
+              <p className="text-[11px] leading-relaxed text-[#666]">
+                {selectedProvider === 'hermes' && hermesBridgeStatus
+                  ? getHermesMissingCredentialMessage(hermesBridgeStatus)
+                  : 'Continue with OpenRouter to connect your account without pasting a key.'}
+              </p>
+            </div>
+
+            {validationError && (
+              <p className="text-[11px] text-destructive animate-in fade-in slide-in-from-top-1 duration-200">{validationError}</p>
+            )}
+
+            <button
+              onClick={handleContinueWithOpenRouter}
+              disabled={oauthBusy}
+              className={cn(
+                'w-full flex items-center justify-center gap-2 h-11 rounded-xl text-[13px] font-medium transition-all duration-200 active:scale-[0.98]',
+                oauthBusy
+                  ? 'bg-[#222] text-[#909090]'
+                  : 'bg-primary text-primary-foreground hover:opacity-90'
+              )}
+            >
+              {oauthLoading
+                ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Opening OpenRouter…</>
+                : validating
+                  ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Finishing setup…</>
+                  : <>Continue with OpenRouter <ArrowRight className="h-3.5 w-3.5" /></>
+              }
+            </button>
+
+            <button
+              onClick={() => setShowManualKeyEntry((current) => !current)}
+              className="w-full flex items-center justify-center gap-2 py-2.5 text-[12px] text-[#888] hover:text-[#aaa] transition-colors rounded-xl hover:bg-[#161616]"
+            >
+              Have a key? Enter manually
+              {showManualKeyEntry ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+            </button>
+
+            {showManualKeyEntry && (
+              <div className="rounded-xl border border-[#2A2A2A] bg-[#141414] px-3.5 py-3 flex flex-col gap-3">
+                <div className="relative">
+                  <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#555]" />
+                  <input
+                    type={showKey ? 'text' : 'password'}
+                    value={apiKey}
+                    onChange={(e) => { setApiKey(e.target.value); setValidationError(''); }}
+                    placeholder="sk-..."
+                    autoFocus
+                    className="w-full h-10 pl-9 pr-10 rounded-xl border border-[#2A2A2A] bg-[#161616] text-[13px] font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 transition-all duration-200 placeholder:text-[#444]"
+                  />
+                  <button onClick={() => setShowKey(!showKey)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#555] hover:text-foreground transition-colors">
+                    {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                  </button>
+                </div>
+
+                {PROVIDER_HELP_URLS[selectedProvider] && (
+                  <span className="text-[10px] text-[#555]">
+                    Get your key at <span className="text-[#888]">{PROVIDER_HELP_URLS[selectedProvider]}</span>
+                  </span>
+                )}
+
+                <button
+                  onClick={handleValidateAndContinue}
+                  disabled={!apiKey.trim() || validating}
+                  className={cn(
+                    'w-full flex items-center justify-center gap-2 h-10 rounded-xl text-[12px] font-medium transition-all duration-200 active:scale-[0.98]',
+                    apiKey.trim() && !validating
+                      ? 'border border-[#2A2A2A] bg-[#191919] text-foreground hover:border-[#3A3A3A]'
+                      : 'border border-[#222] bg-[#151515] text-[#555] cursor-not-allowed'
+                  )}
+                >
+                  {validating
+                    ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Validating…</>
+                    : <>Continue with key <ArrowRight className="h-3.5 w-3.5" /></>
+                  }
+                </button>
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
+            <div className="relative">
+              <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#555]" />
+              <input
+                type={showKey ? 'text' : 'password'}
+                value={apiKey}
+                onChange={(e) => { setApiKey(e.target.value); setValidationError(''); }}
+                placeholder="sk-..."
+                autoFocus
+                className="w-full h-10 pl-9 pr-10 rounded-xl border border-[#2A2A2A] bg-[#161616] text-[13px] font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 transition-all duration-200 placeholder:text-[#444]"
+              />
+              <button onClick={() => setShowKey(!showKey)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#555] hover:text-foreground transition-colors">
+                {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+
+            {PROVIDER_HELP_URLS[selectedProvider] && (
+              <span className="text-[10px] text-[#555]">
+                Get your key at <span className="text-[#888]">{PROVIDER_HELP_URLS[selectedProvider]}</span>
+              </span>
+            )}
+
+            {validationError && (
+              <p className="text-[11px] text-destructive animate-in fade-in slide-in-from-top-1 duration-200">{validationError}</p>
+            )}
+
+            <button
+              onClick={handleValidateAndContinue}
+              disabled={!apiKey.trim() || validating}
+              className={cn(
+                'w-full flex items-center justify-center gap-2 h-11 rounded-xl text-[13px] font-medium transition-all duration-200 active:scale-[0.98]',
+                apiKey.trim() && !validating
+                  ? 'bg-primary text-primary-foreground hover:opacity-90'
+                  : 'bg-[#222] text-[#555] cursor-not-allowed'
+              )}
+            >
+              {validating
+                ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Validating...</>
+                : <>Connect <ArrowRight className="h-3.5 w-3.5" /></>
+              }
+            </button>
+          </>
         )}
-      >
-        {validating
-          ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Validating...</>
-          : <>Connect <ArrowRight className="h-3.5 w-3.5" /></>
-        }
-      </button>
 
-      <div className="flex items-center justify-center gap-1.5">
-        <Lock className="h-2.5 w-2.5 text-[#444]" />
-        <span className="text-[10px] text-[#444]">Stored locally, never sent to CloudChat</span>
+        {!shouldShowHermesInstallFlow && (
+          <div className="flex items-center justify-center gap-1.5">
+            <Lock className="h-2.5 w-2.5 text-[#444]" />
+            <span className="text-[10px] text-[#444]">Stored locally, never sent to CloudChat</span>
+          </div>
+        )}
       </div>
-    </div>
-  );
+    );
+  };
 
   // --- Step 2: Finish ---
   const renderFinishStep = () => (
@@ -391,7 +751,7 @@ export const SetupWizard: React.FC = () => {
             {apiKey && <p className="text-[10px] text-[#555] font-mono truncate">{maskedKey}</p>}
           </div>
           <span className="text-[10px] font-medium px-2 py-0.5 rounded-full" style={{ backgroundColor: '#00FF8815', color: '#00FF88' }}>
-            Connected
+            {selectedProvider === 'hermes' && !apiKey.trim() && hasHermesBridgeCreds ? 'Signed in via Hermes' : 'Connected'}
           </span>
         </div>
       </div>
@@ -408,8 +768,8 @@ export const SetupWizard: React.FC = () => {
 
   const animClass = isAnimating
     ? direction === 'forward'
-      ? 'animate-in fade-in slide-in-from-right-4 duration-300'
-      : 'animate-in fade-in slide-in-from-left-4 duration-300'
+      ? 'animate-in fade-in slide-in-from-right-4 duration-200'
+      : 'animate-in fade-in slide-in-from-left-4 duration-200'
     : '';
 
   return (
@@ -420,7 +780,7 @@ export const SetupWizard: React.FC = () => {
           <div className="mt-2">{renderStepIndicator()}</div>
         </div>
         <div
-          className="transition-[height] duration-300 ease-out overflow-hidden"
+          className="transition-[height] duration-200 ease-out overflow-hidden"
           style={{ height: contentHeight ? `${contentHeight + 16}px` : 'auto' }}
         >
           <div ref={contentRef}>

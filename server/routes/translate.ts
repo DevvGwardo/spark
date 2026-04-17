@@ -5,7 +5,7 @@ import {
   OPENAI_COMPATIBLE,
 } from '../provider-config';
 import { extractHermesChoiceText } from '../lib/hermes';
-import { getHubSelectedProfileName } from '../lib/hermes-profiles';
+import { getProfileFromRequest } from '../lib/hermes-profiles';
 import { normalizeChatMessages } from '../message-normalization';
 import { sendJson } from '../lib/helpers';
 import { getUnknownErrorMessage } from '../lib/github-utils';
@@ -171,7 +171,7 @@ app.post('/functions/v1/translate', async (req, res) => {
       ...(api_key ? { Authorization: `Bearer ${api_key}` } : {}),
       ...getProviderHeaders(provider),
       ...(provider === 'hermes' ? { 'X-Hermes-Execution-Mode': 'agent-loop' } : {}),
-      ...(provider === 'hermes' ? { 'X-Hermes-Profile': getHubSelectedProfileName() } : {}),
+      ...(provider === 'hermes' ? { 'X-Hermes-Profile': getProfileFromRequest(req) } : {}),
     };
 
     const response = await fetch(`${baseUrl}/chat/completions`, {

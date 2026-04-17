@@ -114,9 +114,9 @@ export function HermesUsagePanel() {
                 formattedValue={formatCompactNumber(usage.total_tokens)}
                 className="mt-2 text-[18px] font-semibold leading-none text-foreground"
               />
-              <p className="mt-1 text-[10px] text-muted-foreground/45">
+              <div className="mt-1 text-[10px] text-muted-foreground/45">
                 <SlotNumber formattedValue={formatCompactNumber(usage.tool_call_count)} /> tool calls recorded
-              </p>
+              </div>
             </div>
           </div>
 

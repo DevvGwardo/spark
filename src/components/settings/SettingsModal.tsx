@@ -797,7 +797,11 @@ export const SettingsModal: React.FC = () => {
   const getProviderStatus = (p: Provider): { label: string; color: string; bg: string } | null => {
     const info = PROVIDERS[p];
     if (!info.needsApiKey) return null;
-    const key = providers[p]?.apiKey;
+    const config = providers[p];
+    if (p === 'hermes' && config?.autoDetected) {
+      return { label: 'Signed in via Hermes', color: '#00FF88', bg: '#00FF8812' };
+    }
+    const key = config?.apiKey;
     if (key?.trim()) return { label: 'Connected', color: '#00FF88', bg: '#00FF8812' };
     return { label: 'No key', color: '#FF6666', bg: '#FF444412' };
   };

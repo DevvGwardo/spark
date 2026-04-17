@@ -192,6 +192,10 @@ const headerSecondaryLabel = selectedCronJobId
   const [bridgeSetupVisible, setBridgeSetupVisible] = useState(false);
   const [bridgeSetupDismissed, setBridgeSetupDismissed] = useState(false);
   useEffect(() => {
+    if (!isSetupComplete) {
+      setBridgeSetupVisible(false);
+      return;
+    }
     const bridge = window.electronAPI?.bridge;
     if (!bridge) return; // browser/dev mode without Electron — N/A
     let cancelled = false;
@@ -226,7 +230,7 @@ const headerSecondaryLabel = selectedCronJobId
       cancelled = true;
       if (poller) clearTimeout(poller);
     };
-  }, [bridgeSetupDismissed]);
+  }, [bridgeSetupDismissed, isSetupComplete]);
 
   // Sidebar resize handling
   const isResizing = useRef(false);
@@ -261,7 +265,7 @@ const headerSecondaryLabel = selectedCronJobId
 
   return (
     <>
-      {bridgeSetupVisible && (
+      {isSetupComplete && bridgeSetupVisible && (
         <BridgeSetupModal
           onComplete={() => {
             setBridgeSetupVisible(false);

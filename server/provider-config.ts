@@ -256,7 +256,7 @@ export const MODEL_DISCOVERY_URLS: Partial<Record<string, string>> = {
 
 export const VALIDATION_MODELS: Record<string, string> = {
   openai: 'gpt-5.4',
-  anthropic: 'claude-sonnet-4-5-20250929',
+  anthropic: 'claude-opus-4-7',
   google: 'gemini-2.5-flash',
   xai: 'grok-4-fast-reasoning',
   groq: 'llama-3.3-70b-versatile',
@@ -405,6 +405,7 @@ export const CONTEXT_WINDOW_SIZES: Record<string, number> = {
   'claude-sonnet-4': 200_000,
   'claude-sonnet-4-20250514': 200_000,
   'claude-opus-4': 200_000,
+  'claude-opus-4-7': 200_000,
   'claude-haiku-4': 200_000,
   'claude-haiku-4-5': 200_000,
   'gpt-4.1': 1_047_576,

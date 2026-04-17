@@ -32,7 +32,7 @@ import {
 } from '../lib/hermes';
 import { buildLocalExecutionTools, parseAgentToolsets, getLocalToolsSystemPromptFragment } from '../local-tools';
 import { MAX_AGENT_STEPS } from '../config';
-import { getHubSelectedProfileName } from '../lib/hermes-profiles';
+import { getProfileFromRequest } from '../lib/hermes-profiles';
 
 // ─── /functions/v1/chat ──────────────────────────────────────────────────────
 
@@ -584,7 +584,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
     // githubPAT was already extracted and validated above (before system prompt building)
     const hasServerRepoContext = !!(activeRepo && githubPAT);
     const shouldForwardHermesRepoContext = provider === 'hermes' && !!(activeRepo && githubPAT);
-    const activeHermesProfile = provider === 'hermes' ? getHubSelectedProfileName() : null;
+    const activeHermesProfile = provider === 'hermes' ? getProfileFromRequest(req) : null;
     const runtimeProvider = resolveRuntimeProvider(provider, { activeRepo });
     const hermesExecutionMode =
       provider === 'hermes' && runtimeProvider === 'hermes'

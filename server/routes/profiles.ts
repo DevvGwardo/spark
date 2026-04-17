@@ -2,10 +2,9 @@ import { type Express } from 'express';
 import fs from 'fs';
 import path from 'path';
 import {
-  getHubSelectedProfileName,
-  setHubSelectedProfile,
   getHermesRoot,
   getProfilesRoot,
+  getProfileFromRequest,
   validateProfileName,
 } from '../lib/hermes-profiles';
 
@@ -45,11 +44,13 @@ function countFilesRecursive(rootPath: string, predicate: (p: string) => boolean
 }
 
 export function registerProfilesRoutes(app: Express) {
-  // GET /api/hermes/profiles - list all profiles
-  app.get('/api/hermes/profiles', (_req, res) => {
+  // GET /api/hermes/profiles - list all profiles. The `active` flag reflects
+  // the requesting window's selection (sent via X-Hermes-Profile header);
+  // the server itself holds no active-profile state.
+  app.get('/api/hermes/profiles', (req, res) => {
     try {
       const profilesRoot = getProfilesRoot();
-      const hubProfile = getHubSelectedProfileName();
+      const requestProfile = getProfileFromRequest(req);
       const results: Array<{
         name: string; path: string; active: boolean; model?: string;
         provider?: string; skillCount: number; sessionCount: number; hasEnv: boolean;
@@ -64,7 +65,7 @@ export function registerProfilesRoutes(app: Express) {
           const profilePath = path.join(profilesRoot, name);
           const config = readYamlConfig(path.join(profilePath, 'config.yaml'));
           results.push({
-            name, path: profilePath, active: name === hubProfile,
+            name, path: profilePath, active: name === requestProfile,
             model: config.model as string | undefined,
             provider: config.provider as string | undefined,
             skillCount: countFilesRecursive(path.join(profilePath, 'skills'), (p) => path.basename(p) === 'SKILL.md'),
@@ -77,7 +78,7 @@ export function registerProfilesRoutes(app: Express) {
       const root = getHermesRoot();
       const defaultConfig = readYamlConfig(path.join(root, 'config.yaml'));
       results.unshift({
-        name: 'default', path: root, active: hubProfile === 'default',
+        name: 'default', path: root, active: requestProfile === 'default',
         model: defaultConfig.model as string | undefined,
         provider: defaultConfig.provider as string | undefined,
         skillCount: countFilesRecursive(path.join(root, 'skills'), (p) => path.basename(p) === 'SKILL.md'),
@@ -91,28 +92,9 @@ export function registerProfilesRoutes(app: Express) {
         return a.name.localeCompare(b.name);
       });
 
-      res.json({ profiles: results, activeProfile: hubProfile });
+      res.json({ profiles: results, activeProfile: requestProfile });
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to list profiles' });
-    }
-  });
-
-  // POST /api/hermes/profiles/activate - switch active profile (hub-only, does not affect CLI)
-  app.post('/api/hermes/profiles/activate', (req, res) => {
-    try {
-      const { name } = req.body;
-      if (!name) return res.status(400).json({ error: 'Profile name required' });
-      if (name === 'default') {
-        setHubSelectedProfile(null); // null = default
-      } else {
-        const normalized = validateProfileName(name);
-        const profilePath = path.join(getProfilesRoot(), normalized);
-        if (!fs.existsSync(profilePath)) return res.status(404).json({ error: 'Profile not found' });
-        setHubSelectedProfile(normalized);
-      }
-      res.json({ ok: true, activeProfile: name });
-    } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to activate profile' });
     }
   });
 
@@ -145,15 +127,14 @@ export function registerProfilesRoutes(app: Express) {
     }
   });
 
-  // POST /api/hermes/profiles/delete - delete profile (moves to trash)
+  // POST /api/hermes/profiles/delete - delete profile (moves to trash). The
+  // client enforces "can't delete the profile I'm currently using" — other
+  // windows' selections are not visible to the server.
   app.post('/api/hermes/profiles/delete', (req, res) => {
     try {
       const { name } = req.body;
       if (!name) return res.status(400).json({ error: 'Profile name required' });
       const normalized = validateProfileName(name);
-      if (normalized === getHubSelectedProfileName()) {
-        return res.status(400).json({ error: 'Cannot delete the active profile' });
-      }
       const profilePath = path.join(getProfilesRoot(), normalized);
       if (!fs.existsSync(profilePath)) return res.status(404).json({ error: 'Profile not found' });
 

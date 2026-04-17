@@ -35,6 +35,7 @@ interface ChatInputProps {
   onSend: () => void;
   onStop?: () => void;
   isStreaming: boolean;
+  isAnotherPanelStreamingSameProfile?: boolean;
   toolCallCount?: number;
   disabled?: boolean;
   disabledPlaceholder?: string;
@@ -59,6 +60,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   onSend,
   onStop,
   isStreaming,
+  isAnotherPanelStreamingSameProfile = false,
   toolCallCount = 0,
   disabled,
   disabledPlaceholder,
@@ -234,6 +236,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           onSteer={onSteerQueuedMessage}
           disabled={disabled}
           connected={hasQueuedMessages}
+          waitingForOtherPanel={isAnotherPanelStreamingSameProfile}
         />
 
         <div

@@ -4,6 +4,8 @@ export interface CommandContext {
   setMiniBrowserOpen: (open: boolean) => void;
   setMiniBrowserUrl: (url: string) => void;
   newConversation?: () => void;
+  setConversationForPanel?: (panelId: string, conversationId: string | null) => void;
+  openPanel?: (conversationId: string | null) => void;
   resetSession?: () => void;
   stopAgent?: () => void;
   renameConversation?: (title: string) => void;

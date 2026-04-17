@@ -15,6 +15,7 @@ export type FontFamily = 'inter' | 'mono' | 'serif';
 
 export interface ProviderConfig {
   apiKey: string;
+  autoDetected: boolean;
   model: string;
   temperature: number;
   topP: number;
@@ -72,6 +73,7 @@ const DEFAULT_OPENAI_MODEL = 'gpt-5.4';
 function makeDefault(model: string): ProviderConfig {
   return {
     apiKey: '',
+    autoDetected: false,
     model,
     temperature: 0.7,
     topP: 0.9,
@@ -90,7 +92,7 @@ const LEGACY_HERMES_MODELS = new Set([
 
 const defaultProviders: Record<Provider, ProviderConfig> = {
   openai: makeDefault(DEFAULT_OPENAI_MODEL),
-  anthropic: makeDefault('claude-sonnet-4-5-20250929'),
+  anthropic: makeDefault('claude-opus-4-7'),
   google: makeDefault('gemini-2.5-flash'),
   xai: makeDefault('grok-4-fast-reasoning'),
   groq: makeDefault('llama-3.3-70b-versatile'),
@@ -148,6 +150,7 @@ function normalizeProviderConfig(
 
   return {
     apiKey: typeof config?.apiKey === 'string' ? config.apiKey : defaults.apiKey,
+    autoDetected: typeof config?.autoDetected === 'boolean' ? config.autoDetected : defaults.autoDetected,
     model: typeof config?.model === 'string' && config.model.trim().length > 0 ? config.model : defaults.model,
     temperature: typeof config?.temperature === 'number' && Number.isFinite(config.temperature)
       ? config.temperature

@@ -15,10 +15,6 @@ const providerConfigMocks = vi.hoisted(() => ({
   createProviderModel: vi.fn(),
 }))
 
-const hermesProfileMocks = vi.hoisted(() => ({
-  getHubSelectedProfileName: vi.fn(() => 'agent-two'),
-}))
-
 vi.mock('ai', async () => {
   const actual = await vi.importActual<typeof import('ai')>('ai')
   return {
@@ -34,14 +30,6 @@ vi.mock('../provider-config', async () => {
   return {
     ...actual,
     createProviderModel: providerConfigMocks.createProviderModel,
-  }
-})
-
-vi.mock('../lib/hermes-profiles', async () => {
-  const actual = await vi.importActual<typeof import('../lib/hermes-profiles')>('../lib/hermes-profiles')
-  return {
-    ...actual,
-    getHubSelectedProfileName: hermesProfileMocks.getHubSelectedProfileName,
   }
 })
 
@@ -146,7 +134,10 @@ describe('Hermes chat route', () => {
     try {
       const response = await actualFetchLocal(`${server.url}/functions/v1/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Hermes-Profile': 'agent-two',
+        },
         body: JSON.stringify({
           provider: 'hermes',
           model: 'meta-llama/llama-4-maverick',
@@ -279,7 +270,10 @@ describe('Hermes chat route', () => {
     try {
       const response = await actualFetch(`${server.url}/functions/v1/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Hermes-Profile': 'agent-two',
+        },
         body: JSON.stringify({
           provider: 'hermes',
           model: 'meta-llama/llama-4-maverick',

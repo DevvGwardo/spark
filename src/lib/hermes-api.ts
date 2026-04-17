@@ -1,4 +1,5 @@
 import { getApiBaseUrl } from './api';
+import { getActiveProfile } from '@/stores/profiles-store';
 
 const BRIDGE_BASE = '/api/hermes';
 
@@ -52,6 +53,7 @@ export interface HermesSessionMessage {
 export interface HermesSessionDetail extends HermesSession {
   chat?: HermesSessionMessage[];
   error?: string | null;
+  source?: string | null;
 }
 
 export interface HermesWorkspaceFileSummary {
@@ -163,6 +165,7 @@ async function hermesFetch<T = unknown>(
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      'X-Hermes-Profile': getActiveProfile(),
       ...options?.headers,
     },
   });

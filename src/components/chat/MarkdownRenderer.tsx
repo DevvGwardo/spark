@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
-import { Check, ChevronDown, Copy, Terminal } from 'lucide-react';
+import { Check, ChevronDown, Copy, ExternalLink, Terminal } from 'lucide-react';
 import { codeToHtml } from 'shiki';
 
 const LANG_LABELS: Record<string, string> = {
@@ -74,6 +74,22 @@ const SHIKI_LANG_MAP: Record<string, string> = {
   plaintext: 'text',
   text: 'text',
 };
+
+/** If inline-code text looks like an openable local path or file:// URL, return the URL to open. */
+function getOpenableUrl(text: string): string | null {
+  const trimmed = text.trim();
+  if (/^file:\/\/\/\S+$/i.test(trimmed)) return trimmed;
+  if (/^\/(?:Users|home|tmp|var|opt|etc|private)\/\S+$/.test(trimmed)) return `file://${trimmed}`;
+  return null;
+}
+
+function openExternalUrl(url: string) {
+  if (window.electronAPI?.openExternal) {
+    void window.electronAPI.openExternal(url);
+  } else {
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+}
 
 /** Recursively extract plain text from React children */
 function extractText(node: React.ReactNode): string {
@@ -270,15 +286,54 @@ const MarkdownRendererInner = React.forwardRef<HTMLDivElement, MarkdownRendererP
           rehypePlugins={plugins.rehype}
           components={{
             code({ className, children, node: _node, ...props }) {
-              const isBlock = className?.includes('language-') || extractText(children).includes('\n');
+              const text = extractText(children);
+              const isBlock = className?.includes('language-') || text.includes('\n');
               if (isBlock) {
                 return <CodeBlock className={className} {...props}>{children}</CodeBlock>;
+              }
+              const openableUrl = getOpenableUrl(text);
+              if (openableUrl) {
+                return (
+                  <span className="inline-flex items-center gap-1 align-baseline">
+                    <code className="px-1.5 py-0.5 rounded bg-muted/60 text-[13px] font-mono border border-border/30 text-foreground/90" {...props}>
+                      {children}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => openExternalUrl(openableUrl)}
+                      className="inline-flex h-5 w-5 items-center justify-center rounded border border-border/40 text-muted-foreground transition hover:bg-muted/60 hover:text-foreground"
+                      title="Open in browser"
+                      aria-label="Open in browser"
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                    </button>
+                  </span>
+                );
               }
               return (
                 <code className="px-1.5 py-0.5 rounded bg-muted/60 text-[13px] font-mono border border-border/30 text-foreground/90" {...props}>
                   {children}
                 </code>
               );
+            },
+            a({ href, children, ...props }) {
+              const isExternal = typeof href === 'string' && /^(https?:\/\/|file:\/\/\/)/i.test(href);
+              if (isExternal) {
+                return (
+                  <a
+                    href={href}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      openExternalUrl(href!);
+                    }}
+                    className="text-primary underline-offset-2 hover:underline cursor-pointer"
+                    {...props}
+                  >
+                    {children}
+                  </a>
+                );
+              }
+              return <a href={href} {...props}>{children}</a>;
             },
             table({ children }) {
               return (

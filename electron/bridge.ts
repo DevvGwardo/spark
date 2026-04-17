@@ -17,14 +17,18 @@
 
 import { app } from 'electron'
 import { spawn, ChildProcess, execFileSync } from 'child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { randomBytes } from 'crypto'
+import { existsSync, mkdirSync } from 'fs'
 import { join, resolve } from 'path'
 import { homedir } from 'os'
 
 const BRIDGE_PORT = Number(process.env.HERMES_PORT || 3002)
 const BRIDGE_HEALTH_URL = `http://127.0.0.1:${BRIDGE_PORT}/health`
+const BRIDGE_DIAG_URL = `http://127.0.0.1:${BRIDGE_PORT}/diag`
 const BRIDGE_HEALTH_TIMEOUT_MS = 30_000
 const BRIDGE_HEALTH_POLL_MS = 500
+// Per-launch token lets Electron distinguish its own bridge from stale processes on :3002.
+const BRIDGE_TOKEN = randomBytes(32).toString('hex')
 
 let bridgeProcess: ChildProcess | null = null
 let bridgeStartPromise: Promise<BridgeStartResult> | null = null
@@ -39,8 +43,6 @@ export interface BridgeSetupStatus {
   bridgeSource: string | null
   bridgeDepsInstalled: boolean
   hermesAgentPresent: boolean
-  authJsonPresent: boolean
-  authJsonValid: boolean
   bridgeReachable: boolean
 }
 
@@ -137,10 +139,6 @@ function hermesAgentDir(): string {
   return join(homedir(), '.hermes', 'hermes-agent')
 }
 
-function authJsonPath(): string {
-  return join(homedir(), '.hermes', 'auth.json')
-}
-
 // ── Health checks ──────────────────────────────────────────────────────────
 
 async function isBridgeReachable(): Promise<boolean> {
@@ -155,35 +153,98 @@ async function isBridgeReachable(): Promise<boolean> {
   }
 }
 
-async function waitForBridge(timeoutMs = BRIDGE_HEALTH_TIMEOUT_MS): Promise<boolean> {
+async function isOwnedBridge(): Promise<boolean> {
+  try {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 1500)
+    const res = await fetch(BRIDGE_DIAG_URL, { signal: controller.signal })
+    clearTimeout(timeout)
+    if (!res.ok) {
+      return false
+    }
+    const data = await res.json() as { token?: string }
+    return data.token === BRIDGE_TOKEN
+  } catch {
+    return false
+  }
+}
+
+async function waitForOwnedBridge(timeoutMs = BRIDGE_HEALTH_TIMEOUT_MS): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    if (await isBridgeReachable()) return true
+    if (await isBridgeReachable() && await isOwnedBridge()) return true
     await new Promise((r) => setTimeout(r, BRIDGE_HEALTH_POLL_MS))
   }
   return false
 }
 
-// ── Setup status ───────────────────────────────────────────────────────────
-
-function isAuthJsonValid(): boolean {
-  const p = authJsonPath()
-  if (!existsSync(p)) return false
+function getBridgePidsOnPort(): number[] {
   try {
-    const data = JSON.parse(readFileSync(p, 'utf8')) as {
-      providers?: Record<string, { api_key?: string; key?: string; token?: string }>
-      credential_pool?: Array<{ api_key?: string }>
+    if (process.platform === 'win32') {
+      const output = execFileSync('netstat', ['-ano', '-p', 'tcp'], { encoding: 'utf8' })
+      return [...new Set(output
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.startsWith('TCP'))
+        .flatMap((line) => {
+          const parts = line.split(/\s+/)
+          if (parts.length < 5) return []
+          const localAddress = parts[1] || ''
+          const state = parts[3] || ''
+          const pid = Number(parts[4] || '')
+          if (!localAddress.endsWith(`:${BRIDGE_PORT}`) || state !== 'LISTENING' || !Number.isInteger(pid) || pid <= 0) {
+            return []
+          }
+          return [pid]
+        }))]
     }
-    const providers = data.providers ?? {}
-    const hasProviderKey = Object.values(providers).some(
-      (p) => Boolean(p.api_key || p.key || p.token),
-    )
-    const hasPoolKey = (data.credential_pool ?? []).some((c) => Boolean(c.api_key))
-    return hasProviderKey || hasPoolKey
+
+    const output = execFileSync('lsof', ['-ti', `:${BRIDGE_PORT}`], { encoding: 'utf8' })
+    return [...new Set(output
+      .split(/\r?\n/)
+      .map((line) => Number(line.trim()))
+      .filter((pid) => Number.isInteger(pid) && pid > 0)
+    )]
   } catch {
-    return false
+    return []
   }
 }
+
+function killUnownedBridge(): boolean {
+  const pids = getBridgePidsOnPort()
+  if (pids.length === 0) {
+    return false
+  }
+
+  let killed = false
+  for (const pid of pids) {
+    try {
+      if (process.platform === 'win32') {
+        execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
+      } else {
+        process.kill(pid, 'SIGTERM')
+      }
+      killed = true
+    } catch (error) {
+      console.warn('[bridge] failed to terminate process on :' + BRIDGE_PORT, error)
+    }
+  }
+
+  return killed
+}
+
+async function waitForBridgeExit(timeoutMs = 5_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (getBridgePidsOnPort().length === 0) {
+      return true
+    }
+    await new Promise((r) => setTimeout(r, 100))
+  }
+  return false
+}
+
+// ── Setup status ───────────────────────────────────────────────────────────
 
 export async function getBridgeSetupStatus(): Promise<BridgeSetupStatus> {
   const pythonPath = resolvePython()
@@ -210,8 +271,6 @@ export async function getBridgeSetupStatus(): Promise<BridgeSetupStatus> {
     bridgeSource,
     bridgeDepsInstalled,
     hermesAgentPresent: existsSync(join(hermesAgentDir(), 'run_agent.py')),
-    authJsonPresent: existsSync(authJsonPath()),
-    authJsonValid: isAuthJsonValid(),
     bridgeReachable: await isBridgeReachable(),
   }
 }
@@ -223,9 +282,32 @@ export async function startBridge(): Promise<BridgeStartResult> {
   if (bridgeStartPromise) return bridgeStartPromise
 
   bridgeStartPromise = (async (): Promise<BridgeStartResult> => {
-    if (await isBridgeReachable()) {
-      console.log('[bridge] already running on :' + BRIDGE_PORT + ', reusing')
-      return { status: 'reused-existing' }
+    const bridgeReachable = await isBridgeReachable()
+    const bridgePids = getBridgePidsOnPort()
+    if (bridgeReachable) {
+      if (await isOwnedBridge()) {
+        console.log('[bridge] already running on :' + BRIDGE_PORT + ', reusing')
+        return { status: 'reused-existing' }
+      }
+
+      console.warn('[bridge] replacing unowned bridge on :' + BRIDGE_PORT)
+      if (!killUnownedBridge()) {
+        const msg = 'Bridge on :' + BRIDGE_PORT + ' is not owned by this launch and could not be stopped'
+        console.warn('[bridge] ' + msg)
+        return { status: 'failed', message: msg }
+      }
+    } else if (bridgePids.length > 0) {
+      console.warn('[bridge] replacing unresponsive bridge on :' + BRIDGE_PORT)
+      if (!killUnownedBridge()) {
+        const msg = 'Bridge on :' + BRIDGE_PORT + ' is not reachable and could not be stopped'
+        console.warn('[bridge] ' + msg)
+        return { status: 'failed', message: msg }
+      }
+      if (!(await waitForBridgeExit())) {
+        const msg = 'Bridge on :' + BRIDGE_PORT + ' did not stop in time'
+        console.warn('[bridge] ' + msg)
+        return { status: 'failed', message: msg }
+      }
     }
 
     const python = resolvePython()
@@ -249,6 +331,8 @@ export async function startBridge(): Promise<BridgeStartResult> {
       env: {
         ...process.env,
         HERMES_PORT: String(BRIDGE_PORT),
+        HERMES_BRIDGE_TOKEN: BRIDGE_TOKEN,
+        HERMES_BRIDGE_VERSION: app.getVersion(),
         // Ensure the bridge can find its lazily-installed deps.
         PYTHONPATH: [bridgePackagesDir(), source].join(process.platform === 'win32' ? ';' : ':'),
       },
@@ -267,11 +351,11 @@ export async function startBridge(): Promise<BridgeStartResult> {
       bridgeStartPromise = null
     })
 
-    const ready = await waitForBridge()
+    const ready = await waitForOwnedBridge()
     if (!ready) {
       return {
         status: 'failed',
-        message: 'Bridge did not become healthy within ' + BRIDGE_HEALTH_TIMEOUT_MS + 'ms',
+        message: 'Bridge did not become healthy and owned within ' + BRIDGE_HEALTH_TIMEOUT_MS + 'ms',
       }
     }
     return { status: 'started' }
@@ -393,56 +477,4 @@ export async function installHermesAgent(onProgress?: (line: string) => void): P
       else res({ ok: false, message: err.trim().slice(-2000) || `pip exited ${code}` })
     })
   })
-}
-
-/**
- * Write an auth.json in the format Hermes expects. Merges into existing
- * file if present so we don't clobber unrelated providers.
- */
-export function writeAuthJson(input: {
-  provider: string
-  apiKey: string
-  baseUrl?: string
-  active?: boolean
-}): { ok: boolean; message?: string } {
-  const path = authJsonPath()
-  const dir = join(homedir(), '.hermes')
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-
-  let existing: {
-    version?: number
-    providers?: Record<string, { api_key?: string; base_url?: string }>
-    credential_pool?: unknown[]
-    active_provider?: string
-    updated_at?: string
-  } = {}
-  if (existsSync(path)) {
-    try {
-      existing = JSON.parse(readFileSync(path, 'utf8'))
-    } catch {
-      // start fresh on parse failure
-    }
-  }
-
-  const providers = existing.providers ?? {}
-  providers[input.provider] = {
-    ...providers[input.provider],
-    api_key: input.apiKey,
-    ...(input.baseUrl ? { base_url: input.baseUrl } : {}),
-  }
-
-  const updated = {
-    version: existing.version ?? 1,
-    providers,
-    credential_pool: existing.credential_pool ?? [],
-    active_provider: input.active ? input.provider : (existing.active_provider ?? input.provider),
-    updated_at: new Date().toISOString(),
-  }
-
-  try {
-    writeFileSync(path, JSON.stringify(updated, null, 2), { mode: 0o600 })
-    return { ok: true }
-  } catch (err) {
-    return { ok: false, message: (err as Error).message }
-  }
 }

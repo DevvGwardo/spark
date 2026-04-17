@@ -67,18 +67,18 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
   anthropic: {
     id: 'anthropic',
     label: 'Anthropic',
-    description: 'Claude 4.6, 4.5, and 4-family models',
+    description: 'Claude 4.7, 4.5, and 4-family models',
     needsApiKey: true,
     category: 'featured',
     iconLetter: 'A',
     iconColor: '#D97757',
     models: [
-      'claude-opus-4-6-20260210',
+      'claude-opus-4-7',
       'claude-sonnet-4-5-20250929',
       'claude-haiku-4-5-20251001',
       'claude-sonnet-4-20250514',
     ],
-    defaultModel: 'claude-sonnet-4-5-20250929',
+    defaultModel: 'claude-opus-4-7',
   },
   google: {
     id: 'google',

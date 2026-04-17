@@ -6,6 +6,7 @@ import {
   ShieldCheck, Zap,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { getActiveProfile } from '@/stores/profiles-store';
 import {
   fetchMessagingPlatforms,
   updatePlatformEnv,
@@ -174,7 +175,7 @@ function PlatformDetail({
 
   const configFields = Object.entries(platform.fields).filter(
     ([, f]) => f.type
-  ) as [string, MessagingPlatformField & { type: string }];
+  ) as [string, MessagingPlatformField & { type: string }][];
 
   const handleTest = useCallback(async () => {
     setTesting(true);
@@ -282,7 +283,9 @@ function PlatformDetail({
       // Poll platform status to detect when OAuth tokens are saved
       pollInterval = setInterval(async () => {
         try {
-          const data = await fetch(`${getApiBaseUrl()}/api/hermes/messaging/platforms/${encodeURIComponent(platform.id)}`);
+          const data = await fetch(`${getApiBaseUrl()}/api/hermes/messaging/platforms/${encodeURIComponent(platform.id)}`, {
+            headers: { 'X-Hermes-Profile': getActiveProfile() },
+          });
           if (data.ok) {
             const json = await data.json();
             if (json.platform?.is_connected) {

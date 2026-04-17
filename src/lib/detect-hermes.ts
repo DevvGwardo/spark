@@ -7,10 +7,24 @@
 
 const HERMES_BRIDGE_URL = import.meta.env.VITE_HERMES_BRIDGE_URL || 'http://localhost:3002/v1';
 
+export interface HermesBridgeCredentialSources {
+  env: boolean;
+  authJson: boolean;
+  openclawGateway: boolean;
+}
+
+export interface HermesBridgeMiniMaxCredentialSources {
+  env: boolean;
+  openclawGateway: boolean;
+}
+
 export interface HermesBridgeStatus {
   isReachable: boolean;
   hasOpenRouterCreds: boolean;
   hasMiniMaxCreds: boolean;
+  credentialSources: HermesBridgeCredentialSources;
+  credentialSourcesMinimax: HermesBridgeMiniMaxCredentialSources;
+  launchTokenPresent: boolean;
   brainInitialized: boolean;
   activeRequests: number;
   hermesProvider?: string;
@@ -40,6 +54,16 @@ export async function detectHermesBridge(): Promise<HermesBridgeStatus | null> {
       status?: string;
       has_openrouter_creds?: boolean;
       has_minimax_creds?: boolean;
+      credential_sources?: {
+        env?: boolean;
+        auth_json?: boolean;
+        openclaw_gateway?: boolean;
+      };
+      credential_sources_minimax?: {
+        env?: boolean;
+        openclaw_gateway?: boolean;
+      };
+      launch_token_present?: boolean;
       brain_initialized?: boolean;
       active_requests?: number;
       hermes_provider?: string;
@@ -55,6 +79,16 @@ export async function detectHermesBridge(): Promise<HermesBridgeStatus | null> {
       isReachable: true,
       hasOpenRouterCreds: data.has_openrouter_creds ?? false,
       hasMiniMaxCreds: data.has_minimax_creds ?? false,
+      credentialSources: {
+        env: data.credential_sources?.env ?? false,
+        authJson: data.credential_sources?.auth_json ?? false,
+        openclawGateway: data.credential_sources?.openclaw_gateway ?? false,
+      },
+      credentialSourcesMinimax: {
+        env: data.credential_sources_minimax?.env ?? false,
+        openclawGateway: data.credential_sources_minimax?.openclaw_gateway ?? false,
+      },
+      launchTokenPresent: data.launch_token_present ?? false,
       brainInitialized: data.brain_initialized ?? false,
       activeRequests: data.active_requests ?? 0,
       hermesProvider: data.hermes_provider,
@@ -70,7 +104,7 @@ export async function detectHermesBridge(): Promise<HermesBridgeStatus | null> {
 /**
  * Returns true if Hermes can operate without a client-provided API key.
  * This is the case when the bridge is running locally and has credentials
- * configured via HERMES_OPENROUTER_KEY env var or ~/.openclaw/openclaw.json.
+ * configured via bridge env vars, ~/.hermes/auth.json, or ~/.openclaw/openclaw.json.
  */
 export async function hermesHasLocalCredentials(): Promise<boolean> {
   const status = await detectHermesBridge();

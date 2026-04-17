@@ -1,6 +1,14 @@
 import type { Provider } from '@/stores/settings-store';
+import { getActiveProfile } from '@/stores/profiles-store';
 
 const API_PORT_STORAGE_KEY = 'cloudchat.apiPort';
+
+function hermesHeaders(extra?: HeadersInit): HeadersInit {
+  return {
+    'X-Hermes-Profile': getActiveProfile(),
+    ...(extra ?? {}),
+  };
+}
 
 export interface RepoFileTreeResult {
   paths: string[];
@@ -498,7 +506,7 @@ export async function translateText(
 ): Promise<string> {
   const res = await fetch(`${getApiBaseUrl()}/functions/v1/translate`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: hermesHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ text, targetLanguage, provider, api_key: apiKey, model }),
   });
 
@@ -550,7 +558,9 @@ export interface MessagingPlatform {
 }
 
 export async function fetchMessagingPlatforms(): Promise<MessagingPlatform[]> {
-  const res = await fetch(`${getApiBaseUrl()}/api/hermes/messaging/platforms`);
+  const res = await fetch(`${getApiBaseUrl()}/api/hermes/messaging/platforms`, {
+    headers: hermesHeaders(),
+  });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error || `Failed to fetch platforms (${res.status})`);
@@ -560,7 +570,9 @@ export async function fetchMessagingPlatforms(): Promise<MessagingPlatform[]> {
 }
 
 export async function fetchMessagingPlatform(id: string): Promise<MessagingPlatform> {
-  const res = await fetch(`${getApiBaseUrl()}/api/hermes/messaging/platforms/${encodeURIComponent(id)}`);
+  const res = await fetch(`${getApiBaseUrl()}/api/hermes/messaging/platforms/${encodeURIComponent(id)}`, {
+    headers: hermesHeaders(),
+  });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error || `Failed to fetch platform (${res.status})`);
@@ -577,7 +589,7 @@ export async function updatePlatformEnv(
     `${getApiBaseUrl()}/api/hermes/messaging/platforms/${encodeURIComponent(id)}/env`,
     {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: hermesHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ env }),
     },
   );
@@ -597,7 +609,7 @@ export async function updatePlatformConfig(
     `${getApiBaseUrl()}/api/hermes/messaging/platforms/${encodeURIComponent(id)}/config`,
     {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: hermesHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ config }),
     },
   );
@@ -612,7 +624,7 @@ export async function updatePlatformConfig(
 export async function disconnectPlatform(id: string): Promise<MessagingPlatform> {
   const res = await fetch(
     `${getApiBaseUrl()}/api/hermes/messaging/platforms/${encodeURIComponent(id)}`,
-    { method: 'DELETE' },
+    { method: 'DELETE', headers: hermesHeaders() },
   );
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
@@ -630,7 +642,7 @@ export async function testPlatformConnection(id: string): Promise<{
 }> {
   const res = await fetch(
     `${getApiBaseUrl()}/api/hermes/messaging/platforms/${encodeURIComponent(id)}/test`,
-    { method: 'POST' },
+    { method: 'POST', headers: hermesHeaders() },
   );
   const data = await res.json();
   if (!res.ok) {
@@ -642,7 +654,7 @@ export async function testPlatformConnection(id: string): Promise<{
 export async function restartPlatformGateway(id: string): Promise<{ success: boolean; error?: string }> {
   const res = await fetch(
     `${getApiBaseUrl()}/api/hermes/messaging/platforms/${encodeURIComponent(id)}/restart-gateway`,
-    { method: 'POST' },
+    { method: 'POST', headers: hermesHeaders() },
   );
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -661,6 +673,7 @@ export interface OAuthStatus {
 export async function getOAuthStatus(platformId: string): Promise<OAuthStatus> {
   const res = await fetch(
     `${getApiBaseUrl()}/api/hermes/messaging/platforms/${encodeURIComponent(platformId)}/oauth`,
+    { headers: hermesHeaders() },
   );
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -677,7 +690,7 @@ export async function completeOAuth(
     `${getApiBaseUrl()}/api/hermes/messaging/platforms/${encodeURIComponent(platformId)}/oauth/complete`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: hermesHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ code }),
     },
   );

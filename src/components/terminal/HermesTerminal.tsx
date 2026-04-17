@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { useUIStore } from '@/stores/ui-store';
 import { useChatStore } from '@/stores/chat-store';
 import { usePanelStore } from '@/stores/panel-store';
@@ -30,6 +30,7 @@ export const HermesTerminal: React.FC = () => {
   const outputRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const setActiveTab = useUIStore((s) => s.setActiveTab);
   const setActiveSubTab = useUIStore((s) => s.setActiveSubTab);
   const setMiniBrowserOpen = useUIStore((s) => s.setMiniBrowserOpen);
   const setMiniBrowserUrl = useUIStore((s) => s.setMiniBrowserUrl);
@@ -46,7 +47,8 @@ export const HermesTerminal: React.FC = () => {
   const focusedPanel = panels.find((p) => p.id === focusedPanelId);
 
   // Build the command context from available store methods
-  const commandContext: CommandContext = {
+  const commandContext = useMemo<CommandContext>(() => ({
+    setActiveTab,
     setActiveSubTab,
     setMiniBrowserOpen,
     setMiniBrowserUrl,
@@ -67,7 +69,7 @@ export const HermesTerminal: React.FC = () => {
     openPanel: (conversationId: string | null) => {
       openPanel(conversationId);
     },
-  };
+  }), [createConversation, focusedPanel, openPanel, panels, renameConversation, setActiveSubTab, setActiveTab, setConversationForPanel, setMiniBrowserOpen, setMiniBrowserUrl]);
 
   // Auto-scroll output to bottom
   useEffect(() => {

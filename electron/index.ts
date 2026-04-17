@@ -9,8 +9,8 @@ import {
   getBridgeSetupStatus,
   installBridgeDeps,
   installHermesAgent,
-  writeAuthJson,
 } from './bridge'
+import { startOpenRouterOAuth } from './oauth-openrouter'
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
@@ -266,12 +266,18 @@ ipcMain.handle('bridge:install-hermes-agent', async (event) => {
     event.sender.send('bridge:install-progress', line)
   return installHermesAgent(send)
 })
-ipcMain.handle('bridge:write-auth', (_event, input: {
-  provider: string
-  apiKey: string
-  baseUrl?: string
-  active?: boolean
-}) => writeAuthJson(input))
+ipcMain.handle('openrouter:oauth', () => startOpenRouterOAuth())
+
+ipcMain.handle('shell:open-external', async (_event, url: string) => {
+  if (typeof url !== 'string') return false
+  if (!/^(https?:\/\/|file:\/\/\/)/i.test(url)) return false
+  try {
+    await shell.openExternal(url)
+    return true
+  } catch {
+    return false
+  }
+})
 
 // ── Mini Browser (BrowserView) management ───────────────────────────
 ipcMain.handle('browser:create', (_event, url?: string) => {

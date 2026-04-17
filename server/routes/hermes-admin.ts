@@ -1,10 +1,11 @@
 import type { Express, Request, Response } from 'express';
 import { sendJson } from '../lib/helpers';
-import { getHubSelectedProfileName } from '../lib/hermes-profiles';
+import { getProfileFromRequest } from '../lib/hermes-profiles';
 
 const HERMES_BRIDGE_URL = process.env.HERMES_BRIDGE_URL || 'http://localhost:3002';
 
 async function proxyTo(
+  req: Request,
   res: Response,
   path: string,
   options?: RequestInit,
@@ -14,7 +15,7 @@ async function proxyTo(
       ...options,
       headers: {
         'Content-Type': 'application/json',
-        'X-Hermes-Profile': getHubSelectedProfileName(),
+        'X-Hermes-Profile': getProfileFromRequest(req),
         ...options?.headers,
       },
     });
@@ -54,106 +55,106 @@ export function registerHermesAdminRoute(app: Express) {
   // ─── Cron Jobs ──────────────────────────────────────────────────────────
 
   app.get('/api/hermes/cron', async (req: Request, res: Response) => {
-    await proxyTo(res, `/cron${getQuerySuffix(req)}`);
+    await proxyTo(req, res, `/cron${getQuerySuffix(req)}`);
   });
 
   app.post('/api/hermes/cron', async (req: Request, res: Response) => {
-    await proxyTo(res, '/cron', {
+    await proxyTo(req, res, '/cron', {
       method: 'POST',
       body: JSON.stringify(req.body),
     });
   });
 
   app.delete('/api/hermes/cron/:id', async (req: Request, res: Response) => {
-    await proxyTo(res, `/cron/${encodeURIComponent(req.params.id)}`, {
+    await proxyTo(req, res, `/cron/${encodeURIComponent(req.params.id)}`, {
       method: 'DELETE',
     });
   });
 
   app.post('/api/hermes/cron/:id/pause', async (req: Request, res: Response) => {
-    await proxyTo(res, `/cron/${encodeURIComponent(req.params.id)}/pause`, {
+    await proxyTo(req, res, `/cron/${encodeURIComponent(req.params.id)}/pause`, {
       method: 'POST',
     });
   });
 
   app.post('/api/hermes/cron/:id/resume', async (req: Request, res: Response) => {
-    await proxyTo(res, `/cron/${encodeURIComponent(req.params.id)}/resume`, {
+    await proxyTo(req, res, `/cron/${encodeURIComponent(req.params.id)}/resume`, {
       method: 'POST',
     });
   });
 
   app.post('/api/hermes/cron/:id/run', async (req: Request, res: Response) => {
-    await proxyTo(res, `/cron/${encodeURIComponent(req.params.id)}/run`, {
+    await proxyTo(req, res, `/cron/${encodeURIComponent(req.params.id)}/run`, {
       method: 'POST',
     });
   });
 
   app.get('/api/hermes/cron/:id/history', async (req: Request, res: Response) => {
-    await proxyTo(res, `/cron/${encodeURIComponent(req.params.id)}/history`);
+    await proxyTo(req, res, `/cron/${encodeURIComponent(req.params.id)}/history`);
   });
 
   // ─── Sessions ───────────────────────────────────────────────────────────
 
-  app.get('/api/hermes/sessions', async (_req: Request, res: Response) => {
-    await proxyTo(res, '/sessions');
+  app.get('/api/hermes/sessions', async (req: Request, res: Response) => {
+    await proxyTo(req, res, '/sessions');
   });
 
   app.get('/api/hermes/sessions/:id', async (req: Request, res: Response) => {
-    await proxyTo(res, `/sessions/${encodeURIComponent(req.params.id)}`);
+    await proxyTo(req, res, `/sessions/${encodeURIComponent(req.params.id)}`);
   });
 
   app.delete('/api/hermes/sessions/:id', async (req: Request, res: Response) => {
-    await proxyTo(res, `/sessions/${encodeURIComponent(req.params.id)}`, {
+    await proxyTo(req, res, `/sessions/${encodeURIComponent(req.params.id)}`, {
       method: 'DELETE',
     });
   });
 
   // ─── Hermes Workspace ───────────────────────────────────────────────────
 
-  app.get('/api/hermes/workspace/overview', async (_req: Request, res: Response) => {
-    await proxyTo(res, '/workspace/overview');
+  app.get('/api/hermes/workspace/overview', async (req: Request, res: Response) => {
+    await proxyTo(req, res, '/workspace/overview');
   });
 
-  app.get('/api/hermes/workspace/usage', async (_req: Request, res: Response) => {
-    await proxyTo(res, '/workspace/usage');
+  app.get('/api/hermes/workspace/usage', async (req: Request, res: Response) => {
+    await proxyTo(req, res, '/workspace/usage');
   });
 
-  app.get('/api/hermes/workspace/files', async (_req: Request, res: Response) => {
-    await proxyTo(res, '/workspace/files');
+  app.get('/api/hermes/workspace/files', async (req: Request, res: Response) => {
+    await proxyTo(req, res, '/workspace/files');
   });
 
   app.get('/api/hermes/workspace/files/:key', async (req: Request, res: Response) => {
-    await proxyTo(res, `/workspace/files/${encodeURIComponent(req.params.key)}`);
+    await proxyTo(req, res, `/workspace/files/${encodeURIComponent(req.params.key)}`);
   });
 
   app.put('/api/hermes/workspace/files/:key', async (req: Request, res: Response) => {
-    await proxyTo(res, `/workspace/files/${encodeURIComponent(req.params.key)}`, {
+    await proxyTo(req, res, `/workspace/files/${encodeURIComponent(req.params.key)}`, {
       method: 'PUT',
       body: JSON.stringify(req.body),
     });
   });
 
-  app.get('/api/hermes/workspace/skills', async (_req: Request, res: Response) => {
-    await proxyTo(res, '/workspace/skills');
+  app.get('/api/hermes/workspace/skills', async (req: Request, res: Response) => {
+    await proxyTo(req, res, '/workspace/skills');
   });
 
   app.get('/api/hermes/workspace/skills/content', async (req: Request, res: Response) => {
-    await proxyTo(res, `/workspace/skills/content${getQuerySuffix(req)}`);
+    await proxyTo(req, res, `/workspace/skills/content${getQuerySuffix(req)}`);
   });
 
   app.delete('/api/hermes/workspace/skills', async (req: Request, res: Response) => {
-    await proxyTo(res, '/workspace/skills', {
+    await proxyTo(req, res, '/workspace/skills', {
       method: 'DELETE',
       body: JSON.stringify(req.body),
     });
   });
 
-  app.get('/api/hermes/workspace/skills/hub', async (_req: Request, res: Response) => {
-    await proxyTo(res, '/workspace/skills/hub');
+  app.get('/api/hermes/workspace/skills/hub', async (req: Request, res: Response) => {
+    await proxyTo(req, res, '/workspace/skills/hub');
   });
 
   app.post('/api/hermes/workspace/skills/hub/install', async (req: Request, res: Response) => {
-    await proxyTo(res, '/workspace/skills/hub/install', {
+    await proxyTo(req, res, '/workspace/skills/hub/install', {
       method: 'POST',
       body: JSON.stringify(req.body),
     });
@@ -161,52 +162,52 @@ export function registerHermesAdminRoute(app: Express) {
 
   // ─── Messaging Platforms ──────────────────────────────────────────────
 
-  app.get('/api/hermes/messaging/platforms', async (_req: Request, res: Response) => {
-    await proxyTo(res, '/messaging/platforms');
+  app.get('/api/hermes/messaging/platforms', async (req: Request, res: Response) => {
+    await proxyTo(req, res, '/messaging/platforms');
   });
 
   app.get('/api/hermes/messaging/platforms/:id', async (req: Request, res: Response) => {
-    await proxyTo(res, `/messaging/platforms/${encodeURIComponent(req.params.id)}`);
+    await proxyTo(req, res, `/messaging/platforms/${encodeURIComponent(req.params.id)}`);
   });
 
   app.put('/api/hermes/messaging/platforms/:id/env', async (req: Request, res: Response) => {
-    await proxyTo(res, `/messaging/platforms/${encodeURIComponent(req.params.id)}/env`, {
+    await proxyTo(req, res, `/messaging/platforms/${encodeURIComponent(req.params.id)}/env`, {
       method: 'PUT',
       body: JSON.stringify(req.body),
     });
   });
 
   app.put('/api/hermes/messaging/platforms/:id/config', async (req: Request, res: Response) => {
-    await proxyTo(res, `/messaging/platforms/${encodeURIComponent(req.params.id)}/config`, {
+    await proxyTo(req, res, `/messaging/platforms/${encodeURIComponent(req.params.id)}/config`, {
       method: 'PUT',
       body: JSON.stringify(req.body),
     });
   });
 
   app.delete('/api/hermes/messaging/platforms/:id', async (req: Request, res: Response) => {
-    await proxyTo(res, `/messaging/platforms/${encodeURIComponent(req.params.id)}`, {
+    await proxyTo(req, res, `/messaging/platforms/${encodeURIComponent(req.params.id)}`, {
       method: 'DELETE',
     });
   });
 
   app.post('/api/hermes/messaging/platforms/:id/test', async (req: Request, res: Response) => {
-    await proxyTo(res, `/messaging/platforms/${encodeURIComponent(req.params.id)}/test`, {
+    await proxyTo(req, res, `/messaging/platforms/${encodeURIComponent(req.params.id)}/test`, {
       method: 'POST',
     });
   });
 
   app.post('/api/hermes/messaging/platforms/:id/restart-gateway', async (req: Request, res: Response) => {
-    await proxyTo(res, `/messaging/platforms/${encodeURIComponent(req.params.id)}/restart-gateway`, {
+    await proxyTo(req, res, `/messaging/platforms/${encodeURIComponent(req.params.id)}/restart-gateway`, {
       method: 'POST',
     });
   });
 
   app.get('/api/hermes/messaging/platforms/:id/oauth', async (req: Request, res: Response) => {
-    await proxyTo(res, `/messaging/platforms/${encodeURIComponent(req.params.id)}/oauth`);
+    await proxyTo(req, res, `/messaging/platforms/${encodeURIComponent(req.params.id)}/oauth`);
   });
 
   app.post('/api/hermes/messaging/platforms/:id/oauth/complete', async (req: Request, res: Response) => {
-    await proxyTo(res, `/messaging/platforms/${encodeURIComponent(req.params.id)}/oauth/complete`, {
+    await proxyTo(req, res, `/messaging/platforms/${encodeURIComponent(req.params.id)}/oauth/complete`, {
       method: 'POST',
       body: JSON.stringify(req.body),
     });

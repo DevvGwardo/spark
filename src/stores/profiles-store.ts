@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import { getApiBaseUrl } from '@/lib/api';
 import { useSettingsStore } from '@/stores/settings-store';
 
@@ -23,10 +24,22 @@ interface ProfilesState {
   deleteProfile: (name: string) => Promise<void>;
 }
 
+// The active profile is stored client-side and sent to the server on every
+// Hermes-related request via X-Hermes-Profile. This keeps each window
+// independent and ensures CloudChat never writes to any shared file that the
+// hermes CLI might read.
+export function getActiveProfile(): string {
+  return useProfilesStore.getState().activeProfile || 'default';
+}
+
 async function apiFetch(path: string, init?: RequestInit) {
   const res = await fetch(`${getApiBaseUrl()}${path}`, {
     ...init,
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Hermes-Profile': getActiveProfile(),
+      ...init?.headers,
+    },
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
@@ -35,52 +48,61 @@ async function apiFetch(path: string, init?: RequestInit) {
   return res.json();
 }
 
-export const useProfilesStore = create<ProfilesState>()((set, get) => ({
-  profiles: [],
-  activeProfile: 'default',
-  loading: false,
+export const useProfilesStore = create<ProfilesState>()(
+  persist(
+    (set, get) => ({
+      profiles: [],
+      activeProfile: 'default',
+      loading: false,
 
-  fetchProfiles: async () => {
-    set({ loading: true });
-    try {
-      const data = await apiFetch('/api/hermes/profiles');
-      set({ profiles: data.profiles, activeProfile: data.activeProfile });
-      // Sync the active profile's provider into settings store
-      const active = data.profiles.find((p: Profile) => p.active);
-      if (active?.provider) {
-        useSettingsStore.getState().setActiveProvider(active.provider);
-        if (active.model) {
-          useSettingsStore.getState().updateProviderConfig(active.provider, { model: active.model });
+      fetchProfiles: async () => {
+        set({ loading: true });
+        try {
+          const data = await apiFetch('/api/hermes/profiles');
+          set({ profiles: data.profiles });
+          // Sync the active profile's provider into settings store
+          const activeName = get().activeProfile;
+          const active = data.profiles.find((p: Profile) => p.name === activeName);
+          if (active?.provider) {
+            useSettingsStore.getState().setActiveProvider(active.provider);
+            if (active.model) {
+              useSettingsStore.getState().updateProviderConfig(active.provider, { model: active.model });
+            }
+          }
+        } catch (e) {
+          console.error('Failed to fetch profiles:', e);
+        } finally {
+          set({ loading: false });
         }
-      }
-    } catch (e) {
-      console.error('Failed to fetch profiles:', e);
-    } finally {
-      set({ loading: false });
-    }
-  },
+      },
 
-  activateProfile: async (name) => {
-    await apiFetch('/api/hermes/profiles/activate', {
-      method: 'POST',
-      body: JSON.stringify({ name }),
-    });
-    await get().fetchProfiles();
-  },
+      activateProfile: async (name) => {
+        set({ activeProfile: name });
+        await get().fetchProfiles();
+      },
 
-  createProfile: async (name, cloneFrom) => {
-    await apiFetch('/api/hermes/profiles/create', {
-      method: 'POST',
-      body: JSON.stringify({ name, cloneFrom }),
-    });
-    await get().fetchProfiles();
-  },
+      createProfile: async (name, cloneFrom) => {
+        await apiFetch('/api/hermes/profiles/create', {
+          method: 'POST',
+          body: JSON.stringify({ name, cloneFrom }),
+        });
+        await get().fetchProfiles();
+      },
 
-  deleteProfile: async (name) => {
-    await apiFetch('/api/hermes/profiles/delete', {
-      method: 'POST',
-      body: JSON.stringify({ name }),
-    });
-    await get().fetchProfiles();
-  },
-}));
+      deleteProfile: async (name) => {
+        if (name === get().activeProfile) {
+          throw new Error('Cannot delete the active profile — switch to another profile first');
+        }
+        await apiFetch('/api/hermes/profiles/delete', {
+          method: 'POST',
+          body: JSON.stringify({ name }),
+        });
+        await get().fetchProfiles();
+      },
+    }),
+    {
+      name: 'cloudchat-active-profile',
+      partialize: (state) => ({ activeProfile: state.activeProfile }),
+    },
+  ),
+);

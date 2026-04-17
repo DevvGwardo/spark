@@ -46,6 +46,7 @@ function ChatRuntimeArea({
       handleStop={chat.handleStop}
       handleRegenerate={chat.handleRegenerate}
       isStreaming={chat.isStreaming}
+      isAnotherPanelStreamingSameProfile={chat.isAnotherPanelStreamingSameProfile}
       error={chat.error}
       apiKeyModalOpen={chat.apiKeyModalOpen}
       setApiKeyModalOpen={chat.setApiKeyModalOpen}

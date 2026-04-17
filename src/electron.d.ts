@@ -7,6 +7,8 @@ export interface ElectronAPI {
   platform: string
   apiPort: number
   getAppVersion?: () => Promise<string>
+  openrouterOAuth?: () => Promise<string>
+  openExternal?: (url: string) => Promise<boolean>
   notifyAttentionRequest?: (payload?: { title?: string; body?: string }) => Promise<void>
   clearAttentionRequest?: () => Promise<void>
   terminal?: {
@@ -35,14 +37,11 @@ export interface ElectronAPI {
       bridgeSource: string | null
       bridgeDepsInstalled: boolean
       hermesAgentPresent: boolean
-      authJsonPresent: boolean
-      authJsonValid: boolean
       bridgeReachable: boolean
     }>
     start: () => Promise<{ status: 'started' | 'reused-existing' | 'failed'; message?: string }>
     installDeps: () => Promise<{ ok: boolean; message?: string }>
     installHermesAgent: () => Promise<{ ok: boolean; message?: string }>
-    writeAuth: (input: { provider: string; apiKey: string; baseUrl?: string; active?: boolean }) => Promise<{ ok: boolean; message?: string }>
     onInstallProgress: (callback: (line: string) => void) => () => void
   }
 }

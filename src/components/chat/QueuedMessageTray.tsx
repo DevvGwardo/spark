@@ -9,6 +9,7 @@ interface QueuedMessageTrayProps {
   onSteer?: (messageId: string) => void;
   disabled?: boolean;
   connected?: boolean;
+  waitingForOtherPanel?: boolean;
   className?: string;
 }
 
@@ -18,6 +19,7 @@ export const QueuedMessageTray: React.FC<QueuedMessageTrayProps> = ({
   onSteer,
   disabled = false,
   connected = false,
+  waitingForOtherPanel = false,
   className,
 }) => {
   if (messages.length === 0) return null;
@@ -33,6 +35,11 @@ export const QueuedMessageTray: React.FC<QueuedMessageTrayProps> = ({
         <div className="flex items-center gap-2 border-b border-border/70 px-4 py-2 text-xs text-muted-foreground">
           <GitBranchPlus className="h-3.5 w-3.5" />
           <span className="font-medium">{messages.length} queued message{messages.length === 1 ? '' : 's'}</span>
+          {waitingForOtherPanel && (
+            <span className="ml-auto truncate text-[11px] text-muted-foreground/80">
+              Waiting — profile is busy in another panel
+            </span>
+          )}
         </div>
 
         <div className="divide-y divide-border/60">

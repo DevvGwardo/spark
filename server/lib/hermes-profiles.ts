@@ -1,4 +1,4 @@
-import fs from 'fs';
+import type { Request } from 'express';
 import os from 'os';
 import path from 'path';
 
@@ -10,40 +10,21 @@ export function getProfilesRoot(): string {
   return path.join(getHermesRoot(), 'profiles');
 }
 
-// CloudChat tracks its own active profile in a dedicated file so app activations
-// never mutate ~/.hermes/active_profile (the file the `hermes` CLI reads). This
-// keeps a CLI session running with profile X unaffected when the app activates
-// profile Y. The bridge still reads X-Hermes-Profile from the request header to
-// resolve per-request profile state.
-export function getActiveProfilePath(): string {
-  return path.join(getHermesRoot(), 'cloudchat_active_profile');
-}
-
-export function getHubSelectedProfileName(): string {
-  const activePath = getActiveProfilePath();
-  if (!fs.existsSync(activePath)) return 'default';
-  try {
-    const raw = fs.readFileSync(activePath, 'utf-8').trim();
-    if (!raw || raw === 'default') {
-      return 'default';
-    }
-    return validateProfileName(raw);
-  } catch {
+// The active profile is selected client-side (per-window, persisted in
+// localStorage) and sent to the server on every Hermes-related request via
+// the X-Hermes-Profile header. The server holds no profile state of its own,
+// so two windows can switch profiles independently, and the hermes CLI's
+// ~/.hermes/active_profile file is never touched by the app.
+export function getProfileFromRequest(req: Request): string {
+  const raw = req.headers['x-hermes-profile'];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (!value) return 'default';
+  const trimmed = String(value).trim();
+  if (!trimmed || trimmed === 'default') return 'default';
+  if (trimmed.includes('/') || trimmed.includes('\\') || trimmed.includes('..')) {
     return 'default';
   }
-}
-
-// Writes the hub-selected profile file. Pass null to reset to the default
-// profile (removes the file so getHubSelectedProfileName returns 'default').
-export function setHubSelectedProfile(name: string | null): void {
-  const activePath = getActiveProfilePath();
-  if (name === null) {
-    if (fs.existsSync(activePath)) fs.unlinkSync(activePath);
-    return;
-  }
-  const validated = validateProfileName(name);
-  fs.mkdirSync(path.dirname(activePath), { recursive: true });
-  fs.writeFileSync(activePath, validated, 'utf-8');
+  return trimmed;
 }
 
 export function validateProfileName(name: string): string {

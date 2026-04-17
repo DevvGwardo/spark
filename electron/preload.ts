@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
   apiPort,
   getAppVersion: (): Promise<string> => ipcRenderer.invoke('app:get-version'),
+  openrouterOAuth: (): Promise<string> => ipcRenderer.invoke('openrouter:oauth'),
+  openExternal: (url: string): Promise<boolean> => ipcRenderer.invoke('shell:open-external', url),
   notifyAttentionRequest: (payload?: { title?: string; body?: string }) => ipcRenderer.invoke('app:notify-attention', payload),
   clearAttentionRequest: () => ipcRenderer.invoke('app:clear-attention'),
   terminal: {
@@ -56,8 +58,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     start: () => ipcRenderer.invoke('bridge:start'),
     installDeps: () => ipcRenderer.invoke('bridge:install-deps'),
     installHermesAgent: () => ipcRenderer.invoke('bridge:install-hermes-agent'),
-    writeAuth: (input: { provider: string; apiKey: string; baseUrl?: string; active?: boolean }) =>
-      ipcRenderer.invoke('bridge:write-auth', input),
     onInstallProgress: (callback: (line: string) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, line: string) => callback(line)
       ipcRenderer.on('bridge:install-progress', handler)

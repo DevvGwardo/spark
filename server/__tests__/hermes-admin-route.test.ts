@@ -2,18 +2,6 @@
 import type { AddressInfo } from 'net'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const hermesProfileMocks = vi.hoisted(() => ({
-  getHubSelectedProfileName: vi.fn(() => 'agent-two'),
-}))
-
-vi.mock('../lib/hermes-profiles', async () => {
-  const actual = await vi.importActual<typeof import('../lib/hermes-profiles')>('../lib/hermes-profiles')
-  return {
-    ...actual,
-    getHubSelectedProfileName: hermesProfileMocks.getHubSelectedProfileName,
-  }
-})
-
 async function createTestServer() {
   const { createApp } = await import('../index')
   const app = createApp()
@@ -84,7 +72,9 @@ describe('Hermes admin route', () => {
     const server = await createTestServer()
 
     try {
-      const response = await actualFetch(`${server.url}/api/hermes/workspace/overview`)
+      const response = await actualFetch(`${server.url}/api/hermes/workspace/overview`, {
+        headers: { 'X-Hermes-Profile': 'agent-two' },
+      })
       const data = await response.json()
 
       expect(response.ok).toBe(true)
@@ -123,12 +113,56 @@ describe('Hermes admin route', () => {
     const server = await createTestServer()
 
     try {
-      const response = await actualFetch(`${server.url}/api/hermes/workspace/skills/hub`)
+      const response = await actualFetch(`${server.url}/api/hermes/workspace/skills/hub`, {
+        headers: { 'X-Hermes-Profile': 'agent-two' },
+      })
       const data = await response.json()
 
       expect(response.ok).toBe(true)
       expect(data.skills).toHaveLength(1)
       expect(data.skills[0]?.name).toBe('duckduckgo-search')
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('falls back to default when no X-Hermes-Profile header is sent', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (url.includes('/api/hermes/workspace/overview')) {
+        return actualFetch(input, init)
+      }
+
+      const headers = init?.headers as Record<string, string> ?? {}
+      expect(headers['X-Hermes-Profile']).toBe('default')
+
+      return new Response(JSON.stringify({
+        hermes_home: '/Users/test/.hermes',
+        session_source: { kind: 'sqlite', path: '/tmp/state.db', available: true },
+        cron_backend: 'bridge-local',
+        counts: {
+          tracked_sessions: 0,
+          messages: 0,
+          input_tokens: 0,
+          output_tokens: 0,
+          live_sessions: 0,
+          cron_jobs: 0,
+          skills: 0,
+        },
+        last_session_started_at: null,
+        files: [],
+        top_models: [],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+
+    const server = await createTestServer()
+
+    try {
+      const response = await actualFetch(`${server.url}/api/hermes/workspace/overview`)
+      expect(response.ok).toBe(true)
     } finally {
       await server.close()
     }

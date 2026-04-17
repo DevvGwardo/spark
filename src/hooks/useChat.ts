@@ -14,6 +14,8 @@ import { fetchRepoFileTreeResult, getApiBaseUrl } from '@/lib/api';
 import { createQueuedMessage, moveQueuedMessageToFront, removeQueuedMessage, type QueuedMessage } from '@/lib/chat-queue';
 import { PROVIDERS, supportsReasoningEffort } from '@/lib/providers';
 import { useHermesStore } from '@/stores/hermes-store';
+import { getActiveProfile, useProfilesStore } from '@/stores/profiles-store';
+import { useStreamLockStore } from '@/stores/stream-lock-store';
 
 import { findPendingProposal, type PendingProposal, type ProposalToolInvocationLike } from '@/lib/proposed-changes';
 import {
@@ -362,6 +364,11 @@ When the user asks you to make changes:
   // Keep a just-created conversation local until the first send settles.
   // Switching the panel immediately remounts the chat tree and drops the in-flight transcript.
   const pendingConversationIdRef = useRef<string | null>(null);
+  // Captures the conversationId at stream start so we can distinguish the
+  // draft→new-conv promotion (keep session) from a user navigating to a
+  // different thread mid-stream (advance session so the UI reflects the
+  // new thread). Set when isStreaming goes false→true; cleared on end.
+  const streamConvIdRef = useRef<string | null>(null);
   const repoEditIntentRef = useRef(false);
   const pendingProposalRef = useRef<PendingProposal | null>(null);
   const explicitProposalKeyRef = useRef<string | null>(null);
@@ -542,7 +549,14 @@ When the user asks you to make changes:
       abortControllerRef.current.abort();
     }
     abortControllerRef.current = new AbortController();
-    const response = await fetch(url, { ...init, signal: abortControllerRef.current.signal });
+    const response = await fetch(url, {
+      ...init,
+      headers: {
+        ...init?.headers,
+        'X-Hermes-Profile': getActiveProfile(),
+      },
+      signal: abortControllerRef.current.signal,
+    });
     if (!response.ok) {
       const text = await response.clone().text().catch(() => '');
       console.error(`[useChat:fetch] Error response body:`, text.slice(0, 500));
@@ -932,7 +946,9 @@ When the user asks you to make changes:
     experimental_throttle: 32,
     maxSteps: Infinity,
     onFinish: async (message, options) => {
-      const convId = convIdRef.current;
+      // Use streamConvIdRef (captured at stream start) so mid-stream
+      // conversation navigation doesn't redirect persistence to the wrong thread.
+      const convId = streamConvIdRef.current ?? convIdRef.current;
       if (!convId) return;
       setAgentStatus(null);
 
@@ -1007,7 +1023,7 @@ When the user asks you to make changes:
         ? buildAssistantSnapshotForPersistence({
             message: finishedMessage,
             streamedMessage: finishedMessageId
-              ? messagesRef.current.find((entry) => entry.id === finishedMessageId) as Record<string, unknown> | undefined
+              ? messagesRef.current.find((entry) => entry.id === finishedMessageId) as unknown as Record<string, unknown> | undefined
               : undefined,
             toolActivity: messageToolActivity,
             serverToolEvents: messageServerToolEvents,
@@ -1562,11 +1578,69 @@ When the user asks you to make changes:
   // Track streaming state in global activity store
   const isStreaming = status === 'streaming' || status === 'submitted';
   isStreamingRef.current = isStreaming;
+
+  // Serialize Hermes streams per-profile across panels. Two panels sharing the
+  // active profile would otherwise both hit the same hermes_home/state.db/skills
+  // directory concurrently, which corrupts tool results (skills_list, skill_view)
+  // and traps the agent in a retry loop.
+  const activeProfile = useProfilesStore((s) => s.activeProfile) || 'default';
+  const profileLockHolder = useStreamLockStore((s) => s.locks[activeProfile]);
+  const isAnotherPanelStreamingSameProfile =
+    effectiveProvider === 'hermes' && !!profileLockHolder && profileLockHolder !== panelId;
+  const effectiveBusy = isStreaming || isAnotherPanelStreamingSameProfile;
+
+  useEffect(() => {
+    if (effectiveProvider !== 'hermes') return;
+    if (!isStreaming) return;
+    // Capture the profile at stream start. If the user switches the active
+    // profile mid-stream, the backend keeps streaming against the original
+    // profile — so acquire and release must use the same value. Closure
+    // capture here; `activeProfile` is intentionally not in the dep list.
+    const profile = activeProfile;
+    useStreamLockStore.getState().acquire(profile, panelId);
+    return () => {
+      useStreamLockStore.getState().release(profile, panelId);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- lock stays bound to profile captured at stream start
+  }, [effectiveProvider, isStreaming, panelId]);
+
   useLayoutEffect(() => {
-    if (!isStreaming && aiChatSessionId !== chatSessionId) {
-      setAiChatSessionId(chatSessionId);
+    // Track which conversation owns the active stream. Set on false→true and
+    // cleared when streaming ends; intentionally not updated on mid-stream
+    // navigation so it still identifies the stream's original conversation.
+    if (!isStreaming) {
+      streamConvIdRef.current = null;
+    } else if (streamConvIdRef.current === null) {
+      // Use convIdRef (already set by sendMessage before append()) or
+      // pendingConversationIdRef, because the conversationId prop lags
+      // behind for new conversations (onConversationCreated fires after
+      // the stream resolves).
+      streamConvIdRef.current = convIdRef.current ?? pendingConversationIdRef.current ?? conversationId;
     }
-  }, [aiChatSessionId, chatSessionId, isStreaming]);
+
+    if (aiChatSessionId === chatSessionId) return;
+    if (!isStreaming) {
+      setAiChatSessionId(chatSessionId);
+      return;
+    }
+    // Streaming + mismatch. Two legitimate sources of mismatch to preserve:
+    //   1. draft→new-conv promotion inside sendMessage — pendingConversationIdRef
+    //      matches the newly-assigned conversationId for one render, and
+    //      append() is mid-flight against the draft session.
+    //   2. stream on the current conversation that simply hasn't caught up yet.
+    // Otherwise the user navigated to a different thread; advance the session
+    // so the panel displays the selected conversation instead of the
+    // still-streaming one. The old AI SDK session loses its subscriber; that
+    // trade-off is acceptable since the user explicitly navigated away.
+    const inDraftPromotion =
+      pendingConversationIdRef.current !== null &&
+      pendingConversationIdRef.current === conversationId;
+    const streamingOnCurrentConv =
+      streamConvIdRef.current !== null &&
+      streamConvIdRef.current === conversationId;
+    if (inDraftPromotion || streamingOnCurrentConv) return;
+    setAiChatSessionId(chatSessionId);
+  }, [aiChatSessionId, chatSessionId, isStreaming, conversationId]);
   useEffect(() => {
     const pendingProposal = findPendingProposal(messages as Array<{
       id: string;
@@ -1921,6 +1995,18 @@ When the user asks you to make changes:
     // When going to null, we intentionally leave convIdRef pointing at the old conversation
     // until the next conversation is assigned. This prevents losing streaming responses.
 
+    // If the user navigates to a different conversation while one is streaming,
+    // abort the stream. The stream's partial result is already being persisted
+    // to IndexedDB via onFinish/onToolCall, so nothing is lost.
+    const prevConvId = prevConversationIdRef.current;
+    if (isStreaming && prevConvId !== null && conversationId !== prevConvId) {
+      stop();
+      // Return early and let the stop() cascade handle cleanup.
+      // When isStreaming becomes false, this effect will re-run and
+      // perform the full conversation switch (save files, hydrate messages).
+      return;
+    }
+
     // Don't hydrate or reset messages while streaming — it would clobber the live buffer.
     // Also wait until the AI SDK session ID catches up with the visible conversation so
     // persisted messages never hydrate into the previous conversation's session bucket.
@@ -1928,7 +2014,6 @@ When the user asks you to make changes:
     // still sees the actual previous conversation and performs the full switch.
     if (isStreaming || aiChatSessionId !== chatSessionId) return;
 
-    const prevConvId = prevConversationIdRef.current;
     prevConversationIdRef.current = conversationId;
 
     // Transition: null → new conversation (just created).
@@ -2210,23 +2295,23 @@ When the user asks you to make changes:
   }, [activeRepo, append, buildRequestBody, config, conversationId, createConversation, defaultSystemPrompt, effectiveModel, effectiveProvider, ensureRepoFileTreeLoaded, isRepoMode, onConversationCreated, renameConversation, saveConversationFiles, scopeId, safeSetMessages, sanitizeRetryMessages]);
 
   const handleSend = useCallback(() => {
-    if (isStreaming) {
+    if (effectiveBusy) {
       queueMessage();
       return;
     }
     void sendMessage(draftInput, { clearDraft: true });
-  }, [draftInput, isStreaming, queueMessage, sendMessage]);
+  }, [draftInput, effectiveBusy, queueMessage, sendMessage]);
 
   const handleQuickSend = useCallback((content: string) => {
-    if (isStreaming) {
+    if (effectiveBusy) {
       queueMessage(content);
       return;
     }
     void sendMessage(content);
-  }, [isStreaming, queueMessage, sendMessage]);
+  }, [effectiveBusy, queueMessage, sendMessage]);
 
   useEffect(() => {
-    if (!pendingPanelPrompt || isStreaming) {
+    if (!pendingPanelPrompt || effectiveBusy) {
       return;
     }
 
@@ -2239,7 +2324,7 @@ When the user asks you to make changes:
     }
 
     setDraftInput(pendingPanelPrompt.content);
-  }, [clearPanelPrompt, isStreaming, panelId, pendingPanelPrompt, sendMessage]);
+  }, [clearPanelPrompt, effectiveBusy, panelId, pendingPanelPrompt, sendMessage]);
 
   const handleRemoveQueuedMessage = useCallback((messageId: string) => {
     setQueuedMessages((prev) => removeQueuedMessage(prev, messageId));
@@ -2260,7 +2345,7 @@ When the user asks you to make changes:
   }, [isStreaming, queuedMessages, sendMessage, stop]);
 
   useEffect(() => {
-    if (isStreaming) return;
+    if (effectiveBusy) return;
     if (queuedMessages.length === 0) return;
     if (autoSendingQueuedRef.current) return;
 
@@ -2274,7 +2359,7 @@ When the user asks you to make changes:
       }
       autoSendingQueuedRef.current = null;
     })();
-  }, [isStreaming, queuedMessages, sendMessage]);
+  }, [effectiveBusy, queuedMessages, sendMessage]);
 
   useEffect(() => {
     setQueuedMessages([]);
@@ -2313,6 +2398,7 @@ When the user asks you to make changes:
     handleStop: stop,
     handleRegenerate,
     isStreaming,
+    isAnotherPanelStreamingSameProfile,
     error,
     apiKeyModalOpen,
     setApiKeyModalOpen,

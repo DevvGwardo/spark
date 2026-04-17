@@ -72,14 +72,39 @@ export function registerHermesUpdateRoute(app: Express) {
         timeout: 60000,
       });
 
-      // Step 2: git pull (merge origin/main)
+      // Step 2: stash local changes so merge doesn't abort
+      let hadStash = false;
+      try {
+        const stashResult = await execFileAsync('git', ['stash', 'push', '-m', 'cloud-chat-hub-update'], {
+          cwd: HERMES_DIR,
+          timeout: 10000,
+        });
+        // git stash push returns 0 even when nothing to stash — check output
+        hadStash = !stashResult.stdout.includes('No local changes');
+      } catch {
+        // stash push failed — proceed without stashing
+      }
+
+      // Step 3: git merge origin/main
       const pullResult = await execFileAsync(
         'git',
         ['merge', 'origin/main', '--no-edit'],
         { cwd: HERMES_DIR, timeout: 60000 }
       );
 
-      // Step 3: reinstall dependencies via hermes update
+      // Step 4: restore local changes
+      if (hadStash) {
+        try {
+          await execFileAsync('git', ['stash', 'pop'], {
+            cwd: HERMES_DIR,
+            timeout: 10000,
+          });
+        } catch {
+          // stash pop conflict — leave them in stash for manual resolution
+        }
+      }
+
+      // Step 5: reinstall dependencies via hermes update
       // Run hermes update which handles pip install + venv setup
       const updateResult = await execFileAsync(HERMES_BIN, ['update'], {
         cwd: HERMES_DIR,

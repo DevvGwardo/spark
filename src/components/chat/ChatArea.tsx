@@ -335,6 +335,7 @@ interface ChatAreaProps {
   handleStop: () => void;
   handleRegenerate: () => void;
   isStreaming: boolean;
+  isAnotherPanelStreamingSameProfile?: boolean;
   error?: Error | null;
   apiKeyModalOpen: boolean;
   setApiKeyModalOpen: (v: boolean) => void;
@@ -359,6 +360,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   handleStop,
   handleRegenerate,
   isStreaming,
+  isAnotherPanelStreamingSameProfile = false,
   error,
   apiKeyModalOpen,
   setApiKeyModalOpen,
@@ -705,6 +707,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             onSend={handleSend}
             onStop={handleStop}
             isStreaming={isStreaming}
+            isAnotherPanelStreamingSameProfile={isAnotherPanelStreamingSameProfile}
             toolCallCount={toolCallCount}
             disabled={repoComposerLocked}
             disabledPlaceholder={disabledPlaceholder}
@@ -872,6 +875,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         onSend={handleSendWithScroll}
         onStop={handleStop}
         isStreaming={isStreaming}
+        isAnotherPanelStreamingSameProfile={isAnotherPanelStreamingSameProfile}
         toolCallCount={toolCallCount}
         disabled={repoComposerLocked}
         disabledPlaceholder={disabledPlaceholder}

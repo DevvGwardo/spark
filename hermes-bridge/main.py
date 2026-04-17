@@ -1690,6 +1690,8 @@ except ImportError:
 HERMES_PORT = int(os.environ.get("HERMES_PORT", "3002"))
 OPENROUTER_KEY = os.environ.get("HERMES_OPENROUTER_KEY", "")
 MINIMAX_KEY = os.environ.get("HERMES_MINIMAX_KEY", "")
+HERMES_BRIDGE_TOKEN = os.environ.get("HERMES_BRIDGE_TOKEN", "")
+HERMES_BRIDGE_VERSION = os.environ.get("HERMES_BRIDGE_VERSION", "dev")
 DEFAULT_TOOLSETS = os.environ.get("HERMES_TOOLSETS", "web,browser")
 
 def _load_cli_default_model() -> str | None:
@@ -2105,14 +2107,35 @@ app.add_middleware(
 )
 
 
+@app.get("/diag")
+async def diag():
+    return {
+        "token": HERMES_BRIDGE_TOKEN,
+        "pid": os.getpid(),
+        "home": os.path.expanduser("~"),
+        "bridge_version": HERMES_BRIDGE_VERSION,
+    }
+
+
 @app.get("/health")
 async def health():
-    has_openrouter = bool(OPENROUTER_KEY or _get_openrouter_key_from_hermes_creds() or _get_local_gateway_key())
-    has_minimax = bool(MINIMAX_KEY or _get_local_gateway_key())
+    local_gateway_key = bool(_get_local_gateway_key())
+    credential_sources: dict[str, bool] = {
+        "env": bool(OPENROUTER_KEY),
+        "auth_json": bool(_get_openrouter_key_from_hermes_creds()),
+        "openclaw_gateway": local_gateway_key,
+    }
+    credential_sources_minimax: dict[str, bool] = {
+        "env": bool(MINIMAX_KEY),
+        "openclaw_gateway": local_gateway_key,
+    }
     return {
         "status": "ok",
-        "has_openrouter_creds": has_openrouter,
-        "has_minimax_creds": has_minimax,
+        "has_openrouter_creds": any(credential_sources.values()),
+        "has_minimax_creds": any(credential_sources_minimax.values()),
+        "credential_sources": credential_sources,
+        "credential_sources_minimax": credential_sources_minimax,
+        "launch_token_present": bool(HERMES_BRIDGE_TOKEN),
         "brain_initialized": _brain_initialized,
         "active_requests": _bridge_active_requests,
         "hermes_default_model": DEFAULT_MODEL,
