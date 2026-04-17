@@ -469,7 +469,14 @@ When the user asks you to make changes:
   }
   prevConversationIdForSessionRef.current = conversationId;
   const chatSessionId = `${conversationId ?? `draft-${draftEpochRef.current}`}:${panelId}`;
-  const [aiChatSessionId, setAiChatSessionId] = useState(chatSessionId);
+  // Use useMemo so aiChatSessionId tracks conversationId synchronously.
+  // The previous useState + useLayoutEffect pattern caused a race condition:
+  // when the user switched conversations mid-stream, aiChatSessionId stayed stale
+  // (blocked by isStreaming guard in useLayoutEffect), which also blocked the
+  // conversation-switch effect (guarded on aiChatSessionId !== chatSessionId).
+  // This meant hydrateConversationMessages was never called and the UI kept
+  // showing the old conversation's messages.
+  const aiChatSessionId = useMemo(() => chatSessionId, [chatSessionId]);
   const isStreamingRef = useRef(false);
   const shouldRetainRequestConversationId =
     conversationId === null && (isStreamingRef.current || pendingConversationIdRef.current !== null);
@@ -1617,30 +1624,9 @@ When the user asks you to make changes:
       // the stream resolves).
       streamConvIdRef.current = convIdRef.current ?? pendingConversationIdRef.current ?? conversationId;
     }
-
-    if (aiChatSessionId === chatSessionId) return;
-    if (!isStreaming) {
-      setAiChatSessionId(chatSessionId);
-      return;
-    }
-    // Streaming + mismatch. Two legitimate sources of mismatch to preserve:
-    //   1. draft→new-conv promotion inside sendMessage — pendingConversationIdRef
-    //      matches the newly-assigned conversationId for one render, and
-    //      append() is mid-flight against the draft session.
-    //   2. stream on the current conversation that simply hasn't caught up yet.
-    // Otherwise the user navigated to a different thread; advance the session
-    // so the panel displays the selected conversation instead of the
-    // still-streaming one. The old AI SDK session loses its subscriber; that
-    // trade-off is acceptable since the user explicitly navigated away.
-    const inDraftPromotion =
-      pendingConversationIdRef.current !== null &&
-      pendingConversationIdRef.current === conversationId;
-    const streamingOnCurrentConv =
-      streamConvIdRef.current !== null &&
-      streamConvIdRef.current === conversationId;
-    if (inDraftPromotion || streamingOnCurrentConv) return;
-    setAiChatSessionId(chatSessionId);
-  }, [aiChatSessionId, chatSessionId, isStreaming, conversationId]);
+    // Session ID sync removed: aiChatSessionId is now derived via useMemo from
+    // chatSessionId, so it's always in sync. No async state lag possible.
+  }, [isStreaming, conversationId]);
   useEffect(() => {
     const pendingProposal = findPendingProposal(messages as Array<{
       id: string;
