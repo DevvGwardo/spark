@@ -154,3 +154,4 @@
 {"id":"cloud-chat-hub-5a80","title":"Remove vendored cheeksbase dataforge project","status":"in_progress","type":"task","priority":2,"createdAt":"2026-04-16T23:50:24.680Z","updatedAt":"2026-04-16T23:50:36.429Z"}
 {"id":"cloud-chat-hub-66a6","title":"Add themeable chat backgrounds inspired by Osaurus","status":"closed","type":"feature","priority":2,"createdAt":"2026-04-18T01:11:05.818Z","updatedAt":"2026-04-18T01:25:12.342Z","closedAt":"2026-04-18T01:25:12.342Z"}
 {"id":"cloud-chat-hub-dcca","title":"Restore new thread to pre-send picker state","status":"closed","type":"task","priority":2,"createdAt":"2026-04-18T01:34:51.444Z","updatedAt":"2026-04-18T01:37:22.186Z","closedAt":"2026-04-18T01:37:22.186Z"}
+{"id":"cloud-chat-hub-ec6d","title":"Fix Hermes no-message fallback on rate-limited agent-loop turns","status":"closed","type":"task","priority":1,"createdAt":"2026-04-18T01:42:11.173Z","updatedAt":"2026-04-18T01:54:28.696Z","closedAt":"2026-04-18T01:54:28.696Z"}
