@@ -1815,6 +1815,72 @@ class HermesAdapterBuildRepoSystemPromptTests(unittest.TestCase):
                 self.assertNotIn("file_599.txt", prompt)
 
 
+@unittest.skipUnless(HERMES_ADAPTER_AVAILABLE, "hermes_adapter not available (missing dependencies)")
+class HermesAdapterFinalResponseTests(unittest.TestCase):
+    """Regression coverage for non-streamed real-agent completions."""
+
+    def test_adapter_emits_final_response_when_agent_returns_one_without_streaming(self):
+        import hermes_adapter as ha
+
+        with patch.object(ha, "RealAIAgent") as mock_real_agent:
+            real_agent_instance = MagicMock()
+            real_agent_instance.run_conversation.return_value = {
+                "final_response": "No fallback provider available.",
+                "api_calls": 1,
+                "completed": False,
+                "failed": True,
+                "error": "Rate limited",
+            }
+            mock_real_agent.return_value = real_agent_instance
+
+            captured_text = []
+            adapter = ha.HermesAgentAdapter(
+                base_url="https://inference-api.nousresearch.com/v1",
+                api_key="test-key",
+                model="qwen3.6-plus",
+                on_text=captured_text.append,
+            )
+
+            result = adapter.run_conversation("test", [])
+
+            self.assertEqual(result["final_response"], "No fallback provider available.")
+            self.assertEqual(captured_text, ["No fallback provider available."])
+
+    def test_adapter_emits_last_status_when_agent_fails_without_final_response(self):
+        import hermes_adapter as ha
+
+        with patch.object(ha, "RealAIAgent") as mock_real_agent:
+            real_agent_instance = MagicMock()
+            mock_real_agent.return_value = real_agent_instance
+
+            captured_text = []
+            adapter = ha.HermesAgentAdapter(
+                base_url="https://inference-api.nousresearch.com/v1",
+                api_key="test-key",
+                model="qwen3.6-plus",
+                on_text=captured_text.append,
+            )
+
+            def _run_conversation(*args, **kwargs):
+                adapter._on_status("lifecycle", "⏳ Nous Portal rate limit active — resets in 15m 52s.")
+                return {
+                    "final_response": None,
+                    "api_calls": 1,
+                    "completed": False,
+                    "failed": True,
+                    "error": "Nous Portal rate limit active",
+                }
+
+            real_agent_instance.run_conversation.side_effect = _run_conversation
+
+            adapter.run_conversation("test", [])
+
+            self.assertEqual(
+                captured_text,
+                ["⏳ Nous Portal rate limit active — resets in 15m 52s."],
+            )
+
+
 # ---------------------------------------------------------------------------
 # Swarm Pattern Integration Stubs for run_agent / hermes_adapter
 # ---------------------------------------------------------------------------

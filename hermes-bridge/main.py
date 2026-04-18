@@ -2651,7 +2651,7 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
     chunk_id = f"chatcmpl-hermes-{os.urandom(8).hex()}"
     # Brain MCP: register per-request session so overseer can address it directly
     try:
-        _brain_rpc("tools/call", {"name": "brain_register", "arguments": {"name": f"hermes-request-{chunk_id}"}})
+        await _brain_rpc("tools/call", {"name": "brain_register", "arguments": {"name": f"hermes-request-{chunk_id}"}})
     except Exception:
         pass
     # Brain MCP: publish per-request job metadata keyed by chunk_id so the overseer
@@ -2868,7 +2868,8 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
                     to_release = [r for r in list(_claimed_resources) if repo_prefix is None or r.startswith(repo_prefix)]
                     for r in to_release:
                         _claimed_resources.discard(r)
-                        _brain_release(r)
+                for r in to_release:
+                    _brain_release(r)
                 # Pulse done status
                 _brain_pulse("done", f"completed chunk={chunk_id}")
             except Exception:

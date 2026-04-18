@@ -676,6 +676,8 @@ class HermesAgentAdapter:
         self.on_server_tool_event = on_server_tool_event
         self.on_thinking: Optional[Callable] = None
         self.on_reasoning: Optional[Callable] = None
+        self._streamed_text_chunks: list[str] = []
+        self._last_status_message: Optional[str] = None
 
         self.repo_mode = repo_mode
         self.repo_edit_intent = repo_edit_intent
@@ -779,6 +781,7 @@ class HermesAgentAdapter:
     def _on_stream_delta(self, delta):
         """Real agent streams per-token. Forward directly to on_text."""
         if delta is not None and delta and self.on_text:
+            self._streamed_text_chunks.append(str(delta))
             self.on_text(delta)
 
     def _on_tool_start(self, tc_id: str, name: str, args: dict):
@@ -803,6 +806,8 @@ class HermesAgentAdapter:
 
     def _on_status(self, category: str, message: str):
         """Log status events for debugging."""
+        if message:
+            self._last_status_message = message
         print(f"[hermes-adapter] status/{category}: {message}", flush=True)
 
     # --- Main entry point ---
@@ -821,6 +826,8 @@ class HermesAgentAdapter:
         Note: repo tools are already registered in __init__ (before agent
         creation). We deregister after the conversation completes.
         """
+        self._streamed_text_chunks = []
+        self._last_status_message = None
         try:
             result = self._agent.run_conversation(
                 user_message=user_message,
@@ -832,8 +839,33 @@ class HermesAgentAdapter:
             if self._repo_provider:
                 self._repo_provider._deregister_tools()
 
+        streamed_text = "".join(chunk for chunk in self._streamed_text_chunks if isinstance(chunk, str))
+        streamed_visible_text = bool(streamed_text.strip())
+
         # Log completion stats
         if isinstance(result, dict):
+            final_response = result.get("final_response")
+            if (
+                isinstance(final_response, str)
+                and final_response.strip()
+                and self.on_text
+                and not streamed_visible_text
+            ):
+                self.on_text(final_response)
+                streamed_visible_text = True
+
+            if not streamed_visible_text and self.on_text:
+                fallback_message = None
+                if isinstance(self._last_status_message, str) and self._last_status_message.strip():
+                    fallback_message = self._last_status_message
+                else:
+                    error_message = result.get("error")
+                    if isinstance(error_message, str) and error_message.strip():
+                        fallback_message = f"Error: {error_message}"
+
+                if fallback_message:
+                    self.on_text(fallback_message)
+
             api_calls = result.get("api_calls", 0)
             completed = result.get("completed", False)
             cost = result.get("estimated_cost_usd")
@@ -843,3 +875,5 @@ class HermesAgentAdapter:
                 f"cost=${cost:.4f}" if cost else f"[hermes-adapter] Conversation done. api_calls={api_calls}",
                 flush=True,
             )
+
+        return result

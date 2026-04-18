@@ -6,7 +6,7 @@ import types
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -208,8 +208,19 @@ class _FakeAsyncClient:
 async def _read_streaming_response(response):
     chunks = []
     async for chunk in response.body_iterator:
-        chunks.append(chunk)
+        if isinstance(chunk, str):
+            chunks.append(chunk.encode())
+        else:
+            chunks.append(chunk)
     return b"".join(chunks)
+
+
+async def _invoke_chat_and_read_stream(request, body):
+    response = await main.chat_completions(request, body)
+    payload = None
+    if hasattr(response, "body_iterator"):
+        payload = await _read_streaming_response(response)
+    return response, payload
 
 
 # ---------------------------------------------------------------------------
@@ -973,12 +984,46 @@ class MiniMaxAgentLoopRoutingTests(unittest.TestCase):
         })
 
         with patch.dict(sys.modules, {"hermes_adapter": fake_module}):
-            response = asyncio.run(main.chat_completions(request, body))
-            asyncio.run(_read_streaming_response(response))
+            asyncio.run(_invoke_chat_and_read_stream(request, body))
 
         self.assertIsNotNone(_FakeHermesAgentAdapter.last_init)
         self.assertEqual(_FakeHermesAgentAdapter.last_init["api_key"], "minimax-test-key")
         self.assertEqual(_FakeHermesAgentAdapter.last_init["base_url"], main.MINIMAX_BASE_URL)
+
+
+class BrainRequestRegistrationTests(unittest.TestCase):
+    def test_agent_loop_awaits_per_request_brain_register(self):
+        class _FakeHermesAgentAdapter:
+            def __init__(self, **kwargs):
+                self.on_thinking = None
+                self.on_reasoning = None
+
+            def run_conversation(self, user_message, conversation_history):
+                return {"final_response": "ok", "api_calls": 0, "completed": True}
+
+        fake_module = types.SimpleNamespace(HermesAgentAdapter=_FakeHermesAgentAdapter)
+        body = main.ChatCompletionRequest.model_validate({
+            "model": "meta-llama/llama-4-maverick",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": True,
+        })
+        request = _FakeRequest({
+            "authorization": "Bearer test-key",
+            "x-hermes-execution-mode": "agent-loop",
+        })
+
+        with patch.dict(sys.modules, {"hermes_adapter": fake_module}):
+            with patch.object(main, "_brain_rpc", new_callable=AsyncMock) as mock_brain_rpc:
+                asyncio.run(_invoke_chat_and_read_stream(request, body))
+
+        register_calls = [
+            call for call in mock_brain_rpc.await_args_list
+            if call.args
+            and call.args[0] == "tools/call"
+            and isinstance(call.args[1], dict)
+            and call.args[1].get("name") == "brain_register"
+        ]
+        self.assertGreaterEqual(len(register_calls), 1)
 
 
 class CronBridgeMappingTests(unittest.TestCase):
