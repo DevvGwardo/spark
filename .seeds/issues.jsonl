@@ -152,3 +152,4 @@
 {"id":"cloud-chat-hub-7049","title":"Persist tool invocations and plan-mode html file support","status":"closed","type":"task","priority":2,"createdAt":"2026-04-15T12:32:56.292Z","updatedAt":"2026-04-15T12:51:18.439Z","closedAt":"2026-04-15T12:51:18.439Z"}
 {"id":"cloud-chat-hub-06ff","title":"Move Hermes update button and add skills hub","status":"closed","type":"task","priority":2,"createdAt":"2026-04-15T13:40:11.413Z","updatedAt":"2026-04-15T13:56:38.841Z","closedAt":"2026-04-15T13:56:38.841Z"}
 {"id":"cloud-chat-hub-5a80","title":"Remove vendored cheeksbase dataforge project","status":"in_progress","type":"task","priority":2,"createdAt":"2026-04-16T23:50:24.680Z","updatedAt":"2026-04-16T23:50:36.429Z"}
+{"id":"cloud-chat-hub-66a6","title":"Add themeable chat backgrounds inspired by Osaurus","status":"closed","type":"feature","priority":2,"createdAt":"2026-04-18T01:11:05.818Z","updatedAt":"2026-04-18T01:25:12.342Z","closedAt":"2026-04-18T01:25:12.342Z"}
