@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatSidebar } from '@/components/sidebar/ChatSidebar';
 import { useActivityStore } from '@/stores/activity-store';
@@ -7,7 +7,7 @@ import { useChatStore } from '@/stores/chat-store';
 import { usePanelStore } from '@/stores/panel-store';
 import { useUIStore } from '@/stores/ui-store';
 
-describe('ChatSidebar footer', () => {
+describe('ChatSidebar', () => {
   beforeEach(() => {
     window.localStorage.clear();
 
@@ -87,6 +87,32 @@ describe('ChatSidebar footer', () => {
 
     expect(screen.getByRole('button', { name: 'New thread' })).toBeInTheDocument();
     expect(screen.queryByText('New thread')).not.toBeInTheDocument();
+  });
+
+  it('returns the focused panel to a blank draft without creating a conversation', () => {
+    const createConversation = vi.fn().mockResolvedValue('conv-2');
+
+    useChatStore.setState((state) => ({
+      ...state,
+      createConversation,
+    }));
+    useUIStore.setState((state) => ({
+      ...state,
+      activeTab: 'github',
+    }));
+    usePanelStore.setState((state) => ({
+      ...state,
+      panels: [{ id: 'default', conversationId: 'conv-1' }],
+      focusedPanelId: 'default',
+    }));
+
+    render(<ChatSidebar />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'New thread' }));
+
+    expect(useUIStore.getState().activeTab).toBe('chat');
+    expect(usePanelStore.getState().panels[0]?.conversationId).toBeNull();
+    expect(createConversation).not.toHaveBeenCalled();
   });
 
 });
