@@ -11,6 +11,7 @@ import { WelcomeScreen } from './WelcomeScreen';
 import { ApiKeyModal } from './ApiKeyModal';
 import { ChangeApprovalModal } from './ChangeApprovalModal';
 import { ChatErrorBanner } from './ChatErrorBanner';
+import { ChatSurfaceBackground } from './ChatSurfaceBackground';
 import { getProviderLabel } from '@/lib/providers';
 import type { Provider } from '@/stores/settings-store';
 import { getErrorMessage } from '@/lib/errors';
@@ -677,71 +678,76 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
   if (!conversationId && messages.length === 0) {
     return (
-      <div className="flex flex-col h-full px-4">
-        {planMode && (
-          <div className="flex items-center gap-2 rounded-md bg-purple-500/10 px-3 py-1.5 text-xs text-purple-400 ring-1 ring-purple-500/20 mx-auto mt-2">
-            <ClipboardList className="h-3.5 w-3.5" />
-            <span>Plan Mode — read-only exploration, no file edits</span>
+      <div className="relative flex h-full flex-col overflow-hidden px-4">
+        <ChatSurfaceBackground testId="chat-surface-background" />
+        <div className="relative z-10 flex h-full flex-col">
+          {planMode && (
+            <div className="mx-auto mt-2 flex items-center gap-2 rounded-md bg-purple-500/10 px-3 py-1.5 text-xs text-purple-400 ring-1 ring-purple-500/20">
+              <ClipboardList className="h-3.5 w-3.5" />
+              <span>Plan Mode — read-only exploration, no file edits</span>
+            </div>
+          )}
+          <div className="flex-1" />
+          <WelcomeScreen onSendMessage={(message) => {
+            if (handleQuickSend) {
+              handleQuickSend(message);
+            } else {
+              setInput(message);
+            }
+          }} disableRepoActions={repoComposerLocked} />
+          <div className="mx-auto mt-6 w-full max-w-[720px]">
+            {errorBanner}
+            <VerificationGhostOverlay />
+            <ActivityIndicator
+              isStreaming={isStreaming}
+              messages={messages}
+              toolActivity={toolActivityMap?.current}
+              statusLabel={agentStatus?.label}
+            />
+            <ChatInput
+              value={input}
+              onChange={setInput}
+              onSend={handleSend}
+              onStop={handleStop}
+              isStreaming={isStreaming}
+              isAnotherPanelStreamingSameProfile={isAnotherPanelStreamingSameProfile}
+              toolCallCount={toolCallCount}
+              disabled={repoComposerLocked}
+              disabledPlaceholder={disabledPlaceholder}
+              messages={messages}
+              activeProvider={activeProvider}
+              activeModel={activeModel}
+              agentStatusLabel={agentStatus?.label}
+              queuedMessages={queuedMessages}
+              onRemoveQueuedMessage={handleRemoveQueuedMessage}
+              onSteerQueuedMessage={handleSteerQueuedMessage}
+            />
           </div>
-        )}
-        <div className="flex-1" />
-        <WelcomeScreen onSendMessage={(message) => {
-          if (handleQuickSend) {
-            handleQuickSend(message);
-          } else {
-            setInput(message);
-          }
-        }} disableRepoActions={repoComposerLocked} />
-        <div className="w-full max-w-[720px] mx-auto mt-6">
-          {errorBanner}
-          <VerificationGhostOverlay />
-          <ActivityIndicator
-            isStreaming={isStreaming}
-            messages={messages}
-            toolActivity={toolActivityMap?.current}
-            statusLabel={agentStatus?.label}
-          />
-          <ChatInput
-            value={input}
-            onChange={setInput}
-            onSend={handleSend}
-            onStop={handleStop}
-            isStreaming={isStreaming}
-            isAnotherPanelStreamingSameProfile={isAnotherPanelStreamingSameProfile}
-            toolCallCount={toolCallCount}
-            disabled={repoComposerLocked}
-            disabledPlaceholder={disabledPlaceholder}
-            messages={messages}
-            activeProvider={activeProvider}
-            activeModel={activeModel}
-            agentStatusLabel={agentStatus?.label}
-            queuedMessages={queuedMessages}
-            onRemoveQueuedMessage={handleRemoveQueuedMessage}
-            onSteerQueuedMessage={handleSteerQueuedMessage}
-          />
+          <div className="flex-[2]" />
         </div>
-        <div className="flex-[2]" />
         {modal}
       </div>
     );
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      {planMode && (
-        <div className="flex items-center gap-2 rounded-md bg-purple-500/10 px-3 py-1.5 text-xs text-purple-400 ring-1 ring-purple-500/20 mx-20 mt-2">
-          <ClipboardList className="h-3.5 w-3.5" />
-          <span>Plan Mode — read-only exploration, no file edits</span>
-        </div>
-      )}
-      <Virtuoso
-        ref={virtuosoRef}
-        data={messages}
-        followOutput={() => isAutoScroll.current ? 'smooth' : false}
-        atBottomStateChange={handleAtBottomChange}
-        className="min-h-0 flex-1"
-        data-testid="virtuoso-scroller"
-        itemContent={(index, msg) => {
+    <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
+      <ChatSurfaceBackground testId="chat-surface-background" />
+      <div className="relative z-10 flex h-full min-h-0 flex-col">
+        {planMode && (
+          <div className="mx-20 mt-2 flex items-center gap-2 rounded-md bg-purple-500/10 px-3 py-1.5 text-xs text-purple-400 ring-1 ring-purple-500/20">
+            <ClipboardList className="h-3.5 w-3.5" />
+            <span>Plan Mode — read-only exploration, no file edits</span>
+          </div>
+        )}
+        <Virtuoso
+          ref={virtuosoRef}
+          data={messages}
+          followOutput={() => isAutoScroll.current ? 'smooth' : false}
+          atBottomStateChange={handleAtBottomChange}
+          className="min-h-0 flex-1"
+          data-testid="virtuoso-scroller"
+          itemContent={(index, msg) => {
           const isLastAssistantStreaming =
             isStreaming && msg.role === 'assistant' && index === messages.length - 1;
           const allowPseudoRepoWrites = msg.role === 'assistant'
@@ -804,89 +810,90 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               />
             </div>
           );
-        }}
-        components={{
-          Footer: React.memo(() => (
-            <>
-              {showInlineApprovalBanner && (
-                <div className="max-w-[720px] mx-auto px-20">
-                  <ChangeApprovalModal
-                    open={approvalModalOpen}
-                    onOpenChange={setApprovalModalOpen}
-                    proposal={pendingProposal}
-                    onAccept={handleAcceptProposal}
-                    onAcceptAlways={handleAcceptAlways}
-                    disabled={!handleQuickSend || isStreaming || acceptingProposalId === pendingProposal.messageId}
+          }}
+          components={{
+            Footer: React.memo(() => (
+              <>
+                {showInlineApprovalBanner && (
+                  <div className="mx-auto max-w-[720px] px-20">
+                    <ChangeApprovalModal
+                      open={approvalModalOpen}
+                      onOpenChange={setApprovalModalOpen}
+                      proposal={pendingProposal}
+                      onAccept={handleAcceptProposal}
+                      onAcceptAlways={handleAcceptAlways}
+                      disabled={!handleQuickSend || isStreaming || acceptingProposalId === pendingProposal.messageId}
+                    />
+                  </div>
+                )}
+                {showIssueNextStepCallout && issueContext && (
+                  <div className="mx-auto max-w-[720px] px-20 pb-6">
+                    <IssueNextStepCallout
+                      issueNumber={issueContext.number}
+                      issueTitle={issueContext.title}
+                      onUpdateIssue={handleIssueUpdate}
+                      onFix={handleIssueFix}
+                      disabled={repoComposerLocked}
+                    />
+                  </div>
+                )}
+                {showFooterActivity && (
+                  <ActivityIndicator
+                    isStreaming={isStreaming}
+                    messages={messages}
+                    toolActivity={toolActivityMap?.current}
+                    statusLabel={agentStatus?.label}
                   />
-                </div>
-              )}
-              {showIssueNextStepCallout && issueContext && (
-                <div className="max-w-[720px] mx-auto px-20 pb-6">
-                  <IssueNextStepCallout
-                    issueNumber={issueContext.number}
-                    issueTitle={issueContext.title}
-                    onUpdateIssue={handleIssueUpdate}
-                    onFix={handleIssueFix}
-                    disabled={repoComposerLocked}
-                  />
-                </div>
-              )}
-              {showFooterActivity && (
-                <ActivityIndicator
-                  isStreaming={isStreaming}
-                  messages={messages}
-                  toolActivity={toolActivityMap?.current}
-                  statusLabel={agentStatus?.label}
-                />
-              )}
-            </>
-          )),
-        }}
-      />
-      {showScrollButton && isStreaming && (
-        <div className="flex justify-center py-1">
-          <button
-            type="button"
-            onClick={scrollToBottom}
-            className="flex h-8 w-8 items-center justify-center rounded-full border border-border/60 bg-background/90 text-muted-foreground shadow-md backdrop-blur-sm transition-opacity hover:text-foreground"
-            aria-label="Scroll to bottom"
-          >
-            <ArrowDown className="h-4 w-4" />
-          </button>
+                )}
+              </>
+            )),
+          }}
+        />
+        {showScrollButton && isStreaming && (
+          <div className="flex justify-center py-1">
+            <button
+              type="button"
+              onClick={scrollToBottom}
+              className="flex h-8 w-8 items-center justify-center rounded-full border border-border/60 bg-background/90 text-muted-foreground shadow-md backdrop-blur-sm transition-opacity hover:text-foreground"
+              aria-label="Scroll to bottom"
+            >
+              <ArrowDown className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+        <div className="px-4">
+          {errorBanner}
         </div>
-      )}
-      <div className="px-4">
-        {errorBanner}
+        <ContextualSuggestions
+          messages={messages}
+          isStreaming={isStreaming}
+          onSend={(prompt) => {
+            if (handleQuickSend) {
+              handleQuickSend(prompt);
+            } else {
+              setInput(prompt);
+            }
+          }}
+        />
+        <ChatInput
+          value={input}
+          onChange={setInput}
+          onSend={handleSendWithScroll}
+          onStop={handleStop}
+          isStreaming={isStreaming}
+          isAnotherPanelStreamingSameProfile={isAnotherPanelStreamingSameProfile}
+          toolCallCount={toolCallCount}
+          disabled={repoComposerLocked}
+          disabledPlaceholder={disabledPlaceholder}
+          messages={messages}
+          activeProvider={activeProvider}
+          activeModel={activeModel}
+          agentStatusLabel={agentStatus?.label}
+          queuedMessages={queuedMessages}
+          onRemoveQueuedMessage={handleRemoveQueuedMessage}
+          onSteerQueuedMessage={handleSteerQueuedMessage}
+        />
       </div>
-      <ContextualSuggestions
-        messages={messages}
-        isStreaming={isStreaming}
-        onSend={(prompt) => {
-          if (handleQuickSend) {
-            handleQuickSend(prompt);
-          } else {
-            setInput(prompt);
-          }
-        }}
-      />
-      <ChatInput
-        value={input}
-        onChange={setInput}
-        onSend={handleSendWithScroll}
-        onStop={handleStop}
-        isStreaming={isStreaming}
-        isAnotherPanelStreamingSameProfile={isAnotherPanelStreamingSameProfile}
-        toolCallCount={toolCallCount}
-        disabled={repoComposerLocked}
-        disabledPlaceholder={disabledPlaceholder}
-        messages={messages}
-        activeProvider={activeProvider}
-        activeModel={activeModel}
-        agentStatusLabel={agentStatus?.label}
-        queuedMessages={queuedMessages}
-        onRemoveQueuedMessage={handleRemoveQueuedMessage}
-        onSteerQueuedMessage={handleSteerQueuedMessage}
-      />
       {modal}
     </div>
   );

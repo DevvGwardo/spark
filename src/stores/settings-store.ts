@@ -1,5 +1,12 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import {
+  DEFAULT_CHAT_BACKGROUND_SETTINGS,
+  isChatBackgroundImageFit,
+  isChatBackgroundType,
+  type ChatBackgroundImageFit,
+  type ChatBackgroundType,
+} from '@/lib/chat-backgrounds';
 import { isColorThemeId, type ColorThemeId } from '@/lib/themes';
 
 export type Provider =
@@ -36,6 +43,10 @@ interface SettingsState {
   theme: ThemeMode;
   colorTheme: string;
   accentColor: string;
+  chatBackgroundType: ChatBackgroundType;
+  chatBackgroundImageData: string | null;
+  chatBackgroundImageFit: ChatBackgroundImageFit;
+  chatBackgroundImageOpacity: number;
   fontSize: FontSize;
   fontFamily: FontFamily;
   defaultSystemPrompt: string;
@@ -54,6 +65,10 @@ interface SettingsState {
   setTheme: (t: ThemeMode) => void;
   setColorTheme: (id: string) => void;
   setAccentColor: (hsl: string) => void;
+  setChatBackgroundType: (type: ChatBackgroundType) => void;
+  setChatBackgroundImageData: (imageData: string | null) => void;
+  setChatBackgroundImageFit: (fit: ChatBackgroundImageFit) => void;
+  setChatBackgroundImageOpacity: (opacity: number) => void;
   setFontSize: (f: FontSize) => void;
   setFontFamily: (f: FontFamily) => void;
   setDefaultSystemPrompt: (s: string) => void;
@@ -201,6 +216,10 @@ export function normalizePersistedSettingsState(
   'setTheme' |
   'setColorTheme' |
   'setAccentColor' |
+  'setChatBackgroundType' |
+  'setChatBackgroundImageData' |
+  'setChatBackgroundImageFit' |
+  'setChatBackgroundImageOpacity' |
   'setFontSize' |
   'setFontFamily' |
   'setDefaultSystemPrompt' |
@@ -226,6 +245,21 @@ export function normalizePersistedSettingsState(
     theme: isThemeMode(persisted?.theme) ? persisted.theme : 'system',
     colorTheme: isColorThemeId(persisted?.colorTheme) ? persisted.colorTheme : 'default',
     accentColor: typeof persisted?.accentColor === 'string' && persisted.accentColor.trim().length > 0 ? persisted.accentColor : '31 100% 50%',
+    chatBackgroundType: isChatBackgroundType(persisted?.chatBackgroundType)
+      ? persisted.chatBackgroundType
+      : DEFAULT_CHAT_BACKGROUND_SETTINGS.type,
+    chatBackgroundImageData:
+      typeof persisted?.chatBackgroundImageData === 'string' && persisted.chatBackgroundImageData.trim().length > 0
+        ? persisted.chatBackgroundImageData
+        : DEFAULT_CHAT_BACKGROUND_SETTINGS.imageData,
+    chatBackgroundImageFit: isChatBackgroundImageFit(persisted?.chatBackgroundImageFit)
+      ? persisted.chatBackgroundImageFit
+      : DEFAULT_CHAT_BACKGROUND_SETTINGS.imageFit,
+    chatBackgroundImageOpacity:
+      typeof persisted?.chatBackgroundImageOpacity === 'number'
+        && Number.isFinite(persisted.chatBackgroundImageOpacity)
+      ? Math.min(1, Math.max(0.05, persisted.chatBackgroundImageOpacity))
+      : DEFAULT_CHAT_BACKGROUND_SETTINGS.imageOpacity,
     fontSize: isFontSize(persisted?.fontSize) ? persisted.fontSize : 'medium',
     fontFamily: isFontFamily(persisted?.fontFamily) ? persisted.fontFamily : 'inter',
     defaultSystemPrompt:
@@ -269,6 +303,11 @@ export const useSettingsStore = create<SettingsState>()(
       setTheme: (t) => set({ theme: t }),
       setColorTheme: (id) => set({ colorTheme: id }),
       setAccentColor: (hsl) => set({ accentColor: hsl }),
+      setChatBackgroundType: (type) => set({ chatBackgroundType: type }),
+      setChatBackgroundImageData: (imageData) => set({ chatBackgroundImageData: imageData }),
+      setChatBackgroundImageFit: (fit) => set({ chatBackgroundImageFit: fit }),
+      setChatBackgroundImageOpacity: (opacity) =>
+        set({ chatBackgroundImageOpacity: Math.min(1, Math.max(0.05, opacity)) }),
       setFontSize: (f) => set({ fontSize: f }),
       setFontFamily: (f) => set({ fontFamily: f }),
       setDefaultSystemPrompt: (s) => set({ defaultSystemPrompt: s }),
@@ -283,7 +322,7 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'cloudchat-settings',
-      version: 19,
+      version: 20,
       migrate: (persisted: unknown, version: number) => {
         const state = (persisted ?? {}) as PersistedSettingsState;
         if (version < 3) {
@@ -417,6 +456,23 @@ export const useSettingsStore = create<SettingsState>()(
           if (cur === 'openai/gpt-oss-120b:free' || cur === 'deepseek/deepseek-r1:free') {
             state.providers.openrouter.model = 'nvidia/llama-3.1-nemotron-70b-instruct:free';
           }
+        }
+        if (version < 20) {
+          state.chatBackgroundType = isChatBackgroundType(state.chatBackgroundType)
+            ? state.chatBackgroundType
+            : DEFAULT_CHAT_BACKGROUND_SETTINGS.type;
+          state.chatBackgroundImageData =
+            typeof state.chatBackgroundImageData === 'string' && state.chatBackgroundImageData.trim().length > 0
+              ? state.chatBackgroundImageData
+              : DEFAULT_CHAT_BACKGROUND_SETTINGS.imageData;
+          state.chatBackgroundImageFit = isChatBackgroundImageFit(state.chatBackgroundImageFit)
+            ? state.chatBackgroundImageFit
+            : DEFAULT_CHAT_BACKGROUND_SETTINGS.imageFit;
+          state.chatBackgroundImageOpacity =
+            typeof state.chatBackgroundImageOpacity === 'number'
+              && Number.isFinite(state.chatBackgroundImageOpacity)
+            ? Math.min(1, Math.max(0.05, state.chatBackgroundImageOpacity))
+            : DEFAULT_CHAT_BACKGROUND_SETTINGS.imageOpacity;
         }
         return normalizePersistedSettingsState(state);
       },

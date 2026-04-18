@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { X, Eye, EyeOff, Search, Check, Zap, ChevronDown, ChevronRight, ArrowLeft, ExternalLink, Github, Code2, Network, Info, TerminalSquare, RefreshCw, LayoutGrid, BookOpen, Settings, Plus, Trash2, MessageSquare } from 'lucide-react';
+import { X, Eye, EyeOff, Search, Check, Zap, ChevronDown, ChevronRight, ArrowLeft, ExternalLink, Github, Code2, Network, Info, TerminalSquare, RefreshCw, LayoutGrid, BookOpen, Settings, Plus, Trash2, MessageSquare, ImagePlus } from 'lucide-react';
 import { useSettingsStore, type Provider, type Language } from '@/stores/settings-store';
 import { COLOR_THEMES, ACCENT_COLORS } from '@/lib/themes';
+import { ChatSurfaceBackground } from '@/components/chat/ChatSurfaceBackground';
 import { useHermesStore, type HermesToolsets, type MCPServer, type MCPTool } from '@/stores/hermes-store';
 import { useKnowledgeStore } from '@/stores/knowledge-store';
 import { useUIStore } from '@/stores/ui-store';
@@ -9,6 +10,11 @@ import { PROVIDERS, PROVIDER_ORDER, CATEGORY_LABELS, getVisibleModelOptions, typ
 import { validateApiKey, listGitHubRepos, type GitHubRepoSummary } from '@/lib/api';
 import { PROVIDER_KEY_URLS } from '@/components/chat/ApiKeyModal';
 import { cn } from '@/lib/utils';
+import {
+  optimizeChatBackgroundImage,
+  type ChatBackgroundImageFit,
+  type ChatBackgroundType,
+} from '@/lib/chat-backgrounds';
 import { getLocalProviderRuntimeDetails, parseLocalProviderRuntimeError } from '@/lib/local-provider-runtime';
 import MessagingTab from './MessagingTab';
 import packageJson from '../../../package.json';
@@ -177,6 +183,10 @@ function GeneralTab() {
     theme,
     colorTheme,
     accentColor,
+    chatBackgroundType,
+    chatBackgroundImageData,
+    chatBackgroundImageFit,
+    chatBackgroundImageOpacity,
     language,
     autoSave,
     streamResponses,
@@ -185,6 +195,10 @@ function GeneralTab() {
     setTheme,
     setColorTheme,
     setAccentColor,
+    setChatBackgroundType,
+    setChatBackgroundImageData,
+    setChatBackgroundImageFit,
+    setChatBackgroundImageOpacity,
     setLanguage,
     setAutoSave,
     setStreamResponses,
@@ -193,6 +207,21 @@ function GeneralTab() {
   } = useSettingsStore();
 
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [backgroundUploadError, setBackgroundUploadError] = useState<string | null>(null);
+  const backgroundFileInputRef = useRef<HTMLInputElement>(null);
+
+  const backgroundModes: Array<{ value: ChatBackgroundType; label: string }> = [
+    { value: 'solid', label: 'Solid' },
+    { value: 'gradient', label: 'Gradient' },
+    { value: 'image', label: 'Image' },
+  ];
+
+  const imageFitOptions: Array<{ value: ChatBackgroundImageFit; label: string }> = [
+    { value: 'cover', label: 'Fill' },
+    { value: 'contain', label: 'Fit' },
+    { value: 'stretch', label: 'Stretch' },
+    { value: 'tile', label: 'Tile' },
+  ];
 
   const handleClearData = () => {
     // Clear conversation history from IndexedDB
@@ -204,6 +233,27 @@ function GeneralTab() {
       setShowClearConfirm(false);
     }
   };
+
+  const handleBackgroundFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    input.value = '';
+
+    if (!file) {
+      return;
+    }
+
+    setBackgroundUploadError(null);
+
+    try {
+      const optimized = await optimizeChatBackgroundImage(file);
+      setChatBackgroundImageData(optimized);
+      setChatBackgroundType('image');
+    } catch (error) {
+      console.error('Failed to process chat background image', error);
+      setBackgroundUploadError('Unable to process that image. Try a smaller JPG or PNG.');
+    }
+  }, [setChatBackgroundImageData, setChatBackgroundType]);
 
   const ToggleRow: React.FC<{ label: string; description: string; enabled: boolean; onChange: (v: boolean) => void }> = ({ label, description, enabled, onChange }) => (
     <div className="flex items-center justify-between py-1">
@@ -337,6 +387,123 @@ function GeneralTab() {
               );
             })}
           </div>
+        </div>
+
+        <div className="space-y-3">
+          <div>
+            <p className="text-sm text-foreground">Chat background</p>
+            <p className="text-xs text-[#666666]">Apply a subtle background to the conversation canvas while keeping the current palette.</p>
+          </div>
+
+          <div className="relative overflow-hidden rounded-[14px] border border-[#2a2a2a] bg-[#0f0f10]">
+            <ChatSurfaceBackground />
+            <div className="relative z-10 flex h-[108px] items-end gap-3 p-3">
+              <div className="w-[124px] rounded-[14px] border border-white/10 bg-background/72 px-3 py-2 shadow-[0_8px_24px_rgba(0,0,0,0.18)] backdrop-blur-xl">
+                <div className="h-2.5 w-16 rounded-full bg-foreground/12" />
+                <div className="mt-2 h-2 w-20 rounded-full bg-foreground/8" />
+              </div>
+              <div className="mb-3 flex-1 rounded-[16px] border border-white/10 bg-background/45 px-3 py-2 backdrop-blur-xl">
+                <div className="h-2.5 w-24 rounded-full bg-foreground/10" />
+                <div className="mt-2 h-2 w-32 rounded-full bg-foreground/8" />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2">
+            {backgroundModes.map((option) => {
+              const isSelected = chatBackgroundType === option.value;
+
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setChatBackgroundType(option.value)}
+                  className={cn(
+                    'rounded-[10px] border px-3 py-2 text-[12px] font-medium transition-colors duration-100',
+                    isSelected
+                      ? 'border-primary/50 bg-primary/12 text-foreground'
+                      : 'border-[#2a2a2a] bg-[#141414] text-muted-foreground hover:border-[#444444] hover:text-foreground'
+                  )}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+
+          {chatBackgroundType === 'image' && (
+            <div className="space-y-3 rounded-[10px] border border-[#2a2a2a] bg-[#111111] p-3">
+              <input
+                ref={backgroundFileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                className="hidden"
+                onChange={handleBackgroundFileChange}
+              />
+
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => backgroundFileInputRef.current?.click()}
+                  className="inline-flex items-center gap-2 rounded-[10px] border border-[#2a2a2a] bg-[#141414] px-3 py-2 text-[12px] font-medium text-foreground transition-colors duration-100 hover:border-[#444444]"
+                >
+                  <ImagePlus className="h-3.5 w-3.5" />
+                  {chatBackgroundImageData ? 'Replace image' : 'Upload image'}
+                </button>
+                {chatBackgroundImageData && (
+                  <button
+                    type="button"
+                    onClick={() => setChatBackgroundImageData(null)}
+                    className="rounded-[10px] border border-[#2a2a2a] px-3 py-2 text-[12px] font-medium text-muted-foreground transition-colors duration-100 hover:border-[#444444] hover:text-foreground"
+                  >
+                    Remove image
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                {imageFitOptions.map((option) => {
+                  const isSelected = chatBackgroundImageFit === option.value;
+
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setChatBackgroundImageFit(option.value)}
+                      className={cn(
+                        'rounded-[10px] border px-3 py-2 text-[12px] font-medium transition-colors duration-100',
+                        isSelected
+                          ? 'border-primary/50 bg-primary/12 text-foreground'
+                          : 'border-[#2a2a2a] bg-[#141414] text-muted-foreground hover:border-[#444444] hover:text-foreground'
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-[12px] text-foreground">Image opacity</p>
+                  <span className="text-[11px] font-mono text-[#777777]">{Math.round(chatBackgroundImageOpacity * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={0.05}
+                  max={1}
+                  step={0.05}
+                  value={chatBackgroundImageOpacity}
+                  onChange={(event) => setChatBackgroundImageOpacity(Number(event.target.value))}
+                  className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-[#222222] accent-[hsl(var(--primary))]"
+                />
+              </div>
+
+              {backgroundUploadError && (
+                <p className="text-[11px] text-[#ff9b9b]">{backgroundUploadError}</p>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Language */}
@@ -539,7 +706,7 @@ export const SettingsModal: React.FC = () => {
       closingRef.current = true;
       setVisible(false);
     }
-  }, [settingsOpen]);
+  }, [mounted, settingsOpen]);
 
   const handleTransitionEnd = useCallback(() => {
     if (closingRef.current) {
@@ -710,6 +877,7 @@ export const SettingsModal: React.FC = () => {
   }, [
     activeProvider,
     providers.hermes.apiKey,
+    providers.hermes.model,
     providers.openclaw.model,
     setAvailableModels,
     settingsOpen,

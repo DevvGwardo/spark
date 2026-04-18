@@ -1,10 +1,12 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SettingsModal } from '@/components/settings/SettingsModal';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useUIStore } from '@/stores/ui-store';
 
 const validateApiKeyMock = vi.fn();
+const baseSettingsState = useSettingsStore.getState();
+const baseUiState = useUIStore.getState();
 
 vi.mock('@/lib/api', async () => {
   const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api');
@@ -16,6 +18,10 @@ vi.mock('@/lib/api', async () => {
 
 describe('SettingsModal', () => {
   beforeEach(() => {
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 0;
+    });
     window.localStorage.clear();
     validateApiKeyMock.mockReset();
     validateApiKeyMock.mockResolvedValue({ valid: true, models: [] });
@@ -42,6 +48,14 @@ describe('SettingsModal', () => {
     }));
   });
 
+  afterEach(() => {
+    act(() => {
+      useSettingsStore.setState(baseSettingsState, true);
+      useUIStore.setState(baseUiState, true);
+    });
+    vi.unstubAllGlobals();
+  });
+
   it('renders the settings modal with vertical nav and switches tabs', () => {
     render(<SettingsModal />);
 
@@ -56,6 +70,18 @@ describe('SettingsModal', () => {
     // Switch to General tab via sidebar nav
     fireEvent.click(screen.getByRole('button', { name: 'General' }));
     expect(screen.getByText('Stream responses')).toBeInTheDocument();
+    expect(screen.getByText('Chat background')).toBeInTheDocument();
+  });
+
+  it('reveals image controls when image backgrounds are selected', () => {
+    render(<SettingsModal />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'General' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Image' }));
+
+    expect(screen.getByRole('button', { name: 'Upload image' })).toBeInTheDocument();
+    expect(screen.getByText('Image opacity')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Fill' })).toBeInTheDocument();
   });
 
   it('shows local runtime startup guidance for Hermes providers', async () => {
