@@ -6,6 +6,8 @@ export interface ToolActivityEvent {
   status: 'running' | 'completed';
   input: string;
   output: string | null;
+  /** Byte offset into the accumulated content stream where this tool was emitted. */
+  textOffset?: number;
 }
 
 const TOOL_ICONS: Record<string, typeof Search> = {

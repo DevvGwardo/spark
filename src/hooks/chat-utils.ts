@@ -254,72 +254,70 @@ export function synthesizeToolInvocationsForPersistence(
   toolActivity: ToolActivityEvent[] = [],
   serverToolEvents: ServerToolEvent[] = [],
 ): Array<Record<string, unknown>> {
-  if (serverToolEvents.length > 0) {
-    return serverToolEvents.map((event, index) => {
-      switch (event.type) {
-        case 'repo_file_read':
-          return {
-            toolCallId: `server-read-${index}:${event.path}`,
-            toolName: 'read_repo_file',
-            args: { path: event.path },
-            state: 'result',
-            result: { ok: true },
-          };
-        case 'repo_file_edit':
-          return {
-            toolCallId: `server-edit-${index}:${event.path}`,
-            toolName: 'edit_repo_file',
-            args: { path: event.path, content: event.content, description: event.description },
-            state: 'result',
-            result: { ok: true },
-          };
-        case 'repo_file_create':
-          return {
-            toolCallId: `server-create-${index}:${event.path}`,
-            toolName: 'create_repo_file',
-            args: { path: event.path, content: event.content, description: event.description },
-            state: 'result',
-            result: { ok: true },
-          };
-        case 'repo_file_delete':
-          return {
-            toolCallId: `server-delete-${index}:${event.path}`,
-            toolName: 'delete_repo_file',
-            args: { path: event.path, reason: event.reason },
-            state: 'result',
-            result: { ok: true },
-          };
-        case 'repo_batch_edit':
-          return {
-            toolCallId: `server-batch-edit-${index}`,
-            toolName: 'batch_edit_repo_files',
-            args: {
-              changes: event.changes.map((change) => ({
-                path: change.path,
-                action: change.action,
-                content: change.content,
-                description: change.description,
-              })),
-            },
-            state: 'result',
-            result: { ok: true },
-          };
-        case 'repo_proposal':
-          return {
-            toolCallId: `server-proposal-${index}`,
-            toolName: 'propose_changes',
-            args: {
-              summary: event.summary,
-              plan: event.plan,
-            },
-            state: 'result',
-            result: { ok: true },
-          };
-      }
-    });
-  }
+  const serverInvocations = serverToolEvents.map((event, index) => {
+    switch (event.type) {
+      case 'repo_file_read':
+        return {
+          toolCallId: `server-read-${index}:${event.path}`,
+          toolName: 'read_repo_file',
+          args: { path: event.path },
+          state: 'result',
+          result: { ok: true },
+        };
+      case 'repo_file_edit':
+        return {
+          toolCallId: `server-edit-${index}:${event.path}`,
+          toolName: 'edit_repo_file',
+          args: { path: event.path, content: event.content, description: event.description },
+          state: 'result',
+          result: { ok: true },
+        };
+      case 'repo_file_create':
+        return {
+          toolCallId: `server-create-${index}:${event.path}`,
+          toolName: 'create_repo_file',
+          args: { path: event.path, content: event.content, description: event.description },
+          state: 'result',
+          result: { ok: true },
+        };
+      case 'repo_file_delete':
+        return {
+          toolCallId: `server-delete-${index}:${event.path}`,
+          toolName: 'delete_repo_file',
+          args: { path: event.path, reason: event.reason },
+          state: 'result',
+          result: { ok: true },
+        };
+      case 'repo_batch_edit':
+        return {
+          toolCallId: `server-batch-edit-${index}`,
+          toolName: 'batch_edit_repo_files',
+          args: {
+            changes: event.changes.map((change) => ({
+              path: change.path,
+              action: change.action,
+              content: change.content,
+              description: change.description,
+            })),
+          },
+          state: 'result',
+          result: { ok: true },
+        };
+      case 'repo_proposal':
+        return {
+          toolCallId: `server-proposal-${index}`,
+          toolName: 'propose_changes',
+          args: {
+            summary: event.summary,
+            plan: event.plan,
+          },
+          state: 'result',
+          result: { ok: true },
+        };
+    }
+  });
 
-  return toolActivity.map((event, index) => ({
+  const activityInvocations = toolActivity.map((event, index) => ({
     toolCallId: `activity-${index}:${event.tool}`,
     toolName: event.tool,
     args: parseToolActivityInput(event.input),
@@ -333,7 +331,12 @@ export function synthesizeToolInvocationsForPersistence(
             : { ok: true },
         }
       : {}),
+    ...(typeof event.textOffset === 'number' ? { textOffset: event.textOffset } : {}),
   }));
+
+  // Merge both sources — server tool events first (repo ops), then tool activity
+  // (non-repo tools). This preserves all invocations in mixed Hermes turns.
+  return [...serverInvocations, ...activityInvocations];
 }
 
 export const REPO_EDIT_TOOL_NAMES = new Set([

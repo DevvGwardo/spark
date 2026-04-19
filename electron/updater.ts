@@ -26,19 +26,30 @@ export function setupAutoUpdater(mainWindow: BrowserWindow) {
     console.log(`Update available: ${info.version}`)
   })
 
-  autoUpdater.on('update-downloaded', (info) => {
-    dialog.showMessageBox(mainWindow, {
+  autoUpdater.on('update-downloaded', async (info) => {
+    let hasStreams = false
+    try {
+      hasStreams = await mainWindow.webContents.executeJavaScript(
+        'window.__updateHasActiveStreams ? window.__updateHasActiveStreams() : false'
+      )
+    } catch {
+      // Renderer not ready or function missing — assume no streams
+    }
+
+    const result = await dialog.showMessageBox(mainWindow, {
       type: 'info',
       title: 'Update Ready',
       message: `Version ${info.version} has been downloaded.`,
-      detail: 'Restart CloudChat to install the update.',
-      buttons: ['Restart Now', 'Later'],
-      defaultId: 0
-    }).then((result) => {
-      if (result.response === 0) {
-        autoUpdater.quitAndInstall()
-      }
+      detail: hasStreams
+        ? 'You have an active response in progress. Restarting now will interrupt it.'
+        : 'Restart CloudChat to install the update.',
+      buttons: hasStreams ? ['Restart Anyway', 'Later'] : ['Restart Now', 'Later'],
+      defaultId: 0,
     })
+
+    if (result.response === 0) {
+      autoUpdater.quitAndInstall()
+    }
   })
 
   autoUpdater.on('error', (error) => {

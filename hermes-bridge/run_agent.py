@@ -1045,6 +1045,7 @@ class AIAgent:
         github_repo_name: Optional[str] = None,
         repo_file_tree: Optional[list[str]] = None,
         custom_tools: Optional[list[dict]] = None,
+        workspace_id: Optional[str] = None,
         on_tool_start: Optional[Callable] = None,
         on_tool_end: Optional[Callable] = None,
         on_text: Optional[Callable] = None,

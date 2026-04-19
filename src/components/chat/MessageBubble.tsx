@@ -68,6 +68,8 @@ interface ToolInvocation {
   args: Record<string, unknown>;
   state: 'partial-call' | 'call' | 'result';
   result?: unknown;
+  /** Content-stream offset where this tool was emitted (persisted for interleaving). */
+  textOffset?: number;
 }
 
 function getToolErrorMessage(result: unknown): string | null {
@@ -298,6 +300,67 @@ function buildInterleavedHermesParts(
   }
 
   return result;
+}
+
+/**
+ * Interleave text and tool-invocation parts using persisted textOffset values.
+ * Each tool invocation with a textOffset tells us where in rawContent it was
+ * emitted during the original stream.  We split the content at those offsets,
+ * strip marker/status lines from each text segment, and insert the tool
+ * invocation between segments.
+ *
+ * Returns null if none of the tool invocations carry a textOffset.
+ */
+function buildInterleavedByOffset(
+  rawContent: string,
+  toolInvocations: ToolInvocation[],
+): MessagePart[] | null {
+  if (!rawContent || toolInvocations.length === 0) return null;
+
+  // Only use this path when at least one tool has a textOffset
+  const toolsWithOffset = toolInvocations.filter(
+    (t) => typeof t.textOffset === 'number',
+  );
+  if (toolsWithOffset.length === 0) return null;
+
+  // Sort by textOffset so we split content in order
+  const sorted = [...toolsWithOffset].sort(
+    (a, b) => (a.textOffset ?? 0) - (b.textOffset ?? 0),
+  );
+
+  const result: MessagePart[] = [];
+  let cursor = 0;
+
+  for (const tool of sorted) {
+    const offset = tool.textOffset!;
+    if (offset > cursor) {
+      const segment = rawContent.slice(cursor, offset);
+      const cleaned = stripHermesActivityText(segment).trim();
+      if (cleaned) {
+        result.push({ type: 'text', text: cleaned });
+      }
+    }
+    result.push({ type: 'tool-invocation', toolInvocation: tool });
+    cursor = Math.max(cursor, offset);
+  }
+
+  // Remaining text after the last tool
+  if (cursor < rawContent.length) {
+    const segment = rawContent.slice(cursor);
+    const cleaned = stripHermesActivityText(segment).trim();
+    if (cleaned) {
+      result.push({ type: 'text', text: cleaned });
+    }
+  }
+
+  // Append any tools without offsets at the end
+  for (const tool of toolInvocations) {
+    if (typeof tool.textOffset !== 'number') {
+      result.push({ type: 'tool-invocation', toolInvocation: tool });
+    }
+  }
+
+  return result.length > 0 ? result : null;
 }
 
 function sanitizeAssistantTextContent(content: string, isStreaming: boolean): string {
@@ -1173,6 +1236,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function M
               : { ok: true },
           }
         : {}),
+      ...(typeof event.textOffset === 'number' ? { textOffset: event.textOffset } : {}),
     }));
   }, [isUser, message.id, toolActivity]);
   const orderedParts = React.useMemo(() => {
@@ -1187,28 +1251,60 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function M
       normalizedParts.unshift({ type: 'reasoning', reasoning: effectiveReasoning });
     }
 
-    // If parts already has tool invocations (from AI SDK streaming), they're interleaved
+    // Tool invocations that may already exist on `parts` — these arrive via
+    // ChatArea.mergeAssistantPartsWithToolInvocations, which appends every
+    // `message.toolInvocations` entry to the end of parts.  For Hermes
+    // responses (where tools stream as `hermes_tool_activity` events separate
+    // from text) this collapses into [text, tool, tool, …] and drops the
+    // ordering information.  We keep these as a tool-source candidate but
+    // always prefer Hermes marker-based interleaving from rawContent when
+    // available.
+    const partsToolInvocations = normalizedParts
+      .filter((p): p is MessagePart & { type: 'tool-invocation'; toolInvocation: ToolInvocation } =>
+        p.type === 'tool-invocation' && !!p.toolInvocation)
+      .map((p) => p.toolInvocation);
+
+    // Determine which tool invocations to interleave (priority order)
+    const fallbackTools = pseudoToolInvocations.length > 0
+      ? pseudoToolInvocations
+      : (toolInvocations && toolInvocations.length > 0)
+        ? toolInvocations
+        : partsToolInvocations.length > 0
+          ? partsToolInvocations
+          : synthesizedToolInvocations;
+
+    // Hermes tool interleaving — two strategies, tried in priority order:
+    //
+    // 1. Offset-based: each tool invocation carries a `textOffset` stamped
+    //    during streaming, telling us exactly where in rawContent it appeared.
+    //    This is the most reliable signal because it survives persistence to
+    //    IndexedDB unchanged and doesn't depend on marker text being present.
+    //
+    // 2. Marker-based: scan rawContent for `> **Reading file** — …` lines
+    //    and pair them with tool invocations sequentially.  Fallback for
+    //    messages persisted before offset tracking was added.
+    if (fallbackTools.length > 0) {
+      const interleaved =
+        buildInterleavedByOffset(rawContent, fallbackTools) ??
+        buildInterleavedHermesParts(rawContent, fallbackTools);
+      if (interleaved) {
+        // Replace text/tool entries with the interleaved result; keep any
+        // non-text/non-tool parts (reasoning, step-start markers) in order.
+        const preserved = normalizedParts.filter(
+          (p) => p.type !== 'text' && p.type !== 'tool-invocation',
+        );
+        return dedupeAssistantParts([...preserved, ...interleaved]);
+      }
+    }
+
+    // If parts already has tool invocations (from AI SDK streaming tool_calls
+    // inline with text), they're interleaved at the protocol level — render
+    // as-is.  Only reached when Hermes marker interleaving didn't apply.
     if (hasToolPart) {
       if (!hasTextPart && displayContent) {
         normalizedParts.push({ type: 'text', text: displayContent });
       }
       return dedupeAssistantParts(normalizedParts);
-    }
-
-    // Determine which fallback tool invocations to use (priority order)
-    const fallbackTools = pseudoToolInvocations.length > 0
-      ? pseudoToolInvocations
-      : (toolInvocations && toolInvocations.length > 0)
-        ? toolInvocations
-        : synthesizedToolInvocations;
-
-    // Try to interleave tool invocations with text using Hermes activity markers
-    if (fallbackTools.length > 0 && !hasTextPart) {
-      const interleaved = buildInterleavedHermesParts(rawContent, fallbackTools);
-      if (interleaved) {
-        normalizedParts.push(...interleaved);
-        return dedupeAssistantParts(normalizedParts);
-      }
     }
 
     // Fallback: interleave text parts with tool invocations.

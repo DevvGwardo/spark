@@ -213,6 +213,18 @@ _REPO_EDIT_TOOLS = {"edit_repo_file", "create_repo_file", "delete_repo_file", "b
 _MAX_TOOL_RESPONSE = 25_000
 
 
+def _shared_repo_file_key(owner: str, repo: str, path: str) -> str:
+    return f"repo-file:{owner}/{repo}:{path}"
+
+
+def _shared_repo_tree_key(owner: str, repo: str) -> str:
+    return f"repo-tree:{owner}/{repo}"
+
+
+def _workspace_staged_key(workspace_id: str, owner: str, repo: str, path: str) -> str:
+    return f"repo-staged:{workspace_id}:{owner}/{repo}:{path}"
+
+
 def _cap(text: str) -> str:
     if len(text) <= _MAX_TOOL_RESPONSE:
         return text
@@ -227,6 +239,15 @@ def _cap(text: str) -> str:
 class RepoToolProvider:
     """Manages GitHub API repo tools as a dynamic toolset in the real agent."""
 
+    # Friendly display names for repo tool marker text (matches main.py)
+    _DISPLAY_NAMES: dict[str, str] = {
+        "read_repo_file": "Reading file",
+        "edit_repo_file": "Editing file",
+        "create_repo_file": "Creating file",
+        "delete_repo_file": "Deleting file",
+        "batch_edit_repo_files": "Editing files",
+    }
+
     def __init__(
         self,
         github_pat: Optional[str],
@@ -235,12 +256,16 @@ class RepoToolProvider:
         file_tree: list[str],
         edit_intent: bool,
         on_server_tool_event: Optional[Callable],
+        workspace_id: Optional[str] = None,
+        on_text: Optional[Callable] = None,
     ):
         self.github_pat = github_pat
         self.owner = owner
         self.name = name
         self.edit_intent = edit_intent
         self.on_server_tool_event = on_server_tool_event
+        self.on_text = on_text
+        self.workspace_id = workspace_id or 'default'
         self.session_cache: dict[str, str] = {}
         self._registered_tools: list[str] = []
 
@@ -325,6 +350,17 @@ class RepoToolProvider:
             except Exception as e:
                 print(f"[hermes-adapter] Failed to emit server tool event: {e}", flush=True)
 
+    def _emit_tool_marker(self, tool_name: str, detail: str = ""):
+        """Inject visible marker text into the content stream for inline tool display."""
+        if not self.on_text:
+            return
+        display = self._DISPLAY_NAMES.get(tool_name, tool_name)
+        if detail:
+            marker = f"\n\n> **{display}** — `{detail}`\n\n"
+        else:
+            marker = f"\n\n> **{display}**\n\n"
+        self.on_text(marker)
+
     # --- Tool handlers (signature: handler(args_dict, **kwargs) -> str) ---
 
     @staticmethod
@@ -378,15 +414,16 @@ class RepoToolProvider:
 
     def _handle_read_repo_file(self, args: dict, **kwargs) -> str:
         path = args.get("path", "")
+        self._emit_tool_marker("read_repo_file", path)
         # Return cached content for files edited in this session
         if path in self.session_cache:
             content = self.session_cache[path]
             self._emit({"type": "repo_file_read", "path": path, "content": content})
             return _cap(content) or "(empty file)"
 
-        # Check cross-session staged edits buffer first
+        # Check cross-session staged edits buffer first (workspace-scoped)
         if self.owner and self.name:
-            staged_key = f"repo-staged:{self.owner}/{self.name}:{path}"
+            staged_key = _workspace_staged_key(self.workspace_id, self.owner, self.name, path)
             staged = _brain_safe_get(staged_key)
             if staged is not None:
                 self.session_cache[path] = staged
@@ -415,17 +452,19 @@ class RepoToolProvider:
 
     def _handle_edit_repo_file(self, args: dict, **kwargs) -> str:
         path = args.get("path", "")
+        self._emit_tool_marker("edit_repo_file", path)
         content = args.get("content", "")
         description = args.get("description", "")
         original = self.session_cache.get(path, "")
         self.session_cache[path] = content
-        # Invalidate pooled brain cache and stage to pooled edit buffer
+        # Invalidate pooled brain cache and stage to workspace-scoped edit buffer
         if self.owner and self.name:
-            cache_key = f"repo-file:{self.owner}/{self.name}:{path}"
-            _brain_safe_delete(cache_key)
-            # Publish staged edit so follow-up requests see the new content
-            staged_key = f"repo-staged:{self.owner}/{self.name}:{path}"
-            _brain_safe_set(staged_key, content, ttl=REPO_CACHE_TTL)
+            _brain_safe_delete(_shared_repo_file_key(self.owner, self.name, path))
+            _brain_safe_set(
+                _workspace_staged_key(self.workspace_id, self.owner, self.name, path),
+                content,
+                ttl=REPO_CACHE_TTL,
+            )
         self._emit({
             "type": "repo_file_edit",
             "path": path,
@@ -437,15 +476,18 @@ class RepoToolProvider:
 
     def _handle_create_repo_file(self, args: dict, **kwargs) -> str:
         path = args.get("path", "")
+        self._emit_tool_marker("create_repo_file", path)
         content = args.get("content", "")
         description = args.get("description", "")
         self.session_cache[path] = content
-        # Invalidate pooled brain cache and publish to staged buffer
+        # Invalidate pooled brain cache and publish to workspace-scoped staged buffer
         if self.owner and self.name:
-            cache_key = f"repo-file:{self.owner}/{self.name}:{path}"
-            _brain_safe_delete(cache_key)
-            staged_key = f"repo-staged:{self.owner}/{self.name}:{path}"
-            _brain_safe_set(staged_key, content, ttl=REPO_CACHE_TTL)
+            _brain_safe_delete(_shared_repo_file_key(self.owner, self.name, path))
+            _brain_safe_set(
+                _workspace_staged_key(self.workspace_id, self.owner, self.name, path),
+                content,
+                ttl=REPO_CACHE_TTL,
+            )
         self._emit({
             "type": "repo_file_create",
             "path": path,
@@ -456,16 +498,25 @@ class RepoToolProvider:
 
     def _handle_delete_repo_file(self, args: dict, **kwargs) -> str:
         path = args.get("path", "")
+        self._emit_tool_marker("delete_repo_file", path)
         self.session_cache.pop(path, None)
-        # Invalidate pooled brain cache and staged buffer
+        # Invalidate pooled brain cache and workspace-scoped staged buffer
         if self.owner and self.name:
-            _brain_safe_delete(f"repo-file:{self.owner}/{self.name}:{path}")
-            _brain_safe_delete(f"repo-staged:{self.owner}/{self.name}:{path}")
+            _brain_safe_delete(_shared_repo_file_key(self.owner, self.name, path))
+            _brain_safe_delete(_workspace_staged_key(self.workspace_id, self.owner, self.name, path))
         self._emit({"type": "repo_file_delete", "path": path})
         return f"Staged deletion of {path}"
 
     def _handle_batch_edit(self, args: dict, **kwargs) -> str:
         changes = args.get("changes", [])
+        if isinstance(changes, list) and changes:
+            paths = [c.get("path", "?") for c in changes[:5] if isinstance(c, dict)]
+            detail = ", ".join(paths)
+            if len(changes) > 5:
+                detail += f" +{len(changes) - 5} more"
+            self._emit_tool_marker("batch_edit_repo_files", detail)
+        else:
+            self._emit_tool_marker("batch_edit_repo_files")
         if not isinstance(changes, list):
             return "Error: 'changes' must be an array."
         results = []
@@ -665,6 +716,7 @@ class HermesAgentAdapter:
         github_repo_name: Optional[str] = None,
         repo_file_tree: Optional[list[str]] = None,
         custom_tools: Optional[list[dict]] = None,
+        workspace_id: Optional[str] = None,
         on_tool_start: Optional[Callable] = None,
         on_tool_end: Optional[Callable] = None,
         on_text: Optional[Callable] = None,
@@ -707,6 +759,8 @@ class HermesAgentAdapter:
                 file_tree=repo_file_tree or [],
                 edit_intent=repo_edit_intent,
                 on_server_tool_event=on_server_tool_event,
+                workspace_id=workspace_id,
+                on_text=on_text,
             )
             real_toolsets.append(_REPO_TOOLSET)
             # Pre-register tools so the agent discovers them during __init__

@@ -611,8 +611,12 @@ class HermesBridgeMainTests(unittest.TestCase):
                 "x-hermes-execution-mode": "passthrough",
             })
 
-            response = asyncio.run(main.chat_completions(request, body))
-            streamed = asyncio.run(_read_streaming_response(response))
+            with patch.object(main, "_load_cli_model_config", return_value={
+                     "default": None, "provider": None, "base_url": None,
+                 }), \
+                 patch.object(main, "_get_active_provider", return_value=None):
+                response = asyncio.run(main.chat_completions(request, body))
+                streamed = asyncio.run(_read_streaming_response(response))
         finally:
             main.httpx.AsyncClient = original_client
 
@@ -989,6 +993,132 @@ class MiniMaxAgentLoopRoutingTests(unittest.TestCase):
         self.assertIsNotNone(_FakeHermesAgentAdapter.last_init)
         self.assertEqual(_FakeHermesAgentAdapter.last_init["api_key"], "minimax-test-key")
         self.assertEqual(_FakeHermesAgentAdapter.last_init["base_url"], main.MINIMAX_BASE_URL)
+
+
+class CliProviderRoutingTests(unittest.TestCase):
+    """Ensure ~/.hermes/config.yaml model.provider is authoritative for routing.
+
+    The Electron app calls /chat/completions right after the Hermes CLI
+    rewrites config.yaml. The CLI updates config.yaml deterministically but
+    does NOT always update auth.json active_provider. Routing must trust
+    config.yaml first so the user's CLI model switch immediately takes
+    effect in the Electron app on the next request.
+    """
+
+    @staticmethod
+    def _fake_adapter():
+        class _FakeHermesAgentAdapter:
+            last_init = None
+
+            def __init__(self, **kwargs):
+                _FakeHermesAgentAdapter.last_init = kwargs
+                self.on_thinking = None
+                self.on_reasoning = None
+
+            def run_conversation(self, user_message, conversation_history):
+                return None
+
+        return _FakeHermesAgentAdapter
+
+    def test_cli_provider_openrouter_overrides_stale_auth_json_active_provider(self):
+        """Regression: CLI switches config.yaml to openrouter while auth.json
+        still says nous — bridge must route to OpenRouter, not Nous."""
+        adapter = self._fake_adapter()
+        fake_module = types.SimpleNamespace(HermesAgentAdapter=adapter)
+        body = main.ChatCompletionRequest.model_validate({
+            "model": "meta-llama/llama-3-70b-instruct",
+            "messages": [{"role": "user", "content": "test"}],
+            "stream": True,
+        })
+        request = _FakeRequest({"authorization": "Bearer openrouter-key"})
+
+        with patch.dict(sys.modules, {"hermes_adapter": fake_module}), \
+             patch.object(main, "_load_cli_model_config", return_value={
+                 "default": "meta-llama/llama-3-70b-instruct",
+                 "provider": "openrouter",
+                 "base_url": "https://openrouter.ai/api/v1",
+             }), \
+             patch.object(main, "_get_active_provider", return_value="nous"):
+            asyncio.run(_invoke_chat_and_read_stream(request, body))
+
+        self.assertIsNotNone(adapter.last_init)
+        self.assertEqual(
+            adapter.last_init["base_url"], "https://openrouter.ai/api/v1",
+            "CLI config.yaml provider=openrouter must win over stale auth.json active_provider=nous",
+        )
+
+    def test_cli_provider_nous_routes_to_nous_regardless_of_model_prefix(self):
+        """User sets Nous via CLI but picks an arbitrary model name without
+        the nousresearch/ prefix — the provider field must still route to Nous."""
+        adapter = self._fake_adapter()
+        fake_module = types.SimpleNamespace(HermesAgentAdapter=adapter)
+        body = main.ChatCompletionRequest.model_validate({
+            "model": "xiaomi/mimo-v2-pro",
+            "messages": [{"role": "user", "content": "test"}],
+            "stream": True,
+        })
+        request = _FakeRequest({"authorization": "Bearer some-key"})
+
+        with patch.dict(sys.modules, {"hermes_adapter": fake_module}), \
+             patch.object(main, "_load_cli_model_config", return_value={
+                 "default": "xiaomi/mimo-v2-pro",
+                 "provider": "nous",
+                 "base_url": "https://inference-api.nousresearch.com/v1",
+             }), \
+             patch.object(main, "_get_active_provider", return_value=None), \
+             patch.object(main, "_get_nous_agent_key", return_value="nous-key"):
+            asyncio.run(_invoke_chat_and_read_stream(request, body))
+
+        self.assertIsNotNone(adapter.last_init)
+        self.assertEqual(adapter.last_init["base_url"], main.NOUS_BASE_URL)
+        self.assertEqual(adapter.last_init["api_key"], "nous-key")
+
+    def test_auth_json_active_provider_fallback_when_cli_provider_missing(self):
+        """Legacy path: if config.yaml has no provider field, auth.json
+        active_provider still drives routing."""
+        adapter = self._fake_adapter()
+        fake_module = types.SimpleNamespace(HermesAgentAdapter=adapter)
+        body = main.ChatCompletionRequest.model_validate({
+            "model": "xiaomi/mimo-v2-pro",
+            "messages": [{"role": "user", "content": "test"}],
+            "stream": True,
+        })
+        request = _FakeRequest({"authorization": "Bearer some-key"})
+
+        with patch.dict(sys.modules, {"hermes_adapter": fake_module}), \
+             patch.object(main, "_load_cli_model_config", return_value={
+                 "default": None, "provider": None, "base_url": None,
+             }), \
+             patch.object(main, "_get_active_provider", return_value="nous"), \
+             patch.object(main, "_get_nous_agent_key", return_value="nous-key"):
+            asyncio.run(_invoke_chat_and_read_stream(request, body))
+
+        self.assertEqual(adapter.last_init["base_url"], main.NOUS_BASE_URL)
+
+    def test_cli_custom_base_url_still_supported(self):
+        """Non-known host base_url continues to work (regression for pre-existing
+        cli_is_custom passthrough path)."""
+        adapter = self._fake_adapter()
+        fake_module = types.SimpleNamespace(HermesAgentAdapter=adapter)
+        body = main.ChatCompletionRequest.model_validate({
+            "model": "my-self-hosted/model",
+            "messages": [{"role": "user", "content": "test"}],
+            "stream": True,
+        })
+        request = _FakeRequest({"authorization": "Bearer ignored"})
+
+        with patch.dict(sys.modules, {"hermes_adapter": fake_module}), \
+             patch.object(main, "_load_cli_model_config", return_value={
+                 "default": "my-self-hosted/model",
+                 "provider": "selfhost",
+                 "base_url": "https://my-llm.internal/v1",
+             }), \
+             patch.object(main, "_get_active_provider", return_value=None), \
+             patch.object(main, "_get_credential_pool_key", return_value="selfhost-key"):
+            asyncio.run(_invoke_chat_and_read_stream(request, body))
+
+        self.assertEqual(adapter.last_init["base_url"], "https://my-llm.internal/v1")
+        self.assertEqual(adapter.last_init["api_key"], "selfhost-key")
 
 
 class BrainRequestRegistrationTests(unittest.TestCase):

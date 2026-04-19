@@ -8,8 +8,16 @@ import '@fontsource/geist-mono/400.css';
 import '@shoelace-style/shoelace/dist/themes/dark.css';
 import App from './App.tsx';
 import './index.css';
+import { useActivityStore } from './stores/activity-store';
 
 // Shoelace assets base path (icons, etc.)
 setBasePath('https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.20.1/cdn/');
+
+// Expose a global check for the Electron updater to query whether any
+// conversation is actively streaming (prevents data loss on restart).
+(window as any).__updateHasActiveStreams = (): boolean => {
+  const activities = useActivityStore.getState().activities;
+  return Object.values(activities).some((a) => a.streaming);
+};
 
 createRoot(document.getElementById("root")!).render(<App />);

@@ -1694,19 +1694,28 @@ HERMES_BRIDGE_TOKEN = os.environ.get("HERMES_BRIDGE_TOKEN", "")
 HERMES_BRIDGE_VERSION = os.environ.get("HERMES_BRIDGE_VERSION", "dev")
 DEFAULT_TOOLSETS = os.environ.get("HERMES_TOOLSETS", "web,browser")
 
-def _load_cli_default_model() -> str | None:
-    """Read model.default from ~/.hermes/config.yaml (Hermes CLI config)."""
+def _load_cli_model_config() -> dict:
+    """Read the `model:` block from ~/.hermes/config.yaml (Hermes CLI config).
+
+    Returns a dict with keys: default, provider, base_url (each may be None).
+    """
+    result = {"default": None, "provider": None, "base_url": None}
     try:
         config_path = Path.home() / ".hermes" / "config.yaml"
         if not config_path.is_file():
-            return None
+            return result
         try:
             import yaml
             with open(config_path) as f:
                 cfg = yaml.safe_load(f)
-            return cfg.get("model", {}).get("default") if isinstance(cfg, dict) else None
+            model_cfg = (cfg or {}).get("model", {}) if isinstance(cfg, dict) else {}
+            if isinstance(model_cfg, dict):
+                for k in ("default", "provider", "base_url"):
+                    v = model_cfg.get(k)
+                    if isinstance(v, str) and v.strip():
+                        result[k] = v.strip()
         except ImportError:
-            # Fallback: simple regex parse for "default: <model>" under model section
+            # Fallback: simple parse for keys under "model:" section
             text = config_path.read_text()
             in_model = False
             for line in text.splitlines():
@@ -1717,13 +1726,24 @@ def _load_cli_default_model() -> str | None:
                 if in_model:
                     if not line.startswith(" ") and not line.startswith("\t"):
                         break
-                    if stripped.startswith("default:"):
-                        return stripped.split("default:", 1)[1].strip().strip('"').strip("'")
+                    for k in ("default", "provider", "base_url"):
+                        prefix = f"{k}:"
+                        if stripped.startswith(prefix):
+                            v = stripped.split(prefix, 1)[1].strip().strip('"').strip("'")
+                            if v:
+                                result[k] = v
     except Exception:
         pass
-    return None
+    return result
 
-_cli_default_model = _load_cli_default_model()
+
+def _load_cli_default_model() -> str | None:
+    """Backward-compat shim — returns just the default model string."""
+    return _load_cli_model_config().get("default")
+
+
+_cli_model_config = _load_cli_model_config()
+_cli_default_model = _cli_model_config.get("default")
 DEFAULT_MODEL = os.environ.get("HERMES_DEFAULT_MODEL", _cli_default_model or "meta-llama/llama-4-maverick")
 
 # ------------------------------------------------------------------
@@ -1984,6 +2004,31 @@ def _get_nous_agent_key() -> Optional[str]:
     return None
 
 
+def _get_credential_pool_key(provider_name: str) -> Optional[str]:
+    """Read an API key from ~/.hermes/auth.json credential_pool[provider_name].
+
+    Returns the highest-priority (lowest priority number) entry's access_token.
+    Returns None if auth.json doesn't exist or has no matching credentials.
+    """
+    if not provider_name:
+        return None
+    auth_path = os.path.expanduser("~/.hermes/auth.json")
+    try:
+        with open(auth_path, "r") as f:
+            auth = json.load(f)
+        pool = auth.get("credential_pool", {}).get(provider_name, [])
+        if not pool:
+            return None
+        sorted_creds = sorted(pool, key=lambda c: c.get("priority", 99))
+        for cred in sorted_creds:
+            key = cred.get("access_token", "")
+            if key and key != "***":
+                return key
+    except Exception:
+        pass
+    return None
+
+
 def _get_active_provider() -> Optional[str]:
     """Read the active_provider from ~/.hermes/auth.json."""
     auth_path = os.path.expanduser("~/.hermes/auth.json")
@@ -2138,7 +2183,12 @@ async def health():
         "launch_token_present": bool(HERMES_BRIDGE_TOKEN),
         "brain_initialized": _brain_initialized,
         "active_requests": _bridge_active_requests,
-        "hermes_default_model": DEFAULT_MODEL,
+        # Read ~/.hermes/config.yaml on every call so the Electron app observes
+        # `hermes model` CLI changes without requiring a bridge restart. Falls
+        # back to the startup-cached DEFAULT_MODEL if the config file is missing
+        # or unreadable. The file read is tiny (~KB) and only happens on this
+        # endpoint, which is polled at low rates by the UI.
+        "hermes_default_model": _load_cli_default_model() or DEFAULT_MODEL,
     }
 
 
@@ -2472,6 +2522,14 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
         )
 
 
+def _resolve_workspace_id(request: Request, body) -> str:
+    """Derive a workspace ID from conversation_id (body or header) for per-conversation cache isolation."""
+    extra = body.model_extra or {}
+    raw = getattr(body, 'conversation_id', None) or extra.get('conversation_id') or request.headers.get('x-hermes-conversation-id', '')
+    text = str(raw or '').strip()
+    return text or f"sess-{uuid.uuid4().hex[:12]}"
+
+
 async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
     toolsets_header = request.headers.get("x-hermes-toolsets", DEFAULT_TOOLSETS)
     enabled_toolsets = [t.strip() for t in toolsets_header.split(",") if t.strip()]
@@ -2483,8 +2541,11 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
     repo_edit_intent = request.headers.get("x-hermes-repo-edit-intent", "") == "1"
     request_messages = _normalize_chat_messages(body.messages)
 
+    # Resolve workspace_id from conversation_id (header or body) for per-conversation isolation
+    workspace_id = _resolve_workspace_id(request, body)
+
     # Session tracking for Hermes Chats view
-    session_id = f"sess-{uuid.uuid4().hex[:12]}"
+    session_id = workspace_id
     last_user_msg = ""
     initial_chat: list[dict] = []
     for m in request_messages:
@@ -2560,14 +2621,65 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
         or _get_local_gateway_key()
     )
 
-    # Routing by model prefix:
-    #   MiniMax-*  → MiniMax direct API
-    #   nousresearch/* or active_provider=nous → Nous inference API
-    #   everything else → OpenRouter
+    # Routing priority — ordered so CLI config is always authoritative.
+    # The Electron app calls this endpoint after running `hermes model …` in
+    # a terminal; the CLI writes ~/.hermes/config.yaml with the chosen model
+    # and provider, but does NOT always update ~/.hermes/auth.json's
+    # active_provider. Routing must therefore trust config.yaml first.
+    #
+    #   1. config.yaml model.provider (explicit CLI declaration)          → that provider
+    #   2. config.yaml model.base_url (custom, non-hardcoded endpoint)    → custom passthrough
+    #   3. model-name prefix (MiniMax-*, nousresearch/*)                  → that provider
+    #   4. auth.json active_provider (legacy fallback)                    → that provider
+    #   5. default                                                        → OpenRouter
     is_minimax_model = body.model.startswith(MINIMAX_MODEL_PREFIX)
     active_provider = _get_active_provider()
-    is_nous_model = body.model.startswith(NOUS_MODEL_PREFIX) or active_provider == "nous"
+
+    cli_cfg = _load_cli_model_config()
+    cli_base_url = (cli_cfg.get("base_url") or "").strip()
+    cli_provider = (cli_cfg.get("provider") or "").strip().lower()
+    _known_hosts = ("openrouter.ai", "minimax.io", "nousresearch.com", "anthropic.com", "openai.com")
+    cli_is_custom = bool(cli_base_url) and not any(h in cli_base_url for h in _known_hosts)
+
+    # Resolve the effective provider. Priority:
+    #   a) Explicit model-name prefix (MiniMax-*, nousresearch/*) — the caller
+    #      directly names the provider via the model, strongest possible signal.
+    #   b) config.yaml model.provider — CLI's declared intent. Wins over
+    #      auth.json because the CLI writes config.yaml on `hermes model …`
+    #      but doesn't always rewrite auth.json, so auth.json can be stale.
+    #   c) auth.json active_provider — legacy fallback for older installs.
+    #   d) OpenRouter default.
     if is_minimax_model:
+        resolved_provider = "minimax"
+        route_source = "model-prefix"
+    elif body.model.startswith(NOUS_MODEL_PREFIX):
+        resolved_provider = "nous"
+        route_source = "model-prefix"
+    elif cli_provider in ("openrouter", "nous", "minimax"):
+        resolved_provider = cli_provider
+        route_source = "config.yaml"
+    elif active_provider in ("openrouter", "nous", "minimax"):
+        resolved_provider = active_provider
+        route_source = "auth.json"
+    else:
+        resolved_provider = "openrouter"
+        route_source = "default"
+
+    # Custom non-hardcoded base_url takes precedence over the resolved provider
+    # — but only when the CLI didn't explicitly choose a known provider (that
+    # would be contradictory: declaring "openrouter" + a custom base_url).
+    if cli_is_custom and cli_provider not in ("openrouter", "nous", "minimax"):
+        cli_key = _get_credential_pool_key(cli_provider) or _get_local_gateway_key()
+        if not cli_key:
+            return _no_api_key_error(cli_provider or "cli-config")
+        agent_base_url = cli_base_url
+        agent_api_key = cli_key
+        print(
+            f"[hermes-bridge] Routing via ~/.hermes/config.yaml custom base_url. "
+            f"provider={cli_provider} base_url={cli_base_url} model={body.model}",
+            flush=True,
+        )
+    elif resolved_provider == "minimax":
         if not _minimax_circuit.is_available():
             return _circuit_open_error("MiniMax")
         minimax_key = (
@@ -2585,7 +2697,11 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
         # bridge already forwarded a request-scoped MiniMax key.
         agent_base_url = MINIMAX_BASE_URL
         agent_api_key = minimax_key
-    elif is_nous_model:
+        print(
+            f"[hermes-bridge] Routing via MiniMax. source={route_source} model={body.model}",
+            flush=True,
+        )
+    elif resolved_provider == "nous":
         if not _nous_circuit.is_available():
             return _circuit_open_error("Nous")
         nous_key = _get_nous_agent_key()
@@ -2593,6 +2709,10 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
             return _no_api_key_error("nous")
         agent_base_url = NOUS_BASE_URL
         agent_api_key = nous_key
+        print(
+            f"[hermes-bridge] Routing via Nous. source={route_source} model={body.model}",
+            flush=True,
+        )
     else:
         if not _openrouter_circuit.is_available():
             return _circuit_open_error("OpenRouter")
@@ -2600,6 +2720,11 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
             return _no_api_key_error("openrouter")
         agent_base_url = "https://openrouter.ai/api/v1"
         agent_api_key = api_key
+        print(
+            f"[hermes-bridge] Routing via OpenRouter. source={route_source} model={body.model}",
+            flush=True,
+        )
+
 
     active_job_meta = _mark_request_started(
         model=body.model,
@@ -2628,8 +2753,8 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
         )
         return await _passthrough_chat_completions(
             body,
-            agent_api_key if (is_minimax_model or is_nous_model) else api_key,
-            base_url=MINIMAX_BASE_URL if is_minimax_model else (agent_base_url if is_nous_model else "https://openrouter.ai/api/v1"),
+            agent_api_key,
+            base_url=agent_base_url,
             finalize_request=lambda success: (
                 _finalize_session(success),
                 _mark_request_finished(
@@ -2788,6 +2913,7 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
                 github_repo_name=repo_name if repo_name else None,
                 repo_file_tree=repo_file_tree,
                 custom_tools=custom_tools,
+                workspace_id=workspace_id,
                 on_tool_start=on_tool_start,
                 on_tool_end=on_tool_end,
                 on_text=on_text,
@@ -3025,6 +3151,7 @@ async def swarm_endpoint(request: Request, body: SwarmRequest):
     repo_owner = request.headers.get("x-hermes-repo-owner", "")
     repo_name = request.headers.get("x-hermes-repo-name", "")
     github_pat = request.headers.get("x-hermes-github-pat", "")
+    workspace_id = _resolve_workspace_id(request, body)
 
     extra = body.model_extra or {}
     custom_tools = [t for t in extra.get("custom_tools", []) if isinstance(t, dict)]

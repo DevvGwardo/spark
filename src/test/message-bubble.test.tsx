@@ -275,6 +275,165 @@ describe('MessageBubble', () => {
     expect(screen.queryByText(/Done — read 123 chars/i)).not.toBeInTheDocument();
   });
 
+  it('interleaves tools with text via Hermes markers for hydrated messages that have parts + flat toolInvocations', () => {
+    // Regression: hydrated Hermes conversations were stored as
+    //   parts: [{ type: 'text', text: '…markers…summary' }]
+    //   toolInvocations: [tool1, tool2]
+    // ChatArea merges toolInvocations into parts at the end, so parts became
+    // [text, tool1, tool2] and MessageBubble rendered all tools at the bottom.
+    // With marker-based interleaving running first, each tool lands next to
+    // its corresponding marker and the final summary stays at the end.
+    const rawContent = [
+      'Here is what I found.',
+      '',
+      '> **Reading file** — `src/a.ts`',
+      '',
+      '> *Done — read 10 chars*',
+      '',
+      'Now checking b.',
+      '',
+      '> **Reading file** — `src/b.ts`',
+      '',
+      '> *Done — read 20 chars*',
+      '',
+      'Both files look correct.',
+    ].join('\n');
+
+    const { container } = render(
+      <PanelProvider value="panel-1">
+        <MessageBubble
+          message={{
+            id: 'assistant-hermes-hydrated',
+            conversationId: 'conv-1',
+            role: 'assistant',
+            content: rawContent,
+            timestamp: new Date().toISOString(),
+          }}
+          parts={[
+            { type: 'text', text: rawContent },
+            {
+              type: 'tool-invocation',
+              toolInvocation: {
+                toolCallId: 'activity-0',
+                toolName: 'read_repo_file',
+                args: { path: 'src/a.ts' },
+                state: 'result',
+                result: { output: 'aaa' },
+              },
+            },
+            {
+              type: 'tool-invocation',
+              toolInvocation: {
+                toolCallId: 'activity-1',
+                toolName: 'read_repo_file',
+                args: { path: 'src/b.ts' },
+                state: 'result',
+                result: { output: 'bbbbbbbbbb' },
+              },
+            },
+          ]}
+          toolInvocations={[
+            {
+              toolCallId: 'activity-0',
+              toolName: 'read_repo_file',
+              args: { path: 'src/a.ts' },
+              state: 'result',
+              result: { output: 'aaa' },
+            },
+            {
+              toolCallId: 'activity-1',
+              toolName: 'read_repo_file',
+              args: { path: 'src/b.ts' },
+              state: 'result',
+              result: { output: 'bbbbbbbbbb' },
+            },
+          ]}
+        />
+      </PanelProvider>,
+    );
+
+    // Both tool rows render
+    expect(screen.getAllByText('Reading file')).toHaveLength(2);
+    expect(screen.getByText('src/a.ts')).toBeInTheDocument();
+    expect(screen.getByText('src/b.ts')).toBeInTheDocument();
+
+    // Summary text stays intact
+    expect(screen.getByText(/Both files look correct\./)).toBeInTheDocument();
+
+    // Order check: first tool appears before the "Now checking b." text,
+    // which appears before the second tool, which appears before the final
+    // summary.  If tools were coagulating at the bottom, tool A and B would
+    // both sit after "Both files look correct." in DOM order.
+    const text = container.textContent ?? '';
+    const idxA = text.indexOf('src/a.ts');
+    const idxMid = text.indexOf('Now checking b.');
+    const idxB = text.indexOf('src/b.ts');
+    const idxEnd = text.indexOf('Both files look correct.');
+    expect(idxA).toBeGreaterThanOrEqual(0);
+    expect(idxMid).toBeGreaterThan(idxA);
+    expect(idxB).toBeGreaterThan(idxMid);
+    expect(idxEnd).toBeGreaterThan(idxB);
+  });
+
+  it('interleaves tools using textOffset for hydrated messages without marker text', () => {
+    // Content WITHOUT marker text — simulates a case where markers were
+    // stripped or never present, but textOffset is available from persistence.
+    const rawContent = 'Here is what I found.\n\nNow checking b.\n\nBoth files look correct.';
+
+    // textOffsets: tool A was emitted right after "Here is what I found.\n\n" (offset 23)
+    // tool B was emitted right after "Now checking b.\n\n" (offset 40)
+    const { container } = render(
+      <PanelProvider value="panel-1">
+        <MessageBubble
+          message={{
+            id: 'assistant-offset-hydrated',
+            conversationId: 'conv-1',
+            role: 'assistant',
+            content: rawContent,
+            timestamp: new Date().toISOString(),
+          }}
+          parts={[
+            { type: 'text', text: rawContent },
+          ]}
+          toolInvocations={[
+            {
+              toolCallId: 'activity-0',
+              toolName: 'read_repo_file',
+              args: { path: 'src/a.ts' },
+              state: 'result',
+              result: { output: 'aaa' },
+              textOffset: 23,
+            },
+            {
+              toolCallId: 'activity-1',
+              toolName: 'read_repo_file',
+              args: { path: 'src/b.ts' },
+              state: 'result',
+              result: { output: 'bbbbbbbbbb' },
+              textOffset: 40,
+            },
+          ]}
+        />
+      </PanelProvider>,
+    );
+
+    // Both tool rows render
+    expect(screen.getAllByText('Reading file')).toHaveLength(2);
+    expect(screen.getByText('src/a.ts')).toBeInTheDocument();
+    expect(screen.getByText('src/b.ts')).toBeInTheDocument();
+
+    // Order check: tool A before "Now checking b.", tool B before "Both files look correct."
+    const text = container.textContent ?? '';
+    const idxA = text.indexOf('src/a.ts');
+    const idxMid = text.indexOf('Now checking b.');
+    const idxB = text.indexOf('src/b.ts');
+    const idxEnd = text.indexOf('Both files look correct.');
+    expect(idxA).toBeGreaterThanOrEqual(0);
+    expect(idxMid).toBeGreaterThan(idxA);
+    expect(idxB).toBeGreaterThan(idxMid);
+    expect(idxEnd).toBeGreaterThan(idxB);
+  });
+
   it('renders execution output when tool activity stores it under result.output', () => {
     render(
       <PanelProvider value="panel-1">

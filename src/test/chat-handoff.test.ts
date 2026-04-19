@@ -147,7 +147,7 @@ describe('new thread handoff', () => {
     apiMocks.fetchRepoFileTreeResult.mockResolvedValue({ paths: [], error: null });
   });
 
-  it('waits for the initial append to settle before selecting a brand-new chat conversation', async () => {
+  it('binds the panel to a brand-new chat conversation before the initial append settles', async () => {
     const appendDeferred = deferred<void>();
     aiChatState.append.mockImplementation(() => appendDeferred.promise);
 
@@ -159,15 +159,21 @@ describe('new thread handoff', () => {
       await Promise.resolve();
     });
 
+    // onConversationCreated must fire during sendMessage (before append resolves)
+    // so that a "New thread" click during streaming sees conversationId !== null
+    // and can flip state. Draft-session stability is preserved separately by
+    // the sessionLock in useChat, which pins the AI SDK bucket to the draft
+    // until the stream settles.
+    await waitFor(() => expect(onConversationCreated).toHaveBeenCalledWith('conv-1'));
     await waitFor(() => expect(dbMock.messages.add).toHaveBeenCalledTimes(1));
-    expect(onConversationCreated).not.toHaveBeenCalled();
 
     await act(async () => {
       appendDeferred.resolve();
       await appendDeferred.promise;
     });
 
-    await waitFor(() => expect(onConversationCreated).toHaveBeenCalledWith('conv-1'));
+    // Still exactly one call — not re-fired after append resolves.
+    expect(onConversationCreated).toHaveBeenCalledTimes(1);
   });
 
   it('only forwards reasoning effort for supported provider-model pairs', () => {
@@ -2714,8 +2720,8 @@ body { color: white; }
     });
   });
 
-  it('blocks setMessages during streaming unless forced', async () => {
-    const { result, rerender } = renderHook(
+  it('force-clears the message buffer when switching away from a streaming conversation', async () => {
+    const { rerender } = renderHook(
       ({ convId }) => useChat(convId),
       { initialProps: { convId: 'conv-1' as string | null } },
     );
@@ -2731,22 +2737,16 @@ body { color: white; }
     aiChatState.setMessages.mockClear();
     dbMock.messages.getByConversation.mockClear();
 
-    // Switch to null (new thread) during streaming — would normally call setMessages([])
+    // Switch to null (new thread) during streaming — the conversation-switch
+    // effect force-clears the buffer so the aborting stream's chunks don't
+    // bleed into the new view.
     rerender({ convId: null });
 
-    // setMessages should NOT be called because isStreaming guard blocks it
-    expect(aiChatState.setMessages).not.toHaveBeenCalled();
-
-    // Stop streaming — the deferred switch should now execute
-    aiChatState.status = 'ready';
-    rerender({ convId: null });
-
-    // Now setMessages should be called with empty array (clearing for new thread)
     expect(aiChatState.setMessages).toHaveBeenCalledWith([]);
   });
 
-  it('defers conversation hydration while streaming', async () => {
-    const { result, rerender } = renderHook(
+  it('eagerly hydrates the new conversation when switching during streaming', async () => {
+    const { rerender } = renderHook(
       ({ convId }) => useChat(convId),
       { initialProps: { convId: 'conv-1' as string | null } },
     );
@@ -2762,14 +2762,8 @@ body { color: white; }
     aiChatState.setMessages.mockClear();
     dbMock.messages.getByConversation.mockClear();
 
-    // Switch conversation during streaming
-    rerender({ convId: 'conv-2' });
-
-    // hydration should be deferred (getByConversation not called for conv-2)
-    expect(dbMock.messages.getByConversation).not.toHaveBeenCalledWith('conv-2');
-
-    // Once streaming stops, effect should re-run and hydrate
-    aiChatState.status = 'ready';
+    // Switch conversation during streaming — hydration of the new conversation
+    // is kicked off immediately so the user doesn't stare at an empty view.
     rerender({ convId: 'conv-2' });
 
     await waitFor(() => {

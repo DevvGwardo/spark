@@ -257,6 +257,90 @@ export function normalizeCompatibleProviderPayload(provider: string, payload: st
   };
 }
 
+// Health URL: strip trailing /v1 from the hermes base URL to reach /health.
+// The bridge exposes GET /health at the root, not under /v1.
+const HERMES_HEALTH_URL = `${OPENAI_COMPATIBLE.hermes.replace(/\/v1\/?$/, '')}/health`;
+
+// Bridge-readiness backstop. The Electron main process already polls /health
+// for up to 30s at startup (see electron/bridge.ts waitForOwnedBridge), but
+// chat requests can fire before that completes. Instead of pre-checking on
+// every request (adds latency), we only poll when a fetch actually fails
+// with a connection error — almost always a startup-race false negative.
+const HERMES_READY_POLL_INTERVAL_MS = 300;
+const HERMES_READY_POLL_TIMEOUT_MS = 15_000;
+const HERMES_HEALTH_PROBE_TIMEOUT_MS = 1_000;
+
+function isLikelyBridgeConnectionError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const err = error as { name?: string; code?: string; cause?: { code?: string; name?: string } };
+  const CONN_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'UND_ERR_SOCKET']);
+  if (err.code && CONN_CODES.has(err.code)) return true;
+  if (err.cause?.code && CONN_CODES.has(err.cause.code)) return true;
+  // undici wraps low-level socket errors in a TypeError('fetch failed').
+  if (err.name === 'TypeError') return true;
+  return false;
+}
+
+async function isHermesBridgeReachable(): Promise<boolean> {
+  try {
+    const res = await fetch(HERMES_HEALTH_URL, {
+      method: 'GET',
+      signal: AbortSignal.timeout(HERMES_HEALTH_PROBE_TIMEOUT_MS),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForHermesBridgeReady(abortSignal: AbortSignal): Promise<boolean> {
+  const deadline = Date.now() + HERMES_READY_POLL_TIMEOUT_MS;
+  while (!abortSignal.aborted && Date.now() < deadline) {
+    if (await isHermesBridgeReachable()) return true;
+    if (abortSignal.aborted) return false;
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, HERMES_READY_POLL_INTERVAL_MS);
+      const onAbort = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      if (abortSignal.aborted) {
+        onAbort();
+      } else {
+        abortSignal.addEventListener('abort', onAbort, { once: true });
+      }
+    });
+  }
+  return false;
+}
+
+/**
+ * Fetches the Hermes bridge with a one-shot readiness retry on connection
+ * errors. Guards against the cold-start race where a chat request fires
+ * before hermes-bridge/main.py has finished booting. Happy path adds no
+ * overhead — only kicks in when the initial fetch rejects with a connection
+ * error. If the bridge never becomes reachable within the poll budget, the
+ * original error propagates so the caller's "not reachable" message surfaces.
+ */
+async function fetchHermesWithReadinessRetry(
+  url: string,
+  init: RequestInit,
+  abortSignal: AbortSignal,
+): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (error) {
+    if (abortSignal.aborted) throw error;
+    if (!isLikelyBridgeConnectionError(error)) throw error;
+
+    console.log('[chat] Hermes bridge fetch failed (connection error); polling /health up to %dms for readiness…', HERMES_READY_POLL_TIMEOUT_MS);
+    const ready = await waitForHermesBridgeReady(abortSignal);
+    if (!ready) throw error;
+    console.log('[chat] Hermes bridge became reachable; retrying fetch.');
+    return await fetch(url, init);
+  }
+}
+
 export async function proxyHermesAgentLoopToDataStream(input: {
   req: express.Request;
   res: express.Response;
@@ -274,6 +358,7 @@ export async function proxyHermesAgentLoopToDataStream(input: {
   repoFileTree?: string[];
   customTools?: unknown[];
   activeProfile?: string;
+  conversationId?: string;
 }) {
   const bridgeUrl = `${OPENAI_COMPATIBLE.hermes}/chat/completions`;
   const abortController = new AbortController();
@@ -296,7 +381,7 @@ export async function proxyHermesAgentLoopToDataStream(input: {
     console.log(
       `[chat] Hermes agent-loop bridge fetch start. model=${input.model} repo=${repoLabel} toolsets=${input.hermesToolsets || '-'} t=${startedAt}`,
     );
-    bridgeResponse = await fetch(bridgeUrl, {
+    bridgeResponse = await fetchHermesWithReadinessRetry(bridgeUrl, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${input.apiKey}`,
@@ -313,6 +398,7 @@ export async function proxyHermesAgentLoopToDataStream(input: {
           : {}),
         ...(input.githubPAT ? { 'X-Hermes-Github-PAT': input.githubPAT } : {}),
         ...(input.hermesMiniMaxKey ? { 'X-Hermes-Minimax-Key': input.hermesMiniMaxKey } : {}),
+        ...(input.conversationId ? { 'X-Hermes-Conversation-Id': input.conversationId } : {}),
       },
       body: JSON.stringify({
         model: input.model,
@@ -327,9 +413,10 @@ export async function proxyHermesAgentLoopToDataStream(input: {
         ...(input.customTools && input.customTools.length > 0
           ? { custom_tools: input.customTools }
           : {}),
+        ...(input.conversationId ? { conversation_id: input.conversationId } : {}),
       }),
       signal: combinedSignal,
-    });
+    }, combinedSignal);
     console.log(
       `[chat] Hermes agent-loop bridge headers received in ${Date.now() - startedAt}ms. status=${bridgeResponse.status} model=${input.model} repo=${repoLabel}`,
     );
@@ -387,6 +474,7 @@ export async function proxyHermesSwarmToDataStream(input: {
   repoFileTree?: string[];
   customTools?: unknown[];
   activeProfile?: string;
+  conversationId?: string;
 }) {
   const bridgeUrl = `${OPENAI_COMPATIBLE.hermes}/swarm`;
   const abortController = new AbortController();
@@ -405,7 +493,7 @@ export async function proxyHermesSwarmToDataStream(input: {
     console.log(
       `[chat] Hermes swarm bridge fetch start. model=${input.model} repo=${repoLabel} toolsets=${input.hermesToolsets || '-'} t=${startedAt}`,
     );
-    bridgeResponse = await fetch(bridgeUrl, {
+    bridgeResponse = await fetchHermesWithReadinessRetry(bridgeUrl, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${input.apiKey}`,
@@ -420,6 +508,7 @@ export async function proxyHermesSwarmToDataStream(input: {
             }
           : {}),
         ...(input.githubPAT ? { 'X-Hermes-Github-PAT': input.githubPAT } : {}),
+        ...(input.conversationId ? { 'X-Hermes-Conversation-Id': input.conversationId } : {}),
       },
       body: JSON.stringify({
         model: input.model,
@@ -434,9 +523,10 @@ export async function proxyHermesSwarmToDataStream(input: {
         ...(input.customTools && input.customTools.length > 0
           ? { custom_tools: input.customTools }
           : {}),
+        ...(input.conversationId ? { conversation_id: input.conversationId } : {}),
       }),
       signal: abortController.signal,
-    });
+    }, abortController.signal);
     console.log(
       `[chat] Hermes swarm bridge headers received in ${Date.now() - startedAt}ms. status=${bridgeResponse.status}`,
     );

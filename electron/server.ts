@@ -38,19 +38,17 @@ export async function isCloudChatServerRunning(port: number): Promise<boolean> {
 
 /**
  * Start the embedded Express server.
- * If the preferred port already has a running CloudChat API server,
- * reuse it instead of starting a duplicate.
- * Server code is bundled with the main process by electron-vite,
- * so the import resolves in both dev and prod.
+ * Always starts its own server on the preferred port (or an ephemeral fallback
+ * if :3001 is already bound). We used to reuse an existing server on :3001,
+ * but that caused a dev-restart race: a dying previous Electron instance would
+ * still answer /health during the new instance's startup check, so the new
+ * instance would skip starting its own server — then the dying instance would
+ * finally exit, leaving :3001 with no listener.
+ *
+ * Server code is bundled with the main process by electron-vite, so the import
+ * resolves in both dev and prod.
  */
 export async function startEmbeddedServer(): Promise<number> {
-  // If the standalone server is already running on the preferred port, reuse it.
-  if (await isCloudChatServerRunning(PREFERRED_PORT)) {
-    console.log(`[electron-server] CloudChat API server already running on :${PREFERRED_PORT}, reusing it`)
-    return PREFERRED_PORT
-  }
-
-  // No existing server — start our own on the preferred port (or a free fallback).
   const port = await findFreePort(PREFERRED_PORT)
   await startServer(port)
   return port

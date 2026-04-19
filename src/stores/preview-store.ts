@@ -48,6 +48,7 @@ interface PreviewState {
   getActiveFile: (panelId: string) => PreviewFile | null;
   setProjectType: (panelId: string, type: ProjectType) => void;
   getPreview: (panelId: string) => PanelPreviewState;
+  cleanupPanel: (panelId: string) => void;
 }
 
 function inferProjectType(files: PreviewFile[], newFile?: Omit<PreviewFile, 'id' | 'timestamp'>): ProjectType {
@@ -262,4 +263,10 @@ export const usePreviewStore = create<PreviewState>((set, get) => ({
     }),
 
   getPreview: (panelId) => getOrDefault(get(), panelId),
+
+  cleanupPanel: (panelId) =>
+    set((state) => {
+      const { [panelId]: _, ...rest } = state.panelPreviews;
+      return { panelPreviews: rest };
+    }),
 }));
