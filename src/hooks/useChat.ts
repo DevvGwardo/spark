@@ -16,6 +16,7 @@ import { PROVIDERS, supportsReasoningEffort } from '@/lib/providers';
 import { useHermesStore } from '@/stores/hermes-store';
 import { getActiveProfile, useProfilesStore } from '@/stores/profiles-store';
 import { useStreamLockStore } from '@/stores/stream-lock-store';
+import { usePanelStore } from '@/stores/panel-store';
 
 import { findPendingProposal, type PendingProposal, type ProposalToolInvocationLike } from '@/lib/proposed-changes';
 import {
@@ -249,6 +250,17 @@ export function useChat(
   const renameConversation = useChatStore((s) => s.renameConversation);
   const loadConversations = useChatStore((s) => s.loadConversations);
 
+  // Each non-default panel is a fully isolated session with its own Hermes
+  // profile. The 'default' panel keeps the legacy behavior of tracking the
+  // globally selected profile so existing single-session workflows and the
+  // profiles settings UI still work. Read latest value at call time to match
+  // the prior getActiveProfile() semantics and avoid stale closures.
+  const getSessionProfile = useCallback((): string => {
+    if (panelId === 'default') return getActiveProfile();
+    const panel = usePanelStore.getState().panels.find((p) => p.id === panelId);
+    return panel?.profile || getActiveProfile();
+  }, [panelId]);
+
   const { activeProvider, providers, defaultSystemPrompt, githubPAT, autoApproveRepoChanges } = useSettingsStore(
     useShallow((s) => ({
       activeProvider: s.activeProvider,
@@ -369,6 +381,18 @@ When the user asks you to make changes:
   // different thread mid-stream (advance session so the UI reflects the
   // new thread). Set when isStreaming goes false→true; cleared on end.
   const streamConvIdRef = useRef<string | null>(null);
+  // Tracks the conversationId the user is *currently viewing*, updated every
+  // render. Unlike convIdRef (which intentionally lags behind during a
+  // mid-stream conversation switch so in-flight tool events stay routed to
+  // the aborting conversation), this ref always reflects the prop. Used as a
+  // secondary guard in onFinish so a late write from the aborting stream
+  // doesn't clobber the visible buffer of whichever conversation the user
+  // has navigated to.
+  const viewedConvIdRef = useRef<string | null>(null);
+  viewedConvIdRef.current = conversationId;
+  // Captures the scopeId at stream start so late onToolCall callbacks from an
+  // aborted stream don't write changeset/preview state into the new conversation's scope.
+  const streamScopeIdRef = useRef<string | null>(null);
   const repoEditIntentRef = useRef(false);
   const pendingProposalRef = useRef<PendingProposal | null>(null);
   const explicitProposalKeyRef = useRef<string | null>(null);
@@ -468,7 +492,15 @@ When the user asks you to make changes:
     draftEpochRef.current += 1;
   }
   prevConversationIdForSessionRef.current = conversationId;
-  const chatSessionId = `${conversationId ?? `draft-${draftEpochRef.current}`}:${panelId}`;
+  // sessionLock pins the AI SDK session key during a draft→conv promotion.
+  // sendMessage binds the panel to the freshly created conversation before
+  // append() resolves, which would otherwise swap AI SDK buckets mid-stream
+  // and strand the response on draft-N:panel while the UI watches empty
+  // conv:panel. Set when sendMessage creates the conversation; cleared by
+  // the effect below once isStreaming flips false.
+  const [sessionLock, setSessionLock] = useState<string | null>(null);
+  const derivedSessionId = `${conversationId ?? `draft-${draftEpochRef.current}`}:${panelId}`;
+  const chatSessionId = sessionLock ?? derivedSessionId;
   // Use useMemo so aiChatSessionId tracks conversationId synchronously.
   // The previous useState + useLayoutEffect pattern caused a race condition:
   // when the user switched conversations mid-stream, aiChatSessionId stayed stale
@@ -560,7 +592,7 @@ When the user asks you to make changes:
       ...init,
       headers: {
         ...init?.headers,
-        'X-Hermes-Profile': getActiveProfile(),
+        'X-Hermes-Profile': getSessionProfile(),
       },
       signal: abortControllerRef.current.signal,
     });
@@ -711,6 +743,12 @@ When the user asks you to make changes:
       });
     };
 
+    // Track cumulative text length so we can stamp each tool activity event
+    // with the content offset at which it appeared in the stream.  This
+    // offset is persisted and used by MessageBubble to interleave tools
+    // with text at the correct positions after hydration from IndexedDB.
+    let streamTextOffset = 0;
+
     const stream = new ReadableStream({
       async pull(controller) {
         let readResult;
@@ -748,7 +786,7 @@ When the user asks you to make changes:
               const parsed = JSON.parse(line.slice(6));
               const delta = parsed?.choices?.[0]?.delta;
               if (delta?.tool_activity) {
-                updateToolActivity(delta.tool_activity as ToolActivityEvent);
+                updateToolActivity({ ...(delta.tool_activity as ToolActivityEvent), textOffset: streamTextOffset });
               }
               if (delta?.agent_status && typeof delta.agent_status === 'object') {
                 updateAgentStatus(delta.agent_status as AgentStatusEvent);
@@ -768,6 +806,11 @@ When the user asks you to make changes:
           try {
             const parsedPart = parseDataStreamPart(line);
 
+            // Track accumulated text length for tool-position interleaving
+            if (parsedPart.type === 'text' && typeof parsedPart.value === 'string') {
+              streamTextOffset += parsedPart.value.length;
+            }
+
             if (
               (parsedPart.type === 'tool_call' || parsedPart.type === 'tool_call_streaming_start') &&
               isServerExecutedRepoToolName(parsedPart.value.toolName)
@@ -778,7 +821,7 @@ When the user asks you to make changes:
             if (parsedPart.type === 'data' && Array.isArray(parsedPart.value)) {
               for (const item of parsedPart.value) {
                 if (isHermesToolActivityData(item)) {
-                  updateToolActivity(item.activity);
+                  updateToolActivity({ ...item.activity, textOffset: streamTextOffset });
                   continue;
                 }
                 if (isAgentStatusData(item)) {
@@ -805,7 +848,7 @@ When the user asks you to make changes:
       status: response.status,
       statusText: response.statusText,
     });
-  }, [scopeId]);
+  }, [scopeId, getSessionProfile]);
 
   const ensureRepoFileTreeLoaded = useCallback(async (): Promise<string[]> => {
     const currentChangeset = useChangesetStore.getState().getChangeset(scopeId);
@@ -1070,13 +1113,20 @@ When the user asks you to make changes:
             ...(injectedToolInvocations ? { toolInvocations: injectedToolInvocations } : {}),
           } as AIMessage,
         ];
-        messagesRef.current = nextMessages;
-        // Only update the visible message buffer if the user is still viewing
+        // Only update the message buffers if the user is still viewing
         // the conversation that this stream belongs to. If they navigated away,
         // persistAssistantSnapshot already saved the message to the correct
-        // conversation in IndexedDB. Calling setMessages here would clobber
-        // the currently visible conversation's buffer with a different thread's response.
-        if (convId === convIdRef.current) {
+        // conversation in IndexedDB. Writing here would clobber the currently
+        // visible conversation's buffer with a different thread's response.
+        //
+        // Check viewedConvIdRef in addition to convIdRef: during a mid-stream
+        // conversation switch, the abort branch intentionally leaves
+        // convIdRef pointing at the aborting conversation (to keep tool
+        // events routed correctly), which would let this guard pass. The
+        // viewedConvIdRef always mirrors the current conversationId prop so
+        // it catches the case where the user has already navigated away.
+        if (convId === convIdRef.current && convId === viewedConvIdRef.current) {
+          messagesRef.current = nextMessages;
           setMessages(nextMessages);
         }
       }
@@ -1274,6 +1324,10 @@ When the user asks you to make changes:
       }
     },
     onToolCall: async ({ toolCall }) => {
+      // Use the scope captured at stream start so late tool callbacks from an
+      // aborted stream don't write into the new conversation's scope.
+      const toolScopeId = streamScopeIdRef.current ?? scopeId;
+
       // When server-side tool execution is active, repo tools are handled
       // server-side — return a no-op result to avoid duplicate execution.
       if (serverSideToolsDetectedRef.current && SERVER_EXECUTED_REPO_TOOLS.has(toolCall.toolName)) {
@@ -1285,7 +1339,7 @@ When the user asks you to make changes:
           return 'This proposal was already approved. Continue directly with read_repo_file or the repo edit tools now.';
         }
         const normalizedArgs = normalizeProposeChangesArgs(toolCall.args, {
-          existingPaths: getRepoToolExistingPaths(scopeId),
+          existingPaths: getRepoToolExistingPaths(toolScopeId),
         }) as { summary?: unknown; plan?: unknown };
         pendingProposalRef.current = {
           messageId: '',
@@ -1324,13 +1378,13 @@ When the user asks you to make changes:
       if (fileType) {
         const { filename, content } = toolCall.args as { filename: string; content: string };
         const previewStore = usePreviewStore.getState();
-        const previewState = previewStore.getPreview(scopeId);
+        const previewState = previewStore.getPreview(toolScopeId);
         // Check if file already exists (update it) or add new
         const existing = previewState.files.find((f) => f.filename === filename);
         if (existing) {
-          previewStore.updateFile(scopeId, existing.id, content);
+          previewStore.updateFile(toolScopeId, existing.id, content);
         } else {
-          previewStore.addFile(scopeId, { filename, content, type: fileType });
+          previewStore.addFile(toolScopeId, { filename, content, type: fileType });
         }
         return JSON.stringify({ success: true, filename, message: `Created ${filename}` });
       }
@@ -1339,7 +1393,7 @@ When the user asks you to make changes:
       if (toolCall.toolName === 'read_repo_file') {
         const { path } = toolCall.args as { path: string };
         const normalizedPath = normalizeRepoPath(path);
-        const currentRepo = useChangesetStore.getState().getChangeset(scopeId).activeRepo;
+        const currentRepo = useChangesetStore.getState().getChangeset(toolScopeId).activeRepo;
         if (!currentRepo || !githubPAT) {
           return 'Error: No active repository or GitHub token not configured.';
         }
@@ -1348,13 +1402,13 @@ When the user asks you to make changes:
           return 'Error: Choose a concrete file path from the loaded repository tree, not `.` , `/`, or a directory path.';
         }
 
-        const currentChangeset = useChangesetStore.getState().getChangeset(scopeId);
+        const currentChangeset = useChangesetStore.getState().getChangeset(toolScopeId);
         const repoTree = currentChangeset.repoFileTree.length > 0
           ? currentChangeset.repoFileTree
           : await ensureRepoFileTreeLoaded();
 
-        const repoTreeStatus = useChangesetStore.getState().getChangeset(scopeId).repoFileTreeStatus;
-        const repoTreeError = useChangesetStore.getState().getChangeset(scopeId).repoFileTreeError;
+        const repoTreeStatus = useChangesetStore.getState().getChangeset(toolScopeId).repoFileTreeStatus;
+        const repoTreeError = useChangesetStore.getState().getChangeset(toolScopeId).repoFileTreeError;
 
         if (repoTree.length === 0) {
           return formatRepoTreeUnavailableError(repoTreeStatus, repoTreeError);
@@ -1365,7 +1419,7 @@ When the user asks you to make changes:
         }
 
         // Return cached content if available (avoids redundant GitHub API calls)
-        const cached = useChangesetStore.getState().getChangeset(scopeId).repoFileCache[normalizedPath];
+        const cached = useChangesetStore.getState().getChangeset(toolScopeId).repoFileCache[normalizedPath];
         if (cached !== undefined) {
           return cached;
         }
@@ -1392,7 +1446,7 @@ When the user asks you to make changes:
           }
           const data = await response.json();
           if (data.error) return `Error reading file: ${data.error}`;
-          useChangesetStore.getState().cacheRepoFile(scopeId, normalizedPath, data.content || '');
+          useChangesetStore.getState().cacheRepoFile(toolScopeId, normalizedPath, data.content || '');
           return data.content || '';
         } catch {
           return 'Error: Failed to read file from GitHub.';
@@ -1409,16 +1463,16 @@ When the user asks you to make changes:
         if (!path) {
           return 'Error: edit_repo_file is missing a valid path.';
         }
-        const existingPaths = getRepoToolExistingPaths(scopeId);
+        const existingPaths = getRepoToolExistingPaths(toolScopeId);
         const approvedPlanAllowsEdit =
           approvedProposalContinuationRef.current !== null &&
           (pendingProposalRef.current?.plan ?? []).some((item) => item.action === 'edit' && item.path === path);
         if (!existingPaths.has(path) && !approvedPlanAllowsEdit) {
           return `Error: edit_repo_file can only modify existing repo files. \`${path}\` is not in the indexed repo tree or staged changes. Use create_repo_file only for genuinely new paths.`;
         }
-        const existing = useChangesetStore.getState().getChangeset(scopeId).changes[path];
-        const originalContent = existing?.originalContent ?? useChangesetStore.getState().getChangeset(scopeId).repoFileCache[path] ?? '';
-        addChange({ path, action: 'edit', content, originalContent, staged: true });
+        const existing = useChangesetStore.getState().getChangeset(toolScopeId).changes[path];
+        const originalContent = existing?.originalContent ?? useChangesetStore.getState().getChangeset(toolScopeId).repoFileCache[path] ?? '';
+        addChangeForPanel(toolScopeId, { path, action: 'edit', content, originalContent, staged: true });
         return `Staged edit to ${path}`;
       }
 
@@ -1432,13 +1486,13 @@ When the user asks you to make changes:
         if (!path) {
           return 'Error: create_repo_file is missing a valid path.';
         }
-        const existingPaths = getRepoToolExistingPaths(scopeId);
+        const existingPaths = getRepoToolExistingPaths(toolScopeId);
         const action = resolveRepoWriteAction('create', path, existingPaths);
-        const existing = useChangesetStore.getState().getChangeset(scopeId).changes[path];
+        const existing = useChangesetStore.getState().getChangeset(toolScopeId).changes[path];
         const originalContent = action === 'edit'
-          ? existing?.originalContent ?? useChangesetStore.getState().getChangeset(scopeId).repoFileCache[path] ?? ''
+          ? existing?.originalContent ?? useChangesetStore.getState().getChangeset(toolScopeId).repoFileCache[path] ?? ''
           : '';
-        addChange({ path, action, content, originalContent, staged: true });
+        addChangeForPanel(toolScopeId, { path, action, content, originalContent, staged: true });
         return action === 'edit' ? `Staged edit to ${path}` : `Staged new file ${path}`;
       }
 
@@ -1448,24 +1502,24 @@ When the user asks you to make changes:
         if (!path) {
           return 'Error: delete_repo_file is missing a valid path.';
         }
-        const existingPaths = getRepoToolExistingPaths(scopeId);
+        const existingPaths = getRepoToolExistingPaths(toolScopeId);
         if (!existingPaths.has(path)) {
           return `Error: delete_repo_file can only delete existing repo files. \`${path}\` is not in the indexed repo tree or staged changes.`;
         }
-        const existing = useChangesetStore.getState().getChangeset(scopeId).changes[path];
-        const originalContent = existing?.originalContent ?? useChangesetStore.getState().getChangeset(scopeId).repoFileCache[path] ?? '';
-        addChange({ path, action: 'delete', content: '', originalContent, staged: true });
+        const existing = useChangesetStore.getState().getChangeset(toolScopeId).changes[path];
+        const originalContent = existing?.originalContent ?? useChangesetStore.getState().getChangeset(toolScopeId).repoFileCache[path] ?? '';
+        addChangeForPanel(toolScopeId, { path, action: 'delete', content: '', originalContent, staged: true });
         return `Staged deletion of ${path}`;
       }
 
       if (toolCall.toolName === 'batch_edit_repo_files') {
         const normalizedArgs = normalizeBatchEditRepoFilesArgs(toolCall.args, {
-          existingPaths: getRepoToolExistingPaths(scopeId),
+          existingPaths: getRepoToolExistingPaths(toolScopeId),
         }) as { changes?: unknown };
         const fileChanges = Array.isArray(normalizedArgs.changes)
           ? normalizedArgs.changes as Array<{ path: string; action: 'create' | 'edit' | 'delete'; content: string; description: string }>
           : [];
-        const knownPaths = getRepoToolExistingPaths(scopeId);
+        const knownPaths = getRepoToolExistingPaths(toolScopeId);
         const approvedPlanEditPaths = new Set(
           approvedProposalContinuationRef.current !== null
             ? (pendingProposalRef.current?.plan ?? [])
@@ -1485,9 +1539,9 @@ When the user asks you to make changes:
           if (action === 'delete' && !knownPaths.has(change.path)) {
             return `Error: batch_edit_repo_files cannot delete missing file \`${change.path}\`. Use delete only for paths already present in the repo or staged changes.`;
           }
-          const existing = useChangesetStore.getState().getChangeset(scopeId).changes[change.path];
-          const originalContent = existing?.originalContent ?? useChangesetStore.getState().getChangeset(scopeId).repoFileCache[change.path] ?? '';
-          addChange({
+          const existing = useChangesetStore.getState().getChangeset(toolScopeId).changes[change.path];
+          const originalContent = existing?.originalContent ?? useChangesetStore.getState().getChangeset(toolScopeId).repoFileCache[change.path] ?? '';
+          addChangeForPanel(toolScopeId, {
             path: change.path,
             action,
             content: change.content || '',
@@ -1593,12 +1647,32 @@ When the user asks you to make changes:
   const isStreaming = status === 'streaming' || status === 'submitted';
   isStreamingRef.current = isStreaming;
 
-  // Serialize Hermes streams per-profile across panels. Two panels sharing the
-  // active profile would otherwise both hit the same hermes_home/state.db/skills
-  // directory concurrently, which corrupts tool results (skills_list, skill_view)
-  // and traps the agent in a retry loop.
-  const activeProfile = useProfilesStore((s) => s.activeProfile) || 'default';
-  const profileLockHolder = useStreamLockStore((s) => s.locks[activeProfile]);
+  // Release the draft→conv session lock once the stream settles. Keeping the
+  // lock past stream end would strand the next user turn on the draft bucket.
+  // Only clear on streaming true→false transition — the lock may be set
+  // synchronously in sendMessage *before* status flips to 'streaming', so
+  // clearing on plain !isStreaming would tear the lock down immediately.
+  const streamingForLockRef = useRef(false);
+  useEffect(() => {
+    if (isStreaming) {
+      streamingForLockRef.current = true;
+    } else if (streamingForLockRef.current && sessionLock !== null) {
+      streamingForLockRef.current = false;
+      setSessionLock(null);
+    }
+  }, [isStreaming, sessionLock]);
+
+  // Serialize Hermes streams per-profile across panels. With per-session
+  // profiles, distinct sessions never contend; this lock only prevents the
+  // legacy case where two panels happen to resolve to the same profile (e.g.
+  // two 'default' panels or the profiles UI pointing multiple panels at the
+  // same name). Different profiles stream fully in parallel.
+  const globalActiveProfile = useProfilesStore((s) => s.activeProfile) || 'default';
+  const panelBoundProfile = usePanelStore((s) => s.panels.find((p) => p.id === panelId)?.profile);
+  const sessionProfile = panelId === 'default'
+    ? globalActiveProfile
+    : (panelBoundProfile || globalActiveProfile);
+  const profileLockHolder = useStreamLockStore((s) => s.locks[sessionProfile]);
   const isAnotherPanelStreamingSameProfile =
     effectiveProvider === 'hermes' && !!profileLockHolder && profileLockHolder !== panelId;
   const effectiveBusy = isStreaming || isAnotherPanelStreamingSameProfile;
@@ -1607,10 +1681,10 @@ When the user asks you to make changes:
     if (effectiveProvider !== 'hermes') return;
     if (!isStreaming) return;
     // Capture the profile at stream start. If the user switches the active
-    // profile mid-stream, the backend keeps streaming against the original
-    // profile — so acquire and release must use the same value. Closure
-    // capture here; `activeProfile` is intentionally not in the dep list.
-    const profile = activeProfile;
+    // profile mid-stream (only possible for the 'default' panel), the backend
+    // keeps streaming against the original profile — so acquire and release
+    // must use the same value. Closure capture here.
+    const profile = sessionProfile;
     useStreamLockStore.getState().acquire(profile, panelId);
     return () => {
       useStreamLockStore.getState().release(profile, panelId);
@@ -1624,16 +1698,18 @@ When the user asks you to make changes:
     // navigation so it still identifies the stream's original conversation.
     if (!isStreaming) {
       streamConvIdRef.current = null;
+      streamScopeIdRef.current = null;
     } else if (streamConvIdRef.current === null) {
       // Use convIdRef (already set by sendMessage before append()) or
       // pendingConversationIdRef, because the conversationId prop lags
       // behind for new conversations (onConversationCreated fires after
       // the stream resolves).
       streamConvIdRef.current = convIdRef.current ?? pendingConversationIdRef.current ?? conversationId;
+      streamScopeIdRef.current = scopeId;
     }
     // Session ID sync removed: aiChatSessionId is now derived via useMemo from
     // chatSessionId, so it's always in sync. No async state lag possible.
-  }, [isStreaming, conversationId]);
+  }, [isStreaming, conversationId, scopeId]);
   useEffect(() => {
     const pendingProposal = findPendingProposal(messages as Array<{
       id: string;
@@ -1982,20 +2058,34 @@ When the user asks you to make changes:
     if (conversationId && pendingConversationIdRef.current === conversationId) {
       pendingConversationIdRef.current = null;
     }
-    if (conversationId !== null) {
-      convIdRef.current = conversationId;
-    }
-    // When going to null, we intentionally leave convIdRef pointing at the old conversation
-    // until the next conversation is assigned. This prevents losing streaming responses.
-
     // If the user navigates to a different conversation while one is streaming,
     // abort the stream and clear the message buffer immediately so the user
     // doesn't see the old conversation's streaming chunks in the new one.
     // The stream's partial result is already being persisted to IndexedDB
     // via onFinish/onToolCall, so nothing is lost.
+    //
+    // IMPORTANT: do NOT update convIdRef before detecting the switch. Streaming
+    // callbacks (e.g. server tool events at applyServerToolEvent) read
+    // convIdRef.current synchronously; if we retargeted it to the new
+    // conversation here, in-flight chunks from the old stream would route
+    // their tool activity and changeset writes to the wrong conversation
+    // during the window between this update and stop() taking effect.
     const prevConvId = prevConversationIdRef.current;
     if (isStreaming && prevConvId !== null && conversationId !== prevConvId) {
       stop();
+      // Release the session lock so chatSessionId falls back to the derived
+      // id for the new conversation. Without this, a stream that started
+      // from a draft keeps the AI SDK bucket pinned to `draft-N:panelId`
+      // even after the user switches conversations — so buffered chunks
+      // that arrive after stop() (already read from the network) and the
+      // subsequent onFinish write the aborting stream's partial response
+      // into the bucket the user is now viewing. Clearing the lock makes
+      // the next render subscribe to the new conversation's bucket, so
+      // late writes from the aborting stream's captured mutate land in
+      // the now-invisible draft bucket instead of bleeding into the view.
+      if (sessionLock !== null) {
+        setSessionLock(null);
+      }
       // Immediately clear the message buffer. safeSetMessages would silently
       // drop this due to isStreamingRef.current, but the stream is being
       // aborted so clobbering its buffer is the correct behavior.
@@ -2007,10 +2097,18 @@ When the user asks you to make changes:
       if (conversationId !== null) {
         hydrateConversationMessages(conversationId);
       }
+      // Leave convIdRef pointing at the aborting conversation; the effect
+      // will re-run once isStreaming flips false and update it then.
       // Still return early — the full switch (save files, reset state) runs
       // when isStreaming becomes false and the effect re-runs.
       return;
     }
+
+    if (conversationId !== null) {
+      convIdRef.current = conversationId;
+    }
+    // When going to null, we intentionally leave convIdRef pointing at the old conversation
+    // until the next conversation is assigned. This prevents losing streaming responses.
 
     // Don't hydrate or reset messages while streaming — it would clobber the live buffer.
     // Also wait until the AI SDK session ID catches up with the visible conversation so
@@ -2057,12 +2155,16 @@ When the user asks you to make changes:
       return;
     }
 
-    // Save file state for the conversation we're leaving.
-    // Pass the previous conversation's scope so we read from the correct
-    // changeset store entry — scopeId already points at the NEW conversation.
+    // Save file state for the conversation we're leaving, then clean up
+    // its in-memory store entries to prevent unbounded memory growth.
+    // Also remove it from hydratedScopesRef so re-visiting it reads fresh DB data.
     if (prevConvId) {
       const prevScopeId = getChatScopeId(panelId, prevConvId);
       void saveConversationFiles(prevConvId, prevScopeId);
+      // Clean up in-memory state for the old conversation after persisting to DB.
+      useChangesetStore.getState().cleanupPanel(prevScopeId);
+      usePreviewStore.getState().cleanupPanel(prevScopeId);
+      hydratedScopesRef.current.delete(prevScopeId);
     }
 
     if (conversationId) {
@@ -2101,7 +2203,7 @@ When the user asks you to make changes:
     serverToolEventKeysRef.current = {};
     serverSideToolsDetectedRef.current = false;
 
-  }, [aiChatSessionId, chatSessionId, conversationId, safeSetMessages, panelId, resetPanelFileState, restoreFileState, saveConversationFiles, hydrateConversationMessages, isStreaming, scopeId]);
+  }, [aiChatSessionId, chatSessionId, conversationId, safeSetMessages, panelId, resetPanelFileState, restoreFileState, saveConversationFiles, hydrateConversationMessages, isStreaming, scopeId, sessionLock]);
 
   // Auto-save file state (debounced) whenever the panel's file state changes
   useEffect(() => {
@@ -2112,6 +2214,10 @@ When the user asks you to make changes:
     if (Object.keys(changeset.changes).length === 0 && !changeset.activeRepo && preview.files.length === 0) return;
 
     const timer = setTimeout(() => {
+      // Guard: only save if the user is still on the same conversation.
+      // During a rapid switch, changeset/preview values from the old conv
+      // could still be in the React state when the timer fires.
+      if (convIdRef.current !== convId) return;
       void saveConversationFiles(convId);
     }, AUTO_SAVE_DEBOUNCE_MS);
     return () => clearTimeout(timer);
@@ -2171,6 +2277,11 @@ When the user asks you to make changes:
 
     // Create conversation if needed
     if (!convId) {
+      // Lock the AI SDK session to the draft bucket BEFORE any await so the
+      // lock is applied synchronously. Any re-render that happens before the
+      // conversation id propagates down through props will still read the
+      // locked session id and keep the streaming buffer intact.
+      setSessionLock(`draft-${draftEpochRef.current}:${panelId}`);
       try {
         convId = await createConversation(effectiveProvider, effectiveModel, defaultSystemPrompt);
         createdConversationId = convId;
@@ -2183,6 +2294,15 @@ When the user asks you to make changes:
         isSendingRef.current = false;
         return;
       }
+      // Bind the panel to the real conversation immediately so a "New thread"
+      // click during the in-flight stream sees conversationId !== null and
+      // actually flips state. Before this, onConversationCreated fired after
+      // append() resolved, so clicks during streaming were null→null no-ops.
+      // Draft-session stability (see sessionLock above) keeps the AI SDK
+      // bucket pinned to the draft until the stream settles, so messages
+      // still render for the user.
+      skipNextLoadRef.current = true;
+      onConversationCreated?.(convId);
     }
 
     const currentPendingProposal = findPendingProposal(messagesRef.current as Array<{
@@ -2289,13 +2409,6 @@ When the user asks you to make changes:
       useChatStore.getState().setPlanMode(false);
     }
 
-    if (createdConversationId && pendingConversationIdRef.current === createdConversationId) {
-      skipNextLoadRef.current = true;
-      // Don't clear pendingConversationIdRef before onConversationCreated —
-      // it keeps the active AI chat session stable until conversationId is set by the parent.
-      // The conversation-switch effect clears it once conversationId matches.
-      onConversationCreated?.(createdConversationId);
-    }
     return true;
   }, [activeRepo, append, buildRequestBody, config, conversationId, createConversation, defaultSystemPrompt, effectiveModel, effectiveProvider, ensureRepoFileTreeLoaded, isRepoMode, onConversationCreated, renameConversation, saveConversationFiles, scopeId, safeSetMessages, sanitizeRetryMessages]);
 

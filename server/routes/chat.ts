@@ -32,7 +32,7 @@ import {
 } from '../lib/hermes';
 import { buildLocalExecutionTools, parseAgentToolsets, getLocalToolsSystemPromptFragment } from '../local-tools';
 import { MAX_AGENT_STEPS } from '../config';
-import { getProfileFromRequest } from '../lib/hermes-profiles';
+import { ensureProfileExists, getProfileFromRequest } from '../lib/hermes-profiles';
 
 // ─── /functions/v1/chat ──────────────────────────────────────────────────────
 
@@ -585,6 +585,13 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
     const hasServerRepoContext = !!(activeRepo && githubPAT);
     const shouldForwardHermesRepoContext = provider === 'hermes' && !!(activeRepo && githubPAT);
     const activeHermesProfile = provider === 'hermes' ? getProfileFromRequest(req) : null;
+    if (activeHermesProfile) {
+      try {
+        ensureProfileExists(activeHermesProfile);
+      } catch (err) {
+        console.warn(`[chat] Failed to auto-provision Hermes profile ${activeHermesProfile}: ${err instanceof Error ? err.message : err}`);
+      }
+    }
     const runtimeProvider = resolveRuntimeProvider(provider, { activeRepo });
     const hermesExecutionMode =
       provider === 'hermes' && runtimeProvider === 'hermes'
@@ -678,6 +685,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
         repoFileTree: shouldForwardHermesRepoContext ? sanitizeFileTree(repo_file_tree) : undefined,
         customTools: Array.isArray(custom_tools) ? custom_tools : undefined,
         activeProfile: activeHermesProfile ?? undefined,
+        conversationId: typeof conversation_id === 'string' ? conversation_id : undefined,
       });
       return;
     }
@@ -701,6 +709,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
         repoFileTree: shouldForwardHermesRepoContext ? sanitizeFileTree(repo_file_tree) : undefined,
         customTools: Array.isArray(custom_tools) ? custom_tools : undefined,
         activeProfile: activeHermesProfile ?? undefined,
+        conversationId: typeof conversation_id === 'string' ? conversation_id : undefined,
       });
       return;
     }

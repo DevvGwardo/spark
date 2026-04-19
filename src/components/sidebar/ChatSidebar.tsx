@@ -480,15 +480,13 @@ export const ChatSidebar: React.FC = () => {
                         ) : (
                           <div className="shrink-0 overflow-hidden">
                             <div className="flex max-w-0 translate-x-2 gap-0.5 opacity-0 transition-[max-width,opacity,transform] duration-200 ease-out group-hover:max-w-20 group-hover:translate-x-0 group-hover:opacity-100">
-                              {panels.length < 4 && (
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); openPanel(conv.id); }}
-                                  className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-background/80 hover:text-foreground"
-                                  title="Open in new panel"
-                                >
-                                  <Columns2 className="h-3 w-3" />
-                                </button>
-                              )}
+                              <button
+                                onClick={(e) => { e.stopPropagation(); openPanel(conv.id); }}
+                                className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-background/80 hover:text-foreground"
+                                title="Open in new panel"
+                              >
+                                <Columns2 className="h-3 w-3" />
+                              </button>
                               <button
                                 onClick={(e) => { e.stopPropagation(); setDeleteConfirm(conv.id); }}
                                 className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-background/80 hover:text-destructive"

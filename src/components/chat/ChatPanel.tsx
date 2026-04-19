@@ -327,21 +327,17 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                         <Copy className="h-3.5 w-3.5 text-muted-foreground" />
                         <span className="flex-1 text-left">Copy conversation ID</span>
                       </button>
-                      {panels.length < 4 && (
-                        <>
-                          <div className="my-1 border-t border-border" />
-                          <button
-                            onClick={() => {
-                              openPanel(activeConv.id);
-                              setMenuOpen(false);
-                            }}
-                            className="w-full flex items-center gap-2.5 px-3 py-1.5 hover:bg-muted transition-colors duration-100"
-                          >
-                            <PanelRight className="h-3.5 w-3.5 text-muted-foreground" />
-                            <span className="flex-1 text-left">Open in new panel</span>
-                          </button>
-                        </>
-                      )}
+                      <div className="my-1 border-t border-border" />
+                      <button
+                        onClick={() => {
+                          openPanel(activeConv.id);
+                          setMenuOpen(false);
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3 py-1.5 hover:bg-muted transition-colors duration-100"
+                      >
+                        <PanelRight className="h-3.5 w-3.5 text-muted-foreground" />
+                        <span className="flex-1 text-left">Open in new panel</span>
+                      </button>
                       <div className="my-1 border-t border-border" />
                       <button
                         onClick={() => {

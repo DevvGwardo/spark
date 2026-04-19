@@ -20,11 +20,13 @@ import { useContextUsageStore } from '@/stores/context-usage-store';
 import { useTheme } from '@/hooks/useTheme';
 import { useGlobalStyles } from '@/hooks/useGlobalStyles';
 import { PROVIDERS } from '@/lib/providers';
+import { detectHermesBridge } from '@/lib/detect-hermes';
 import { getChatScopeId } from '@/lib/chat-scope';
 import { PanelLeft, GitPullRequest, MoreHorizontal, Circle, Pin, Pencil, Archive, Copy, PanelRight, Plus, FileCode2, MessageSquare, TerminalSquare, Globe, Sparkles } from 'lucide-react';
 import { TerminalPanel } from '@/components/terminal/TerminalPanel';
 import { MiniBrowser, MiniBrowserToggle, DockedMiniBrowser, HermesPTYPanel, type HermesPTYPanelHandle } from '@/components/browser/MiniBrowser';
 import { DockedChatSidebar } from '@/components/chat/DockedChatSidebar';
+import { SessionsRail } from '@/components/sessions/SessionsRail';
 import { SlotNumber } from '@/components/ui/SlotNumber';
 import { HermesUpdateButton } from '@/components/chat/HermesUpdateButton';
 import { FeedbackButton } from '@/components/feedback/FeedbackButton';
@@ -59,7 +61,7 @@ export const AppLayout: React.FC = () => {
   );
   const { getChangeset, getChangeCount, clearChanges, getStagedCount, getStagedChanges, setPullRequest, getLineTotals } = useChangesetStore();
   const { conversations, deleteConversation, renameConversation, pinConversation } = useChatStore();
-  const { panels, focusedPanelId, openPanel, setConversationForPanel, focusPanel } = usePanelStore();
+  const { panels, focusedPanelId, openPanel, setConversationForPanel, focusPanel, viewMode, setViewMode } = usePanelStore();
   const footerUsage = useContextUsageStore((state) => state.panelUsage[focusedPanelId]);
   const setPreviewOpen = usePreviewStore((s) => s.setOpen);
   const setPreviewView = usePreviewStore((s) => s.setView);
@@ -114,6 +116,46 @@ export const AppLayout: React.FC = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [toggleTerminal]);
+
+  // Sync Hermes model from ~/.hermes/config.yaml.
+  // CLI config is the source of truth — overwrites any previous UI selection.
+  // Runs on mount, on window focus, and on a light interval while the document
+  // is visible. The interval covers the case where `hermes model …` is run in
+  // the embedded HermesPTYPanel — no window focus change fires there, so an
+  // interval is the only way to notice the config change.
+  useEffect(() => {
+    let cancelled = false;
+
+    const syncHermesModel = () => {
+      detectHermesBridge().then((status) => {
+        if (cancelled || !status?.hermesDefaultModel) return;
+        const store = useSettingsStore.getState();
+        const currentHermesModel = store.providers?.hermes?.model;
+        if (currentHermesModel === status.hermesDefaultModel) return;
+        store.updateProviderConfig('hermes', { model: status.hermesDefaultModel });
+        console.info(
+          `[hermes-sync] model synced from ~/.hermes/config.yaml: ${currentHermesModel ?? '(none)'} → ${status.hermesDefaultModel}`,
+        );
+      }).catch(() => {
+        // Bridge unreachable — keep existing stored model.
+      });
+    };
+
+    syncHermesModel();
+    window.addEventListener('focus', syncHermesModel);
+
+    // 15s poll — only while the tab is visible, so we don't spam /health in
+    // a hidden background window.
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') syncHermesModel();
+    }, 15000);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', syncHermesModel);
+      window.clearInterval(interval);
+    };
+  }, []);
 
   // Close header menu on outside click
   useEffect(() => {
@@ -294,6 +336,13 @@ const headerSecondaryLabel = selectedCronJobId
 
       <div className="h-screen flex flex-col bg-[hsl(var(--frame-bg))] p-0 gap-0">
         <div className="flex-1 flex min-h-0 gap-0 overflow-hidden">
+          {/* Sessions rail — always visible, shows every parallel session */}
+          {activeTab === 'chat' && !selectedCronJobId && !selectedSessionId && (
+            <SessionsRail
+              viewMode={viewMode}
+              onToggleViewMode={() => setViewMode(viewMode === 'grid' ? 'row' : 'grid')}
+            />
+          )}
           {/* Sidebar + resize handle wrapper */}
           <div className="flex-shrink-0 relative" style={sidebarOpen ? { width: sidebarWidth } : { width: 0 }}>
             <div
@@ -446,21 +495,17 @@ const headerSecondaryLabel = selectedCronJobId
                                 <span className="flex-1 text-left">Copy conversation ID</span>
                               </button>
 
-                              {panels.length < 4 && (
-                                <>
-                                  <div className="my-1 border-t border-border" />
-                                  <button
-                                    onClick={() => {
-                                      openPanel(activeConv.id);
-                                      setHeaderMenuOpen(false);
-                                    }}
-                                    className="w-full flex items-center gap-3 px-3 py-2 hover:bg-muted transition-colors duration-100"
-                                  >
-                                    <PanelRight className="h-4 w-4 text-muted-foreground" />
-                                    <span className="flex-1 text-left">Open in new panel</span>
-                                  </button>
-                                </>
-                              )}
+                              <div className="my-1 border-t border-border" />
+                              <button
+                                onClick={() => {
+                                  openPanel(activeConv.id);
+                                  setHeaderMenuOpen(false);
+                                }}
+                                className="w-full flex items-center gap-3 px-3 py-2 hover:bg-muted transition-colors duration-100"
+                              >
+                                <PanelRight className="h-4 w-4 text-muted-foreground" />
+                                <span className="flex-1 text-left">Open in new panel</span>
+                              </button>
                             </>
                           ) : (
                             <div className="px-3 py-2 text-muted-foreground text-center">

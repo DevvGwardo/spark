@@ -1,4 +1,5 @@
 import type { Request } from 'express';
+import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
@@ -42,4 +43,20 @@ export function resolveHermesHome(profileName: string): string {
     return getHermesRoot();
   }
   return path.join(getProfilesRoot(), validateProfileName(profileName));
+}
+
+// Auto-provision a profile directory on first use. Session-bound panels pick
+// their own profile name up front, so the directory may not exist until the
+// first Hermes request fires. No-op for 'default' (the CLI owns that root).
+export function ensureProfileExists(profileName: string): void {
+  if (profileName === 'default') return;
+  const profilePath = resolveHermesHome(profileName);
+  if (fs.existsSync(profilePath)) return;
+  fs.mkdirSync(profilePath, { recursive: true });
+  fs.mkdirSync(path.join(profilePath, 'skills'), { recursive: true });
+  fs.mkdirSync(path.join(profilePath, 'sessions'), { recursive: true });
+  const configPath = path.join(profilePath, 'config.yaml');
+  if (!fs.existsSync(configPath)) {
+    fs.writeFileSync(configPath, 'model: ""\nprovider: ""\n', 'utf-8');
+  }
 }

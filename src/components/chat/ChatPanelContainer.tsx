@@ -8,7 +8,7 @@ interface ChatPanelContainerProps {
 }
 
 export const ChatPanelContainer: React.FC<ChatPanelContainerProps> = ({ onOpenPR }) => {
-  const { panels, focusedPanelId, focusPanel, closePanel } = usePanelStore();
+  const { panels, focusedPanelId, focusPanel, closePanel, viewMode } = usePanelStore();
 
   // Single panel — no resize handles, no header
   if (panels.length === 1) {
@@ -20,6 +20,34 @@ export const ChatPanelContainer: React.FC<ChatPanelContainerProps> = ({ onOpenPR
         isFocused={true}
         onFocus={() => {}}
       />
+    );
+  }
+
+  // Grid mode — tiled layout (2 cols, wrap). Each panel keeps streaming while
+  // unfocused; grid is purely presentational over the same ChatPanel instances.
+  if (viewMode === 'grid') {
+    const cols = panels.length <= 2 ? 2 : panels.length <= 4 ? 2 : panels.length <= 9 ? 3 : 4;
+    return (
+      <div
+        className="grid h-full gap-0 overflow-hidden"
+        style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+      >
+        {panels.map((panel) => (
+          <div
+            key={panel.id}
+            className="min-w-0 min-h-0 overflow-hidden border-r border-b border-border/40 last:border-r-0"
+          >
+            <ChatPanel
+              panelId={panel.id}
+              conversationId={panel.conversationId}
+              isFocused={panel.id === focusedPanelId}
+              onFocus={() => focusPanel(panel.id)}
+              onClose={() => closePanel(panel.id)}
+              onOpenPR={onOpenPR}
+            />
+          </div>
+        ))}
+      </div>
     );
   }
 

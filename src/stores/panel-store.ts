@@ -1,13 +1,16 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-const MAX_PANELS = 4;
-
-const DEFAULT_PANEL: Panel = { id: 'default', conversationId: null };
+// Each panel is an isolated session: its own Hermes profile (state.db, skills/,
+// working dir). Sessions can stream in parallel because the bridge resolves to
+// different hermes_home dirs per profile. The 'default' profile is reserved
+// for the original single-session experience.
+const DEFAULT_PANEL: Panel = { id: 'default', conversationId: null, profile: 'default' };
 
 interface Panel {
   id: string;
   conversationId: string | null;
+  profile: string;
 }
 
 interface DockedPanel {
@@ -15,11 +18,14 @@ interface DockedPanel {
   sourcePanelId: string;
 }
 
+type ViewMode = 'row' | 'grid';
+
 interface PanelState {
   panels: Panel[];
   focusedPanelId: string;
   dockedPanel: DockedPanel | null;
   dockedPanelWidth: number;
+  viewMode: ViewMode;
   openPanel: (conversationId: string | null) => string;
   closePanel: (panelId: string) => void;
   focusPanel: (panelId: string) => void;
@@ -27,6 +33,7 @@ interface PanelState {
   dockPanel: (panelId: string, conversationId: string) => void;
   undockPanel: () => void;
   setDockedPanelWidth: (width: number) => void;
+  setViewMode: (mode: ViewMode) => void;
 }
 
 let panelCounter = 0;
@@ -36,6 +43,13 @@ function generatePanelId(): string {
   return `panel-${Date.now()}-${panelCounter}`;
 }
 
+// Session profile name: human-sortable timestamp + counter. Kept short so the
+// bridge's ~/.hermes/profiles/<name> path stays reasonable.
+function generateSessionProfile(): string {
+  const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(2, 12);
+  return `session-${stamp}-${panelCounter}`;
+}
+
 export const usePanelStore = create<PanelState>()(
   persist(
     (set, get) => ({
@@ -43,6 +57,7 @@ export const usePanelStore = create<PanelState>()(
       focusedPanelId: 'default',
       dockedPanel: null,
       dockedPanelWidth: 380,
+      viewMode: 'row',
 
       openPanel: (conversationId) => {
         const { panels } = get();
@@ -53,21 +68,10 @@ export const usePanelStore = create<PanelState>()(
             return existingPanel.id;
           }
         }
-        if (panels.length >= MAX_PANELS) {
-          // At cap — focus the last panel and assign the conversation to it
-          const lastPanel = panels[panels.length - 1];
-          set({
-            panels: panels.map((p) =>
-              p.id === lastPanel.id ? { ...p, conversationId } : p
-            ),
-            focusedPanelId: lastPanel.id,
-          });
-          return lastPanel.id;
-        }
 
         const id = generatePanelId();
         set({
-          panels: [...panels, { id, conversationId }],
+          panels: [...panels, { id, conversationId, profile: generateSessionProfile() }],
           focusedPanelId: id,
         });
         return id;
@@ -123,7 +127,7 @@ export const usePanelStore = create<PanelState>()(
         // Remove the panel from the panels array (if it's not the only one)
         const remaining = panels.length > 1
           ? panels.filter((p) => p.id !== panelId)
-          : [{ id: panelId, conversationId: null }]; // clear the conversation from the only panel
+          : [{ id: panelId, conversationId: null, profile: panels[0]?.profile ?? 'default' }];
 
         let nextFocusedId = focusedPanelId;
         if (focusedPanelId === panelId && remaining.length > 0) {
@@ -151,21 +155,11 @@ export const usePanelStore = create<PanelState>()(
             focusedPanelId: emptyPanel.id,
             dockedPanel: null,
           });
-        } else if (panels.length < MAX_PANELS) {
+        } else {
           const id = generatePanelId();
           set({
-            panels: [...panels, { id, conversationId: dockedPanel.conversationId }],
+            panels: [...panels, { id, conversationId: dockedPanel.conversationId, profile: generateSessionProfile() }],
             focusedPanelId: id,
-            dockedPanel: null,
-          });
-        } else {
-          // Replace last panel
-          const lastPanel = panels[panels.length - 1];
-          set({
-            panels: panels.map((p) =>
-              p.id === lastPanel.id ? { ...p, conversationId: dockedPanel.conversationId } : p
-            ),
-            focusedPanelId: lastPanel.id,
             dockedPanel: null,
           });
         }
@@ -173,6 +167,10 @@ export const usePanelStore = create<PanelState>()(
 
       setDockedPanelWidth: (width) => {
         set({ dockedPanelWidth: Math.max(280, Math.min(600, width)) });
+      },
+
+      setViewMode: (mode) => {
+        set({ viewMode: mode });
       },
     }),
     {
@@ -183,12 +181,28 @@ export const usePanelStore = create<PanelState>()(
             panels: [DEFAULT_PANEL],
             focusedPanelId: 'default',
           });
-        } else {
-          // Ensure focusedPanelId references an actual panel
-          const valid = state.panels.some((p) => p.id === state.focusedPanelId);
-          if (!valid) {
-            usePanelStore.setState({ focusedPanelId: state.panels[0].id });
-          }
+          return;
+        }
+        // Backfill profile on panels persisted before per-session profiles existed.
+        // The original 'default' panel keeps 'default'; others get a fresh profile
+        // so the old global-profile behavior is preserved for the primary session.
+        const needsBackfill = state.panels.some((p) => typeof p.profile !== 'string' || !p.profile);
+        if (needsBackfill) {
+          usePanelStore.setState({
+            panels: state.panels.map((p) => ({
+              ...p,
+              profile: p.profile && typeof p.profile === 'string'
+                ? p.profile
+                : p.id === 'default'
+                  ? 'default'
+                  : generateSessionProfile(),
+            })),
+          });
+        }
+        // Ensure focusedPanelId references an actual panel
+        const valid = state.panels.some((p) => p.id === state.focusedPanelId);
+        if (!valid) {
+          usePanelStore.setState({ focusedPanelId: state.panels[0].id });
         }
       },
     }

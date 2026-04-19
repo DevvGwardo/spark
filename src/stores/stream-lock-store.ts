@@ -10,18 +10,20 @@ import { create } from 'zustand';
 interface StreamLockState {
   locks: Record<string, string>; // profile -> panelId
 
-  acquire: (profile: string, panelId: string) => void;
+  acquire: (profile: string, panelId: string) => boolean;
   release: (profile: string, panelId: string) => void;
 }
 
-export const useStreamLockStore = create<StreamLockState>()((set) => ({
+export const useStreamLockStore = create<StreamLockState>()((set, get) => ({
   locks: {},
 
-  acquire: (profile, panelId) =>
-    set((state) => {
-      if (state.locks[profile] === panelId) return state;
-      return { locks: { ...state.locks, [profile]: panelId } };
-    }),
+  acquire: (profile, panelId) => {
+    const current = get().locks[profile];
+    if (current && current !== panelId) return false;
+    if (current === panelId) return true;
+    set((state) => ({ locks: { ...state.locks, [profile]: panelId } }));
+    return true;
+  },
 
   release: (profile, panelId) =>
     set((state) => {
