@@ -2335,6 +2335,20 @@ def _format_tool_end_text(tool_name: str, tool_output: str) -> str:
             return f"> *Done:* `{preview}`\n\n"
         return f"> *Done (no output)*\n\n"
 
+    if tool_name == "todo":
+        try:
+            payload = json.loads(tool_output) if tool_output else {}
+            cli_text = payload.get("cli", "")
+            if cli_text:
+                return f"\n\n```\n{cli_text}\n```\n\n"
+            summary = payload.get("summary", {})
+            total = summary.get("total", 0)
+            if total == 0:
+                return "> *No tasks*\n\n"
+            return f"> *{total} tasks*\n\n"
+        except (json.JSONDecodeError, TypeError):
+            return "> *todo — done*\n\n"
+
     # Fallback: just say it's done
     return f"> *{display} — done*\n\n"
 
