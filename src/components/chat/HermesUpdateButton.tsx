@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Download, Check, Loader2 } from 'lucide-react';
+import { Download, Check, Loader2, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getApiBaseUrl } from '@/lib/api';
 
@@ -8,6 +8,11 @@ interface UpdateStatus {
   updateAvailable: boolean;
   currentVersion: string;
   updateInProgress: boolean;
+  currentBranch?: string;
+  dirty?: boolean;
+  hasConflicts?: boolean;
+  stashCount?: number;
+  blockedReason?: string | null;
 }
 
 export const HermesUpdateButton: React.FC = () => {
@@ -69,30 +74,37 @@ export const HermesUpdateButton: React.FC = () => {
 
   const hasUpdate = status.updateAvailable && !updating;
   const justUpdated = result && !error;
+  const isBlocked = status.blockedReason && !updating;
 
   return (
     <div className="flex items-center gap-1.5">
       <button
         onClick={handleUpdate}
-        disabled={updating || !status.updateAvailable}
+        disabled={updating || !status.updateAvailable || isBlocked}
         className={cn(
           'inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors',
-          hasUpdate
-            ? 'bg-violet-500/15 text-violet-400 ring-1 ring-violet-500/30 hover:bg-violet-500/25'
-            : justUpdated
-              ? 'bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/30'
-              : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+          isBlocked
+            ? 'bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/30 cursor-not-allowed'
+            : hasUpdate
+              ? 'bg-violet-500/15 text-violet-400 ring-1 ring-violet-500/30 hover:bg-violet-500/25'
+              : justUpdated
+                ? 'bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/30'
+                : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
         )}
         title={
-          updating
-            ? 'Updating Hermes...'
-            : hasUpdate
-              ? `${status.commitsBehind} update${status.commitsBehind !== 1 ? 's' : ''} available`
-              : 'Hermes is up to date'
+          isBlocked
+            ? status.blockedReason
+            : updating
+              ? 'Updating Hermes...'
+              : hasUpdate
+                ? `${status.commitsBehind} update${status.commitsBehind !== 1 ? 's' : ''} available`
+                : 'Hermes is up to date'
         }
       >
         {updating ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : isBlocked ? (
+          <AlertTriangle className="h-3.5 w-3.5" />
         ) : justUpdated ? (
           <Check className="h-3.5 w-3.5" />
         ) : hasUpdate ? (
@@ -101,19 +113,21 @@ export const HermesUpdateButton: React.FC = () => {
           <Check className="h-3.5 w-3.5" />
         )}
         <span>
-          {updating
-            ? 'Updating...'
-            : justUpdated
-              ? 'Updated!'
-              : hasUpdate
-                ? `Update (${status.commitsBehind})`
-                : 'Up to date'}
+          {isBlocked
+            ? 'Blocked'
+            : updating
+              ? 'Updating...'
+              : justUpdated
+                ? 'Updated!'
+                : hasUpdate
+                  ? `Update (${status.commitsBehind})`
+                  : 'Up to date'}
         </span>
       </button>
 
       {error && (
-        <span className="text-[10px] text-destructive" title={error}>
-          Failed
+        <span className="text-[10px] text-destructive max-w-[120px] truncate" title={error}>
+          {error}
         </span>
       )}
     </div>
