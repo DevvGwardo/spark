@@ -18,14 +18,11 @@ interface DockedPanel {
   sourcePanelId: string;
 }
 
-type ViewMode = 'row' | 'grid';
-
 interface PanelState {
   panels: Panel[];
   focusedPanelId: string;
   dockedPanel: DockedPanel | null;
   dockedPanelWidth: number;
-  viewMode: ViewMode;
   openPanel: (conversationId: string | null) => string;
   closePanel: (panelId: string) => void;
   focusPanel: (panelId: string) => void;
@@ -33,7 +30,6 @@ interface PanelState {
   dockPanel: (panelId: string, conversationId: string) => void;
   undockPanel: () => void;
   setDockedPanelWidth: (width: number) => void;
-  setViewMode: (mode: ViewMode) => void;
 }
 
 let panelCounter = 0;
@@ -50,6 +46,23 @@ function generateSessionProfile(): string {
   return `session-${stamp}-${panelCounter}`;
 }
 
+// Fire-and-forget deletion of an auto-created session profile. Keeps
+// ~/.hermes/profiles from accumulating one dir per closed panel. Only targets
+// names we generated (`session-*`); user-named profiles and 'default' are
+// never touched.
+function cleanupSessionProfile(profile: string): void {
+  if (!profile || profile === 'default' || !profile.startsWith('session-')) return;
+  try {
+    void fetch('/api/hermes/profiles/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: profile }),
+    }).catch(() => { /* best-effort */ });
+  } catch {
+    /* best-effort */
+  }
+}
+
 export const usePanelStore = create<PanelState>()(
   persist(
     (set, get) => ({
@@ -57,7 +70,6 @@ export const usePanelStore = create<PanelState>()(
       focusedPanelId: 'default',
       dockedPanel: null,
       dockedPanelWidth: 380,
-      viewMode: 'row',
 
       openPanel: (conversationId) => {
         const { panels } = get();
@@ -84,6 +96,7 @@ export const usePanelStore = create<PanelState>()(
         const index = panels.findIndex((p) => p.id === panelId);
         if (index === -1) return;
 
+        const closed = panels[index];
         const remaining = panels.filter((p) => p.id !== panelId);
 
         let nextFocusedId = focusedPanelId;
@@ -94,6 +107,11 @@ export const usePanelStore = create<PanelState>()(
         }
 
         set({ panels: remaining, focusedPanelId: nextFocusedId });
+
+        // Reap the auto-generated profile dir so ~/.hermes/profiles doesn't
+        // grow unbounded. Skipped if another panel still uses the same profile.
+        const stillUsed = remaining.some((p) => p.profile === closed.profile);
+        if (!stillUsed) cleanupSessionProfile(closed.profile);
       },
 
       focusPanel: (panelId) => {
@@ -167,10 +185,6 @@ export const usePanelStore = create<PanelState>()(
 
       setDockedPanelWidth: (width) => {
         set({ dockedPanelWidth: Math.max(280, Math.min(600, width)) });
-      },
-
-      setViewMode: (mode) => {
-        set({ viewMode: mode });
       },
     }),
     {

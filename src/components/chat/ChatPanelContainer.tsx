@@ -8,7 +8,7 @@ interface ChatPanelContainerProps {
 }
 
 export const ChatPanelContainer: React.FC<ChatPanelContainerProps> = ({ onOpenPR }) => {
-  const { panels, focusedPanelId, focusPanel, closePanel, viewMode } = usePanelStore();
+  const { panels, focusedPanelId, focusPanel, closePanel } = usePanelStore();
 
   // Single panel — no resize handles, no header
   if (panels.length === 1) {
@@ -23,10 +23,10 @@ export const ChatPanelContainer: React.FC<ChatPanelContainerProps> = ({ onOpenPR
     );
   }
 
-  // Grid mode — tiled layout (2 cols, wrap). Each panel keeps streaming while
-  // unfocused; grid is purely presentational over the same ChatPanel instances.
-  if (viewMode === 'grid') {
-    const cols = panels.length <= 2 ? 2 : panels.length <= 4 ? 2 : panels.length <= 9 ? 3 : 4;
+  // 3+ panels — auto-switch to tiled grid (resizable row gets too cramped).
+  // Each panel keeps streaming while unfocused; grid is purely presentational.
+  if (panels.length > 2) {
+    const cols = panels.length <= 4 ? 2 : panels.length <= 9 ? 3 : 4;
     return (
       <div
         className="grid h-full gap-0 overflow-hidden"

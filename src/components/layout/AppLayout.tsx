@@ -26,7 +26,6 @@ import { PanelLeft, GitPullRequest, MoreHorizontal, Circle, Pin, Pencil, Archive
 import { TerminalPanel } from '@/components/terminal/TerminalPanel';
 import { MiniBrowser, MiniBrowserToggle, DockedMiniBrowser, HermesPTYPanel, type HermesPTYPanelHandle } from '@/components/browser/MiniBrowser';
 import { DockedChatSidebar } from '@/components/chat/DockedChatSidebar';
-import { SessionsRail } from '@/components/sessions/SessionsRail';
 import { SlotNumber } from '@/components/ui/SlotNumber';
 import { HermesUpdateButton } from '@/components/chat/HermesUpdateButton';
 import { FeedbackButton } from '@/components/feedback/FeedbackButton';
@@ -61,7 +60,7 @@ export const AppLayout: React.FC = () => {
   );
   const { getChangeset, getChangeCount, clearChanges, getStagedCount, getStagedChanges, setPullRequest, getLineTotals } = useChangesetStore();
   const { conversations, deleteConversation, renameConversation, pinConversation } = useChatStore();
-  const { panels, focusedPanelId, openPanel, setConversationForPanel, focusPanel, viewMode, setViewMode } = usePanelStore();
+  const { panels, focusedPanelId, openPanel, setConversationForPanel, focusPanel } = usePanelStore();
   const footerUsage = useContextUsageStore((state) => state.panelUsage[focusedPanelId]);
   const setPreviewOpen = usePreviewStore((s) => s.setOpen);
   const setPreviewView = usePreviewStore((s) => s.setView);
@@ -336,13 +335,6 @@ const headerSecondaryLabel = selectedCronJobId
 
       <div className="h-screen flex flex-col bg-[hsl(var(--frame-bg))] p-0 gap-0">
         <div className="flex-1 flex min-h-0 gap-0 overflow-hidden">
-          {/* Sessions rail — always visible, shows every parallel session */}
-          {activeTab === 'chat' && !selectedCronJobId && !selectedSessionId && (
-            <SessionsRail
-              viewMode={viewMode}
-              onToggleViewMode={() => setViewMode(viewMode === 'grid' ? 'row' : 'grid')}
-            />
-          )}
           {/* Sidebar + resize handle wrapper */}
           <div className="flex-shrink-0 relative" style={sidebarOpen ? { width: sidebarWidth } : { width: 0 }}>
             <div
