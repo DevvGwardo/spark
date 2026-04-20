@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork, Search, ChevronRight, Zap, Clock, House, BookOpen, Sparkles, BarChart3, User } from 'lucide-react';
+import { Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork, Search, ChevronRight, Zap, Clock, House, BookOpen, Sparkles, BarChart3, User, Network } from 'lucide-react';
 import { Github } from 'lucide-react';
 import { GhostIcon } from '@/components/chat/GhostIcon';
 import { useChatStore } from '@/stores/chat-store';
@@ -19,6 +19,7 @@ import { HermesMemoriesPanel } from '@/components/sidebar/HermesMemoriesPanel';
 import { ProfilesPanel } from '@/components/sidebar/ProfilesPanel';
 import { HermesSkillsPanel } from '@/components/sidebar/HermesSkillsPanel';
 import { HermesUsagePanel } from '@/components/sidebar/HermesUsagePanel';
+import { ConversationTreeOverlay } from '@/components/workflow/ConversationTreeOverlay';
 import type { Conversation } from '@/lib/db';
 
 import type { SubTab } from '@/stores/ui-store';
@@ -100,6 +101,7 @@ export const ChatSidebar: React.FC = () => {
   const [cleanupOpen, setCleanupOpen] = useState(false);
   const [cleanupDays, setCleanupDays] = useState<number | null>(null);
   const [cleanupCount, setCleanupCount] = useState(0);
+  const [showTreeOverlay, setShowTreeOverlay] = useState(false);
   const isHermes = activeProvider === 'hermes';
 
   // Get active repo from focused panel's changeset
@@ -131,6 +133,16 @@ export const ChatSidebar: React.FC = () => {
     setActiveTab('chat');
     setConversationForPanel(focusedPanelId, null);
   };
+
+  // Close tree overlay on Esc
+  useEffect(() => {
+    if (!showTreeOverlay) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowTreeOverlay(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showTreeOverlay]);
 
   // Listen for "New Chat" from Electron tray/dock menu
   useEffect(() => {
@@ -299,8 +311,26 @@ export const ChatSidebar: React.FC = () => {
         <div className="flex items-center gap-1.5">
           <span className="text-[11px] font-semibold uppercase tracking-[1px] text-[#666666]">Threads</span>
           <SlotNumber value={conversations.length} className="text-[11px] font-mono text-[#555555]" />
+          {panels.length > 1 && (
+            <span
+              className="ml-1 inline-flex items-center gap-1 rounded-full border border-[#2F2F2F] bg-[hsl(var(--card))]/70 px-1.5 py-0.5 text-[10px] font-mono text-[#888888]"
+              title={`${panels.length} panels open`}
+            >
+              <Columns2 className="h-3 w-3" />
+              {panels.length}
+            </span>
+          )}
         </div>
         <div className="relative flex items-center gap-1.5">
+          <button
+            onClick={() => setShowTreeOverlay(true)}
+            className="rounded-md p-0.5 text-[#666666] transition-colors duration-100 hover:text-[hsl(var(--text-secondary))]"
+            title="Conversation tree"
+            aria-label="Open conversation tree"
+            disabled={conversations.length === 0}
+          >
+            <Network className="h-3.5 w-3.5" />
+          </button>
           <button
             onClick={() => { setCleanupOpen(!cleanupOpen); setCleanupDays(null); }}
             className="rounded-md p-0.5 text-[#666666] transition-colors duration-100 hover:text-[hsl(var(--text-secondary))]"
@@ -597,6 +627,10 @@ export const ChatSidebar: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {showTreeOverlay && (
+        <ConversationTreeOverlay onClose={() => setShowTreeOverlay(false)} />
+      )}
     </div>
   );
 };
