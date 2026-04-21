@@ -99,7 +99,7 @@ describe('AppLayout tab switching', () => {
     });
 
     usePanelStore.setState({
-      panels: [{ id: 'default', conversationId: null }],
+      panels: [{ id: 'default', conversationId: null, profile: 'default' }],
       focusedPanelId: 'default',
     });
 

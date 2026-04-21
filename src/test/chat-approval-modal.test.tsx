@@ -249,6 +249,7 @@ Here's a proposal to update the UI.`,
     window.electronAPI = {
       apiPort: 3555,
       platform: 'darwin',
+      homeDir: '/tmp',
       versions: {
         electron: '1',
         node: '1',
@@ -332,6 +333,7 @@ Here's a proposal to update the UI.`,
     window.electronAPI = {
       apiPort: 3555,
       platform: 'darwin',
+      homeDir: '/tmp',
       versions: {
         electron: '1',
         node: '1',

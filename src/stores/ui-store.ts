@@ -57,6 +57,8 @@ interface UIState {
   setSelectedCronJobId: (id: string | null) => void;
   selectedSessionId: string | null;
   setSelectedSessionId: (id: string | null) => void;
+  hermesSessionViewMode: 'focused' | 'all-active';
+  setHermesSessionViewMode: (mode: 'focused' | 'all-active') => void;
 }
 
 export const useUIStore = create<UIState>()(
@@ -135,10 +137,19 @@ export const useUIStore = create<UIState>()(
       setSelectedCronJobId: (id) => set({ selectedCronJobId: id }),
       selectedSessionId: null,
       setSelectedSessionId: (id) => set({ selectedSessionId: id }),
+      hermesSessionViewMode: 'focused',
+      setHermesSessionViewMode: (mode) => set({ hermesSessionViewMode: mode }),
     }),
     {
       name: 'ui-store',
-      partialize: (state) => ({ sidebarOpen: state.sidebarOpen, sidebarWidth: state.sidebarWidth, terminalHeight: state.terminalHeight, hermesTerminalOpen: state.hermesTerminalOpen, hermesTerminalHeight: state.hermesTerminalHeight }),
+      partialize: (state) => ({
+        sidebarOpen: state.sidebarOpen,
+        sidebarWidth: state.sidebarWidth,
+        terminalHeight: state.terminalHeight,
+        hermesTerminalOpen: state.hermesTerminalOpen,
+        hermesTerminalHeight: state.hermesTerminalHeight,
+        hermesSessionViewMode: state.hermesSessionViewMode,
+      }),
     }
   )
 );

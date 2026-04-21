@@ -5,6 +5,38 @@
 
 PROJECT_DIR="$HOME/cloud-chat-hub"
 BRIDGE_DIR="$PROJECT_DIR/hermes-bridge"
+DEFAULT_HERMES_HOME="$HOME/.hermes"
+DOCKER_HERMES_CONTAINER="${DOCKER_HERMES_CONTAINER:-hermes-docker}"
+
+resolve_hermes_home() {
+  if [ -n "$HERMES_HOME" ]; then
+    echo "$HERMES_HOME"
+    return 0
+  fi
+
+  # Opt-in: share docker container's bind-mounted data dir with the bridge.
+  # Off by default — host and container should have independent state to avoid
+  # state.db schema drift when versions diverge.
+  if [ "${CLOUDCHAT_SHARE_HERMES_DATA:-0}" = "1" ] && command -v docker >/dev/null 2>&1; then
+    local docker_state
+    docker_state=$(docker inspect "$DOCKER_HERMES_CONTAINER" --format '{{.State.Running}}' 2>/dev/null)
+    if [ "$docker_state" = "true" ]; then
+      local docker_home
+      docker_home=$(docker inspect "$DOCKER_HERMES_CONTAINER" --format '{{range .Mounts}}{{if eq .Destination "/opt/data"}}{{.Source}}{{end}}{{end}}' 2>/dev/null)
+      if [ -n "$docker_home" ] && [ -d "$docker_home" ]; then
+        echo "$docker_home"
+        return 0
+      fi
+    elif [ "$docker_state" = "false" ]; then
+      echo "  [!!] Docker container '$DOCKER_HERMES_CONTAINER' exists but is stopped — using $DEFAULT_HERMES_HOME" >&2
+    fi
+  fi
+
+  echo "$DEFAULT_HERMES_HOME"
+}
+
+HERMES_HOME_RESOLVED="$(resolve_hermes_home)"
+export HERMES_HOME="$HERMES_HOME_RESOLVED"
 
 if [ "$1" = "stop" ]; then
   echo "Stopping services..."
@@ -15,6 +47,7 @@ if [ "$1" = "stop" ]; then
 fi
 
 echo "Starting CloudChat services..."
+echo "  Hermes home: $HERMES_HOME"
 
 # 1. Hermes bridge
 if curl -s --max-time 1 http://localhost:3002/health > /dev/null 2>&1; then
@@ -23,6 +56,7 @@ else
   echo "  Starting Hermes bridge on :3002..."
   cd "$BRIDGE_DIR"
   export HERMES_MINIMAX_KEY="${MINIMAX_API_KEY:-$HERMES_MINIMAX_KEY}"
+  export HERMES_HOME
   # Prefer the hermes-agent venv (has all deps for real agent + bridge).
   # Fall back to the bridge's own venv if hermes-agent isn't installed.
   HERMES_VENV="$HOME/.hermes/hermes-agent/venv"
@@ -79,3 +113,4 @@ echo "All services:"
 echo "  Frontend:      http://localhost:8080"
 echo "  API server:    http://localhost:3001"
 echo "  Hermes bridge: http://localhost:3002"
+echo "  Hermes home:   $HERMES_HOME"

@@ -18,6 +18,7 @@ describe('getApiBaseUrl', () => {
     window.electronAPI = {
       apiPort: 3555,
       platform: 'darwin',
+      homeDir: '/tmp',
       versions: {
         electron: '1',
         node: '1',
@@ -40,6 +41,7 @@ describe('getApiBaseUrl', () => {
     window.electronAPI = {
       apiPort: 3555,
       platform: 'darwin',
+      homeDir: '/tmp',
       versions: {
         electron: '1',
         node: '1',

@@ -32,7 +32,7 @@ describe('repo workflow', () => {
     });
 
     usePanelStore.setState({
-      panels: [{ id: 'default', conversationId: 'conv-1' }],
+      panels: [{ id: 'default', conversationId: 'conv-1', profile: 'default' }],
       focusedPanelId: 'default',
     });
 

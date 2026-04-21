@@ -161,6 +161,17 @@ async function createWindow() {
     }
   })
 
+  // Grant microphone + clipboard permission requests from the renderer
+  mainWindow.webContents.session.setPermissionRequestHandler(
+    (_webContents, permission, callback) => {
+      if (permission === 'media' || permission === 'clipboard-sanitized-write' || permission === 'clipboard-read') {
+        callback(true)
+      } else {
+        callback(false)
+      }
+    }
+  )
+
   // Content Security Policy — only apply to the main window, not the BrowserView
   mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
     // Skip CSP injection for BrowserView (mini browser) — it needs full web access for sites like YouTube
@@ -182,6 +193,7 @@ async function createWindow() {
           " style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net;" +
           " font-src 'self' https://fonts.gstatic.com data:;" +
           " img-src 'self' data: https: http: file: cloudchat-asset:;" +
+          " media-src 'self' blob:;" +
           " connect-src 'self' data: http://localhost:* https://* https://cdn.jsdelivr.net;" +
           " worker-src 'self' blob:;"
         ]

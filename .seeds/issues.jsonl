@@ -161,3 +161,4 @@
 {"id":"cloud-chat-hub-570d","title":"Fix Hermes image loading via custom Electron asset protocol","status":"closed","type":"bug","priority":2,"createdAt":"2026-04-21T13:02:38.974Z","updatedAt":"2026-04-21T13:10:04.471Z","closedAt":"2026-04-21T13:10:04.471Z"}
 {"id":"cloud-chat-hub-1ba0","title":"Fix Electron local image rendering via cloudchat-asset protocol","status":"in_progress","type":"bug","priority":2,"createdAt":"2026-04-21T13:07:10.400Z","updatedAt":"2026-04-21T13:07:20.291Z"}
 {"id":"cloud-chat-hub-f438","title":"Fix sidebar conversation image previews","status":"closed","type":"bug","priority":2,"createdAt":"2026-04-21T14:03:25.603Z","updatedAt":"2026-04-21T14:09:46.923Z","closedAt":"2026-04-21T14:09:46.923Z"}
+{"id":"cloud-chat-hub-9c1e","title":"Docker integration cleanup option B runtime split","status":"in_progress","type":"task","priority":2,"createdAt":"2026-04-21T21:11:21.281Z","updatedAt":"2026-04-21T21:11:25.112Z"}

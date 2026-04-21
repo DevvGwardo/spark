@@ -28,7 +28,7 @@ describe('ChatSidebar', () => {
     }));
     usePanelStore.setState((state) => ({
       ...state,
-      panels: [{ id: 'default', conversationId: null }],
+      panels: [{ id: 'default', conversationId: null, profile: 'default' }],
       focusedPanelId: 'default',
     }));
     useActivityStore.setState({ activities: {} });
@@ -102,7 +102,7 @@ describe('ChatSidebar', () => {
     }));
     usePanelStore.setState((state) => ({
       ...state,
-      panels: [{ id: 'default', conversationId: 'conv-1' }],
+      panels: [{ id: 'default', conversationId: 'conv-1', profile: 'default' }],
       focusedPanelId: 'default',
     }));
 

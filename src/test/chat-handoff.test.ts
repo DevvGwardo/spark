@@ -96,7 +96,7 @@ describe('new thread handoff', () => {
     useChangesetStore.setState({ panelChangesets: {} });
     usePreviewStore.setState({ panelPreviews: {} });
     usePanelStore.setState({
-      panels: [{ id: 'default', conversationId: null }],
+      panels: [{ id: 'default', conversationId: null, profile: 'default' }],
       focusedPanelId: 'default',
     });
     useHermesStore.setState({

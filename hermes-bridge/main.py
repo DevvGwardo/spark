@@ -176,7 +176,9 @@ def _session_summary(session: dict) -> dict:
 
 # --- Hermes workspace inspection/editing ---
 _HERMES_HOME = Path(os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes")))
-_PROFILE_MANAGER_HOME = Path(os.path.expanduser("~/.hermes"))
+# Profile manager workspace — honor HERMES_HOME so start-all.sh can align the
+# bridge with a docker container's bind-mounted data dir.
+_PROFILE_MANAGER_HOME = _HERMES_HOME
 _PROFILES_ROOT = _PROFILE_MANAGER_HOME / "profiles"
 _ACTIVE_PROFILE_PATH = _PROFILE_MANAGER_HOME / "active_profile"
 

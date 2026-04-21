@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useCallback, useState } from 'react';
-import { ArrowUp, Square, Plus, ChevronDown, Mic, CornerDownLeft, Bot, ClipboardList } from 'lucide-react';
+import { ArrowUp, Square, Plus, ChevronDown, Mic, MicOff, CornerDownLeft, Bot, ClipboardList, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUIStore } from '@/stores/ui-store';
 
@@ -12,7 +12,9 @@ const SUBTAB_NAV_COMMANDS = new Set([
 const MAINTAB_NAV_COMMANDS = new Set([
   'github', 'analyzer', 'knowledge',
 ]);
-import { useSettingsStore } from '@/stores/settings-store';
+import { useSettingsStore, type Provider } from '@/stores/settings-store';
+import { useShallow } from 'zustand/shallow';
+import { useVoiceInput } from '@/hooks/useVoiceInput';
 import { PROVIDERS, REASONING_EFFORTS, getVisibleModelOptions, supportsReasoningEffort } from '@/lib/providers';
 import type { QueuedMessage } from '@/lib/chat-queue';
 import { StreamingStatusBar } from './StreamingStatusBar';
@@ -105,6 +107,45 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
   const safeValue = value ?? '';
 
+  // Voice input
+  const { providers: settingsProviders } = useSettingsStore(
+    useShallow((s) => ({ providers: s.providers }))
+  );
+  const voiceInput = useVoiceInput(settingsProviders as Record<Provider, { apiKey: string }>);
+
+  // Use refs for stable references so handleMicToggle doesn't recreate every render
+  const voiceStartRef = useRef(voiceInput.startRecording);
+  const voiceStopRef = useRef(voiceInput.stopRecording);
+  const voiceCancelRef = useRef(voiceInput.cancelRecording);
+  const voiceIsRecordingRef = useRef(voiceInput.isRecording);
+  const voiceIsTranscribingRef = useRef(voiceInput.isTranscribing);
+  voiceStartRef.current = voiceInput.startRecording;
+  voiceStopRef.current = voiceInput.stopRecording;
+  voiceCancelRef.current = voiceInput.cancelRecording;
+  voiceIsRecordingRef.current = voiceInput.isRecording;
+  voiceIsTranscribingRef.current = voiceInput.isTranscribing;
+
+  const safeValueRef = useRef(safeValue);
+  safeValueRef.current = safeValue;
+  const disabledRef = useRef(disabled);
+  disabledRef.current = disabled;
+
+  const handleMicToggle = useCallback(async () => {
+    if (voiceIsTranscribingRef.current || disabledRef.current) return;
+
+    if (voiceIsRecordingRef.current) {
+      const transcribed = await voiceStopRef.current();
+      if (transcribed) {
+        const current = safeValueRef.current;
+        const separator = current.trim() ? ' ' : '';
+        onChange(current + separator + transcribed);
+        setTimeout(() => textareaRef.current?.focus(), 0);
+      }
+    } else {
+      await voiceStartRef.current();
+    }
+  }, [onChange]);
+
   const executeCommand = useCallback(async (input: string): Promise<boolean> => {
     const parsed = parseCommand(input);
     if (!parsed) return false;
@@ -163,6 +204,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       return;
     }
     if (e.key === 'Escape') {
+      if (voiceIsRecordingRef.current) {
+        voiceCancelRef.current();
+        return;
+      }
       setShowCommandSuggestions(false);
       return;
     }
@@ -373,12 +418,48 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             )}
 
             {/* Mic button */}
-            <button
-              className="p-1.5 rounded-lg text-[#555555] hover:text-foreground hover:bg-muted transition-colors duration-100"
-              title="Voice input"
-            >
-              <Mic className="h-4 w-4" />
-            </button>
+            {voiceInput.isTranscribing ? (
+              <button
+                className="p-1.5 rounded-lg text-muted-foreground"
+                title="Transcribing…"
+                disabled
+              >
+                <Loader2 className="h-4 w-4 animate-spin" />
+              </button>
+            ) : voiceInput.isRecording ? (
+              <button
+                onClick={handleMicToggle}
+                disabled={disabled}
+                className={cn(
+                  'p-1.5 rounded-lg transition-colors duration-100',
+                  'text-red-500 hover:text-red-400 bg-red-500/10 hover:bg-red-500/20',
+                  disabled && 'opacity-50 pointer-events-none'
+                )}
+                title="Stop recording"
+              >
+                <MicOff className="h-4 w-4" />
+              </button>
+            ) : (
+              <button
+                onClick={handleMicToggle}
+                disabled={disabled}
+                className={cn(
+                  'p-1.5 rounded-lg transition-colors duration-100',
+                  voiceInput.error
+                    ? 'text-amber-500 hover:text-amber-400'
+                    : 'text-[#555555] hover:text-foreground hover:bg-muted',
+                  disabled && 'opacity-50 pointer-events-none'
+                )}
+                title={voiceInput.error || 'Voice input'}
+              >
+                <Mic className="h-4 w-4" />
+              </button>
+            )}
+            {voiceInput.error && (
+              <span className="text-[10px] text-amber-500 max-w-[120px] truncate" title={voiceInput.error}>
+                {voiceInput.error}
+              </span>
+            )}
 
             {/* Send / Stop */}
             {isStreaming ? (

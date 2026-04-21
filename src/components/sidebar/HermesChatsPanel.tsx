@@ -3,14 +3,22 @@ import { Trash2, Zap, AlertCircle, Loader2 } from 'lucide-react';
 import { useSessionsStore, type HermesSession } from '@/stores/sessions-store';
 import { useUIStore } from '@/stores/ui-store';
 import { getSession, type HermesSessionDetail, type HermesSessionMessage } from '@/lib/hermes-api';
+import { deriveTasks } from '@/lib/derive-tasks';
 import { cn } from '@/lib/utils';
 import { relativeTime } from '@/lib/relative-time';
+import { TaskList } from './TaskList';
 
 function statusColor(session: HermesSession): string {
   if (session.status === 'error') return 'bg-red-500';
   if (session.status === 'active') return 'bg-blue-500';
   if (session.messages > 0) return 'bg-green-500';
   return 'bg-gray-400';
+}
+
+function sessionTitle(session: Pick<HermesSession, 'id' | 'firstUserMessage'>): string {
+  return session.firstUserMessage?.trim().length
+    ? session.firstUserMessage.trim()
+    : `Session ${session.id.slice(0, 8)}`;
 }
 
 function roleLabel(role: HermesSessionMessage['role']): string {
@@ -39,9 +47,7 @@ interface SessionRowProps {
 function SessionRow({ session, selectedId, onSelect, deleteConfirmId, onDeleteRequest, onDeleteConfirm, onDeleteCancel }: SessionRowProps) {
   const msgCount = session.messages;
   const isConfirming = deleteConfirmId === session.id;
-  const title = session.firstUserMessage?.trim().length
-    ? session.firstUserMessage.trim()
-    : `Session ${session.id.slice(0, 8)}`;
+  const title = sessionTitle(session);
 
   return (
     <div
@@ -113,16 +119,23 @@ function SessionRow({ session, selectedId, onSelect, deleteConfirmId, onDeleteRe
 }
 
 export function HermesChatsPanel() {
-  const { sessions, loading, error, fetchSessions, deleteSession } = useSessionsStore();
+  const { sessions, activeDetails, loading, error, fetchSessions, fetchActiveDetails, deleteSession } = useSessionsStore();
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const detailRequestRef = useRef(0);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [selectedSession, setSelectedSession] = useState<HermesSessionDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [detailTab, setDetailTab] = useState<'chat' | 'tasks'>('chat');
+  const [activeDetailsLoading, setActiveDetailsLoading] = useState(false);
+  const [activeDetailsError, setActiveDetailsError] = useState<string | null>(null);
   const sessionChat = selectedSession?.chat ?? [];
-  const setGlobalSessionId = useUIStore((s) => s.setSelectedSessionId);
+  const selectedSessionId = useUIStore((s) => s.selectedSessionId);
+  const setSelectedSessionId = useUIStore((s) => s.setSelectedSessionId);
+  const viewMode = useUIStore((s) => s.hermesSessionViewMode);
+  const setViewMode = useUIStore((s) => s.setHermesSessionViewMode);
+  const activeSessions = sessions.filter((session) => session.status === 'active');
+  const activeSessionIds = activeSessions.map((session) => session.id).join(',');
 
   const loadSessionDetail = useCallback(async (sessionId: string, silent = false) => {
     const requestId = ++detailRequestRef.current;
@@ -146,21 +159,42 @@ export function HermesChatsPanel() {
     }
   }, []);
 
+  const loadActiveSessionDetails = useCallback(async (silent = false) => {
+    if (!silent) {
+      setActiveDetailsLoading(true);
+    }
+
+    try {
+      await fetchActiveDetails();
+      setActiveDetailsError(null);
+    } catch (err) {
+      setActiveDetailsError(err instanceof Error ? err.message : 'Failed to fetch active sessions');
+    } finally {
+      if (!silent) {
+        setActiveDetailsLoading(false);
+      }
+    }
+  }, [fetchActiveDetails]);
+
   useEffect(() => {
     void fetchSessions();
 
     // Auto-refresh every 10s
     intervalRef.current = setInterval(() => {
-      void fetchSessions();
-      if (selectedSessionId) {
-        void loadSessionDetail(selectedSessionId, true);
-      }
+      void (async () => {
+        await fetchSessions();
+        if (viewMode === 'all-active') {
+          await loadActiveSessionDetails(true);
+        } else if (selectedSessionId) {
+          await loadSessionDetail(selectedSessionId, true);
+        }
+      })();
     }, 10000);
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [fetchSessions, loadSessionDetail, selectedSessionId]);
+  }, [fetchSessions, loadActiveSessionDetails, loadSessionDetail, selectedSessionId, viewMode]);
 
   useEffect(() => {
     if (!selectedSessionId) {
@@ -174,6 +208,16 @@ export function HermesChatsPanel() {
   }, [loadSessionDetail, selectedSessionId]);
 
   useEffect(() => {
+    if (viewMode !== 'all-active') return;
+    void loadActiveSessionDetails();
+  }, [loadActiveSessionDetails, viewMode]);
+
+  useEffect(() => {
+    if (viewMode !== 'all-active' || activeSessions.length === 0) return;
+    void loadActiveSessionDetails(true);
+  }, [activeSessionIds, activeSessions.length, loadActiveSessionDetails, viewMode]);
+
+  useEffect(() => {
     if (!selectedSessionId) return;
     const stillExists = sessions.some((session) => session.id === selectedSessionId);
     if (stillExists) return;
@@ -182,21 +226,18 @@ export function HermesChatsPanel() {
     setSelectedSession(null);
     setDetailError(null);
     setDetailLoading(false);
-    setGlobalSessionId(null);
-  }, [selectedSessionId, sessions, setGlobalSessionId]);
+  }, [selectedSessionId, sessions, setSelectedSessionId]);
 
   const handleSelect = (id: string) => {
-    setSelectedSessionId((prev) => {
-      if (prev === id) {
-        detailRequestRef.current += 1;
-        setDetailError(null);
-        setDetailLoading(false);
-        setGlobalSessionId(null);
-        return null;
-      }
-      setGlobalSessionId(id);
-      return id;
-    });
+    if (selectedSessionId === id) {
+      detailRequestRef.current += 1;
+      setDetailError(null);
+      setDetailLoading(false);
+      setSelectedSessionId(null);
+      return;
+    }
+
+    setSelectedSessionId(id);
   };
 
   const handleDeleteConfirm = async (id: string) => {
@@ -208,7 +249,6 @@ export function HermesChatsPanel() {
       setSelectedSession(null);
       setDetailError(null);
       setDetailLoading(false);
-      setGlobalSessionId(null);
     }
   };
 
@@ -217,16 +257,33 @@ export function HermesChatsPanel() {
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2">
         <span className="text-[12px] font-semibold text-muted-foreground uppercase tracking-wide">Sessions</span>
-        <button
-          onClick={() => { void fetchSessions(); }}
-          className="text-[10px] text-muted-foreground/50 hover:text-muted-foreground transition-colors"
-        >
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              void (async () => {
+                await fetchSessions();
+                if (viewMode === 'all-active') {
+                  await loadActiveSessionDetails();
+                } else if (selectedSessionId) {
+                  await loadSessionDetail(selectedSessionId);
+                }
+              })();
+            }}
+            className="text-[10px] text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+          >
+            Refresh
+          </button>
+          <button
+            onClick={() => setViewMode(viewMode === 'all-active' ? 'focused' : 'all-active')}
+            className="text-[10px] text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+          >
+            {viewMode === 'all-active' ? 'Focused' : 'All Active'}
+          </button>
+        </div>
       </div>
 
       {/* Selected session info */}
-      {selectedSessionId && (
+      {viewMode === 'focused' && selectedSessionId && (
         <div className="mx-3 mb-2 p-2 rounded-lg bg-[hsl(var(--sidebar-active))] border border-border/30">
           <div className="flex items-center justify-between gap-2">
             <p className="text-[11px] text-muted-foreground truncate">
@@ -252,14 +309,37 @@ export function HermesChatsPanel() {
             <p className="text-[10px] text-red-400/90 mt-1 truncate">{selectedSession.error}</p>
           )}
 
+          <div className="mt-2 flex items-center gap-2 border-b border-border/30 pb-2">
+            <button
+              onClick={() => setDetailTab('chat')}
+              className={cn(
+                'text-[10px] transition-colors',
+                detailTab === 'chat' ? 'text-foreground' : 'text-muted-foreground/50 hover:text-muted-foreground',
+              )}
+            >
+              Chat
+            </button>
+            <button
+              onClick={() => setDetailTab('tasks')}
+              className={cn(
+                'text-[10px] transition-colors',
+                detailTab === 'tasks' ? 'text-foreground' : 'text-muted-foreground/50 hover:text-muted-foreground',
+              )}
+            >
+              Tasks
+            </button>
+          </div>
+
           <div className="mt-2 max-h-[260px] overflow-y-auto pr-1 space-y-1.5">
             {detailLoading ? (
               <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground/60">
                 <Loader2 className="h-3 w-3 animate-spin" />
-                Loading chat...
+                Loading {detailTab}...
               </div>
             ) : detailError ? (
               <p className="text-[11px] text-red-400/90">{detailError}</p>
+            ) : detailTab === 'tasks' ? (
+              <TaskList tasks={selectedSession ? deriveTasks(selectedSession) : []} />
             ) : sessionChat.length === 0 ? (
               <p className="text-[11px] text-muted-foreground/60">No chat transcript recorded for this session yet.</p>
             ) : (
@@ -278,6 +358,47 @@ export function HermesChatsPanel() {
                     </p>
                   </div>
                 ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {viewMode === 'all-active' && (
+        <div className="mx-3 mb-2 p-2 rounded-lg bg-[hsl(var(--sidebar-active))] border border-border/30">
+          <div className="max-h-[320px] overflow-y-auto pr-1 space-y-2">
+            {activeDetailsLoading ? (
+              <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground/60">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Loading active tasks...
+              </div>
+            ) : activeDetailsError ? (
+              <p className="text-[11px] text-red-400/90">{activeDetailsError}</p>
+            ) : activeSessions.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-6 px-4">
+                <Zap className="h-8 w-8 text-muted-foreground/30 mb-2" />
+                <p className="text-[12px] text-muted-foreground/50 text-center">No active sessions</p>
+                <p className="text-[11px] text-muted-foreground/40 text-center mt-1">
+                  Sessions appear when hermes processes requests
+                </p>
+              </div>
+            ) : (
+              activeSessions.map((session) => {
+                const detail = activeDetails[session.id];
+                return (
+                  <div key={session.id} className="rounded-md border border-border/30 bg-background/40 px-2 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-[11px] font-medium text-foreground truncate">{sessionTitle(session)}</p>
+                      <div className={cn('h-2 w-2 rounded-full flex-shrink-0', statusColor(session), session.status === 'active' && 'animate-pulse')} />
+                    </div>
+                    <p className="mt-0.5 text-[10px] text-muted-foreground/50 truncate">
+                      Session {session.id.slice(0, 8)}
+                    </p>
+                    <div className="mt-2">
+                      <TaskList tasks={detail ? deriveTasks(detail) : []} />
+                    </div>
+                  </div>
+                );
+              })
             )}
           </div>
         </div>

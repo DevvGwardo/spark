@@ -7,8 +7,10 @@ import { registerValidateRoute } from './routes/validate';
 import { registerProxyRoute } from './routes/proxy';
 import { registerTranslateRoute } from './routes/translate';
 import { registerHermesAdminRoute } from './routes/hermes-admin';
+import { registerHermesRuntimesRoute } from './routes/hermes-runtimes';
 import { registerHermesUpdateRoute } from './routes/hermes-update';
 import { registerProfilesRoutes } from './routes/profiles';
+import { registerTranscribeRoute } from './routes/transcribe';
 import { sendJson } from './lib/helpers';
 import { MAX_BODY_SIZE } from './config';
 import { workspaceIndex } from './workspace-indexer';
@@ -38,6 +40,7 @@ export const HEALTH_ROUTES = [
   '/api/hermes/update/status',
   '/api/hermes/update',
   '/api/hermes/profiles',
+  '/functions/v1/transcribe',
 ] as const;
 
 export function createApp() {
@@ -52,8 +55,10 @@ export function createApp() {
   registerProxyRoute(app);
   registerTranslateRoute(app);
   registerHermesAdminRoute(app);
+  registerHermesRuntimesRoute(app);
   registerHermesUpdateRoute(app);
   registerProfilesRoutes(app);
+  registerTranscribeRoute(app);
 
   // ─── Workspace search ───────────────────────────────────────────────────────
   app.get('/functions/v1/workspace/search', async (req, res) => {

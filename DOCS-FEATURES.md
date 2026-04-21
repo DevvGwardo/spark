@@ -391,6 +391,15 @@ BlueBubbles (iMessage via BlueBubbles Server), Open WebUI, Webhooks.
 - Multi-user with profiles: `hermes profile create <name>`
 - Docker-based deployment; `host.docker.internal` for Linux
 
+### Hermes Runtime Model
+CloudChat's Hermes integration is intentionally split across two runtimes:
+- **Host install** (`~/.hermes/hermes-agent`) — imported in-process by the FastAPI bridge. Fast agent execution; Python-native tool registry fusion for custom GitHub repo tools.
+- **Docker container** (`hermes-docker`) — HTTP server on :8643, used by external consumers like Open WebUI.
+
+Each has its own state dir and credential store (host: `~/.hermes/auth.json`, container: `~/.hermes-docker/data/.env`). Set `CLOUDCHAT_SHARE_HERMES_DATA=1` before `start-all.sh` only if you explicitly want both to share the container's data dir — this creates schema-drift risk and is off by default.
+
+See `GET /api/hermes/runtimes` for both versions at a glance.
+
 ---
 
 ## Environment Variables Quick Reference

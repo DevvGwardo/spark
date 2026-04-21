@@ -81,9 +81,9 @@ const defaultToolsets: HermesToolsets = {
   web: true,
   browser: true,
   vision: true,
-  terminal: false,
-  files: false,
-  code_execution: false,
+  terminal: true,
+  files: true,
+  code_execution: true,
 };
 
 const defaultSwarm: SwarmState = {

@@ -6,7 +6,7 @@ describe('panel state isolation', () => {
   beforeEach(() => {
     window.localStorage.removeItem('cloud-chat-panels');
     usePanelStore.setState({
-      panels: [{ id: 'default', conversationId: null }],
+      panels: [{ id: 'default', conversationId: null, profile: 'default' }],
       focusedPanelId: 'default',
     });
     usePreviewStore.setState({ panelPreviews: {} });
@@ -77,8 +77,8 @@ describe('panel state isolation', () => {
   it('moves a conversation to the selected panel instead of duplicating it', () => {
     usePanelStore.setState({
       panels: [
-        { id: 'default', conversationId: 'conv-1' },
-        { id: 'panel-2', conversationId: null },
+        { id: 'default', conversationId: 'conv-1', profile: 'default' },
+        { id: 'panel-2', conversationId: null, profile: 'default' },
       ],
       focusedPanelId: 'default',
     });
@@ -86,8 +86,8 @@ describe('panel state isolation', () => {
     usePanelStore.getState().setConversationForPanel('panel-2', 'conv-1');
 
     expect(usePanelStore.getState().panels).toEqual([
-      { id: 'default', conversationId: null },
-      { id: 'panel-2', conversationId: 'conv-1' },
+      { id: 'default', conversationId: null, profile: 'default' },
+      { id: 'panel-2', conversationId: 'conv-1', profile: 'default' },
     ]);
     expect(usePanelStore.getState().focusedPanelId).toBe('panel-2');
   });
@@ -95,8 +95,8 @@ describe('panel state isolation', () => {
   it('focuses the existing panel when opening a conversation already on screen', () => {
     usePanelStore.setState({
       panels: [
-        { id: 'default', conversationId: 'conv-1' },
-        { id: 'panel-2', conversationId: null },
+        { id: 'default', conversationId: 'conv-1', profile: 'default' },
+        { id: 'panel-2', conversationId: null, profile: 'default' },
       ],
       focusedPanelId: 'panel-2',
     });
