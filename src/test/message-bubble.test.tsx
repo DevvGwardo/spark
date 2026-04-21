@@ -581,7 +581,7 @@ describe('MessageBubble', () => {
       </PanelProvider>,
     );
 
-    expect(container.querySelector('.chat-tool-glimmer')).not.toBeNull();
+    expect(container.querySelector('.chat-tool-glimmer__track')).not.toBeNull();
     expect(screen.getByText('Editing file')).toBeInTheDocument();
     expect(screen.getByText('client/src/components/KanbanBoard.tsx')).toBeInTheDocument();
     expect(screen.getByText('+1 more queued')).toBeInTheDocument();
@@ -689,7 +689,7 @@ describe('MessageBubble', () => {
       </PanelProvider>,
     );
 
-    expect(container.querySelector('.chat-tool-glimmer')).not.toBeNull();
+    expect(container.querySelector('.chat-tool-glimmer__track')).not.toBeNull();
     expect(screen.getByText('Reading...')).toBeInTheDocument();
   });
 

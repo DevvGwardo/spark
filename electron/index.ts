@@ -1,6 +1,8 @@
-import { app, BrowserView, BrowserWindow, globalShortcut, ipcMain, Menu, Notification, Tray, nativeImage, shell } from 'electron'
-import { existsSync } from 'fs'
+import { app, BrowserView, BrowserWindow, globalShortcut, ipcMain, Menu, Notification, Tray, nativeImage, net, protocol, shell } from 'electron'
+import { existsSync, statSync } from 'fs'
+import { homedir } from 'os'
 import { join } from 'path'
+import { pathToFileURL } from 'url'
 import { is } from '@electron-toolkit/utils'
 import { startEmbeddedServer } from './server'
 import {
@@ -18,6 +20,24 @@ let apiPort: number = 3001
 let dockBounceId: number | null = null
 let miniBrowserView: BrowserView | null = null
 const dockIconPath = join(__dirname, '../../build/icon.png')
+const CLOUDCHAT_ASSET_PROTOCOL = 'cloudchat-asset'
+const CLOUDCHAT_ASSET_ROOTS = {
+  hermes: join(homedir(), '.hermes/images'),
+  tmp: '/tmp',
+} as const
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: CLOUDCHAT_ASSET_PROTOCOL,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      bypassCSP: false,
+    },
+  },
+])
 
 interface AttentionRequestPayload {
   title?: string
@@ -48,6 +68,68 @@ async function resolvePreloadPath() {
     preloadPathCandidates
   )
   return preloadPathCandidates[0]
+}
+
+function assetTextResponse(status: number, body: string) {
+  return new Response(body, {
+    status,
+    headers: {
+      'content-type': 'text/plain; charset=utf-8',
+    },
+  })
+}
+
+function getAssetRoot(host: string) {
+  if (host === 'hermes') return CLOUDCHAT_ASSET_ROOTS.hermes
+  if (host === 'tmp') return CLOUDCHAT_ASSET_ROOTS.tmp
+  return null
+}
+
+function getAssetBasename(pathname: string) {
+  const rawBasename = pathname.startsWith('/') ? pathname.slice(1) : pathname
+  if (!rawBasename) return null
+
+  let basename: string
+  try {
+    basename = decodeURIComponent(rawBasename)
+  } catch {
+    return null
+  }
+
+  if (!basename || basename.includes('..') || basename.includes('/') || basename.includes('\\')) {
+    return null
+  }
+
+  return basename
+}
+
+function registerLocalAssetProtocol() {
+  protocol.handle(CLOUDCHAT_ASSET_PROTOCOL, async (request) => {
+    let url: URL
+    try {
+      url = new URL(request.url)
+    } catch {
+      return assetTextResponse(400, 'Bad Request')
+    }
+
+    const root = getAssetRoot(url.hostname)
+    const basename = getAssetBasename(url.pathname)
+    if (!root || !basename) {
+      return assetTextResponse(400, 'Bad Request')
+    }
+
+    const resolvedPath = join(root, basename)
+
+    try {
+      if (!statSync(resolvedPath).isFile()) {
+        return assetTextResponse(404, 'Not Found')
+      }
+    } catch {
+      return assetTextResponse(404, 'Not Found')
+    }
+
+    return net.fetch(pathToFileURL(resolvedPath).toString())
+  })
 }
 
 async function createWindow() {
@@ -99,7 +181,7 @@ async function createWindow() {
           " script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net;" +
           " style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net;" +
           " font-src 'self' https://fonts.gstatic.com data:;" +
-          " img-src 'self' data: https: http:;" +
+          " img-src 'self' data: https: http: file: cloudchat-asset:;" +
           " connect-src 'self' data: http://localhost:* https://* https://cdn.jsdelivr.net;" +
           " worker-src 'self' blob:;"
         ]
@@ -118,7 +200,7 @@ async function createWindow() {
 
   // Catch <a target="_blank"> and any navigation away from the app
   mainWindow.webContents.on('will-navigate', (event, url) => {
-    const appOrigins = ['http://localhost', 'file://']
+    const appOrigins = ['http://localhost', 'file://', `${CLOUDCHAT_ASSET_PROTOCOL}://`]
     if (!appOrigins.some((origin) => url.startsWith(origin))) {
       event.preventDefault()
       shell.openExternal(url)
@@ -511,6 +593,7 @@ app.setAboutPanelOptions({
 })
 
 app.whenReady().then(async () => {
+  registerLocalAssetProtocol()
   applyAppIcon()
   await createWindow()
   createTray()

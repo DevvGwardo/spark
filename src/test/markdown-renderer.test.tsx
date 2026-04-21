@@ -4,9 +4,18 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MarkdownRenderer } from '@/components/chat/MarkdownRenderer';
 
+function assetUrl(path: string): string {
+  const basename = path.slice(path.lastIndexOf('/') + 1);
+  if (path.startsWith('/tmp/')) {
+    return `cloudchat-asset://tmp/${encodeURIComponent(basename)}`;
+  }
+  return `cloudchat-asset://hermes/${encodeURIComponent(basename)}`;
+}
+
 describe('MarkdownRenderer', () => {
   beforeEach(() => {
     window.history.replaceState({}, '', '/');
+    window.electronAPI = undefined;
     vi.stubGlobal('navigator', {
       clipboard: {
         writeText: vi.fn().mockResolvedValue(undefined),
@@ -78,14 +87,14 @@ ${lines}
     render(<MarkdownRenderer content={'MEDIA:/tmp/foo.png'} />);
 
     const image = screen.getByRole('img', { name: '/tmp/foo.png' });
-    expect(image).toHaveAttribute('src', 'file:///tmp/foo.png');
+    expect(image).toHaveAttribute('src', assetUrl('/tmp/foo.png'));
   });
 
   it('renders bare local image paths as images', () => {
     render(<MarkdownRenderer content={'/tmp/foo.png'} />);
 
     const image = screen.getByRole('img', { name: '/tmp/foo.png' });
-    expect(image).toHaveAttribute('src', 'file:///tmp/foo.png');
+    expect(image).toHaveAttribute('src', assetUrl('/tmp/foo.png'));
   });
 
   it('renders bare Hermes image path lines as images', () => {
@@ -99,20 +108,47 @@ ${lines}
     );
 
     expect(screen.getByRole('img', { name: '/Users/devgwardo/.hermes/images/bar-agents.png' }))
-      .toHaveAttribute('src', 'file:///Users/devgwardo/.hermes/images/bar-agents.png');
+      .toHaveAttribute('src', assetUrl('/Users/devgwardo/.hermes/images/bar-agents.png'));
     expect(screen.getByRole('img', { name: '/Users/devgwardo/.hermes/images/foo-agents.png' }))
-      .toHaveAttribute('src', 'file:///Users/devgwardo/.hermes/images/foo-agents.png');
+      .toHaveAttribute('src', assetUrl('/Users/devgwardo/.hermes/images/foo-agents.png'));
   });
 
   it('falls back from /tmp image path to ~/.hermes/images on load error', () => {
-    window.electronAPI = { homeDir: '/MOCKED_HOME' } as Window['electronAPI'];
+    const fallbackHomeDir = '/Users/mockuser';
+    const openExternal = vi.fn().mockResolvedValue(true);
+    window.electronAPI = {
+      apiPort: 3001,
+      homeDir: fallbackHomeDir,
+      platform: 'darwin',
+      versions: { electron: '1', node: '1', chrome: '1' },
+      openExternal,
+    };
 
     render(<MarkdownRenderer content={'/tmp/foo.png'} />);
 
     const image = screen.getByRole('img', { name: '/tmp/foo.png' });
     fireEvent.error(image);
+    fireEvent.click(image);
 
-    expect(image).toHaveAttribute('src', 'file:///MOCKED_HOME/.hermes/images/foo.png');
+    expect(image).toHaveAttribute('src', assetUrl('/Users/mockuser/.hermes/images/foo.png'));
+    expect(openExternal).toHaveBeenCalledWith('file:///Users/mockuser/.hermes/images/foo.png');
+  });
+
+  it('opens local images via file URLs when clicked', () => {
+    const openExternal = vi.fn().mockResolvedValue(true);
+    window.electronAPI = {
+      apiPort: 3001,
+      homeDir: '/MOCKED_HOME',
+      platform: 'darwin',
+      versions: { electron: '1', node: '1', chrome: '1' },
+      openExternal,
+    };
+
+    render(<MarkdownRenderer content={'/tmp/foo.png'} />);
+
+    fireEvent.click(screen.getByRole('img', { name: '/tmp/foo.png' }));
+
+    expect(openExternal).toHaveBeenCalledWith('file:///tmp/foo.png');
   });
 
   it('expands ~/ image paths using the active home directory', () => {
@@ -128,7 +164,7 @@ ${lines}
   it('keeps trailing punctuation outside local image paths', () => {
     render(<MarkdownRenderer content={'see /tmp/foo.png.\n(check /tmp/bar.png)'} />);
 
-    expect(screen.getByRole('img', { name: '/tmp/foo.png' })).toHaveAttribute('src', 'file:///tmp/foo.png');
-    expect(screen.getByRole('img', { name: '/tmp/bar.png' })).toHaveAttribute('src', 'file:///tmp/bar.png');
+    expect(screen.getByRole('img', { name: '/tmp/foo.png' })).toHaveAttribute('src', assetUrl('/tmp/foo.png'));
+    expect(screen.getByRole('img', { name: '/tmp/bar.png' })).toHaveAttribute('src', assetUrl('/tmp/bar.png'));
   });
 });

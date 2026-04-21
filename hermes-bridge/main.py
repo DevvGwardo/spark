@@ -97,20 +97,39 @@ def _normalize_message_role(message) -> str:
     return "assistant"
 
 
-def _normalize_message_content(message) -> str:
+def _normalize_message_content(message, strip_images: bool = False) -> str:
     content = _message_field(message, "content")
     if content is None:
         return ""
+    if isinstance(content, list):
+        text_parts = []
+        for part in content:
+            if isinstance(part, dict):
+                part_type = part.get("type", "")
+                if part_type == "text":
+                    text_parts.append(str(part.get("text", "")))
+                elif strip_images and part_type in ("image", "image_url"):
+                    pass
+        return " ".join(text_parts)
+    if strip_images and isinstance(content, str):
+        import re
+
+        content = re.sub(r"!\[.*?\]\(.*?\)", "", content)
+        content = re.sub(r"data:image/[^;]+;base64,", "[image]", content)
     return str(content)
 
 
-def _normalize_chat_messages(messages) -> list[dict]:
+def _normalize_chat_messages(messages, model: str = None, strip_images: bool = False) -> list[dict]:
+    if strip_images and model and not _model_supports_vision(model):
+        strip_images = True
+    else:
+        strip_images = False
     normalized: list[dict] = []
     for message in messages or []:
         normalized.append(
             {
                 "role": _normalize_message_role(message),
-                "content": _normalize_message_content(message),
+                "content": _normalize_message_content(message, strip_images=strip_images),
             }
         )
     return normalized
@@ -1692,7 +1711,7 @@ OPENROUTER_KEY = os.environ.get("HERMES_OPENROUTER_KEY", "")
 MINIMAX_KEY = os.environ.get("HERMES_MINIMAX_KEY", "")
 HERMES_BRIDGE_TOKEN = os.environ.get("HERMES_BRIDGE_TOKEN", "")
 HERMES_BRIDGE_VERSION = os.environ.get("HERMES_BRIDGE_VERSION", "dev")
-DEFAULT_TOOLSETS = os.environ.get("HERMES_TOOLSETS", "web,browser")
+DEFAULT_TOOLSETS = os.environ.get("HERMES_TOOLSETS", "web,browser,terminal")
 
 def _load_cli_model_config() -> dict:
     """Read the `model:` block from ~/.hermes/config.yaml (Hermes CLI config).
@@ -1796,6 +1815,50 @@ import os
 MINIMAX_BASE_URL = os.environ.get("MINIMAX_BASE_URL", "https://api.minimax.io/anthropic")
 NOUS_MODEL_PREFIX = "nousresearch/"
 NOUS_BASE_URL = "https://inference-api.nousresearch.com/v1"
+
+# Vision-capable models — these support image input (base64, URLs, or multimodal content)
+# Models NOT in this list will have image content stripped before being sent upstream
+_VISION_CAPABLE_MODELS: set[str] = {
+    # MiniMax models with vision support
+    "MiniMax-M2.7",
+    "MiniMax-M2.7-highspeed",
+    # Claude Opus 4 and Sonnet 4 support vision
+    "anthropic/claude-opus-4-5",
+    "anthropic/claude-sonnet-4-5",
+    "claude-opus-4-5",
+    "claude-sonnet-4-5",
+    # Gemini 2.x flash variants support vision
+    "google/gemini-2.0-flash-exp",
+    "google/gemini-3.1-flash-preview",
+    "gemini-2.0-flash-exp",
+    "gemini-3.1-flash-preview",
+    # GPT-4o and vision models
+    "openai/gpt-4o",
+    "openai/gpt-4o-mini",
+    "gpt-4o",
+    "gpt-4o-mini",
+    # Nous Hermès variants with multimodal
+    "nousresearch/hermes-3-llama-3.3-70b",
+}
+
+
+def _model_supports_vision(model: str) -> bool:
+    """Check if a model supports image/vision input."""
+    if model in _VISION_CAPABLE_MODELS:
+        return True
+    model_lower = model.lower()
+    for capable in _VISION_CAPABLE_MODELS:
+        if capable.lower() in model_lower or model_lower in capable.lower():
+            return True
+    if model_lower.startswith("claude") and "sonnet" in model_lower:
+        return True
+    if model_lower.startswith("gpt-4o"):
+        return True
+    if "gemini-2" in model_lower or "gemini-3" in model_lower:
+        return True
+    if "minimax-m2" in model_lower:
+        return True
+    return False
 
 # ------------------------------------------------------------------
 # Retry helper for brain gateway calls
@@ -2553,7 +2616,7 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
     repo_name = request.headers.get("x-hermes-repo-name", "")
     github_pat = request.headers.get("x-hermes-github-pat", "")
     repo_edit_intent = request.headers.get("x-hermes-repo-edit-intent", "") == "1"
-    request_messages = _normalize_chat_messages(body.messages)
+    request_messages = _normalize_chat_messages(body.messages, model=body.model, strip_images=True)
 
     # Resolve workspace_id from conversation_id (header or body) for per-conversation isolation
     workspace_id = _resolve_workspace_id(request, body)
@@ -3175,7 +3238,7 @@ async def swarm_endpoint(request: Request, body: SwarmRequest):
     repo_mode = bool(repo_owner and repo_name)
 
     # Extract last user message
-    conversation_history = _normalize_chat_messages(body.messages)
+    conversation_history = _normalize_chat_messages(body.messages, model=body.model, strip_images=True)
     last_user_idx = None
     for i in range(len(conversation_history) - 1, -1, -1):
         if conversation_history[i]["role"] == "user":
@@ -3539,7 +3602,7 @@ def _run_cron_agent(job: dict, run_record: dict):
             api_key=os.environ.get("HERMES_OPENROUTER_KEY", ""),
             model=job.get("model") or os.environ.get("HERMES_DEFAULT_MODEL", "meta-llama/llama-4-maverick"),
             max_iterations=int(os.environ.get("HERMES_MAX_ITERATIONS", "30")),
-            enabled_toolsets=job.get("toolsets") or os.environ.get("HERMES_TOOLSETS", "web,browser"),
+            enabled_toolsets=job.get("toolsets") or os.environ.get("HERMES_TOOLSETS", "web,browser,terminal"),
             on_tool_start=on_tool_start,
             on_tool_end=on_tool_end,
             on_text=on_text,

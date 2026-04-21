@@ -5,6 +5,15 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { Check, ChevronDown, Copy, ExternalLink, Terminal } from 'lucide-react';
 import { codeToHtml } from 'shiki';
+import {
+  applyTmpImageFallback,
+  defaultSafeUrlTransform,
+  getImageUrl,
+  getLocalImageTarget,
+  getOpenableUrl,
+  isImageSrcUrl,
+  rewriteLocalImageTokens,
+} from '@/lib/local-images';
 
 const LANG_LABELS: Record<string, string> = {
   js: 'javascript',
@@ -74,73 +83,6 @@ const SHIKI_LANG_MAP: Record<string, string> = {
   plaintext: 'text',
   text: 'text',
 };
-
-/** If inline-code text looks like an openable local path or file:// URL, return the URL to open. */
-const LOCAL_PATH_RE = /^\/(?:Users|home|tmp|var|opt|etc|private)\/\S+$/;
-function getExpandedPath(path: string): string | null {
-  if (!path.startsWith('~/')) return path;
-
-  const locationPath = window.location?.pathname ?? '';
-  const match = locationPath.match(/^\/(?:Users|home)\/[^/]+/);
-  if (!match) return null;
-
-  return `${match[0]}/${path.slice(2)}`;
-}
-
-function getOpenableUrl(text: string): string | null {
-  const trimmed = text.trim().replace(/^(?:MEDIA:|:)/i, '');
-  if (/^file:\/\/\/\S+$/i.test(trimmed)) return trimmed;
-
-  const expandedPath = getExpandedPath(trimmed);
-  if (!expandedPath) return null;
-  if (LOCAL_PATH_RE.test(expandedPath)) return `file://${expandedPath}`;
-
-  return null;
-}
-
-/** If a URL (file:// or absolute local path) points at an image file, return it. */
-const IMAGE_EXT_RE = /\.(?:png|jpe?g|gif|webp|svg|avif|bmp)(?:\?\S*)?$/i;
-const TMP_IMAGE_URL_RE = /^file:\/\/\/tmp\/([^/]+\.(?:png|jpe?g|gif|webp|svg|avif|bmp))$/i;
-function getImageUrl(text: string): string | null {
-  const url = getOpenableUrl(text);
-  if (!url) return null;
-  return IMAGE_EXT_RE.test(url) ? url : null;
-}
-
-const LOCAL_IMAGE_TOKEN_RE = /(^|\s)(?:MEDIA:|:)?((?:~\/\S+?|\/(?:Users|home|tmp|var|opt|etc|private)\/\S+?)\.(?:png|jpe?g|gif|webp|svg|avif|bmp))([.,\)\];:]+)?(?=\s|$)/gi;
-
-function defaultSafeUrlTransform(url: string): string {
-  const trimmed = url.trim();
-  const colonIndex = trimmed.indexOf(':');
-  if (colonIndex < 0) return trimmed;
-
-  const slashIndex = trimmed.indexOf('/');
-  const questionIndex = trimmed.indexOf('?');
-  const hashIndex = trimmed.indexOf('#');
-  const firstTailIndex = [slashIndex, questionIndex, hashIndex]
-    .filter((index) => index >= 0)
-    .reduce((min, index) => Math.min(min, index), Number.POSITIVE_INFINITY);
-
-  if (firstTailIndex !== Number.POSITIVE_INFINITY && colonIndex > firstTailIndex) {
-    return trimmed;
-  }
-
-  const protocol = trimmed.slice(0, colonIndex);
-  return /^(https?|ircs?|mailto|xmpp)$/i.test(protocol) ? trimmed : '';
-}
-
-function isImageSrcUrl(key: string, node: unknown): boolean {
-  if (key !== 'src' || !node || typeof node !== 'object') return false;
-  return 'tagName' in node && node.tagName === 'img';
-}
-
-function rewriteLocalImageTokens(markdown: string): string {
-  return markdown.replace(LOCAL_IMAGE_TOKEN_RE, (match: string, leading: string, path: string, trailing = '') => {
-    const imageUrl = getImageUrl(path);
-    if (!imageUrl) return match;
-    return `${leading}![${path}](${imageUrl})${trailing}`;
-  });
-}
 
 function openExternalUrl(url: string) {
   if (window.electronAPI?.openExternal) {
@@ -359,17 +301,19 @@ const MarkdownRendererInner = React.forwardRef<HTMLDivElement, MarkdownRendererP
               if (isBlock) {
                 return <CodeBlock className={className} {...props}>{children}</CodeBlock>;
               }
-              const imageUrl = getImageUrl(text);
-              if (imageUrl) {
+              const imageTarget = getLocalImageTarget(text);
+              if (imageTarget) {
                 return (
                   <span className="my-2 block">
                     <img
-                      src={imageUrl}
+                      src={imageTarget.srcUrl}
                       alt={text.trim()}
-                      className="max-h-[480px] max-w-full cursor-pointer rounded-lg border border-border/40 object-contain"
-                      loading="lazy"
-                      onClick={() => openExternalUrl(imageUrl)}
-                    />
+                    data-open-url={imageTarget.openUrl}
+                    className="max-h-[480px] max-w-full cursor-pointer rounded-lg border border-border/40 object-contain"
+                    loading="lazy"
+                    onClick={(event) => openExternalUrl(event.currentTarget.dataset.openUrl || imageTarget.openUrl)}
+                    onError={(event) => applyTmpImageFallback(event.currentTarget, imageTarget.path)}
+                  />
                     <span className="mt-1 block text-[11px] text-muted-foreground/60 font-mono truncate">
                       {text.trim()}
                     </span>
@@ -422,8 +366,8 @@ const MarkdownRendererInner = React.forwardRef<HTMLDivElement, MarkdownRendererP
             },
             img({ src, alt, ...props }) {
               const rawSrc = typeof src === 'string' ? src : '';
-              const imageUrl = getImageUrl(rawSrc);
-              if (!imageUrl) {
+              const imageTarget = getLocalImageTarget(rawSrc) || (typeof alt === 'string' ? getLocalImageTarget(alt) : null);
+              if (!imageTarget) {
                 return <img src={src} alt={alt ?? ''} {...props} />;
               }
 
@@ -431,21 +375,13 @@ const MarkdownRendererInner = React.forwardRef<HTMLDivElement, MarkdownRendererP
               return (
                 <span className="my-2 block">
                   <img
-                    src={imageUrl}
+                    src={imageTarget.srcUrl}
                     alt={label}
+                    data-open-url={imageTarget.openUrl}
                     className="max-h-[480px] max-w-full cursor-pointer rounded-lg border border-border/40 object-contain"
                     loading="lazy"
-                    onClick={() => openExternalUrl(imageUrl)}
-                    onError={(event) => {
-                      if (event.currentTarget.dataset.fallbackTried) return;
-                      event.currentTarget.dataset.fallbackTried = '1';
-                      const match = event.currentTarget.src.match(TMP_IMAGE_URL_RE);
-                      if (!match) return;
-                      const homeDir = window.electronAPI?.homeDir;
-                      if (!homeDir) return;
-                      const basename = match[1];
-                      event.currentTarget.src = `file://${homeDir}/.hermes/images/${basename}`;
-                    }}
+                    onClick={(event) => openExternalUrl(event.currentTarget.dataset.openUrl || imageTarget.openUrl)}
+                    onError={(event) => applyTmpImageFallback(event.currentTarget, imageTarget.path)}
                     {...props}
                   />
                   <span className="mt-1 block text-[11px] text-muted-foreground/60 font-mono truncate">

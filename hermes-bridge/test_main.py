@@ -396,6 +396,55 @@ class BrainMCPIntegrationTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Vision Capability Tests
+# ---------------------------------------------------------------------------
+
+class VisionCapabilityTests(unittest.TestCase):
+    """Tests for model vision capability detection and image stripping."""
+
+    def test_minimax_m27_supports_vision(self):
+        """MiniMax-M2.7 should support vision."""
+        self.assertTrue(main._model_supports_vision("MiniMax-M2.7"))
+        self.assertTrue(main._model_supports_vision("MiniMax-M2.7-highspeed"))
+
+    def test_claude_sonnet_supports_vision(self):
+        """Claude Sonnet 4 should support vision."""
+        self.assertTrue(main._model_supports_vision("anthropic/claude-sonnet-4-5"))
+        self.assertTrue(main._model_supports_vision("claude-sonnet-4-5"))
+
+    def test_gpt4o_supports_vision(self):
+        """GPT-4o should support vision."""
+        self.assertTrue(main._model_supports_vision("openai/gpt-4o"))
+        self.assertTrue(main._model_supports_vision("gpt-4o"))
+
+    def test_gemini_flash_supports_vision(self):
+        """Gemini Flash should support vision."""
+        self.assertTrue(main._model_supports_vision("google/gemini-3.1-flash-preview"))
+
+    def test_claude_haiku_does_not_support_vision(self):
+        """Claude Haiku should not support vision."""
+        self.assertFalse(main._model_supports_vision("claude-3-haiku-20240307"))
+        self.assertFalse(main._model_supports_vision("anthropic/claude-3-haiku"))
+
+    def test_strips_images_for_non_vision_model(self):
+        """Image content should be stripped for non-vision models."""
+        messages = [
+            {"role": "user", "content": [{"type": "text", "text": "Describe this picture"}, {"type": "image_url", "image_url": {"url": "https://example.com/image.png"}}]}
+        ]
+        result = main._normalize_chat_messages(messages, model="claude-3-haiku-20240307", strip_images=True)
+        self.assertEqual(result[0]["content"], "Describe this picture")
+        self.assertNotIn("https://example.com/image.png", result[0]["content"])
+
+    def test_keeps_images_for_vision_model(self):
+        """Image content should be kept for vision models."""
+        messages = [
+            {"role": "user", "content": [{"type": "text", "text": "What is in this image?"}, {"type": "image_url", "image_url": {"url": "https://example.com/image.png"}}]}
+        ]
+        result = main._normalize_chat_messages(messages, model="claude-sonnet-4-5", strip_images=True)
+        self.assertIn("What is in this image?", result[0]["content"])
+
+
+# ---------------------------------------------------------------------------
 # Edge Case Tests
 # ---------------------------------------------------------------------------
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork, Search, ChevronRight, Zap, Clock, House, BookOpen, Sparkles, BarChart3, User, Network } from 'lucide-react';
+import { Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork, Search, ChevronRight, Zap, Clock, House, BookOpen, Sparkles, BarChart3, User, Network, Image } from 'lucide-react';
 import { Github } from 'lucide-react';
 import { GhostIcon } from '@/components/chat/GhostIcon';
 import { useChatStore } from '@/stores/chat-store';
@@ -19,6 +19,7 @@ import { HermesMemoriesPanel } from '@/components/sidebar/HermesMemoriesPanel';
 import { ProfilesPanel } from '@/components/sidebar/ProfilesPanel';
 import { HermesSkillsPanel } from '@/components/sidebar/HermesSkillsPanel';
 import { HermesUsagePanel } from '@/components/sidebar/HermesUsagePanel';
+import { ImagesPanel } from '@/components/sidebar/ImagesPanel';
 import { ConversationTreeOverlay } from '@/components/workflow/ConversationTreeOverlay';
 import type { Conversation } from '@/lib/db';
 
@@ -77,6 +78,7 @@ const HERMES_SUB_TABS: Array<{ key: SubTab; label: string; icon: React.Component
   { key: 'memories', label: 'Memories', icon: BookOpen },
   { key: 'skills', label: 'Skills', icon: Sparkles },
   { key: 'usage', label: 'Usage', icon: BarChart3 },
+  { key: 'images', label: 'Images', icon: Image },
 ];
 
 export const ChatSidebar: React.FC = () => {
@@ -575,6 +577,8 @@ export const ChatSidebar: React.FC = () => {
         <HermesSkillsPanel />
       ) : activeSubTab === 'usage' ? (
         <HermesUsagePanel />
+      ) : activeSubTab === 'images' ? (
+        <ImagesPanel />
       ) : (
         <CronJobsPanel
           conversationId={focusedConversation?.id ?? null}

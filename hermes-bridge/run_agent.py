@@ -1055,7 +1055,7 @@ class AIAgent:
         self.api_key = api_key
         self.model = model
         self.max_iterations = max_iterations
-        requested_toolsets = enabled_toolsets or ["web", "browser", "vision"]
+        requested_toolsets = enabled_toolsets or ["web", "browser", "terminal", "vision"]
         if repo_mode:
             requested_toolsets = [
                 toolset for toolset in requested_toolsets

@@ -736,7 +736,7 @@ class HermesAgentAdapter:
 
         # Map CloudChat toolset names to real agent toolset names
         real_toolsets = []
-        for ts in (enabled_toolsets or ["web", "browser"]):
+        for ts in (enabled_toolsets or ["web", "browser", "terminal"]):
             mapped = _TOOLSET_MAP.get(ts, ts)
             if mapped not in real_toolsets:
                 real_toolsets.append(mapped)
