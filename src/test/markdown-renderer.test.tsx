@@ -1,10 +1,12 @@
 import React from 'react';
+import os from 'node:os';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MarkdownRenderer } from '@/components/chat/MarkdownRenderer';
 
 describe('MarkdownRenderer', () => {
   beforeEach(() => {
+    window.history.replaceState({}, '', '/');
     vi.stubGlobal('navigator', {
       clipboard: {
         writeText: vi.fn().mockResolvedValue(undefined),
@@ -77,5 +79,29 @@ ${lines}
 
     const image = screen.getByRole('img', { name: '/tmp/foo.png' });
     expect(image).toHaveAttribute('src', 'file:///tmp/foo.png');
+  });
+
+  it('renders bare local image paths as images', () => {
+    render(<MarkdownRenderer content={'/tmp/foo.png'} />);
+
+    const image = screen.getByRole('img', { name: '/tmp/foo.png' });
+    expect(image).toHaveAttribute('src', 'file:///tmp/foo.png');
+  });
+
+  it('expands ~/ image paths using the active home directory', () => {
+    const homeDir = os.homedir();
+    window.history.replaceState({}, '', `${homeDir}/chat`);
+
+    render(<MarkdownRenderer content={'~/Desktop/foo.png'} />);
+
+    const image = screen.getByRole('img', { name: '~/Desktop/foo.png' });
+    expect(image).toHaveAttribute('src', `file://${homeDir}/Desktop/foo.png`);
+  });
+
+  it('keeps trailing punctuation outside local image paths', () => {
+    render(<MarkdownRenderer content={'see /tmp/foo.png.\n(check /tmp/bar.png)'} />);
+
+    expect(screen.getByRole('img', { name: '/tmp/foo.png' })).toHaveAttribute('src', 'file:///tmp/foo.png');
+    expect(screen.getByRole('img', { name: '/tmp/bar.png' })).toHaveAttribute('src', 'file:///tmp/bar.png');
   });
 });

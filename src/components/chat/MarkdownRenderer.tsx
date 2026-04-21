@@ -106,12 +106,38 @@ function getImageUrl(text: string): string | null {
   return IMAGE_EXT_RE.test(url) ? url : null;
 }
 
-const LOCAL_IMAGE_TOKEN_RE = /(^|\s)(?:MEDIA:|:)?((?:~\/|\/)(?:Users|home|tmp|var|opt|etc|private)\/\S+?\.(?:png|jpe?g|gif|webp|svg|avif|bmp))(?=\s|$)/gi;
+const LOCAL_IMAGE_TOKEN_RE = /(^|\s)(?:MEDIA:|:)?((?:~\/\S+?|\/(?:Users|home|tmp|var|opt|etc|private)\/\S+?)\.(?:png|jpe?g|gif|webp|svg|avif|bmp))([.,\)\];:]+)?(?=\s|$)/gi;
+
+function defaultSafeUrlTransform(url: string): string {
+  const trimmed = url.trim();
+  const colonIndex = trimmed.indexOf(':');
+  if (colonIndex < 0) return trimmed;
+
+  const slashIndex = trimmed.indexOf('/');
+  const questionIndex = trimmed.indexOf('?');
+  const hashIndex = trimmed.indexOf('#');
+  const firstTailIndex = [slashIndex, questionIndex, hashIndex]
+    .filter((index) => index >= 0)
+    .reduce((min, index) => Math.min(min, index), Number.POSITIVE_INFINITY);
+
+  if (firstTailIndex !== Number.POSITIVE_INFINITY && colonIndex > firstTailIndex) {
+    return trimmed;
+  }
+
+  const protocol = trimmed.slice(0, colonIndex);
+  return /^(https?|ircs?|mailto|xmpp)$/i.test(protocol) ? trimmed : '';
+}
+
+function isImageSrcUrl(key: string, node: unknown): boolean {
+  if (key !== 'src' || !node || typeof node !== 'object') return false;
+  return 'tagName' in node && node.tagName === 'img';
+}
+
 function rewriteLocalImageTokens(markdown: string): string {
-  return markdown.replace(LOCAL_IMAGE_TOKEN_RE, (match: string, leading: string, path: string) => {
+  return markdown.replace(LOCAL_IMAGE_TOKEN_RE, (match: string, leading: string, path: string, trailing = '') => {
     const imageUrl = getImageUrl(path);
     if (!imageUrl) return match;
-    return `${leading}![${path}](${imageUrl})`;
+    return `${leading}![${path}](${imageUrl})${trailing}`;
   });
 }
 
@@ -317,7 +343,14 @@ const MarkdownRendererInner = React.forwardRef<HTMLDivElement, MarkdownRendererP
         <ReactMarkdown
           remarkPlugins={plugins.remark}
           rehypePlugins={plugins.rehype}
-          urlTransform={(url) => url}
+          urlTransform={(url, key, node) => {
+            if (isImageSrcUrl(key, node)) {
+              const imageUrl = getImageUrl(url);
+              if (imageUrl) return imageUrl;
+            }
+
+            return defaultSafeUrlTransform(url);
+          }}
           components={{
             code({ className, children, node: _node, ...props }) {
               const text = extractText(children);
