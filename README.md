@@ -1,245 +1,236 @@
+<div align="center">
+
 # CloudChat
 
-AI chat client built around [Hermes](https://github.com/DevvGwardo/hermes-agent) — an autonomous AI agent with real tool access. Hermes can read and edit your code, browse the web, run terminals, and manage GitHub repos. CloudChat gives it a beautiful interface, multi-provider routing, and live code preview.
+**AI chat client with an autonomous agent brain.**
 
-Also supports 16 other LLM providers, an orchestrator for parallel sub-tasks, and ships as a native macOS Electron app.
+[![License](https://img.shields.io/badge/license-PolyForm--Shield--1.0.0-blue?style=flat-square)](LICENSE)
+[![Version](https://img.shields.io/badge/version-1.0.0--beta.3-orange?style=flat-square)](package.json)
+[![Platform](https://img.shields.io/badge/platform-macOS-lightgrey?style=flat-square)](electron-builder.yml)
+[![Node](https://img.shields.io/badge/node-%3E%3D20-green?style=flat-square)](package.json)
+[![Python](https://img.shields.io/badge/python-%3E%3D3.10-green?style=flat-square)](hermes-bridge/requirements.txt)
 
-![CloudChat Interface](public/cloudchat-screenshot-2026-03-17.png)
+<img src="public/cloudchat-screenshot-2026-03-17.png" alt="CloudChat interface showing a Hermes agent session with live code preview and tool calls" width="800">
 
-## What is Hermes?
+[Quick Start](#-quick-start) · [Features](#-features) · [Architecture](#-architecture) · [Contributing](CONTRIBUTING.md)
 
-Hermes is an autonomous AI agent that goes beyond chat. It has a tool loop — it can call functions, inspect results, and iterate until the task is done.
+</div>
 
-**What Hermes can do:**
-- Read, edit, create, and delete files in GitHub repos
-- Browse the web and interact with web pages
-- Run terminal commands
-- Execute code
-- Search its own memory and skill library
-- Manage multi-step tasks with a todo system
+---
 
-**The bridge:** CloudChat connects to Hermes through the **Hermes Bridge** — a Python FastAPI server that wraps the Hermes agent, provides GitHub repo tools, handles streaming, and manages credential routing across providers.
+## What is this?
+
+CloudChat is an AI chat client that ships with **[Hermes](https://github.com/DevvGwardo/hermes-agent)** — an autonomous agent that can read your code, browse the web, run terminals, manage GitHub repos, and actually get things done instead of just talking about them.
+
+It also supports **17 other LLM providers** as regular chat clients, an **orchestrator** for parallel sub-tasks, and ships as a **native macOS Electron app** with auto-updates.
+
+**Hermes is optional.** CloudChat works perfectly as a chat client with any provider without it. Hermes just makes it way more useful.
+
+---
+
+## Quick Start
+
+```bash
+git clone https://github.com/DevvGwardo/cloud-chat-hub.git
+cd cloud-chat-hub
+npm install
+./start-all.sh
+```
+
+That's it. Open **http://localhost:8080**.
+
+`start-all.sh` starts three services automatically:
+- **Frontend** on `:8080`
+- **API server** on `:3001`
+- **Hermes bridge** on `:3002` (if you want agent mode)
+
+It auto-detects if you have [Hermes Agent](https://github.com/DevvGwardo/hermes-agent) installed and uses its venv. If not, it falls back to a local setup — still works for basic chat.
+
+To stop everything: `./start-all.sh stop`
+
+### Desktop App
+
+```bash
+npm run electron:dev    # dev mode with hot reload
+npm run electron:build  # build macOS DMG
+```
+
+---
 
 ## Features
 
-### Agent-First
+### Hermes Agent Mode
 
-- **Hermes Agent Mode** — Autonomous tool-calling agent with configurable toolsets: web search, browser, terminal, files, code execution, vision
-- **GitHub Repo Tools** — Connect a repo and Hermes reads, edits, creates, deletes, and batch-edits files with full changeset staging and PR workflow
-- **Multi-Provider Routing** — Hermes routes to OpenRouter, Nous, or MiniMax based on model and `~/.hermes/auth.json` credentials
-- **Orchestrator Mode** — Decomposes complex requests into parallel sub-tasks, executes with retry and fallback models, synthesizes results
-- **Brain MCP Integration** — Multi-agent coordination for parallel workstreams
+Hermes isn't a chat bot — it's an autonomous agent with a tool loop. It plans, executes, checks results, and iterates until the task is done.
 
-### Chat Client
-
-- **17 LLM Providers** — OpenAI, Anthropic, Google Gemini, xAI, Groq, DeepSeek, Mistral, Together, MiniMax, Kimi, Cerebras, OpenRouter, SambaNova, z.ai, OpenClaw, and Hermes Agent
-- **Live Code Preview** — Real-time preview of generated code: HTML/CSS/JS, React (Vite) with JSX/TSX transpilation, Next.js with mocked routing, and Markdown
-- **Changeset Panel** — Review proposed file changes with inline diffs, added/removed line counts, per-file staging, and revert
-- **Streaming** — Real-time token streaming with context usage tracking
-- **Themes** — 6 themes (Default, Ayu, Dracula, Gruvbox, IntelliJ, Terminal) with 10 accent colors, light/dark/system modes
-- **Desktop App** — Native macOS Electron app with global hotkey (Cmd+Shift+Space), tray menu, and auto-updates
-
-## How to Use
-
-### Basic Chat
-
-1. Open CloudChat (web or Electron app)
-2. Pick a provider and model from the model selector in the chat bar
-3. Type your message and hit Enter
-4. That's it — standard AI chat with streaming responses
-
-### Using Hermes Agent Mode
-
-Hermes is what makes CloudChat different. It's not just a chat — it's an agent that can *do things*.
-
-1. Select **Hermes Agent** as the provider in Settings
-2. Pick a model (any model works — Hermes handles the tool loop regardless of provider)
-3. Enable the toolsets you want:
-   - **web** — Search the web for current information
-   - **browser** — Open and interact with web pages
-   - **terminal** — Run shell commands on your machine
-   - **files** — Read and write local files
-   - **code_execution** — Run code snippets
-   - **vision** — Analyze images
-4. Ask Hermes to do something — it will plan, use tools, and iterate until done
+**Available toolsets:**
+| Toolset | What it does |
+|---------|-------------|
+| `web` | Search the web for current information |
+| `browser` | Open and interact with web pages |
+| `terminal` | Run shell commands on your machine |
+| `files` | Read and write local files |
+| `code_execution` | Run code snippets |
+| `vision` | Analyze images |
 
 **Example prompts:**
-- "Search for the latest React 19 changes and summarize them"
-- "Read my package.json and tell me which dependencies are outdated"
-- "Create a new React component that renders a sortable table"
-- "Find and fix the bug in src/api/routes.ts"
+- "Search for React 19 breaking changes and update my imports"
+- "Read src/api/routes.ts and fix the auth middleware bug"
+- "Create a new React component with a sortable table"
+- "Find all TODO comments and create GitHub issues for them"
 
-Hermes shows its work — you'll see tool calls, their results, and how it's reasoning through the problem in real time.
+Hermes shows its work — you see every tool call, its result, and how it's reasoning through the problem in real time.
 
-### Working with GitHub Repos
+### Multi-Provider Chat
 
-1. Add a GitHub Personal Access Token in Settings → GitHub
-2. Open the GitHub panel (sidebar icon)
-3. Browse your repos and issues
-4. Click an issue to start an issue-focused chat — Hermes gets the full context
-5. Ask Hermes to make changes — it reads the repo, proposes edits, and stages them in the Changeset panel
-6. Review changes with inline diffs in the Workspace sidebar
-7. Stage/unstage individual files
-8. Click **Create PR** to open a pull request with auto-generated title and description
+17 providers out of the box. Enter your API key in Settings and go.
 
-**Tips:**
-- Start with "read-only" prompts to let Hermes explore before making changes
-- Use batch edits — "update all imports from old-api to new-api across these files"
-- The Changeset panel shows exactly what changed before anything hits GitHub
+OpenAI · Anthropic · Google Gemini · xAI · Groq · DeepSeek · Mistral · Together · MiniMax · Kimi · Cerebras · OpenRouter · SambaNova · z.ai · OpenClaw · Hermes Agent
+
+### Live Code Preview
+
+Generated code gets rendered in real time — HTML/CSS/JS, React (Vite) with JSX/TSX transpilation, Next.js with mocked routing, and Markdown.
+
+### GitHub Integration
+
+- Browse repos and issues from the sidebar
+- Click an issue → Hermes gets full context
+- Review proposed changes in the Changeset panel with inline diffs
+- Stage/unstage files, then create a PR with one click
 
 ### Orchestrator Mode
 
-For complex tasks that benefit from parallel work:
+For complex tasks that benefit from parallel work. The orchestrator decomposes requests into sub-tasks, runs them concurrently with retry/fallback, and synthesizes results.
 
-1. Enable Orchestrator in Settings
-2. Configure: planning model, code model, fallback model, max sub-agents
-3. Send a complex request — the orchestrator breaks it into sub-tasks, runs them in parallel, and synthesizes the results
+### Desktop App
 
-**Good for:** multi-file refactors, generating tests + implementation, researching multiple topics at once.
+Native macOS Electron app with global hotkey (`Cmd+Shift+Space`), tray menu, and auto-updates.
 
-### Switching Providers
+### Themes
 
-CloudChat supports 17 providers. To use any non-Hermes provider:
+6 themes (Default, Ayu, Dracula, Gruvbox, IntelliJ, Terminal) with 10 accent colors. Light, dark, and system modes.
 
-1. Open Settings → Providers
-2. Enter your API key for the provider you want
-3. Select it as active in the model selector
+---
 
-Your API keys stay in the browser — they never hit our servers.
-
-## Getting Started
-
-### 1. Start the API Server
-
-```sh
-git clone https://github.com/DevGwardo/cloud-chat-hub.git
-cd cloud-chat-hub
-npm install
-npm run server    # Port 3001
-```
-
-### 2. Start the Hermes Bridge (Agent Mode)
-
-```sh
-cd hermes-bridge
-pip install -r requirements.txt
-python main.py    # Port 3002
-```
-
-Credentials are read from `~/.hermes/auth.json` (created by the [Hermes CLI](https://github.com/DevvGwardo/hermes-agent)). Run `hermes auth login` to configure providers.
-
-**Model routing:**
-- `MiniMax-*` models → MiniMax direct API
-- `nousresearch/*` models or `active_provider: nous` → Nous inference API
-- Everything else → OpenRouter
-
-### 3. Start the Frontend
-
-```sh
-npm run dev
-```
-
-Select Hermes as the provider in Settings. Configure toolsets (web, browser, vision, terminal, files, code_execution) from there.
-
-### Desktop App (Electron)
-
-```sh
-npm run electron:dev       # Dev mode with hot reload
-npm run electron:build     # Build macOS app (DMG + ZIP)
-npm run electron:publish   # Build and publish to GitHub Releases
-```
-
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `VITE_API_URL` | `http://localhost:3001` | URL of the API server |
-| `HERMES_PORT` | `3002` | Hermes Bridge server port |
-| `HERMES_TOOLSETS` | `web,browser,vision` | Default agent toolsets |
-| `HERMES_DEFAULT_MODEL` | `meta-llama/llama-4-maverick` | Default Hermes model |
-| `HERMES_MAX_ITERATIONS` | `60` | Max tool-use iterations per turn |
-| `HERMES_OPENROUTER_KEY` | — | OpenRouter API key (fallback if auth.json missing) |
-| `HERMES_MINIMAX_KEY` | — | MiniMax API key (fallback if auth.json missing) |
-| `ORCHESTRATOR_SUBTASK_TIMEOUT_MS` | `5400000` | Per-subtask timeout for orchestrator |
-| `OPENCLAW_BIN` | `~/.openclaw/bin/openclaw` | Path to OpenClaw CLI |
-
-API keys are resolved in order: env var → `~/.hermes/auth.json` credential pool → OpenClaw gateway token.
-
-## GitHub Integration
-
-1. **Connect** — Add a GitHub PAT in Settings
-2. **Browse Issues** — Filter, sort, jump into issue-focused chats
-3. **Propose Changes** — Hermes proposes file changes via server-side repo tools. Review in the Workspace panel
-4. **Stage & Review** — Stage/unstage files, view inline diffs with line counts, revert changes
-5. **Create PR** — Open a pull request with auto-generated branch, title, and description. Supports draft PRs
-6. **Monitor & Merge** — Track CI checks, then merge (squash, rebase, or merge commit)
-
-## Hermes Bridge Architecture
+## Architecture
 
 ```
-CloudChat UI  →  Express Server (port 3001)  →  Hermes Bridge (port 3002)
-                      │                                │
-                      ├─ Chat proxy                    ├─ FastAPI SSE streaming
-                      ├─ GitHub integration            ├─ Hermes AIAgent (tool loop)
-                      ├─ Orchestrator                  ├─ RepoToolProvider (GitHub API)
-                      └─ Preview manager               └─ Credential routing (auth.json)
+CloudChat UI  →  Express Server (:3001)  →  Hermes Bridge (:3002)
+                      │                          │
+                      ├─ Chat proxy              ├─ FastAPI SSE streaming
+                      ├─ GitHub integration      ├─ Hermes AIAgent (tool loop)
+                      ├─ Orchestrator            ├─ RepoToolProvider (GitHub API)
+                      └─ Preview manager         └─ Credential routing (auth.json)
 ```
 
-The bridge supports three execution modes:
+Three execution modes:
 - **agent-loop** (default) — Full Hermes agent with tool calling
 - **passthrough** — Direct API forwarding without agent
 - **swarm** — Architect → Implementor → Reviewer pipeline
 
+---
+
+## Setup (Detailed)
+
+### Prerequisites
+
+- **Node.js** >= 20
+- **Python** >= 3.10 (for Hermes bridge)
+- **npm** or **bun**
+
+### 1. Install
+
+```bash
+git clone https://github.com/DevvGwardo/cloud-chat-hub.git
+cd cloud-chat-hub
+npm install
+
+# Set up the Hermes bridge (skip if you only want basic chat)
+cd hermes-bridge
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+cd ..
+```
+
+### 2. Configure Credentials
+
+CloudChat reads credentials in this order: env var → `~/.hermes/auth.json` → OpenClaw gateway token.
+
+```bash
+# Option A: Environment variables
+export HERMES_OPENROUTER_KEY="sk-or-..."
+export HERMES_MINIMAX_KEY="..."
+
+# Option B: Use the Hermes CLI (recommended)
+# Install: https://github.com/DevvGwardo/hermes-agent
+hermes auth login
+```
+
+### 3. Run
+
+```bash
+./start-all.sh          # start everything
+# OR manually:
+npm run server          # API server on :3001
+cd hermes-bridge && .venv/bin/python main.py  # bridge on :3002
+npm run dev             # frontend on :8080
+```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VITE_API_URL` | `http://localhost:3001` | API server URL |
+| `HERMES_PORT` | `3002` | Bridge port |
+| `HERMES_TOOLSETS` | `web,browser,vision` | Default toolsets |
+| `HERMES_DEFAULT_MODEL` | `meta-llama/llama-4-maverick` | Default model |
+| `HERMES_MAX_ITERATIONS` | `60` | Max tool calls per turn |
+| `HERMES_OPENROUTER_KEY` | — | OpenRouter key (fallback) |
+| `HERMES_MINIMAX_KEY` | — | MiniMax key (fallback) |
+
+---
+
 ## Project Structure
 
 ```
-src/
+src/                    # React + TypeScript frontend
 ├── components/
-│   ├── chat/          # Chat UI, messages, markdown renderer, activity indicators
-│   ├── github/        # GitHub panel, issue browser, PR creation
-│   ├── layout/        # App shell layout
-│   ├── preview/       # Workspace sidebar (changeset diffs, live code preview)
-│   ├── settings/      # Settings modal, setup wizard, knowledge panel
-│   ├── sidebar/       # Chat history sidebar
-│   └── terminal/      # Terminal panel
-├── hooks/             # useChat, useOrchestrator, useTheme
-├── lib/               # API client, providers, tokens, themes, repo tools
-├── stores/            # Zustand stores (chat, settings, changeset, orchestrator, etc.)
-└── contexts/          # React contexts (PanelContext)
-server/
-├── index.ts           # Express API — chat, GitHub, preview, model discovery
-├── agent-loop.ts      # Server-side agentic tool definitions and execution
-├── direct-sse-proxy.ts # SSE proxy for compatible providers (MiniMax, Kimi)
-├── orchestrator.ts    # Multi-agent orchestrator with planning, execution, synthesis
-├── provider-config.ts # Provider routing, model lists, headers
-├── chat-store.ts      # Server-side chat persistence
-├── preview-manager.ts # Project preview lifecycle (clone, build, serve)
-└── openclaw.ts        # OpenClaw CLI integration
-hermes-bridge/
-├── main.py            # FastAPI server — credential routing, SSE streaming, brain MCP
-├── hermes_adapter.py  # Wraps real Hermes AIAgent for CloudChat
-├── run_agent.py       # Fallback AIAgent (when hermes-agent not installed)
-└── requirements.txt   # Python dependencies
-electron/
-├── index.ts           # Main process (window, tray, hotkey, auto-update)
-├── preload.ts         # Preload bridge (API port, theme, window controls)
-└── updater.ts         # Auto-update logic
+│   ├── chat/           # Chat UI, messages, markdown renderer
+│   ├── github/         # GitHub panel, issue browser, PR creation
+│   ├── layout/         # App shell
+│   ├── preview/        # Changeset diffs, live code preview
+│   ├── settings/       # Settings modal, setup wizard
+│   └── sidebar/        # Chat history
+├── hooks/              # useChat, useOrchestrator, useTheme
+├── lib/                # API client, providers, themes
+└── stores/             # Zustand stores
+
+server/                 # Express API
+├── index.ts            # Chat, GitHub, preview, model discovery
+├── agent-loop.ts       # Server-side tool definitions
+├── orchestrator.ts     # Multi-agent orchestrator
+└── provider-config.ts  # Provider routing
+
+hermes-bridge/          # Python FastAPI server
+├── main.py             # Credential routing, SSE streaming
+├── hermes_adapter.py   # Wraps real Hermes AIAgent
+└── run_agent.py        # Fallback (no hermes-agent needed)
+
+electron/               # macOS desktop app
+├── index.ts            # Window, tray, hotkey, auto-update
+└── preload.ts          # Preload bridge
 ```
 
-## Scripts
-
-| Command | Description |
-|---------|-------------|
-| `npm run dev` | Start frontend dev server |
-| `npm run server` | Start API server (port 3001) |
-| `npm run build` | Production build |
-| `npm run test` | Run tests |
-| `npm run lint` | Lint with ESLint |
-| `npm run typecheck` | Type-check frontend and Electron |
-| `npm run electron:dev` | Electron dev mode with hot reload |
-| `npm run electron:build` | Build macOS desktop app |
-| `npm run electron:publish` | Build and publish to GitHub Releases |
+---
 
 ## License
 
-Licensed under the **Business Source License 1.1** (BSL 1.1).
+**PolyForm Shield 1.0.0** — see [LICENSE](LICENSE).
+
+You can use, modify, and distribute CloudChat freely. The only restriction: you can't offer a competing service using it.
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
