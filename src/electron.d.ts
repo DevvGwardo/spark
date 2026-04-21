@@ -5,6 +5,7 @@ export interface ElectronAPI {
     chrome: string
   }
   platform: string
+  homeDir: string
   apiPort: number
   getAppVersion?: () => Promise<string>
   openrouterOAuth?: () => Promise<string>

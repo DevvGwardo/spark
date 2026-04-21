@@ -88,6 +88,17 @@ ${lines}
     expect(image).toHaveAttribute('src', 'file:///tmp/foo.png');
   });
 
+  it('falls back from /tmp image path to ~/.hermes/images on load error', () => {
+    window.electronAPI = { homeDir: '/MOCKED_HOME' } as any;
+
+    render(<MarkdownRenderer content={'/tmp/foo.png'} />);
+
+    const image = screen.getByRole('img', { name: '/tmp/foo.png' });
+    fireEvent.error(image);
+
+    expect(image).toHaveAttribute('src', 'file:///MOCKED_HOME/.hermes/images/foo.png');
+  });
+
   it('expands ~/ image paths using the active home directory', () => {
     const homeDir = os.homedir();
     window.history.replaceState({}, '', `${homeDir}/chat`);

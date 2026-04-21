@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import os from 'os'
 
 // Main process sets ELECTRON_API_PORT env var before creating BrowserWindow
 const apiPort = Number(process.env.ELECTRON_API_PORT) || 3001
@@ -10,6 +11,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     chrome: process.versions.chrome
   },
   platform: process.platform,
+  homeDir: os.homedir(),
   apiPort,
   getAppVersion: (): Promise<string> => ipcRenderer.invoke('app:get-version'),
   openrouterOAuth: (): Promise<string> => ipcRenderer.invoke('openrouter:oauth'),

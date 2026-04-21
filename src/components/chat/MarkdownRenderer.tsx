@@ -100,6 +100,7 @@ function getOpenableUrl(text: string): string | null {
 
 /** If a URL (file:// or absolute local path) points at an image file, return it. */
 const IMAGE_EXT_RE = /\.(?:png|jpe?g|gif|webp|svg|avif|bmp)(?:\?\S*)?$/i;
+const TMP_IMAGE_URL_RE = /^file:\/\/\/tmp\/([^/]+\.(?:png|jpe?g|gif|webp|svg|avif|bmp))$/i;
 function getImageUrl(text: string): string | null {
   const url = getOpenableUrl(text);
   if (!url) return null;
@@ -435,6 +436,16 @@ const MarkdownRendererInner = React.forwardRef<HTMLDivElement, MarkdownRendererP
                     className="max-h-[480px] max-w-full cursor-pointer rounded-lg border border-border/40 object-contain"
                     loading="lazy"
                     onClick={() => openExternalUrl(imageUrl)}
+                    onError={(event) => {
+                      if (event.currentTarget.dataset.fallbackTried) return;
+                      event.currentTarget.dataset.fallbackTried = '1';
+                      const match = event.currentTarget.src.match(TMP_IMAGE_URL_RE);
+                      if (!match) return;
+                      const homeDir = window.electronAPI?.homeDir;
+                      if (!homeDir) return;
+                      const basename = match[1];
+                      event.currentTarget.src = `file://${homeDir}/.hermes/images/${basename}`;
+                    }}
                     {...props}
                   />
                   <span className="mt-1 block text-[11px] text-muted-foreground/60 font-mono truncate">
