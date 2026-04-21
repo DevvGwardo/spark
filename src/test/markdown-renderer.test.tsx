@@ -71,4 +71,11 @@ ${lines}
       }
     }
   });
+
+  it('renders MEDIA-prefixed local image paths as images', () => {
+    render(<MarkdownRenderer content={'MEDIA:/tmp/foo.png'} />);
+
+    const image = screen.getByRole('img', { name: '/tmp/foo.png' });
+    expect(image).toHaveAttribute('src', 'file:///tmp/foo.png');
+  });
 });

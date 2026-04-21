@@ -76,11 +76,43 @@ const SHIKI_LANG_MAP: Record<string, string> = {
 };
 
 /** If inline-code text looks like an openable local path or file:// URL, return the URL to open. */
+const LOCAL_PATH_RE = /^\/(?:Users|home|tmp|var|opt|etc|private)\/\S+$/;
+function getExpandedPath(path: string): string | null {
+  if (!path.startsWith('~/')) return path;
+
+  const locationPath = window.location?.pathname ?? '';
+  const match = locationPath.match(/^\/(?:Users|home)\/[^/]+/);
+  if (!match) return null;
+
+  return `${match[0]}/${path.slice(2)}`;
+}
+
 function getOpenableUrl(text: string): string | null {
-  const trimmed = text.trim();
+  const trimmed = text.trim().replace(/^(?:MEDIA:|:)/i, '');
   if (/^file:\/\/\/\S+$/i.test(trimmed)) return trimmed;
-  if (/^\/(?:Users|home|tmp|var|opt|etc|private)\/\S+$/.test(trimmed)) return `file://${trimmed}`;
+
+  const expandedPath = getExpandedPath(trimmed);
+  if (!expandedPath) return null;
+  if (LOCAL_PATH_RE.test(expandedPath)) return `file://${expandedPath}`;
+
   return null;
+}
+
+/** If a URL (file:// or absolute local path) points at an image file, return it. */
+const IMAGE_EXT_RE = /\.(?:png|jpe?g|gif|webp|svg|avif|bmp)(?:\?\S*)?$/i;
+function getImageUrl(text: string): string | null {
+  const url = getOpenableUrl(text);
+  if (!url) return null;
+  return IMAGE_EXT_RE.test(url) ? url : null;
+}
+
+const LOCAL_IMAGE_TOKEN_RE = /(^|\s)(?:MEDIA:|:)?((?:~\/|\/)(?:Users|home|tmp|var|opt|etc|private)\/\S+?\.(?:png|jpe?g|gif|webp|svg|avif|bmp))(?=\s|$)/gi;
+function rewriteLocalImageTokens(markdown: string): string {
+  return markdown.replace(LOCAL_IMAGE_TOKEN_RE, (match: string, leading: string, path: string) => {
+    const imageUrl = getImageUrl(path);
+    if (!imageUrl) return match;
+    return `${leading}![${path}](${imageUrl})`;
+  });
 }
 
 function openExternalUrl(url: string) {
@@ -278,18 +310,37 @@ const MarkdownRendererInner = React.forwardRef<HTMLDivElement, MarkdownRendererP
       remark: [remarkGfm, remarkMath],
       rehype: [rehypeKatex],
     }), []);
+    const processedContent = useMemo(() => rewriteLocalImageTokens(content), [content]);
 
     return (
       <div ref={ref} className="prose prose-sm dark:prose-invert max-w-none overflow-hidden prose-pre:p-0 prose-pre:bg-transparent prose-pre:border-0 prose-code:before:content-none prose-code:after:content-none prose-headings:font-semibold prose-p:text-base prose-p:leading-relaxed">
         <ReactMarkdown
           remarkPlugins={plugins.remark}
           rehypePlugins={plugins.rehype}
+          urlTransform={(url) => url}
           components={{
             code({ className, children, node: _node, ...props }) {
               const text = extractText(children);
               const isBlock = className?.includes('language-') || text.includes('\n');
               if (isBlock) {
                 return <CodeBlock className={className} {...props}>{children}</CodeBlock>;
+              }
+              const imageUrl = getImageUrl(text);
+              if (imageUrl) {
+                return (
+                  <span className="my-2 block">
+                    <img
+                      src={imageUrl}
+                      alt={text.trim()}
+                      className="max-h-[480px] max-w-full cursor-pointer rounded-lg border border-border/40 object-contain"
+                      loading="lazy"
+                      onClick={() => openExternalUrl(imageUrl)}
+                    />
+                    <span className="mt-1 block text-[11px] text-muted-foreground/60 font-mono truncate">
+                      {text.trim()}
+                    </span>
+                  </span>
+                );
               }
               const openableUrl = getOpenableUrl(text);
               if (openableUrl) {
@@ -335,6 +386,30 @@ const MarkdownRendererInner = React.forwardRef<HTMLDivElement, MarkdownRendererP
               }
               return <a href={href} {...props}>{children}</a>;
             },
+            img({ src, alt, ...props }) {
+              const rawSrc = typeof src === 'string' ? src : '';
+              const imageUrl = getImageUrl(rawSrc);
+              if (!imageUrl) {
+                return <img src={src} alt={alt ?? ''} {...props} />;
+              }
+
+              const label = alt?.trim() || rawSrc.trim();
+              return (
+                <span className="my-2 block">
+                  <img
+                    src={imageUrl}
+                    alt={label}
+                    className="max-h-[480px] max-w-full cursor-pointer rounded-lg border border-border/40 object-contain"
+                    loading="lazy"
+                    onClick={() => openExternalUrl(imageUrl)}
+                    {...props}
+                  />
+                  <span className="mt-1 block text-[11px] text-muted-foreground/60 font-mono truncate">
+                    {label}
+                  </span>
+                </span>
+              );
+            },
             table({ children }) {
               return (
                 <div className="overflow-x-auto my-3">
@@ -350,7 +425,7 @@ const MarkdownRendererInner = React.forwardRef<HTMLDivElement, MarkdownRendererP
             },
           }}
         >
-          {content}
+          {processedContent}
         </ReactMarkdown>
       </div>
     );
