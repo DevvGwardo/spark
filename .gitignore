@@ -15,6 +15,7 @@ dist-ssr
 # Environment variables
 .env
 .env.*
+!.env.example
 
 # Editor directories and files
 .vscode/*
@@ -35,13 +36,29 @@ dist-electron/
 
 # Worktrees
 .worktrees/
+.claude/worktrees/
+
+# Claude / agent workflow artifacts (internal to dev workflow)
+.claude/audit-reports/
+.claude/scheduled_tasks.lock
+.codex_task*
+.codex_session*
+.overstory/
+.seeds/
+.mulch/
+.canopy/
+
+# Standalone sub-projects (split out of this repo)
+/twitter-engagement-analyzer/
+
+# Published sub-package build artifacts
+packages/*/dist/
+packages/*/node_modules/
+packages/*/*.tsbuildinfo
 
 # Python cache artifacts
 __pycache__/
 *.pyc
-
-# Local task scheduler lock
-.claude/scheduled_tasks.lock
 
 # Backup files
 *.bak

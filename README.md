@@ -20,9 +20,9 @@
 
 ## What is this?
 
-CloudChat is an AI chat client that ships with **[Hermes](https://github.com/DevvGwardo/hermes-agent)** — an autonomous agent that can read your code, browse the web, run terminals, manage GitHub repos, and actually get things done instead of just talking about them.
+CloudChat is an AI chat client that ships with **[Hermes](https://hermes-agent.nousresearch.com)** — Nous Research's autonomous agent that can read your code, browse the web, run terminals, manage GitHub repos, and actually get things done instead of just talking about them.
 
-It also supports **17 other LLM providers** as regular chat clients, an **orchestrator** for parallel sub-tasks, and ships as a **native macOS Electron app** with auto-updates.
+It also supports **15 other LLM providers** as regular chat clients, an **orchestrator** for parallel sub-tasks, and ships as a **native macOS Electron app** with auto-updates.
 
 **Hermes is optional.** CloudChat works perfectly as a chat client with any provider without it. Hermes just makes it way more useful.
 
@@ -44,7 +44,7 @@ That's it. Open **http://localhost:8080**.
 - **API server** on `:3001`
 - **Hermes bridge** on `:3002` (if you want agent mode)
 
-It auto-detects if you have [Hermes Agent](https://github.com/DevvGwardo/hermes-agent) installed and uses its venv. If not, it falls back to a local setup — still works for basic chat.
+It auto-detects if you have [Hermes Agent](https://hermes-agent.nousresearch.com) installed at `~/.hermes/hermes-agent` and uses its venv. If not, it falls back to the bridge's own venv — still works for basic chat across all providers, but agent tool-calling requires the real Hermes install.
 
 To stop everything: `./start-all.sh stop`
 
@@ -83,9 +83,11 @@ Hermes shows its work — you see every tool call, its result, and how it's reas
 
 ### Multi-Provider Chat
 
-17 providers out of the box. Enter your API key in Settings and go.
+15 providers out of the box. Enter your API key in Settings and go.
 
-OpenAI · Anthropic · Google Gemini · xAI · Groq · DeepSeek · Mistral · Together · MiniMax · Kimi · Cerebras · OpenRouter · SambaNova · z.ai · OpenClaw · Hermes Agent
+OpenAI · Anthropic · Google Gemini · xAI · Groq · DeepSeek · Mistral · Together · MiniMax · Kimi · Cerebras · OpenRouter · SambaNova · z.ai · OpenClaw
+
+Hermes agent mode is a separate feature — it uses any of the above providers as the underlying LLM, plus adds the autonomous tool loop.
 
 ### Live Code Preview
 
@@ -145,11 +147,15 @@ git clone https://github.com/DevvGwardo/cloud-chat-hub.git
 cd cloud-chat-hub
 npm install
 
-# Set up the Hermes bridge (skip if you only want basic chat)
+# Set up the Hermes bridge (required for agent mode, optional for basic chat)
 cd hermes-bridge
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 cd ..
+
+# (Optional) Install Hermes Agent itself for real tool-calling.
+# Follow https://hermes-agent.nousresearch.com and install to ~/.hermes/hermes-agent
+# (or set HERMES_AGENT_DIR to a custom path).
 ```
 
 ### 2. Configure Credentials
@@ -162,7 +168,8 @@ export HERMES_OPENROUTER_KEY="sk-or-..."
 export HERMES_MINIMAX_KEY="..."
 
 # Option B: Use the Hermes CLI (recommended)
-# Install: https://github.com/DevvGwardo/hermes-agent
+# Install Hermes Agent per https://hermes-agent.nousresearch.com
+# Then:
 hermes auth login
 ```
 
@@ -182,7 +189,9 @@ npm run dev             # frontend on :8080
 |----------|---------|-------------|
 | `VITE_API_URL` | `http://localhost:3001` | API server URL |
 | `HERMES_PORT` | `3002` | Bridge port |
-| `HERMES_TOOLSETS` | `web,browser,vision` | Default toolsets |
+| `HERMES_TOOLSETS` | `web,browser,terminal` | Default toolsets |
+| `HERMES_AGENT_DIR` | `~/.hermes/hermes-agent` | Where the real Hermes agent is installed |
+| `HERMES_HOME` | `~/.hermes` | Hermes data / auth.json location |
 | `HERMES_DEFAULT_MODEL` | `meta-llama/llama-4-maverick` | Default model |
 | `HERMES_MAX_ITERATIONS` | `60` | Max tool calls per turn |
 | `HERMES_OPENROUTER_KEY` | — | OpenRouter key (fallback) |

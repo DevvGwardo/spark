@@ -3,9 +3,10 @@
 # Usage: ./start-all.sh       (start everything)
 #        ./start-all.sh stop  (kill everything)
 
-PROJECT_DIR="$HOME/cloud-chat-hub"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BRIDGE_DIR="$PROJECT_DIR/hermes-bridge"
 DEFAULT_HERMES_HOME="$HOME/.hermes"
+HERMES_AGENT_DIR="${HERMES_AGENT_DIR:-$HOME/.hermes/hermes-agent}"
 DOCKER_HERMES_CONTAINER="${DOCKER_HERMES_CONTAINER:-hermes-docker}"
 
 resolve_hermes_home() {
@@ -59,15 +60,21 @@ else
   export HERMES_HOME
   # Prefer the hermes-agent venv (has all deps for real agent + bridge).
   # Fall back to the bridge's own venv if hermes-agent isn't installed.
-  HERMES_VENV="$HOME/.hermes/hermes-agent/venv"
+  HERMES_VENV="$HERMES_AGENT_DIR/venv"
+  export HERMES_AGENT_DIR
   # Check if hermes-agent venv has fastapi (the bridge depends on it).
   if [ -x "$HERMES_VENV/bin/python3" ] && $HERMES_VENV/bin/python3 -c "import fastapi" 2>/dev/null; then
-    echo "  Using real Hermes agent venv"
+    echo "  Using Hermes agent venv at $HERMES_AGENT_DIR"
     BRIDGE_PYTHON="$HERMES_VENV/bin/python3"
+  elif [ -x "$BRIDGE_DIR/.venv/bin/python" ]; then
+    echo "  Hermes agent not found — using local .venv"
+    BRIDGE_PYTHON="$BRIDGE_DIR/.venv/bin/python"
+  elif [ -x "$BRIDGE_DIR/venv/bin/python" ]; then
+    echo "  Hermes agent not found — using local venv"
+    BRIDGE_PYTHON="$BRIDGE_DIR/venv/bin/python"
   else
-    echo "  Hermes agent not found or missing fastapi — using local venv"
-    source venv/bin/activate
-    BRIDGE_PYTHON="python"
+    echo "  [!!] No Python environment found. Run: cd hermes-bridge && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
+    exit 1
   fi
   nohup $BRIDGE_PYTHON main.py > /tmp/hermes-bridge.log 2>&1 &
   sleep 2
