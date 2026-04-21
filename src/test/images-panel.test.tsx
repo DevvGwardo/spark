@@ -146,6 +146,46 @@ describe('extractImageUrls', () => {
       assetUrl('/tmp/bar.png'),
     ]);
   });
+
+  it('extracts local image paths from tool-invocation results (banana/run_command)', () => {
+    const messages = [
+      makeMsg({
+        role: 'assistant',
+        content: '',
+        toolInvocations: [
+          {
+            toolName: 'run_command',
+            state: 'result',
+            result: '/Users/devgwardo/.hermes/images/banana-1.png',
+          },
+        ],
+      }),
+      makeMsg({
+        id: 'msg-2',
+        role: 'assistant',
+        content: '',
+        parts: [
+          {
+            type: 'tool-invocation',
+            toolInvocation: {
+              toolName: 'run_command',
+              state: 'result',
+              result: { output: '/Users/devgwardo/.hermes/images/banana-2.png' },
+            },
+          },
+        ],
+      }),
+    ];
+
+    const result = extractImageUrls(messages, conv);
+
+    expect(result.map((image) => image.url)).toEqual([
+      '/Users/devgwardo/.hermes/images/banana-1.png',
+      '/Users/devgwardo/.hermes/images/banana-2.png',
+    ]);
+    expect(result[0].srcUrl).toBe(assetUrl('/Users/devgwardo/.hermes/images/banana-1.png'));
+    expect(result[1].srcUrl).toBe(assetUrl('/Users/devgwardo/.hermes/images/banana-2.png'));
+  });
 });
 
 // --- Component rendering tests ---

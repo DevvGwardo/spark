@@ -53,6 +53,47 @@ function getRenderableImage(url: string): { originalUrl: string; srcUrl: string 
   return null;
 }
 
+function getToolResultText(result: unknown): string | null {
+  if (typeof result === 'string') return result;
+  if (!result || typeof result !== 'object') return null;
+  const r = result as Record<string, unknown>;
+  if (typeof r.output === 'string' && r.output.trim()) return r.output;
+  if (typeof r.message === 'string' && r.message.trim()) return r.message;
+  if (Array.isArray(r.content)) {
+    const textParts = r.content
+      .filter((c) => typeof c === 'object' && c && (c as Record<string, unknown>).type === 'text')
+      .map((c) => ((c as Record<string, unknown>).text as string) || '')
+      .filter(Boolean);
+    if (textParts.length > 0) return textParts.join('\n');
+  }
+  if (typeof r.result === 'string' && r.result.trim()) return r.result;
+  return null;
+}
+
+function collectToolResultTexts(msg: Message): string[] {
+  const texts: string[] = [];
+
+  const parts = Array.isArray(msg.parts) ? msg.parts : [];
+  for (const part of parts) {
+    if (!part || typeof part !== 'object') continue;
+    const p = part as Record<string, unknown>;
+    if (p.type !== 'tool-invocation') continue;
+    const invocation = p.toolInvocation as Record<string, unknown> | undefined;
+    if (!invocation) continue;
+    const text = getToolResultText(invocation.result);
+    if (text) texts.push(text);
+  }
+
+  const invocations = Array.isArray(msg.toolInvocations) ? msg.toolInvocations : [];
+  for (const invocation of invocations) {
+    if (!invocation || typeof invocation !== 'object') continue;
+    const text = getToolResultText((invocation as Record<string, unknown>).result);
+    if (text) texts.push(text);
+  }
+
+  return texts;
+}
+
 export function extractImageUrls(messages: Message[], conv: Conversation): ImageItem[] {
   const images: ImageItem[] = [];
   const seen = new Set<string>();
@@ -72,42 +113,49 @@ export function extractImageUrls(messages: Message[], conv: Conversation): Image
     });
   };
 
-  for (const msg of messages) {
-    if (msg.role !== 'assistant' && msg.role !== 'user') continue;
-    if (!msg.content) continue;
-
+  const scanBlob = (text: string, msg: Message) => {
     // Extract from markdown ![alt](url)
-    for (const match of msg.content.matchAll(MARKDOWN_IMAGE_REGEX)) {
+    for (const match of text.matchAll(MARKDOWN_IMAGE_REGEX)) {
       const url = match[1]?.trim();
       if (url) addUrl(url, msg);
     }
 
     // Extract standalone image URLs not already inside markdown syntax
-    for (const match of msg.content.matchAll(STANDALONE_IMAGE_URL_REGEX)) {
+    for (const match of text.matchAll(STANDALONE_IMAGE_URL_REGEX)) {
       addUrl(match[0], msg);
     }
 
     // Extract cloudchat-asset URLs (local images stored by hermes)
-    for (const match of msg.content.matchAll(CLOUDCHAT_ASSET_URL_REGEX)) {
+    for (const match of text.matchAll(CLOUDCHAT_ASSET_URL_REGEX)) {
       addUrl(match[0], msg);
     }
 
     // Extract bare local image paths in plaintext tool output
     const localImageRegex = new RegExp(LOCAL_IMAGE_TOKEN_RE);
-    for (const match of msg.content.matchAll(localImageRegex)) {
+    for (const match of text.matchAll(localImageRegex)) {
       const path = match[2]?.trim();
       if (path) addUrl(path, msg);
     }
 
     // Extract inline-code local image paths rendered by the transcript
-    for (const match of msg.content.matchAll(INLINE_CODE_LOCAL_IMAGE_REGEX)) {
+    for (const match of text.matchAll(INLINE_CODE_LOCAL_IMAGE_REGEX)) {
       const path = match[1]?.trim();
       if (path) addUrl(path, msg);
     }
 
     // Extract data URIs
-    for (const match of msg.content.matchAll(DATA_URI_REGEX)) {
+    for (const match of text.matchAll(DATA_URI_REGEX)) {
       addUrl(match[1], msg);
+    }
+  };
+
+  for (const msg of messages) {
+    if (msg.role !== 'assistant' && msg.role !== 'user') continue;
+
+    if (msg.content) scanBlob(msg.content, msg);
+
+    for (const toolText of collectToolResultTexts(msg)) {
+      scanBlob(toolText, msg);
     }
   }
 
