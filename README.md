@@ -5,7 +5,6 @@ AI chat client built around [Hermes](https://github.com/DevvGwardo/hermes-agent)
 Also supports 16 other LLM providers, an orchestrator for parallel sub-tasks, and ships as a native macOS Electron app.
 
 ![CloudChat Interface](public/cloudchat-screenshot-2026-03-17.png)
-![CloudChat — Pull Request](public/cloud-chat-hub-screenshot.png)
 
 ## What is Hermes?
 
