@@ -133,6 +133,22 @@ interface MessagePart {
   toolInvocation?: ToolInvocation;
 }
 
+const LOCAL_IMAGE_OUTPUT_LINE_RE = /^(?:MEDIA:|:)?(?:~\/\S+|\/(?:Users|home|tmp|var|opt|etc|private)\/\S+)\.(?:png|jpe?g|gif|webp|svg|avif|bmp)$/i;
+const LOCAL_IMAGE_OUTPUT_MARKDOWN_RE = /!\[[^\]]*\]\((?:file:\/\/\/\S+|(?:~\/|\/(?:Users|home|tmp|var|opt|etc|private)\/)\S+?\.(?:png|jpe?g|gif|webp|svg|avif|bmp))(?:\?\S*)?\)/i;
+
+function shouldRenderToolOutputAsMarkdown(output: string): boolean {
+  const trimmed = output.trim();
+  if (!trimmed) return false;
+  if (LOCAL_IMAGE_OUTPUT_MARKDOWN_RE.test(trimmed)) return true;
+
+  const lines = trimmed
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  return lines.length > 0 && lines.every((line) => LOCAL_IMAGE_OUTPUT_LINE_RE.test(line));
+}
+
 interface MessageBubbleProps {
   message: Message;
   isStreaming?: boolean;
@@ -857,6 +873,7 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
   const isExecTool = invocation.toolName === 'run_command' || invocation.toolName === 'terminal' || invocation.toolName === 'execute_python';
   const outputMessage = getToolOutputMessage(invocation.result);
   const hasOutput = isComplete && !hasError && !!outputMessage && outputMessage !== '(no output)';
+  const renderOutputAsMarkdown = !!outputMessage && shouldRenderToolOutputAsMarkdown(outputMessage);
   const progressLabel = invocation.toolName === 'read_repo_file' || invocation.toolName === 'read_file' ? 'Reading...'
     : invocation.toolName === 'run_command' || invocation.toolName === 'terminal' ? 'Running...'
     : invocation.toolName === 'execute_python' ? 'Executing...'
@@ -1066,9 +1083,15 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
           {/* Command/execution output and tool result text */}
           {hasOutput && (
             <div>
-              <pre className="text-[11px] font-mono text-foreground/80 bg-muted/30 rounded-md px-2.5 py-2 max-h-[200px] overflow-auto whitespace-pre-wrap break-all">
-                {outputMessage}
-              </pre>
+              {renderOutputAsMarkdown ? (
+                <div className="rounded-md bg-muted/30 px-2.5 py-2">
+                  <MarkdownRenderer content={outputMessage} />
+                </div>
+              ) : (
+                <pre className="text-[11px] font-mono text-foreground/80 bg-muted/30 rounded-md px-2.5 py-2 max-h-[200px] overflow-auto whitespace-pre-wrap break-all">
+                  {outputMessage}
+                </pre>
+              )}
             </div>
           )}
 

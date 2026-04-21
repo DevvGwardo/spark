@@ -6,7 +6,7 @@ import { PanelProvider } from '@/contexts/PanelContext';
 import { useChangesetStore } from '@/stores/changeset-store';
 
 vi.mock('@/components/chat/MarkdownRenderer', () => ({
-  MarkdownRenderer: ({ content }: { content: string }) => <div>{content}</div>,
+  MarkdownRenderer: ({ content }: { content: string }) => <div data-testid="markdown-renderer">{content}</div>,
 }));
 
 vi.mock('@/components/chat/GhostIcon', () => ({
@@ -457,10 +457,44 @@ describe('MessageBubble', () => {
       </PanelProvider>,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Output' }));
+    fireEvent.click(screen.getByRole('button', { name: /Running command/ }));
 
     expect(screen.getByText('Running command')).toBeInTheDocument();
     expect(screen.getByText('Lint passed')).toBeInTheDocument();
+  });
+
+  it('routes bare local image path tool output through the markdown renderer', () => {
+    const localImageOutput = [
+      '/Users/devgwardo/.hermes/images/bar-agents.png',
+      '/Users/devgwardo/.hermes/images/foo-agents.png',
+    ].join('\n');
+
+    render(
+      <PanelProvider value="panel-1">
+        <MessageBubble
+          message={{
+            id: 'assistant-image-output',
+            conversationId: 'conv-1',
+            role: 'assistant',
+            content: '',
+            timestamp: new Date().toISOString(),
+          }}
+          toolActivity={[
+            {
+              tool: 'run_command',
+              status: 'completed',
+              input: '{"command":"banana generate"}',
+              output: localImageOutput,
+            },
+          ]}
+        />
+      </PanelProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Running command/ }));
+
+    expect(screen.getByTestId('markdown-renderer')).toHaveTextContent('/Users/devgwardo/.hermes/images/bar-agents.png');
+    expect(screen.getByTestId('markdown-renderer')).toHaveTextContent('/Users/devgwardo/.hermes/images/foo-agents.png');
   });
 
   it('shows a multi-file edit summary when Hermes activity does not include per-file inputs', () => {

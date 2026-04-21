@@ -88,8 +88,24 @@ ${lines}
     expect(image).toHaveAttribute('src', 'file:///tmp/foo.png');
   });
 
+  it('renders bare Hermes image path lines as images', () => {
+    render(
+      <MarkdownRenderer
+        content={[
+          '/Users/devgwardo/.hermes/images/bar-agents.png',
+          '/Users/devgwardo/.hermes/images/foo-agents.png',
+        ].join('\n')}
+      />,
+    );
+
+    expect(screen.getByRole('img', { name: '/Users/devgwardo/.hermes/images/bar-agents.png' }))
+      .toHaveAttribute('src', 'file:///Users/devgwardo/.hermes/images/bar-agents.png');
+    expect(screen.getByRole('img', { name: '/Users/devgwardo/.hermes/images/foo-agents.png' }))
+      .toHaveAttribute('src', 'file:///Users/devgwardo/.hermes/images/foo-agents.png');
+  });
+
   it('falls back from /tmp image path to ~/.hermes/images on load error', () => {
-    window.electronAPI = { homeDir: '/MOCKED_HOME' } as any;
+    window.electronAPI = { homeDir: '/MOCKED_HOME' } as Window['electronAPI'];
 
     render(<MarkdownRenderer content={'/tmp/foo.png'} />);
 
