@@ -1,0 +1,53 @@
+{
+  "name": "hermes-bridge-client",
+  "version": "0.1.0",
+  "description": "TypeScript client for the CloudChat Hermes bridge — SSE streaming, agent tool events, and session management against the Nous Research Hermes Agent.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "hermes",
+    "hermes-agent",
+    "nous-research",
+    "cloudchat",
+    "ai",
+    "agent",
+    "llm",
+    "sse",
+    "streaming",
+    "openai-compatible"
+  ],
+  "author": "DevGwardo",
+  "license": "PolyForm-Shield-1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DevvGwardo/cloud-chat-hub.git",
+    "directory": "packages/hermes-bridge-client"
+  },
+  "homepage": "https://github.com/DevvGwardo/cloud-chat-hub/tree/main/packages/hermes-bridge-client#readme",
+  "bugs": {
+    "url": "https://github.com/DevvGwardo/cloud-chat-hub/issues"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}
