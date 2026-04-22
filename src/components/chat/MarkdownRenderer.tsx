@@ -6,7 +6,6 @@ import rehypeKatex from 'rehype-katex';
 import { Check, ChevronDown, Copy, ExternalLink, Terminal } from 'lucide-react';
 import { codeToHtml } from 'shiki';
 import {
-  applyTmpImageFallback,
   defaultSafeUrlTransform,
   getImageUrl,
   getLocalImageTarget,
@@ -312,7 +311,6 @@ const MarkdownRendererInner = React.forwardRef<HTMLDivElement, MarkdownRendererP
                     className="max-h-[480px] max-w-full cursor-pointer rounded-lg border border-border/40 object-contain"
                     loading="lazy"
                     onClick={(event) => openExternalUrl(event.currentTarget.dataset.openUrl || imageTarget.openUrl)}
-                    onError={(event) => applyTmpImageFallback(event.currentTarget, imageTarget.path)}
                   />
                     <span className="mt-1 block text-[11px] text-muted-foreground/60 font-mono truncate">
                       {text.trim()}
@@ -381,7 +379,6 @@ const MarkdownRendererInner = React.forwardRef<HTMLDivElement, MarkdownRendererP
                     className="max-h-[480px] max-w-full cursor-pointer rounded-lg border border-border/40 object-contain"
                     loading="lazy"
                     onClick={(event) => openExternalUrl(event.currentTarget.dataset.openUrl || imageTarget.openUrl)}
-                    onError={(event) => applyTmpImageFallback(event.currentTarget, imageTarget.path)}
                     {...props}
                   />
                   <span className="mt-1 block text-[11px] text-muted-foreground/60 font-mono truncate">

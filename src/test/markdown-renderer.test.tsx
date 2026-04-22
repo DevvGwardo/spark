@@ -113,7 +113,7 @@ ${lines}
       .toHaveAttribute('src', assetUrl('/Users/devgwardo/.hermes/images/foo-agents.png'));
   });
 
-  it('falls back from /tmp image path to ~/.hermes/images on load error', () => {
+  it('keeps /tmp image paths unchanged on load error', () => {
     const fallbackHomeDir = '/Users/mockuser';
     const openExternal = vi.fn().mockResolvedValue(true);
     window.electronAPI = {
@@ -130,8 +130,8 @@ ${lines}
     fireEvent.error(image);
     fireEvent.click(image);
 
-    expect(image).toHaveAttribute('src', assetUrl('/Users/mockuser/.hermes/images/foo.png'));
-    expect(openExternal).toHaveBeenCalledWith('file:///Users/mockuser/.hermes/images/foo.png');
+    expect(image).toHaveAttribute('src', assetUrl('/tmp/foo.png'));
+    expect(openExternal).toHaveBeenCalledWith('file:///tmp/foo.png');
   });
 
   it('opens local images via file URLs when clicked', () => {

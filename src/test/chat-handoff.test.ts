@@ -140,6 +140,19 @@ describe('new thread handoff', () => {
       loadConversations: vi.fn().mockResolvedValue(undefined),
     }));
 
+    window.electronAPI = {
+      apiPort: 3001,
+      homeDir: '/Users/mockuser',
+      platform: 'darwin',
+      snapshotDir: '/Users/mockuser/Library/Application Support/CloudChat/image-snapshots',
+      snapshotLocalImage: vi.fn(async (path: string) => ({
+        url: `cloudchat-asset://snapshot/${path.includes('/tmp/') ? 'a'.repeat(64) : 'b'.repeat(64)}.png`,
+        hash: path.includes('/tmp/') ? 'a'.repeat(64) : 'b'.repeat(64),
+        path: `/Users/mockuser/Library/Application Support/CloudChat/image-snapshots/${path.includes('/tmp/') ? 'a'.repeat(64) : 'b'.repeat(64)}.png`,
+      })),
+      versions: { electron: '1', node: '1', chrome: '1' },
+    };
+
     aiChatState.messages = [];
     aiChatState.status = 'ready';
     latestUseChatOptions = null;
@@ -1659,6 +1672,84 @@ body { color: white; }
         ],
       }),
     );
+  });
+
+  it('snapshots same-basename local image references before persisting assistant messages', async () => {
+    renderHook(() => useChat('conv-1'));
+
+    const onFinish = latestUseChatOptions?.onFinish as
+      | ((message: {
+          id: string; role: string; content: string; parts?: unknown[]; toolInvocations?: unknown[];
+        }, options?: { finishReason?: string }) => Promise<void>)
+      | undefined;
+
+    expect(onFinish).toBeDefined();
+
+    await act(async () => {
+      await onFinish?.(
+        {
+          id: 'assistant-snapshots',
+          role: 'assistant',
+          content: 'Generated /tmp/foo.png and saved /Users/mockuser/.hermes/images/foo.png',
+          toolInvocations: [
+            {
+              toolName: 'run_command',
+              state: 'result',
+              result: {
+                output: '/tmp/foo.png',
+                nested: ['/Users/mockuser/.hermes/images/foo.png'],
+              },
+            },
+          ],
+        },
+        { finishReason: 'stop' },
+      );
+    });
+
+    expect(window.electronAPI?.snapshotLocalImage).toHaveBeenCalledWith('/tmp/foo.png');
+    expect(window.electronAPI?.snapshotLocalImage).toHaveBeenCalledWith('/Users/mockuser/.hermes/images/foo.png');
+    expect(dbMock.messages.add).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'assistant-snapshots',
+      conversationId: 'conv-1',
+      content: 'Generated cloudchat-asset://snapshot/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png and saved cloudchat-asset://snapshot/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.png',
+      toolInvocations: expect.arrayContaining([
+        expect.objectContaining({
+          result: {
+            output: 'cloudchat-asset://snapshot/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png',
+            nested: ['cloudchat-asset://snapshot/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.png'],
+          },
+        }),
+      ]),
+    }));
+  });
+
+  it('leaves original local image references intact when snapshot IPC fails', async () => {
+    window.electronAPI = {
+      ...window.electronAPI,
+      snapshotLocalImage: vi.fn().mockRejectedValue(new Error('missing file')),
+    };
+
+    renderHook(() => useChat('conv-1'));
+
+    const onFinish = latestUseChatOptions?.onFinish as
+      | ((message: {
+          id: string; role: string; content: string; parts?: unknown[]; toolInvocations?: unknown[];
+        }, options?: { finishReason?: string }) => Promise<void>)
+      | undefined;
+
+    await expect(onFinish?.(
+      {
+        id: 'assistant-snapshot-failure',
+        role: 'assistant',
+        content: 'Generated /tmp/foo.png',
+      },
+      { finishReason: 'stop' },
+    )).resolves.toBeUndefined();
+
+    expect(dbMock.messages.add).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'assistant-snapshot-failure',
+      content: 'Generated /tmp/foo.png',
+    }));
   });
 
   it('auto-continues read-only Hermes repo analysis after a server-side repo read ends with an unknown finish', async () => {

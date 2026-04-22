@@ -3,6 +3,7 @@ import os from 'os'
 
 // Main process sets ELECTRON_API_PORT env var before creating BrowserWindow
 const apiPort = Number(process.env.ELECTRON_API_PORT) || 3001
+const snapshotDir = process.env.CLOUDCHAT_IMAGE_SNAPSHOT_DIR || ''
 
 contextBridge.exposeInMainWorld('electronAPI', {
   versions: {
@@ -12,10 +13,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   platform: process.platform,
   homeDir: os.homedir(),
+  snapshotDir,
   apiPort,
   getAppVersion: (): Promise<string> => ipcRenderer.invoke('app:get-version'),
   openrouterOAuth: (): Promise<string> => ipcRenderer.invoke('openrouter:oauth'),
   openExternal: (url: string): Promise<boolean> => ipcRenderer.invoke('shell:open-external', url),
+  snapshotLocalImage: (path: string): Promise<{ url: string; hash: string; path: string }> =>
+    ipcRenderer.invoke('cloudchat:snapshotLocalImage', path),
   notifyAttentionRequest: (payload?: { title?: string; body?: string }) => ipcRenderer.invoke('app:notify-attention', payload),
   clearAttentionRequest: () => ipcRenderer.invoke('app:clear-attention'),
   terminal: {

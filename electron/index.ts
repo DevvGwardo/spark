@@ -1,7 +1,8 @@
 import { app, BrowserView, BrowserWindow, globalShortcut, ipcMain, Menu, Notification, Tray, nativeImage, net, protocol, shell } from 'electron'
-import { existsSync, statSync } from 'fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync } from 'fs'
 import { homedir } from 'os'
-import { join } from 'path'
+import { createHash } from 'crypto'
+import { extname, join, resolve } from 'path'
 import { pathToFileURL } from 'url'
 import { is } from '@electron-toolkit/utils'
 import { startEmbeddedServer } from './server'
@@ -25,6 +26,7 @@ const CLOUDCHAT_ASSET_ROOTS = {
   hermes: join(homedir(), '.hermes/images'),
   tmp: '/tmp',
 } as const
+const SNAPSHOT_FILENAME_RE = /^[0-9a-f]{64}\.(png|jpe?g|gif|webp|svg|avif|bmp)$/
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -80,12 +82,50 @@ function assetTextResponse(status: number, body: string) {
 }
 
 function getAssetRoot(host: string) {
+  if (host === 'snapshot') return getSnapshotDir()
   if (host === 'hermes') return CLOUDCHAT_ASSET_ROOTS.hermes
   if (host === 'tmp') return CLOUDCHAT_ASSET_ROOTS.tmp
   return null
 }
 
-function getAssetBasename(pathname: string) {
+function getSnapshotDir() {
+  return join(app.getPath('userData'), 'image-snapshots')
+}
+
+function ensureSnapshotDir() {
+  const snapshotDir = getSnapshotDir()
+  mkdirSync(snapshotDir, { recursive: true })
+  return snapshotDir
+}
+
+function isWithinRoot(path: string, root: string) {
+  const resolvedPath = resolve(path)
+  const resolvedRoot = resolve(root)
+  return resolvedPath === resolvedRoot || resolvedPath.startsWith(`${resolvedRoot}/`)
+}
+
+function resolveAllowedImagePath(inputPath: string) {
+  if (!inputPath || !inputPath.startsWith('/')) {
+    return null
+  }
+
+  let resolvedPath: string
+  try {
+    resolvedPath = realpathSync(inputPath)
+  } catch {
+    return null
+  }
+  const allowedRoots = [
+    CLOUDCHAT_ASSET_ROOTS.tmp,
+    CLOUDCHAT_ASSET_ROOTS.hermes,
+  ]
+
+  return allowedRoots.some((root) => isWithinRoot(resolvedPath, root))
+    ? resolvedPath
+    : null
+}
+
+function getAssetBasename(host: string, pathname: string) {
   const rawBasename = pathname.startsWith('/') ? pathname.slice(1) : pathname
   if (!rawBasename) return null
 
@@ -97,6 +137,10 @@ function getAssetBasename(pathname: string) {
   }
 
   if (!basename || basename.includes('..') || basename.includes('/') || basename.includes('\\')) {
+    return null
+  }
+
+  if (host === 'snapshot' && !SNAPSHOT_FILENAME_RE.test(basename)) {
     return null
   }
 
@@ -113,7 +157,7 @@ function registerLocalAssetProtocol() {
     }
 
     const root = getAssetRoot(url.hostname)
-    const basename = getAssetBasename(url.pathname)
+    const basename = getAssetBasename(url.hostname, url.pathname)
     if (!root || !basename) {
       return assetTextResponse(400, 'Bad Request')
     }
@@ -132,8 +176,50 @@ function registerLocalAssetProtocol() {
   })
 }
 
+ipcMain.handle('cloudchat:snapshotLocalImage', async (_event, inputPath: string) => {
+  if (typeof inputPath !== 'string') {
+    throw new Error('Invalid image path')
+  }
+
+  const resolvedPath = resolveAllowedImagePath(inputPath)
+  if (!resolvedPath) {
+    throw new Error('Image path is outside allowed roots')
+  }
+
+  let fileData: Buffer
+  try {
+    if (!statSync(resolvedPath).isFile()) {
+      throw new Error('Image path is not a file')
+    }
+    fileData = readFileSync(resolvedPath)
+  } catch (error) {
+    throw new Error(error instanceof Error ? error.message : 'Unable to read image file')
+  }
+
+  const hash = createHash('sha256').update(fileData).digest('hex')
+  const extension = extname(resolvedPath).toLowerCase()
+  const snapshotBasename = `${hash}${extension}`
+  if (!SNAPSHOT_FILENAME_RE.test(snapshotBasename)) {
+    throw new Error('Unsupported image extension')
+  }
+
+  const snapshotDir = ensureSnapshotDir()
+  const snapshotPath = join(snapshotDir, snapshotBasename)
+
+  if (!existsSync(snapshotPath)) {
+    copyFileSync(resolvedPath, snapshotPath)
+  }
+
+  return {
+    url: `${CLOUDCHAT_ASSET_PROTOCOL}://snapshot/${snapshotBasename}`,
+    hash,
+    path: snapshotPath,
+  }
+})
+
 async function createWindow() {
   process.env.CLOUDCHAT_USER_DATA_DIR = app.getPath('userData')
+  process.env.CLOUDCHAT_IMAGE_SNAPSHOT_DIR = getSnapshotDir()
 
   // Start embedded Express server
   apiPort = await startEmbeddedServer()

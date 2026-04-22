@@ -1,7 +1,7 @@
-const LOCAL_PATH_RE = /^\/(?:Users|home|tmp|var|opt|etc|private)\/\S+$/;
+const LOCAL_PATH_RE = /^\/(?:Users|home|tmp|var|opt|etc|private)\/.+$/;
 const CLOUDCHAT_ASSET_PROTOCOL = 'cloudchat-asset:';
 const HERMES_IMAGE_PATH_RE = /^\/(?:Users|home)\/[^/]+\/\.hermes\/images\/[^/]+$/;
-const TMP_IMAGE_PATH_RE = /^\/tmp\/[^/]+\.(?:png|jpe?g|gif|webp|svg|avif|bmp)$/i;
+const SNAPSHOT_BASENAME_RE = /^[0-9a-f]{64}\.(png|jpe?g|gif|webp|svg|avif|bmp)$/;
 const IMAGE_EXT_RE = /\.(?:png|jpe?g|gif|webp|svg|avif|bmp)(?:\?\S*)?$/i;
 
 export const LOCAL_IMAGE_TOKEN_RE = /(^|\s)(?:MEDIA:|:)?((?:~\/\S+?|\/(?:Users|home|tmp|var|opt|etc|private)\/\S+?)\.(?:png|jpe?g|gif|webp|svg|avif|bmp))([.,)\];:]+)?(?=\s|$)/gi;
@@ -41,6 +41,15 @@ function isSafeAssetBasename(basename: string): boolean {
 }
 
 function getLocalImageAssetUrl(path: string): string | null {
+  const snapshotDir = window.electronAPI?.snapshotDir;
+  if (snapshotDir) {
+    const snapshotPrefix = `${snapshotDir}/`;
+    const snapshotBasename = path.startsWith(snapshotPrefix) ? path.slice(snapshotPrefix.length) : null;
+    if (snapshotBasename && SNAPSHOT_BASENAME_RE.test(snapshotBasename)) {
+      return `cloudchat-asset://snapshot/${encodeURIComponent(snapshotBasename)}`;
+    }
+  }
+
   const tmpBasename = path.startsWith('/tmp/') ? path.slice('/tmp/'.length) : null;
   if (tmpBasename && isSafeAssetBasename(tmpBasename)) {
     return `cloudchat-asset://tmp/${encodeURIComponent(tmpBasename)}`;
@@ -86,6 +95,12 @@ function getCloudChatAssetPath(text: string): string | null {
       return `${homeDir}/.hermes/images/${basename}`;
     }
 
+    if (url.hostname === 'snapshot') {
+      const snapshotDir = window.electronAPI?.snapshotDir;
+      if (!snapshotDir || !SNAPSHOT_BASENAME_RE.test(basename)) return null;
+      return `${snapshotDir}/${basename}`;
+    }
+
     return null;
   } catch {
     return null;
@@ -97,7 +112,7 @@ export function getLocalAbsolutePath(text: string): string | null {
   const assetPath = getCloudChatAssetPath(trimmed);
   if (assetPath) return assetPath;
 
-  if (/^file:\/\/\/\S+$/i.test(trimmed)) {
+  if (/^file:\/\/\/.+$/i.test(trimmed)) {
     try {
       const pathname = decodeURIComponent(new URL(trimmed).pathname);
       return LOCAL_PATH_RE.test(pathname) ? pathname : null;
@@ -163,22 +178,4 @@ export function rewriteLocalImageTokens(markdown: string): string {
     if (!imageUrl) return match;
     return `${leading}![${path}](${imageUrl})${trailing}`;
   });
-}
-
-export function applyTmpImageFallback(img: HTMLImageElement, source: string) {
-  if (img.dataset.fallbackTried) return;
-
-  const currentPath = getLocalAbsolutePath(source);
-  if (!currentPath || !TMP_IMAGE_PATH_RE.test(currentPath)) return;
-
-  const homeDir = window.electronAPI?.homeDir;
-  if (!homeDir) return;
-
-  const basename = currentPath.slice(currentPath.lastIndexOf('/') + 1);
-  const fallbackTarget = getLocalImageTarget(`${homeDir}/.hermes/images/${basename}`);
-  if (!fallbackTarget) return;
-
-  img.dataset.fallbackTried = '1';
-  img.dataset.openUrl = fallbackTarget.openUrl;
-  img.src = fallbackTarget.srcUrl;
 }

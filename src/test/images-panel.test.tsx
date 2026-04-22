@@ -281,7 +281,7 @@ describe('ImagesPanel component', () => {
     });
   });
 
-  it('falls back from tmp thumbnails to hermes image assets on load error', async () => {
+  it('keeps tmp thumbnails unchanged on load error', async () => {
     const { db } = await import('@/lib/db');
     vi.mocked(db.conversations.getAll).mockResolvedValue([
       { id: 'c1', title: 'Chat 1', provider: 'anthropic', model: 'm', systemPrompt: '', createdAt: '', updatedAt: '' },
@@ -301,6 +301,6 @@ describe('ImagesPanel component', () => {
 
     fireEvent.error(image);
 
-    expect(image).toHaveAttribute('src', assetUrl('/Users/mockuser/.hermes/images/foo.png'));
+    expect(image).toHaveAttribute('src', assetUrl('/tmp/foo.png'));
   });
 });

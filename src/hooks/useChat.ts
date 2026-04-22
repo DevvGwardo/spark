@@ -30,6 +30,7 @@ import { getErrorMessage } from '@/lib/errors';
 import { handleServerToolEvent, SERVER_EXECUTED_REPO_TOOLS, type ServerToolEvent } from '@/lib/server-tool-events';
 import { getChatScopeId } from '@/lib/chat-scope';
 import { extractPseudoToolInvocations, extractTextFileEdits, getPseudoToolSourceText } from '@/lib/pseudo-tool-calls';
+import { getLocalAbsolutePath, LOCAL_IMAGE_TOKEN_RE } from '@/lib/local-images';
 import {
   normalizeBatchEditRepoFilesArgs,
   normalizeCreateRepoFileArgs,
@@ -170,6 +171,169 @@ function pickPreferredArray(primary?: unknown[], secondary?: unknown[]): unknown
   }
 
   return primary ?? secondary;
+}
+
+type SnapshotLocalImageResult = { url: string; hash: string; path: string };
+
+function replaceLocalImageRefsInText(
+  text: string,
+  replacements: Map<string, string>,
+): string {
+  const directPath = getLocalAbsolutePath(text);
+  if (directPath) {
+    return replacements.get(directPath) ?? text;
+  }
+
+  const tokenRegex = new RegExp(LOCAL_IMAGE_TOKEN_RE);
+  return text.replace(tokenRegex, (match: string, leading: string, path: string, trailing = '') => {
+    const absolutePath = getLocalAbsolutePath(path);
+    const replacement = absolutePath ? replacements.get(absolutePath) : null;
+    if (!replacement) return match;
+    return `${leading}${replacement}${trailing}`;
+  });
+}
+
+function collectLocalImagePathsFromText(text: string, paths: Set<string>) {
+  const directPath = getLocalAbsolutePath(text);
+  if (directPath) {
+    paths.add(directPath);
+  }
+
+  const tokenRegex = new RegExp(LOCAL_IMAGE_TOKEN_RE);
+  for (const match of text.matchAll(tokenRegex)) {
+    const absolutePath = getLocalAbsolutePath(match[2] ?? '');
+    if (absolutePath) {
+      paths.add(absolutePath);
+    }
+  }
+}
+
+function collectLocalImagePathsFromValue(value: unknown, paths: Set<string>) {
+  if (typeof value === 'string') {
+    collectLocalImagePathsFromText(value, paths);
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectLocalImagePathsFromValue(item, paths);
+    }
+    return;
+  }
+
+  if (!value || typeof value !== 'object') {
+    return;
+  }
+
+  for (const nestedValue of Object.values(value)) {
+    collectLocalImagePathsFromValue(nestedValue, paths);
+  }
+}
+
+function replaceLocalImageRefsInValue(value: unknown, replacements: Map<string, string>): unknown {
+  if (typeof value === 'string') {
+    return replaceLocalImageRefsInText(value, replacements);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => replaceLocalImageRefsInValue(item, replacements));
+  }
+
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, nestedValue]) => [
+      key,
+      replaceLocalImageRefsInValue(nestedValue, replacements),
+    ]),
+  );
+}
+
+async function snapshotAssistantMessageImages(
+  message: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const snapshotLocalImage = window.electronAPI?.snapshotLocalImage;
+  if (!snapshotLocalImage) {
+    return message;
+  }
+
+  const localImagePaths = new Set<string>();
+  if (typeof message.content === 'string') {
+    collectLocalImagePathsFromText(message.content, localImagePaths);
+  }
+
+  const parts = Array.isArray(message.parts) ? message.parts : [];
+  for (const part of parts) {
+    if (!part || typeof part !== 'object') continue;
+    const invocation = (part as { toolInvocation?: { result?: unknown } }).toolInvocation;
+    collectLocalImagePathsFromValue(invocation?.result, localImagePaths);
+  }
+
+  const toolInvocations = Array.isArray(message.toolInvocations) ? message.toolInvocations : [];
+  for (const invocation of toolInvocations) {
+    if (!invocation || typeof invocation !== 'object') continue;
+    const result = (invocation as { result?: unknown }).result;
+    collectLocalImagePathsFromValue(result, localImagePaths);
+  }
+
+  if (localImagePaths.size === 0) {
+    return message;
+  }
+
+  const replacements = new Map<string, string>();
+  await Promise.all(Array.from(localImagePaths).map(async (path) => {
+    try {
+      const snapshot = await snapshotLocalImage(path) as SnapshotLocalImageResult;
+      if (snapshot?.url) {
+        replacements.set(path, snapshot.url);
+      }
+    } catch {
+      // Leave original references intact when snapshotting is unavailable.
+    }
+  }));
+
+  if (replacements.size === 0) {
+    return message;
+  }
+
+  const nextMessage: Record<string, unknown> = { ...message };
+
+  if (typeof nextMessage.content === 'string') {
+    nextMessage.content = replaceLocalImageRefsInText(nextMessage.content, replacements);
+  }
+
+  if (parts.length > 0) {
+    nextMessage.parts = parts.map((part) => {
+      if (!part || typeof part !== 'object') return part;
+      const toolInvocation = (part as { toolInvocation?: { result?: unknown } }).toolInvocation;
+      if (typeof toolInvocation?.result === 'undefined') return part;
+
+      return {
+        ...part,
+        toolInvocation: {
+          ...toolInvocation,
+          result: replaceLocalImageRefsInValue(toolInvocation.result, replacements),
+        },
+      };
+    });
+  }
+
+  if (toolInvocations.length > 0) {
+    nextMessage.toolInvocations = toolInvocations.map((invocation) => {
+      if (!invocation || typeof invocation !== 'object') return invocation;
+      const result = (invocation as { result?: unknown }).result;
+      if (typeof result === 'undefined') return invocation;
+
+      return {
+        ...invocation,
+        result: replaceLocalImageRefsInValue(result, replacements),
+      };
+    });
+  }
+
+  return nextMessage;
 }
 
 function buildAssistantSnapshotForPersistence(params: {
@@ -564,15 +728,17 @@ When the user asks you to make changes:
       return;
     }
 
-    const parts = asUnknownArray(snapshot.parts);
-    const toolInvocations = asUnknownArray(snapshot.toolInvocations);
+    const persistedSnapshot = await snapshotAssistantMessageImages(snapshot);
+
+    const parts = asUnknownArray(persistedSnapshot.parts);
+    const toolInvocations = asUnknownArray(persistedSnapshot.toolInvocations);
 
     await upsertStoredMessage({
       id: messageId,
       conversationId: convId,
       role: 'assistant',
-      content: typeof snapshot.content === 'string' ? snapshot.content : '',
-      timestamp: typeof snapshot.timestamp === 'string' ? snapshot.timestamp : timestamp,
+      content: typeof persistedSnapshot.content === 'string' ? persistedSnapshot.content : '',
+      timestamp: typeof persistedSnapshot.timestamp === 'string' ? persistedSnapshot.timestamp : timestamp,
       parts,
       toolInvocations: toolInvocations && toolInvocations.length > 0
         ? toolInvocations

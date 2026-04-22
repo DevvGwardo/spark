@@ -6,10 +6,12 @@ export interface ElectronAPI {
   }
   platform: string
   homeDir: string
+  snapshotDir?: string
   apiPort: number
   getAppVersion?: () => Promise<string>
   openrouterOAuth?: () => Promise<string>
   openExternal?: (url: string) => Promise<boolean>
+  snapshotLocalImage?: (path: string) => Promise<{ url: string; hash: string; path: string }>
   notifyAttentionRequest?: (payload?: { title?: string; body?: string }) => Promise<void>
   clearAttentionRequest?: () => Promise<void>
   terminal?: {

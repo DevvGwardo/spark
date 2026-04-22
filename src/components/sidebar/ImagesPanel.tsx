@@ -4,7 +4,6 @@ import { cn } from '@/lib/utils';
 import { db, type Conversation, type Message } from '@/lib/db';
 import { relativeTime } from '@/lib/relative-time';
 import {
-  applyTmpImageFallback,
   getLocalImageTarget,
   LOCAL_IMAGE_TOKEN_RE,
 } from '@/lib/local-images';
@@ -179,13 +178,7 @@ function ImageThumbnail({ image }: { image: ImageItem }) {
       alt=""
       className="h-full w-full object-cover"
       loading="lazy"
-      onError={(event) => {
-        const nextSrc = event.currentTarget.currentSrc;
-        applyTmpImageFallback(event.currentTarget, image.url);
-        if (event.currentTarget.currentSrc === nextSrc) {
-          setHasError(true);
-        }
-      }}
+      onError={() => setHasError(true)}
     />
   );
 }
@@ -272,13 +265,7 @@ function Lightbox({
             src={current.srcUrl}
             alt=""
             className="max-h-[85vh] max-w-full object-contain"
-            onError={(event) => {
-              const nextSrc = event.currentTarget.currentSrc;
-              applyTmpImageFallback(event.currentTarget, current.url);
-              if (event.currentTarget.currentSrc === nextSrc) {
-                setHasError(true);
-              }
-            }}
+            onError={() => setHasError(true)}
           />
         )}
         <div className="mt-3 flex flex-col items-center gap-2 text-center text-[12px] text-white/60">
