@@ -13,6 +13,7 @@ import {
   isImageSrcUrl,
   rewriteLocalImageTokens,
 } from '@/lib/local-images';
+import { MermaidDiagram } from './MermaidDiagram';
 
 const LANG_LABELS: Record<string, string> = {
   js: 'javascript',
@@ -298,6 +299,9 @@ const MarkdownRendererInner = React.forwardRef<HTMLDivElement, MarkdownRendererP
               const text = extractText(children);
               const isBlock = className?.includes('language-') || text.includes('\n');
               if (isBlock) {
+                if (className === 'language-mermaid') {
+                  return <MermaidDiagram source={text.replace(/\n$/, '')} />;
+                }
                 return <CodeBlock className={className} {...props}>{children}</CodeBlock>;
               }
               const imageTarget = getLocalImageTarget(text);
