@@ -17,6 +17,7 @@ export interface Conversation {
   forkPointMessageId?: string;
   forkNumber?: number;
   originalCreatedAt?: string;
+  archivedAt?: string | null;
 }
 
 export interface Message {
@@ -172,11 +173,16 @@ async function getLegacyTx(storeName: string, mode: IDBTransactionMode) {
 
 const legacyDb = {
   conversations: {
-    async getAll(): Promise<Conversation[]> {
+    async getAll(options: { includeArchived?: boolean; archivedOnly?: boolean } = {}): Promise<Conversation[]> {
       const { store, complete } = await getLegacyTx('conversations', 'readonly');
       const all = await reqToPromise<Conversation[]>(store.getAll());
       await complete;
-      return all.sort((a, b) => {
+      const filtered = options.archivedOnly
+        ? all.filter((c) => c.archivedAt)
+        : options.includeArchived
+          ? all
+          : all.filter((c) => !c.archivedAt);
+      return filtered.sort((a, b) => {
         if (a.pinned && !b.pinned) return -1;
         if (!a.pinned && b.pinned) return 1;
         return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
@@ -298,10 +304,16 @@ async function requestServer<T>(
 
 const serverDb = {
   conversations: {
-    async getAll(): Promise<Conversation[]> {
-      const response = await requestServer<{ conversations: Conversation[] }>(
-        '/functions/v1/chat-store/conversations',
-      );
+    async getAll(options: { includeArchived?: boolean; archivedOnly?: boolean } = {}): Promise<Conversation[]> {
+      const params = new URLSearchParams();
+      if (options.archivedOnly) {
+        params.set('archivedOnly', '1');
+      } else if (options.includeArchived) {
+        params.set('includeArchived', '1');
+      }
+      const query = params.toString();
+      const path = query ? `/functions/v1/chat-store/conversations?${query}` : '/functions/v1/chat-store/conversations';
+      const response = await requestServer<{ conversations: Conversation[] }>(path);
       return response?.conversations ?? [];
     },
     async add(conversation: Conversation): Promise<void> {
@@ -395,12 +407,12 @@ async function ensureServerMigration(): Promise<void> {
       return;
     }
 
-    const serverConversations = await serverDb.conversations.getAll();
+    const serverConversations = await serverDb.conversations.getAll({ includeArchived: true });
     if (serverConversations.length > 0) {
       return;
     }
 
-    const legacyConversations = await legacyDb.conversations.getAll();
+    const legacyConversations = await legacyDb.conversations.getAll({ includeArchived: true });
     if (legacyConversations.length === 0) {
       return;
     }
@@ -452,10 +464,10 @@ async function withBackend<T>(
 
 export const db = {
   conversations: {
-    async getAll(): Promise<Conversation[]> {
+    async getAll(options: { includeArchived?: boolean; archivedOnly?: boolean } = {}): Promise<Conversation[]> {
       return withBackend(
-        () => serverDb.conversations.getAll(),
-        () => legacyDb.conversations.getAll(),
+        () => serverDb.conversations.getAll(options),
+        () => legacyDb.conversations.getAll(options),
       );
     },
     async add(conversation: Conversation): Promise<void> {
@@ -524,6 +536,14 @@ export const db = {
     },
   },
 };
+
+export async function archiveConversation(id: string): Promise<void> {
+  await db.conversations.update(id, { archivedAt: new Date().toISOString() });
+}
+
+export async function unarchiveConversation(id: string): Promise<void> {
+  await db.conversations.update(id, { archivedAt: null });
+}
 
 async function loadConversationForExport(id: string): Promise<{ conversation: Conversation; messages: Message[] }> {
   const conversations = await db.conversations.getAll();

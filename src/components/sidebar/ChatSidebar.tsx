@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork, Search, ChevronRight, Zap, Clock, House, BookOpen, Sparkles, BarChart3, User, Network, Image, Download, Upload } from 'lucide-react';
+import { Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork, Search, ChevronRight, Zap, Clock, House, BookOpen, Sparkles, BarChart3, User, Network, Image, Download, Upload, Archive, ArchiveRestore, ChevronDown } from 'lucide-react';
 import { Github } from 'lucide-react';
 import { GhostIcon } from '@/components/chat/GhostIcon';
 import { useChatStore } from '@/stores/chat-store';
@@ -86,11 +86,14 @@ const HERMES_SUB_TABS: Array<{ key: SubTab; label: string; icon: React.Component
 export const ChatSidebar: React.FC = () => {
   const {
     conversations,
+    archivedConversations,
     loadConversations,
     deleteConversation,
     deleteOldConversations,
     renameConversation,
     pinConversation,
+    archiveConversation,
+    unarchiveConversation,
   } = useChatStore();
 
   const { panels, focusedPanelId, setConversationForPanel, openPanel } = usePanelStore();
@@ -107,6 +110,8 @@ export const ChatSidebar: React.FC = () => {
   const [cleanupCount, setCleanupCount] = useState(0);
   const [showTreeOverlay, setShowTreeOverlay] = useState(false);
   const [exportMenuId, setExportMenuId] = useState<string | null>(null);
+  const [archivedOpen, setArchivedOpen] = useState(false);
+  const [focusedRowId, setFocusedRowId] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const isHermes = activeProvider === 'hermes';
 
@@ -149,6 +154,34 @@ export const ChatSidebar: React.FC = () => {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [showTreeOverlay]);
+
+  // Press "E" on a focused sidebar row to archive / unarchive.
+  // Scoped to avoid hijacking typing: only fires when focus is on a sidebar
+  // row (tracked via focusedRowId) and no text input / textarea / contentEditable
+  // element is focused.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'e' && e.key !== 'E') return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (!focusedRowId) return;
+      const target = document.activeElement as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) {
+          return;
+        }
+      }
+      const archived = archivedConversations.some((c) => c.id === focusedRowId);
+      e.preventDefault();
+      if (archived) {
+        void unarchiveConversation(focusedRowId);
+      } else {
+        void archiveConversation(focusedRowId);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [focusedRowId, archivedConversations, archiveConversation, unarchiveConversation]);
 
   // Listen for "New Chat" from Electron tray/dock menu
   useEffect(() => {
@@ -444,7 +477,7 @@ export const ChatSidebar: React.FC = () => {
 
       {/* Thread list */}
       <div className="flex-1 overflow-y-auto px-3 pb-3">
-        {conversations.length === 0 ? (
+        {conversations.length === 0 && archivedConversations.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 px-4">
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-background/60 mb-4">
               <MessageSquare className="h-6 w-6 text-muted-foreground/40" />
@@ -473,9 +506,12 @@ export const ChatSidebar: React.FC = () => {
                   return (
                     <div
                       key={conv.id}
+                      tabIndex={0}
                       onClick={() => handleSelectConversation(conv.id)}
+                      onFocus={() => setFocusedRowId(conv.id)}
+                      onBlur={() => setFocusedRowId((current) => (current === conv.id ? null : current))}
                       className={cn(
-                        'group mb-1 flex cursor-pointer flex-col gap-0.5 rounded-[10px] px-4 py-2.5 text-[13px] transition-colors duration-100',
+                        'group mb-1 flex cursor-pointer flex-col gap-0.5 rounded-[10px] px-4 py-2.5 text-[13px] transition-colors duration-100 focus:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--ring))]',
                         isFocused
                           ? 'bg-[#FF840010] border-l-2 border-l-[#FF840020]'
                           : isInAnotherPanel
@@ -616,6 +652,14 @@ export const ChatSidebar: React.FC = () => {
                                 )}
                               </div>
                               <button
+                                onClick={(e) => { e.stopPropagation(); void archiveConversation(conv.id); }}
+                                className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-background/80 hover:text-foreground"
+                                title="Archive (E)"
+                                aria-label="Archive conversation"
+                              >
+                                <Archive className="h-3 w-3" />
+                              </button>
+                              <button
                                 onClick={(e) => { e.stopPropagation(); setDeleteConfirm(conv.id); }}
                                 className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-background/80 hover:text-destructive"
                               >
@@ -655,6 +699,43 @@ export const ChatSidebar: React.FC = () => {
               >
                 Show more
               </button>
+            )}
+
+            {archivedConversations.length > 0 && (
+              <div className="mt-3">
+                <button
+                  onClick={() => setArchivedOpen((v) => !v)}
+                  className="flex w-full items-center gap-1.5 px-4 pt-4 pb-1 text-[10px] font-semibold uppercase tracking-[1.2px] text-[#666666] transition-colors hover:text-[hsl(var(--text-secondary))]"
+                  aria-expanded={archivedOpen}
+                  aria-label={`Archived (${archivedConversations.length})`}
+                >
+                  {archivedOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                  <span>Archived ({archivedConversations.length})</span>
+                </button>
+                {archivedOpen && archivedConversations.map((conv) => (
+                  <div
+                    key={conv.id}
+                    tabIndex={0}
+                    onClick={() => handleSelectConversation(conv.id)}
+                    onFocus={() => setFocusedRowId(conv.id)}
+                    onBlur={() => setFocusedRowId((current) => (current === conv.id ? null : current))}
+                    className="group mb-1 flex cursor-pointer items-center gap-2 rounded-[10px] px-4 py-2 text-[13px] text-[hsl(var(--text-tertiary))] transition-colors duration-100 hover:bg-[hsl(var(--sidebar-active))]/40 focus:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--ring))]"
+                  >
+                    <span className="min-w-0 flex-1 truncate font-medium opacity-70">{conv.title}</span>
+                    <span className="shrink-0 text-[11px] tabular-nums text-[hsl(var(--text-dim))]">
+                      {relativeTime(conv.archivedAt || conv.updatedAt || conv.createdAt)}
+                    </span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); void unarchiveConversation(conv.id); }}
+                      className="rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-background/80 hover:text-foreground group-hover:opacity-100"
+                      title="Unarchive (E)"
+                      aria-label="Unarchive conversation"
+                    >
+                      <ArchiveRestore className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
             )}
           </>
         )}

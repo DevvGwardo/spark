@@ -1,10 +1,11 @@
 import { create } from 'zustand';
-import { db, type Conversation } from '@/lib/db';
+import { archiveConversation, db, unarchiveConversation, type Conversation } from '@/lib/db';
 
 interface ChatState {
   planMode: boolean;
   setPlanMode: (enabled: boolean) => void;
   conversations: Conversation[];
+  archivedConversations: Conversation[];
   activeConversationId: string | null;
   searchQuery: string;
 
@@ -14,6 +15,8 @@ interface ChatState {
   deleteConversation: (id: string) => Promise<void>;
   renameConversation: (id: string, title: string) => Promise<void>;
   pinConversation: (id: string, pinned: boolean) => Promise<void>;
+  archiveConversation: (id: string) => Promise<void>;
+  unarchiveConversation: (id: string) => Promise<void>;
   deleteOldConversations: (olderThanDays: number) => Promise<number>;
   setSearchQuery: (q: string) => void;
   clearActiveConversation: () => void;
@@ -27,12 +30,16 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   planMode: false,
   setPlanMode: (enabled) => set({ planMode: enabled }),
   conversations: [],
+  archivedConversations: [],
   activeConversationId: null,
   searchQuery: '',
 
   loadConversations: async () => {
-    const conversations = await db.conversations.getAll();
-    set({ conversations });
+    const [conversations, archivedConversations] = await Promise.all([
+      db.conversations.getAll(),
+      db.conversations.getAll({ archivedOnly: true }),
+    ]);
+    set({ conversations, archivedConversations });
   },
 
   createConversation: async (provider, model, systemPrompt) => {
@@ -74,6 +81,20 @@ export const useChatStore = create<ChatState>()((set, get) => ({
 
   pinConversation: async (id, pinned) => {
     await db.conversations.update(id, { pinned });
+    await get().loadConversations();
+  },
+
+  archiveConversation: async (id) => {
+    await archiveConversation(id);
+    const { activeConversationId } = get();
+    if (activeConversationId === id) {
+      set({ activeConversationId: null });
+    }
+    await get().loadConversations();
+  },
+
+  unarchiveConversation: async (id) => {
+    await unarchiveConversation(id);
     await get().loadConversations();
   },
 

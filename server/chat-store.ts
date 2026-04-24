@@ -21,6 +21,7 @@ interface ConversationRow {
   lines_added: number;
   lines_removed: number;
   original_created_at: string | null;
+  archived_at: string | null;
 }
 
 interface MessageRow {
@@ -76,6 +77,10 @@ function toConversation(row: ConversationRow): Conversation {
 
   if (typeof row.original_created_at === 'string') {
     conversation.originalCreatedAt = row.original_created_at;
+  }
+
+  if (typeof row.archived_at === 'string') {
+    conversation.archivedAt = row.archived_at;
   }
 
   return conversation;
@@ -149,7 +154,8 @@ const SCHEMA_SQL = `
     pinned INTEGER NOT NULL DEFAULT 0,
     lines_added INTEGER NOT NULL DEFAULT 0,
     lines_removed INTEGER NOT NULL DEFAULT 0,
-    original_created_at TEXT
+    original_created_at TEXT,
+    archived_at TEXT
   );
 
   CREATE TABLE IF NOT EXISTS messages (
@@ -178,23 +184,43 @@ const SCHEMA_SQL = `
 
 const SQL = {
   listConversations: `
-    SELECT id, title, provider, model, system_prompt, created_at, updated_at, pinned, lines_added, lines_removed, original_created_at
+    SELECT id, title, provider, model, system_prompt, created_at, updated_at, pinned, lines_added, lines_removed, original_created_at, archived_at
+    FROM conversations
+    WHERE archived_at IS NULL
+    ORDER BY pinned DESC, updated_at DESC
+    LIMIT :limit OFFSET :offset
+  `,
+  listConversationsAll: `
+    SELECT id, title, provider, model, system_prompt, created_at, updated_at, pinned, lines_added, lines_removed, original_created_at, archived_at
     FROM conversations
     ORDER BY pinned DESC, updated_at DESC
     LIMIT :limit OFFSET :offset
   `,
+  listConversationsArchived: `
+    SELECT id, title, provider, model, system_prompt, created_at, updated_at, pinned, lines_added, lines_removed, original_created_at, archived_at
+    FROM conversations
+    WHERE archived_at IS NOT NULL
+    ORDER BY archived_at DESC
+    LIMIT :limit OFFSET :offset
+  `,
   countConversations: `
+    SELECT COUNT(*) as total FROM conversations WHERE archived_at IS NULL
+  `,
+  countConversationsAll: `
     SELECT COUNT(*) as total FROM conversations
+  `,
+  countConversationsArchived: `
+    SELECT COUNT(*) as total FROM conversations WHERE archived_at IS NOT NULL
   `,
   insertConversation: `
     INSERT INTO conversations (
-      id, title, provider, model, system_prompt, created_at, updated_at, pinned, lines_added, lines_removed, original_created_at
+      id, title, provider, model, system_prompt, created_at, updated_at, pinned, lines_added, lines_removed, original_created_at, archived_at
     ) VALUES (
-      :id, :title, :provider, :model, :systemPrompt, :createdAt, :updatedAt, :pinned, :linesAdded, :linesRemoved, :originalCreatedAt
+      :id, :title, :provider, :model, :systemPrompt, :createdAt, :updatedAt, :pinned, :linesAdded, :linesRemoved, :originalCreatedAt, :archivedAt
     )
   `,
   getConversation: `
-    SELECT id, title, provider, model, system_prompt, created_at, updated_at, pinned, lines_added, lines_removed, original_created_at
+    SELECT id, title, provider, model, system_prompt, created_at, updated_at, pinned, lines_added, lines_removed, original_created_at, archived_at
     FROM conversations
     WHERE id = :id
   `,
@@ -210,7 +236,8 @@ const SQL = {
       pinned = :pinned,
       lines_added = :linesAdded,
       lines_removed = :linesRemoved,
-      original_created_at = :originalCreatedAt
+      original_created_at = :originalCreatedAt,
+      archived_at = :archivedAt
     WHERE id = :id
   `,
   deleteConversation: `
@@ -348,6 +375,13 @@ function createChatStore(dbPath = resolveDbPath()) {
         console.warn('[chat-store] Failed to add original_created_at column:', error instanceof Error ? error.message : String(error));
       }
     }
+    if (!colNames.has('archived_at')) {
+      try {
+        db.exec('ALTER TABLE conversations ADD COLUMN archived_at TEXT');
+      } catch (error) {
+        console.warn('[chat-store] Failed to add archived_at column:', error instanceof Error ? error.message : String(error));
+      }
+    }
   }
 
   function openDb() {
@@ -380,10 +414,24 @@ function createChatStore(dbPath = resolveDbPath()) {
   openDb();
 
   return {
-    listConversations(limit = 50, offset = 0): { conversations: Conversation[]; total: number } {
+    listConversations(
+      limit = 50,
+      offset = 0,
+      options: { includeArchived?: boolean; archivedOnly?: boolean } = {},
+    ): { conversations: Conversation[]; total: number } {
       return run(() => {
-        const rows = stmt('listConversations').all({ limit, offset }) as unknown as ConversationRow[];
-        const countRow = stmt('countConversations').get() as unknown as { total: number };
+        const listKey = options.archivedOnly
+          ? 'listConversationsArchived'
+          : options.includeArchived
+            ? 'listConversationsAll'
+            : 'listConversations';
+        const countKey = options.archivedOnly
+          ? 'countConversationsArchived'
+          : options.includeArchived
+            ? 'countConversationsAll'
+            : 'countConversations';
+        const rows = stmt(listKey).all({ limit, offset }) as unknown as ConversationRow[];
+        const countRow = stmt(countKey).get() as unknown as { total: number };
         return {
           conversations: rows.map(toConversation),
           total: countRow.total,
@@ -404,6 +452,7 @@ function createChatStore(dbPath = resolveDbPath()) {
         linesAdded: conversation.linesAdded ?? 0,
         linesRemoved: conversation.linesRemoved ?? 0,
         originalCreatedAt: conversation.originalCreatedAt ?? null,
+        archivedAt: conversation.archivedAt ?? null,
       }));
     },
 
@@ -423,6 +472,7 @@ function createChatStore(dbPath = resolveDbPath()) {
             linesAdded: conversation.linesAdded ?? 0,
             linesRemoved: conversation.linesRemoved ?? 0,
             originalCreatedAt: conversation.originalCreatedAt ?? null,
+            archivedAt: conversation.archivedAt ?? null,
           });
 
           for (const message of messages) {
@@ -475,6 +525,7 @@ function createChatStore(dbPath = resolveDbPath()) {
             linesAdded: next.linesAdded ?? 0,
             linesRemoved: next.linesRemoved ?? 0,
             originalCreatedAt: next.originalCreatedAt ?? null,
+            archivedAt: next.archivedAt ?? null,
           });
           db.exec('COMMIT');
           return true;
@@ -629,7 +680,9 @@ export function registerChatStoreRoutes(app: express.Express) {
     try {
       const limit = Math.max(1, Math.min(200, Number(req.query.limit) || 50));
       const offset = Math.max(0, Number(req.query.offset) || 0);
-      const result = chatStore.listConversations(limit, offset);
+      const includeArchived = req.query.includeArchived === '1' || req.query.includeArchived === 'true';
+      const archivedOnly = req.query.archivedOnly === '1' || req.query.archivedOnly === 'true';
+      const result = chatStore.listConversations(limit, offset, { includeArchived, archivedOnly });
       res.json({ conversations: result.conversations, total: result.total });
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
