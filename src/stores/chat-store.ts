@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { archiveConversation, db, unarchiveConversation, type Conversation } from '@/lib/db';
+import { addTag, archiveConversation, db, removeTag, unarchiveConversation, type Conversation } from '@/lib/db';
 
 interface ChatState {
   planMode: boolean;
@@ -17,6 +17,8 @@ interface ChatState {
   pinConversation: (id: string, pinned: boolean) => Promise<void>;
   archiveConversation: (id: string) => Promise<void>;
   unarchiveConversation: (id: string) => Promise<void>;
+  addTagToConversation: (id: string, tag: string) => Promise<void>;
+  removeTagFromConversation: (id: string, tag: string) => Promise<void>;
   deleteOldConversations: (olderThanDays: number) => Promise<number>;
   setSearchQuery: (q: string) => void;
   clearActiveConversation: () => void;
@@ -95,6 +97,16 @@ export const useChatStore = create<ChatState>()((set, get) => ({
 
   unarchiveConversation: async (id) => {
     await unarchiveConversation(id);
+    await get().loadConversations();
+  },
+
+  addTagToConversation: async (id, tag) => {
+    await addTag(id, tag);
+    await get().loadConversations();
+  },
+
+  removeTagFromConversation: async (id, tag) => {
+    await removeTag(id, tag);
     await get().loadConversations();
   },
 

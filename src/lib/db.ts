@@ -18,6 +18,7 @@ export interface Conversation {
   forkNumber?: number;
   originalCreatedAt?: string;
   archivedAt?: string | null;
+  tags?: string[];
 }
 
 export interface Message {
@@ -543,6 +544,55 @@ export async function archiveConversation(id: string): Promise<void> {
 
 export async function unarchiveConversation(id: string): Promise<void> {
   await db.conversations.update(id, { archivedAt: null });
+}
+
+function normalizeTag(tag: string): string {
+  return tag.trim().toLowerCase();
+}
+
+export async function getAllTags(): Promise<string[]> {
+  const all = await db.conversations.getAll({ includeArchived: true });
+  const set = new Set<string>();
+  for (const conv of all) {
+    if (!conv.tags) continue;
+    for (const tag of conv.tags) {
+      const norm = normalizeTag(tag);
+      if (norm) set.add(norm);
+    }
+  }
+  return Array.from(set).sort();
+}
+
+export async function addTag(conversationId: string, tag: string): Promise<Conversation> {
+  const norm = normalizeTag(tag);
+  if (!norm) {
+    throw new Error('Tag cannot be empty');
+  }
+  const all = await db.conversations.getAll({ includeArchived: true });
+  const conversation = all.find((c) => c.id === conversationId);
+  if (!conversation) {
+    throw new Error(`Conversation not found: ${conversationId}`);
+  }
+  const existing = (conversation.tags ?? []).map(normalizeTag).filter((t) => t.length > 0);
+  if (existing.includes(norm)) {
+    return { ...conversation, tags: existing };
+  }
+  const nextTags = [...existing, norm];
+  await db.conversations.update(conversationId, { tags: nextTags });
+  return { ...conversation, tags: nextTags };
+}
+
+export async function removeTag(conversationId: string, tag: string): Promise<Conversation> {
+  const norm = normalizeTag(tag);
+  const all = await db.conversations.getAll({ includeArchived: true });
+  const conversation = all.find((c) => c.id === conversationId);
+  if (!conversation) {
+    throw new Error(`Conversation not found: ${conversationId}`);
+  }
+  const existing = (conversation.tags ?? []).map(normalizeTag).filter((t) => t.length > 0);
+  const nextTags = existing.filter((t) => t !== norm);
+  await db.conversations.update(conversationId, { tags: nextTags });
+  return { ...conversation, tags: nextTags };
 }
 
 async function loadConversationForExport(id: string): Promise<{ conversation: Conversation; messages: Message[] }> {

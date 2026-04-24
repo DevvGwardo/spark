@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork, Search, ChevronRight, Zap, Clock, House, BookOpen, Sparkles, BarChart3, User, Network, Image, Download, Upload, Archive, ArchiveRestore, ChevronDown } from 'lucide-react';
+import { Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork, Search, ChevronRight, Zap, Clock, House, BookOpen, Sparkles, BarChart3, User, Network, Image, Download, Upload, Archive, ArchiveRestore, ChevronDown, Tag, X } from 'lucide-react';
 import { Github } from 'lucide-react';
 import { GhostIcon } from '@/components/chat/GhostIcon';
 import { useChatStore } from '@/stores/chat-store';
@@ -24,6 +24,7 @@ import { ConversationTreeOverlay } from '@/components/workflow/ConversationTreeO
 import type { Conversation } from '@/lib/db';
 import { exportConversationJson, exportConversationMarkdown, importConversationJson } from '@/lib/db';
 import { toast } from '@/lib/toast';
+import { tagColor } from '@/lib/tag-color';
 
 import type { SubTab } from '@/stores/ui-store';
 import { relativeTime } from '@/lib/relative-time';
@@ -94,6 +95,8 @@ export const ChatSidebar: React.FC = () => {
     pinConversation,
     archiveConversation,
     unarchiveConversation,
+    addTagToConversation,
+    removeTagFromConversation,
   } = useChatStore();
 
   const { panels, focusedPanelId, setConversationForPanel, openPanel } = usePanelStore();
@@ -112,6 +115,9 @@ export const ChatSidebar: React.FC = () => {
   const [exportMenuId, setExportMenuId] = useState<string | null>(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [focusedRowId, setFocusedRowId] = useState<string | null>(null);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [tagEditorId, setTagEditorId] = useState<string | null>(null);
+  const [tagInput, setTagInput] = useState('');
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const isHermes = activeProvider === 'hermes';
 
@@ -262,10 +268,59 @@ export const ChatSidebar: React.FC = () => {
     setCleanupOpen(false);
   };
 
-  const displayLimit = showAll ? conversations.length : 15;
-  const visibleConversations = conversations.slice(0, displayLimit);
-  const hasMore = conversations.length > 15 && !showAll;
+  const allTags = useMemo(() => {
+    const set = new Set<string>();
+    for (const conv of conversations) {
+      for (const tag of conv.tags ?? []) {
+        if (tag) set.add(tag);
+      }
+    }
+    return Array.from(set).sort();
+  }, [conversations]);
+
+  // Prune selected tags that no longer exist so the filter bar stays accurate.
+  useEffect(() => {
+    setSelectedTags((prev) => prev.filter((t) => allTags.includes(t)));
+  }, [allTags]);
+
+  const filteredConversations = useMemo(() => {
+    if (selectedTags.length === 0) return conversations;
+    return conversations.filter((conv) => {
+      const tags = conv.tags ?? [];
+      return selectedTags.every((t) => tags.includes(t));
+    });
+  }, [conversations, selectedTags]);
+
+  const displayLimit = showAll ? filteredConversations.length : 15;
+  const visibleConversations = filteredConversations.slice(0, displayLimit);
+  const hasMore = filteredConversations.length > 15 && !showAll;
   const groups = useMemo(() => groupConversationsByDate(visibleConversations), [visibleConversations]);
+
+  const handleTagClick = (tag: string, shift: boolean) => {
+    setSelectedTags((prev) => {
+      if (shift) {
+        return prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag];
+      }
+      if (prev.length === 1 && prev[0] === tag) return [];
+      return [tag];
+    });
+  };
+
+  const commitTag = async (conversationId: string) => {
+    const value = tagInput.trim().toLowerCase();
+    if (!value) {
+      setTagEditorId(null);
+      setTagInput('');
+      return;
+    }
+    try {
+      await addTagToConversation(conversationId, value);
+    } catch (error) {
+      toast.error(`Failed to add tag: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    setTagInput('');
+    setTagEditorId(null);
+  };
 
   return (
     <div className="flex h-full flex-col bg-transparent text-foreground">
@@ -475,6 +530,47 @@ export const ChatSidebar: React.FC = () => {
         </div>
       </div>
 
+      {/* Tag filter bar */}
+      {allTags.length > 0 && (
+        <div
+          className="flex flex-wrap gap-1 px-4 pb-2"
+          aria-label="Filter by tag"
+        >
+          <button
+            type="button"
+            onClick={() => setSelectedTags([])}
+            className={cn(
+              'rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors',
+              selectedTags.length === 0
+                ? 'border-[hsl(var(--ring))] bg-[hsl(var(--muted))]/60 text-foreground'
+                : 'border-[#2F2F2F] text-muted-foreground hover:text-foreground'
+            )}
+          >
+            All
+          </button>
+          {allTags.map((tag) => {
+            const color = tagColor(tag);
+            const selected = selectedTags.includes(tag);
+            return (
+              <button
+                key={tag}
+                type="button"
+                onClick={(e) => handleTagClick(tag, e.shiftKey)}
+                title={selected ? 'Click to deselect (shift-click to combine)' : 'Click to filter (shift-click to combine)'}
+                className={cn(
+                  'rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors',
+                  color.bg,
+                  color.fg,
+                  selected ? `ring-1 ${color.ring}` : 'opacity-70 hover:opacity-100'
+                )}
+              >
+                #{tag}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* Thread list */}
       <div className="flex-1 overflow-y-auto px-3 pb-3">
         {conversations.length === 0 && archivedConversations.length === 0 ? (
@@ -585,6 +681,45 @@ export const ChatSidebar: React.FC = () => {
                                   <GitFork className="inline-block ml-1 h-3 w-3 text-muted-foreground opacity-60" />
                                 )}
                               </span>
+                              {conv.tags && conv.tags.length > 0 && (
+                                <div className="flex shrink-0 items-center gap-0.5" aria-label="Tags">
+                                  {conv.tags.slice(0, 2).map((tag) => {
+                                    const color = tagColor(tag);
+                                    return (
+                                      <span
+                                        key={tag}
+                                        className={cn(
+                                          'group/chip inline-flex items-center gap-0.5 rounded-full px-1.5 py-0 text-[9px] font-medium leading-[14px]',
+                                          color.bg,
+                                          color.fg,
+                                        )}
+                                        title={`#${tag}`}
+                                      >
+                                        {tag}
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            void removeTagFromConversation(conv.id, tag);
+                                          }}
+                                          className="hidden opacity-0 group-hover/chip:inline-flex group-hover/chip:opacity-70 hover:opacity-100"
+                                          aria-label={`Remove tag ${tag}`}
+                                        >
+                                          <X className="h-2 w-2" />
+                                        </button>
+                                      </span>
+                                    );
+                                  })}
+                                  {conv.tags.length > 2 && (
+                                    <span
+                                      className="rounded-full bg-[hsl(var(--muted))]/60 px-1.5 py-0 text-[9px] font-medium leading-[14px] text-muted-foreground"
+                                      title={conv.tags.slice(2).map((t) => `#${t}`).join(' ')}
+                                    >
+                                      +{conv.tags.length - 2}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
                               <span className="shrink-0 text-[11px] tabular-nums text-[hsl(var(--text-dim))] transition-opacity duration-200 ease-out group-hover:opacity-70">
                                 {relativeTime(conv.updatedAt || conv.createdAt)}
                               </span>
@@ -652,6 +787,18 @@ export const ChatSidebar: React.FC = () => {
                                 )}
                               </div>
                               <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setTagEditorId(tagEditorId === conv.id ? null : conv.id);
+                                  setTagInput('');
+                                }}
+                                className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-background/80 hover:text-foreground"
+                                title="Add tag"
+                                aria-label="Add tag"
+                              >
+                                <Tag className="h-3 w-3" />
+                              </button>
+                              <button
                                 onClick={(e) => { e.stopPropagation(); void archiveConversation(conv.id); }}
                                 className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-background/80 hover:text-foreground"
                                 title="Archive (E)"
@@ -684,6 +831,41 @@ export const ChatSidebar: React.FC = () => {
                           <SlotNumber value={totalAdded} prefix="+" className="text-[10px] font-mono text-emerald-500" />
                           <span className="text-[10px] text-muted-foreground/40">/</span>
                           <SlotNumber value={totalRemoved} prefix="-" className="text-[10px] font-mono text-red-400" />
+                        </div>
+                      )}
+
+                      {tagEditorId === conv.id && (
+                        <div className="pl-6 pt-1" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            autoFocus
+                            list={`tag-suggestions-${conv.id}`}
+                            value={tagInput}
+                            onChange={(e) => setTagInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                void commitTag(conv.id);
+                              } else if (e.key === 'Escape') {
+                                e.preventDefault();
+                                setTagEditorId(null);
+                                setTagInput('');
+                              }
+                            }}
+                            onBlur={() => {
+                              setTagEditorId(null);
+                              setTagInput('');
+                            }}
+                            placeholder="Add tag…"
+                            className="w-full rounded-md border border-[#2F2F2F] bg-background/60 px-2 py-1 text-[11px] focus:border-[hsl(var(--ring))] focus:outline-none"
+                            aria-label="Add tag"
+                          />
+                          <datalist id={`tag-suggestions-${conv.id}`}>
+                            {allTags
+                              .filter((t) => !(conv.tags ?? []).includes(t))
+                              .map((t) => (
+                                <option key={t} value={t} />
+                              ))}
+                          </datalist>
                         </div>
                       )}
                     </div>
