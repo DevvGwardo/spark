@@ -339,7 +339,12 @@ describe('Hermes chat route', () => {
       if (url.includes('/functions/v1/chat')) {
         return actualFetch(input, init)
       }
-
+      // Simulate the bridge being permanently down: /health claims to be up
+      // (so the readiness retry exits quickly), but the actual chat fetch still
+      // fails — this verifies the 503 path without waiting 15s.
+      if (url.includes('/health')) {
+        return new Response(null, { status: 200 })
+      }
       throw new TypeError('fetch failed')
     }))
 

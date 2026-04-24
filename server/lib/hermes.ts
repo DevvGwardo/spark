@@ -272,12 +272,15 @@ const HERMES_HEALTH_PROBE_TIMEOUT_MS = 1_000;
 
 function isLikelyBridgeConnectionError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
-  const err = error as { name?: string; code?: string; cause?: { code?: string; name?: string } };
+  const err = error as { name?: string; code?: string; message?: string; cause?: { code?: string; name?: string } };
   const CONN_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'UND_ERR_SOCKET']);
   if (err.code && CONN_CODES.has(err.code)) return true;
   if (err.cause?.code && CONN_CODES.has(err.cause.code)) return true;
   // undici wraps low-level socket errors in a TypeError('fetch failed').
-  if (err.name === 'TypeError') return true;
+  // In practice undici always populates `cause` with the underlying error;
+  // requiring it prevents test mocks (bare TypeError) from triggering the
+  // 15-second readiness poll.
+  if (err.name === 'TypeError' && (err.cause || err.message?.includes('fetch failed'))) return true;
   return false;
 }
 
@@ -566,6 +569,176 @@ export async function proxyHermesSwarmToDataStream(input: {
     },
     emptyTextFallback:
       'Hermes swarm returned an empty response. Check hermes-bridge logs.',
+  });
+}
+
+// ─── SSE Resume (Feature 8) ──────────────────────────────────────────────────
+// Per-stream ring buffer of the last N SSE events, keyed by a server-generated
+// streamId. Clients open `POST /api/hermes/chat/start` to mint a streamId,
+// then `GET /api/hermes/chat/stream?id=<streamId>&since=<lastEventId>` to
+// tail the live stream with replay of any buffered events past `since`.
+//
+// Buffer retention: entries live for 60s past the stream emitting `done` so a
+// brief network blip can resume, then they're GC'd.
+
+export interface HermesStreamBufferEvent {
+  id: number;
+  event?: string;
+  data: string;
+}
+
+const HERMES_STREAM_BUFFER_CAPACITY = 200;
+const HERMES_STREAM_BUFFER_TTL_MS = 60_000;
+
+interface HermesStreamEntry {
+  id: string;
+  nextEventId: number;
+  buffer: HermesStreamBufferEvent[];
+  subscribers: Set<(evt: HermesStreamBufferEvent | { done: true }) => void>;
+  done: boolean;
+  expiresAt: number | null;
+  evictionTimer: ReturnType<typeof setTimeout> | null;
+}
+
+const hermesStreams = new Map<string, HermesStreamEntry>();
+
+function generateStreamId(): string {
+  // Node 18+ / jsdom both expose crypto.randomUUID.
+  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  return `stream-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function __resetHermesStreamBuffersForTests(): void {
+  for (const entry of hermesStreams.values()) {
+    if (entry.evictionTimer) clearTimeout(entry.evictionTimer);
+  }
+  hermesStreams.clear();
+}
+
+export function createHermesStreamBuffer(): HermesStreamEntry {
+  const id = generateStreamId();
+  const entry: HermesStreamEntry = {
+    id,
+    nextEventId: 1,
+    buffer: [],
+    subscribers: new Set(),
+    done: false,
+    expiresAt: null,
+    evictionTimer: null,
+  };
+  hermesStreams.set(id, entry);
+  return entry;
+}
+
+export function appendHermesStreamEvent(
+  streamId: string,
+  partial: { event?: string; data: string },
+): HermesStreamBufferEvent | null {
+  const entry = hermesStreams.get(streamId);
+  if (!entry || entry.done) return null;
+  const evt: HermesStreamBufferEvent = {
+    id: entry.nextEventId++,
+    event: partial.event,
+    data: partial.data,
+  };
+  entry.buffer.push(evt);
+  if (entry.buffer.length > HERMES_STREAM_BUFFER_CAPACITY) {
+    entry.buffer.splice(0, entry.buffer.length - HERMES_STREAM_BUFFER_CAPACITY);
+  }
+  for (const subscriber of entry.subscribers) {
+    subscriber(evt);
+  }
+  return evt;
+}
+
+export function finishHermesStream(streamId: string): void {
+  const entry = hermesStreams.get(streamId);
+  if (!entry || entry.done) return;
+  entry.done = true;
+  for (const subscriber of entry.subscribers) {
+    subscriber({ done: true });
+  }
+  entry.subscribers.clear();
+  entry.expiresAt = Date.now() + HERMES_STREAM_BUFFER_TTL_MS;
+  entry.evictionTimer = setTimeout(() => {
+    hermesStreams.delete(streamId);
+  }, HERMES_STREAM_BUFFER_TTL_MS);
+  // Don't keep the event loop alive solely for buffer GC.
+  if (typeof entry.evictionTimer === 'object' && entry.evictionTimer && 'unref' in entry.evictionTimer) {
+    (entry.evictionTimer as { unref: () => void }).unref();
+  }
+}
+
+function formatSseEvent(evt: HermesStreamBufferEvent): string {
+  const parts = [`id: ${evt.id}`];
+  if (evt.event) parts.push(`event: ${evt.event}`);
+  // Split data on newlines per SSE spec.
+  for (const line of evt.data.split('\n')) {
+    parts.push(`data: ${line}`);
+  }
+  parts.push('', '');
+  return parts.join('\n');
+}
+
+export function registerHermesStreamResumeRoute(app: express.Application): void {
+  // Mint a streamId. Kept deliberately small — the full chat payload still
+  // flows through /functions/v1/chat; this endpoint only allocates the buffer
+  // that the streaming side will write into.
+  app.post('/api/hermes/chat/start', (_req, res) => {
+    const entry = createHermesStreamBuffer();
+    res.status(200).json({ streamId: entry.id, resumeToken: entry.id });
+  });
+
+  app.get('/api/hermes/chat/stream', (req, res) => {
+    const streamId = typeof req.query.id === 'string' ? req.query.id : '';
+    const sinceRaw = typeof req.query.since === 'string' ? req.query.since : '';
+    if (!streamId) {
+      res.status(400).json({ error: 'missing id' });
+      return;
+    }
+
+    const entry = hermesStreams.get(streamId);
+    if (!entry) {
+      // 410 Gone — the buffer has been GC'd (or never existed).
+      res.status(410).json({ error: 'stream unknown or expired' });
+      return;
+    }
+
+    const sinceId = sinceRaw ? Number.parseInt(sinceRaw, 10) : 0;
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+
+    // Replay buffered events with id > since immediately.
+    for (const evt of entry.buffer) {
+      if (evt.id > sinceId) {
+        res.write(formatSseEvent(evt));
+      }
+    }
+
+    if (entry.done) {
+      res.end();
+      return;
+    }
+
+    const subscriber = (msg: HermesStreamBufferEvent | { done: true }) => {
+      if ('done' in msg) {
+        res.end();
+        entry.subscribers.delete(subscriber);
+        return;
+      }
+      res.write(formatSseEvent(msg));
+    };
+    entry.subscribers.add(subscriber);
+
+    req.on('close', () => {
+      entry.subscribers.delete(subscriber);
+    });
   });
 }
 

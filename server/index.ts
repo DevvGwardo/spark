@@ -15,6 +15,8 @@ import { sendJson } from './lib/helpers';
 import { MAX_BODY_SIZE } from './config';
 import { workspaceIndex } from './workspace-indexer';
 
+import { registerHermesStreamResumeRoute } from './lib/hermes';
+
 // Re-export for external consumers
 export { shouldDirectProxyCompatibleProvider } from './lib/hermes';
 
@@ -59,6 +61,7 @@ export function createApp() {
   registerHermesUpdateRoute(app);
   registerProfilesRoutes(app);
   registerTranscribeRoute(app);
+  registerHermesStreamResumeRoute(app);
 
   // ─── Workspace search ───────────────────────────────────────────────────────
   app.get('/functions/v1/workspace/search', async (req, res) => {
