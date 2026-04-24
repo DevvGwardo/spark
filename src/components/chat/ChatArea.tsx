@@ -40,7 +40,13 @@ import { useChatStore } from '@/stores/chat-store';
 import { useContextUsageStore } from '@/stores/context-usage-store';
 import { useUIStore } from '@/stores/ui-store';
 import { useChangesetStore } from '@/stores/changeset-store';
+import { useHermesStore } from '@/stores/hermes-store';
 import { useChatScopeId, usePanelId } from '@/contexts/PanelContext';
+import {
+  getProposalApprovalKey,
+  matchApprovalPolicy,
+  type ApprovalPolicy,
+} from '@/lib/approval-policy';
 
 interface ChatPartLike {
   type?: 'text' | 'reasoning' | 'tool-invocation' | 'step-start' | 'source' | 'file';
@@ -388,6 +394,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [approvalModalOpen, setApprovalModalOpen] = useState(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const notifiedProposalKeyRef = useRef<string | null>(null);
+  const autoApprovedProposalIdRef = useRef<string | null>(null);
 
   const updateProviderConfig = useSettingsStore((state) => state.updateProviderConfig);
   const setPanelUsage = useContextUsageStore((state) => state.setPanelUsage);
@@ -396,6 +403,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const queuePanelPrompt = useUIStore((state) => state.queuePanelPrompt);
   const changeset = useChangesetStore((state) => state.getChangeset(scopeId));
   const planMode = useChatStore((state) => state.planMode);
+  const alwaysApprovalPolicies = useSettingsStore((state) => state.approvalPolicies);
+  const addAlwaysApprovalPolicy = useSettingsStore((state) => state.addApprovalPolicy);
+  const sessionApprovalPolicies = useHermesStore((state) => state.sessionApprovalPolicies);
+  const addSessionApprovalPolicy = useHermesStore((state) => state.addSessionApprovalPolicy);
+  const clearSessionApprovalPolicies = useHermesStore((state) => state.clearSessionApprovalPolicies);
   const repoComposerLocked = changeset.isRepoMode && changeset.repoFileTreeStatus === 'loading';
   const disabledPlaceholder = repoComposerLocked
     ? `Loading ${changeset.activeRepo?.fullName || 'repository'} files...`
@@ -577,7 +589,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     });
   }, [canShowProposalApproval, conversationId, pendingProposal]);
 
-  const handleAcceptProposal = useCallback(async () => {
+  const handleApproveOnce = useCallback(async () => {
     if (!conversationId || !pendingProposal || !handleQuickSend || isStreaming) return;
     setApprovalModalOpen(false);
     setAcceptingProposalId(pendingProposal.messageId);
@@ -589,10 +601,49 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     }
   }, [conversationId, pendingProposal, handleQuickSend, isStreaming]);
 
-  const handleAcceptAlways = useCallback(async () => {
+  const handleApproveSession = useCallback(async () => {
+    if (!pendingProposal) return;
+    addSessionApprovalPolicy({
+      key: getProposalApprovalKey(pendingProposal),
+      scope: 'session',
+      createdAt: Date.now(),
+    });
+    await handleApproveOnce();
+  }, [pendingProposal, addSessionApprovalPolicy, handleApproveOnce]);
+
+  const handleApproveAlways = useCallback(async () => {
+    if (pendingProposal) {
+      addAlwaysApprovalPolicy({
+        key: getProposalApprovalKey(pendingProposal),
+        scope: 'always',
+        createdAt: Date.now(),
+      });
+    }
     setConversationAutoApprove?.(true);
-    await handleAcceptProposal();
-  }, [handleAcceptProposal, setConversationAutoApprove]);
+    await handleApproveOnce();
+  }, [pendingProposal, addAlwaysApprovalPolicy, handleApproveOnce, setConversationAutoApprove]);
+
+  // Auto-accept if a saved session or always policy matches this proposal.
+  useEffect(() => {
+    if (!canShowProposalApproval || !pendingProposal) return;
+    if (autoApprovedProposalIdRef.current === pendingProposal.messageId) return;
+    const key = getProposalApprovalKey(pendingProposal);
+    const matched = matchApprovalPolicy(key, sessionApprovalPolicies, alwaysApprovalPolicies);
+    if (!matched) return;
+    autoApprovedProposalIdRef.current = pendingProposal.messageId;
+    void handleApproveOnce();
+  }, [
+    canShowProposalApproval,
+    pendingProposal,
+    sessionApprovalPolicies,
+    alwaysApprovalPolicies,
+    handleApproveOnce,
+  ]);
+
+  // Clear session-scope approval policies when the chat panel unmounts.
+  useEffect(() => () => {
+    clearSessionApprovalPolicies();
+  }, [clearSessionApprovalPolicies]);
 
   const handleDismissError = useCallback(() => {
     setDismissedError(errorMessage);
@@ -820,8 +871,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                       open={approvalModalOpen}
                       onOpenChange={setApprovalModalOpen}
                       proposal={pendingProposal}
-                      onAccept={handleAcceptProposal}
-                      onAcceptAlways={handleAcceptAlways}
+                      onApproveOnce={handleApproveOnce}
+                      onApproveSession={handleApproveSession}
+                      onApproveAlways={handleApproveAlways}
                       disabled={!handleQuickSend || isStreaming || acceptingProposalId === pendingProposal.messageId}
                     />
                   </div>

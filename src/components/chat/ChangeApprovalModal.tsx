@@ -1,5 +1,5 @@
 import React from 'react';
-import { CheckCircle2, GitPullRequestDraft, ShieldCheck, Wand2, X } from 'lucide-react';
+import { CheckCircle2, Clock, GitPullRequestDraft, ShieldCheck, Wand2, X } from 'lucide-react';
 import type { PendingProposal } from '@/lib/proposed-changes';
 import { cn } from '@/lib/utils';
 
@@ -7,8 +7,9 @@ interface ChangeApprovalModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   proposal: PendingProposal;
-  onAccept: () => void;
-  onAcceptAlways: () => void;
+  onApproveOnce: () => void;
+  onApproveSession: () => void;
+  onApproveAlways: () => void;
   disabled?: boolean;
 }
 
@@ -16,8 +17,9 @@ export const ChangeApprovalModal: React.FC<ChangeApprovalModalProps> = ({
   open,
   onOpenChange,
   proposal,
-  onAccept,
-  onAcceptAlways,
+  onApproveOnce,
+  onApproveSession,
+  onApproveAlways,
   disabled = false,
 }) => {
   if (!open) return null;
@@ -102,7 +104,7 @@ export const ChangeApprovalModal: React.FC<ChangeApprovalModalProps> = ({
 
             <div className="flex flex-col gap-2 sm:flex-row">
               <button
-                onClick={onAcceptAlways}
+                onClick={onApproveAlways}
                 disabled={disabled}
                 className={cn(
                   'inline-flex items-center justify-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors duration-150',
@@ -116,7 +118,21 @@ export const ChangeApprovalModal: React.FC<ChangeApprovalModalProps> = ({
               </button>
 
               <button
-                onClick={onAccept}
+                onClick={onApproveSession}
+                disabled={disabled}
+                className={cn(
+                  'inline-flex items-center justify-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors duration-150',
+                  disabled
+                    ? 'cursor-not-allowed border-border/60 bg-muted/40 text-muted-foreground/60'
+                    : 'border-border/60 bg-background/80 text-foreground hover:bg-muted'
+                )}
+              >
+                <Clock className="h-3.5 w-3.5" />
+                Approve for session
+              </button>
+
+              <button
+                onClick={onApproveOnce}
                 disabled={disabled}
                 className={cn(
                   'inline-flex items-center justify-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold transition-colors duration-150',

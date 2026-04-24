@@ -8,6 +8,7 @@ import {
   type ChatBackgroundType,
 } from '@/lib/chat-backgrounds';
 import { isColorThemeId, type ColorThemeId } from '@/lib/themes';
+import type { ApprovalPolicy } from '@/lib/approval-policy';
 
 export type Provider =
   | 'openai' | 'anthropic' | 'google' | 'xai'
@@ -58,6 +59,7 @@ interface SettingsState {
   streamResponses: boolean;
   soundNotifications: boolean;
   analytics: boolean;
+  approvalPolicies: ApprovalPolicy[];
 
   setActiveProvider: (p: Provider) => void;
   updateProviderConfig: (p: Provider, config: Partial<ProviderConfig>) => void;
@@ -80,6 +82,8 @@ interface SettingsState {
   setStreamResponses: (enabled: boolean) => void;
   setSoundNotifications: (enabled: boolean) => void;
   setAnalytics: (enabled: boolean) => void;
+  addApprovalPolicy: (policy: ApprovalPolicy) => void;
+  removeApprovalPolicy: (key: string) => void;
 }
 
 const DEFAULT_PROVIDER_MAX_TOKENS = 32_768;
@@ -230,7 +234,9 @@ export function normalizePersistedSettingsState(
   'setAutoSave' |
   'setStreamResponses' |
   'setSoundNotifications' |
-  'setAnalytics'
+  'setAnalytics' |
+  'addApprovalPolicy' |
+  'removeApprovalPolicy'
 > {
   const providers = cloneDefaultProviders();
 
@@ -275,6 +281,14 @@ export function normalizePersistedSettingsState(
     streamResponses: typeof persisted?.streamResponses === 'boolean' ? persisted.streamResponses : true,
     soundNotifications: typeof persisted?.soundNotifications === 'boolean' ? persisted.soundNotifications : false,
     analytics: typeof persisted?.analytics === 'boolean' ? persisted.analytics : false,
+    approvalPolicies: Array.isArray(persisted?.approvalPolicies)
+      ? persisted.approvalPolicies.filter((p): p is ApprovalPolicy =>
+          !!p
+            && typeof (p as ApprovalPolicy).key === 'string'
+            && (p as ApprovalPolicy).scope === 'always'
+            && typeof (p as ApprovalPolicy).createdAt === 'number',
+        )
+      : [],
   };
 }
 
@@ -319,10 +333,21 @@ export const useSettingsStore = create<SettingsState>()(
       setStreamResponses: (enabled) => set({ streamResponses: enabled }),
       setSoundNotifications: (enabled) => set({ soundNotifications: enabled }),
       setAnalytics: (enabled) => set({ analytics: enabled }),
+      addApprovalPolicy: (policy) =>
+        set((state) => ({
+          approvalPolicies: [
+            ...state.approvalPolicies.filter((p) => p.key !== policy.key),
+            policy,
+          ],
+        })),
+      removeApprovalPolicy: (key) =>
+        set((state) => ({
+          approvalPolicies: state.approvalPolicies.filter((p) => p.key !== key),
+        })),
     }),
     {
       name: 'cloudchat-settings',
-      version: 20,
+      version: 21,
       migrate: (persisted: unknown, version: number) => {
         const state = (persisted ?? {}) as PersistedSettingsState;
         if (version < 3) {

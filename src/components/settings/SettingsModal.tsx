@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { X, Eye, EyeOff, Search, Check, Zap, ChevronDown, ChevronRight, ArrowLeft, ExternalLink, Github, Code2, Network, Info, TerminalSquare, RefreshCw, LayoutGrid, BookOpen, Settings, Plus, Trash2, MessageSquare, ImagePlus } from 'lucide-react';
+import { X, Eye, EyeOff, Search, Check, Zap, ChevronDown, ChevronRight, ArrowLeft, ExternalLink, Github, Code2, Network, Info, TerminalSquare, RefreshCw, LayoutGrid, BookOpen, Settings, Plus, Trash2, MessageSquare, ImagePlus, ShieldCheck } from 'lucide-react';
 import { useSettingsStore, type Provider, type Language } from '@/stores/settings-store';
 import { COLOR_THEMES, ACCENT_COLORS } from '@/lib/themes';
 import { ChatSurfaceBackground } from '@/components/chat/ChatSurfaceBackground';
@@ -192,6 +192,7 @@ function GeneralTab() {
     streamResponses,
     soundNotifications,
     analytics,
+    approvalPolicies,
     setTheme,
     setColorTheme,
     setAccentColor,
@@ -204,7 +205,10 @@ function GeneralTab() {
     setStreamResponses,
     setSoundNotifications,
     setAnalytics,
+    removeApprovalPolicy,
   } = useSettingsStore();
+  const sessionApprovalPolicies = useHermesStore((state) => state.sessionApprovalPolicies);
+  const clearSessionApprovalPolicies = useHermesStore((state) => state.clearSessionApprovalPolicies);
 
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [backgroundUploadError, setBackgroundUploadError] = useState<string | null>(null);
@@ -535,6 +539,64 @@ function GeneralTab() {
         <ToggleRow label="Auto-save" description="Automatically save conversations as you type" enabled={autoSave} onChange={setAutoSave} />
         <ToggleRow label="Stream responses" description="Show responses as they're generated" enabled={streamResponses} onChange={setStreamResponses} />
         <ToggleRow label="Sound notifications" description="Play sound when a response is ready" enabled={soundNotifications} onChange={setSoundNotifications} />
+      </div>
+
+      <div className={settingsDividerClass} />
+
+      {/* APPROVAL POLICIES */}
+      <div className="space-y-3">
+        <p className={sectionLabelClass}>Approval policies</p>
+        <p className="text-xs text-[#666666]">
+          Saved approvals auto-accept repo changes that match. Session approvals clear when the chat panel closes.
+        </p>
+
+        {approvalPolicies.length === 0 ? (
+          <p className="text-xs text-[#555555]">No saved always-approvals.</p>
+        ) : (
+          <ul className="space-y-1.5">
+            {approvalPolicies.map((policy) => (
+              <li
+                key={policy.key}
+                className="flex items-center justify-between rounded-[8px] border border-[#2a2a2a] bg-[#141414] px-3 py-2"
+              >
+                <div className="flex min-w-0 items-center gap-2">
+                  <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <code className="truncate font-mono text-[11px] text-foreground">{policy.key}</code>
+                </div>
+                <button
+                  onClick={() => removeApprovalPolicy(policy.key)}
+                  aria-label={`Revoke approval ${policy.key}`}
+                  className="ml-3 rounded-[6px] p-1 text-muted-foreground transition-colors duration-100 hover:bg-[#1f1f1f] hover:text-foreground"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <div className="flex items-center justify-between py-1">
+          <div className="min-w-0 flex-1 pr-4">
+            <p className="text-sm text-foreground">Session approvals</p>
+            <p className="text-xs text-[#666666]">
+              {sessionApprovalPolicies.length === 0
+                ? 'No active session approvals.'
+                : `${sessionApprovalPolicies.length} active session approval${sessionApprovalPolicies.length === 1 ? '' : 's'}.`}
+            </p>
+          </div>
+          <button
+            onClick={clearSessionApprovalPolicies}
+            disabled={sessionApprovalPolicies.length === 0}
+            className={cn(
+              'rounded-[8px] border px-3 py-1.5 text-xs font-medium transition-colors duration-100',
+              sessionApprovalPolicies.length === 0
+                ? 'cursor-not-allowed border-[#2a2a2a] bg-[#141414] text-muted-foreground/50'
+                : 'border-[#2a2a2a] bg-[#141414] text-muted-foreground hover:border-[#444444] hover:text-foreground',
+            )}
+          >
+            Clear all
+          </button>
+        </div>
       </div>
 
       <div className={settingsDividerClass} />

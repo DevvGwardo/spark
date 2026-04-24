@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { ApprovalPolicy } from '@/lib/approval-policy';
 
 export interface HermesToolsets {
   web: boolean;
@@ -57,6 +58,7 @@ interface HermesState {
   toolsets: HermesToolsets;
   mcpServers: MCPServer[];
   swarm: SwarmState;
+  sessionApprovalPolicies: ApprovalPolicy[];
 
   setToolset: (key: keyof HermesToolsets, enabled: boolean) => void;
   getEnabledToolsets: () => string[];
@@ -75,6 +77,10 @@ interface HermesState {
   setSwarmPhase: (phase: SwarmPhase) => void;
   setSwarmResult: (result: { verdict: string; reviewNotes: string; stagedFiles: string[]; elapsedMs: number }) => void;
   resetSwarm: () => void;
+
+  /** Session-scope approval policies — in-memory only, cleared on panel close. */
+  addSessionApprovalPolicy: (policy: ApprovalPolicy) => void;
+  clearSessionApprovalPolicies: () => void;
 }
 
 const defaultToolsets: HermesToolsets = {
@@ -101,6 +107,7 @@ export const useHermesStore = create<HermesState>()(
       toolsets: { ...defaultToolsets },
       mcpServers: [],
       swarm: { ...defaultSwarm },
+      sessionApprovalPolicies: [],
 
       setToolset: (key, enabled) =>
         set((state) => ({
@@ -192,7 +199,25 @@ export const useHermesStore = create<HermesState>()(
         set(() => ({
           swarm: { ...defaultSwarm, enabled: get().swarm.enabled },
         })),
+
+      addSessionApprovalPolicy: (policy) =>
+        set((state) => ({
+          sessionApprovalPolicies: [
+            ...state.sessionApprovalPolicies.filter((p) => p.key !== policy.key),
+            policy,
+          ],
+        })),
+
+      clearSessionApprovalPolicies: () =>
+        set(() => ({ sessionApprovalPolicies: [] })),
     }),
-    { name: 'cloudchat-hermes' }
+    {
+      name: 'cloudchat-hermes',
+      partialize: (state) => ({
+        toolsets: state.toolsets,
+        mcpServers: state.mcpServers,
+        swarm: state.swarm,
+      }),
+    }
   )
 );
