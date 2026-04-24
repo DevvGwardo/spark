@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork, Search, ChevronRight, Zap, Clock, House, BookOpen, Sparkles, BarChart3, User, Network, Image } from 'lucide-react';
+import { Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork, Search, ChevronRight, Zap, Clock, House, BookOpen, Sparkles, BarChart3, User, Network, Image, Download } from 'lucide-react';
 import { Github } from 'lucide-react';
 import { GhostIcon } from '@/components/chat/GhostIcon';
 import { useChatStore } from '@/stores/chat-store';
@@ -22,6 +22,7 @@ import { HermesUsagePanel } from '@/components/sidebar/HermesUsagePanel';
 import { ImagesPanel } from '@/components/sidebar/ImagesPanel';
 import { ConversationTreeOverlay } from '@/components/workflow/ConversationTreeOverlay';
 import type { Conversation } from '@/lib/db';
+import { exportConversationJson, exportConversationMarkdown } from '@/lib/db';
 
 import type { SubTab } from '@/stores/ui-store';
 import { relativeTime } from '@/lib/relative-time';
@@ -104,6 +105,7 @@ export const ChatSidebar: React.FC = () => {
   const [cleanupDays, setCleanupDays] = useState<number | null>(null);
   const [cleanupCount, setCleanupCount] = useState(0);
   const [showTreeOverlay, setShowTreeOverlay] = useState(false);
+  const [exportMenuId, setExportMenuId] = useState<string | null>(null);
   const isHermes = activeProvider === 'hermes';
 
   // Get active repo from focused panel's changeset
@@ -163,6 +165,25 @@ export const ChatSidebar: React.FC = () => {
   const handleDelete = async (id: string) => {
     await deleteConversation(id);
     setDeleteConfirm(null);
+  };
+
+  const handleExport = async (conv: Conversation, format: 'md' | 'json') => {
+    const blob = format === 'md' ? await exportConversationMarkdown(conv.id) : await exportConversationJson(conv.id);
+    const slug = (conv.title || 'conversation')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 60) || 'conversation';
+    const idPrefix = conv.id.slice(0, 8);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${slug}-${idPrefix}.${format}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setExportMenuId(null);
   };
 
   const handleSelectConversation = (convId: string) => {
@@ -511,7 +532,12 @@ export const ChatSidebar: React.FC = () => {
                           </div>
                         ) : (
                           <div className="shrink-0 overflow-hidden">
-                            <div className="flex max-w-0 translate-x-2 gap-0.5 opacity-0 transition-[max-width,opacity,transform] duration-200 ease-out group-hover:max-w-20 group-hover:translate-x-0 group-hover:opacity-100">
+                            <div className={cn(
+                              'flex translate-x-2 gap-0.5 opacity-0 transition-[max-width,opacity,transform] duration-200 ease-out group-hover:translate-x-0 group-hover:opacity-100',
+                              exportMenuId === conv.id
+                                ? 'max-w-28 translate-x-0 opacity-100'
+                                : 'max-w-0 group-hover:max-w-28'
+                            )}>
                               <button
                                 onClick={(e) => { e.stopPropagation(); openPanel(conv.id); }}
                                 className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-background/80 hover:text-foreground"
@@ -519,6 +545,41 @@ export const ChatSidebar: React.FC = () => {
                               >
                                 <Columns2 className="h-3 w-3" />
                               </button>
+                              <div className="relative">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setExportMenuId(exportMenuId === conv.id ? null : conv.id);
+                                  }}
+                                  className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-background/80 hover:text-foreground"
+                                  title="Export conversation"
+                                  aria-label="Export conversation"
+                                >
+                                  <Download className="h-3 w-3" />
+                                </button>
+                                {exportMenuId === conv.id && (
+                                  <div
+                                    className="absolute right-0 top-full z-50 mt-1 min-w-[140px] rounded-lg border border-[#2F2F2F] bg-[hsl(var(--card))] py-1 shadow-lg"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-[1px] text-[#666666]">
+                                      Export as
+                                    </div>
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); void handleExport(conv, 'md'); }}
+                                      className="flex w-full items-center px-3 py-1.5 text-[11px] text-[hsl(var(--text-secondary))] transition-colors hover:bg-[hsl(var(--sidebar-active))]/40"
+                                    >
+                                      Markdown
+                                    </button>
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); void handleExport(conv, 'json'); }}
+                                      className="flex w-full items-center px-3 py-1.5 text-[11px] text-[hsl(var(--text-secondary))] transition-colors hover:bg-[hsl(var(--sidebar-active))]/40"
+                                    >
+                                      JSON
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
                               <button
                                 onClick={(e) => { e.stopPropagation(); setDeleteConfirm(conv.id); }}
                                 className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-background/80 hover:text-destructive"

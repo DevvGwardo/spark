@@ -1,5 +1,6 @@
 import { getApiBaseUrl } from '@/lib/api';
 import type { PullRequestRecord } from '@/lib/pull-request';
+import { formatConversationJson, formatConversationMarkdown } from '@/lib/conversation-export';
 
 export interface Conversation {
   id: string;
@@ -522,3 +523,25 @@ export const db = {
     },
   },
 };
+
+async function loadConversationForExport(id: string): Promise<{ conversation: Conversation; messages: Message[] }> {
+  const conversations = await db.conversations.getAll();
+  const conversation = conversations.find((c) => c.id === id);
+  if (!conversation) {
+    throw new Error(`Conversation not found: ${id}`);
+  }
+  const messages = await db.messages.getByConversation(id);
+  return { conversation, messages };
+}
+
+export async function exportConversationJson(id: string): Promise<Blob> {
+  const { conversation, messages } = await loadConversationForExport(id);
+  const body = formatConversationJson(conversation, messages);
+  return new Blob([body], { type: 'application/json' });
+}
+
+export async function exportConversationMarkdown(id: string): Promise<Blob> {
+  const { conversation, messages } = await loadConversationForExport(id);
+  const body = formatConversationMarkdown(conversation, messages);
+  return new Blob([body], { type: 'text/markdown' });
+}
