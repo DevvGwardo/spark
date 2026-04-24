@@ -20,6 +20,7 @@ interface ConversationRow {
   pinned: number;
   lines_added: number;
   lines_removed: number;
+  original_created_at: string | null;
 }
 
 interface MessageRow {
@@ -60,7 +61,7 @@ function parseJson<T>(value: string | null | undefined, fallback: T): T {
 }
 
 function toConversation(row: ConversationRow): Conversation {
-  return {
+  const conversation: Conversation = {
     id: row.id,
     title: row.title,
     provider: row.provider,
@@ -72,6 +73,12 @@ function toConversation(row: ConversationRow): Conversation {
     linesAdded: row.lines_added || 0,
     linesRemoved: row.lines_removed || 0,
   };
+
+  if (typeof row.original_created_at === 'string') {
+    conversation.originalCreatedAt = row.original_created_at;
+  }
+
+  return conversation;
 }
 
 function toMessage(row: MessageRow): Message {
@@ -141,7 +148,8 @@ const SCHEMA_SQL = `
     updated_at TEXT NOT NULL,
     pinned INTEGER NOT NULL DEFAULT 0,
     lines_added INTEGER NOT NULL DEFAULT 0,
-    lines_removed INTEGER NOT NULL DEFAULT 0
+    lines_removed INTEGER NOT NULL DEFAULT 0,
+    original_created_at TEXT
   );
 
   CREATE TABLE IF NOT EXISTS messages (
@@ -170,7 +178,7 @@ const SCHEMA_SQL = `
 
 const SQL = {
   listConversations: `
-    SELECT id, title, provider, model, system_prompt, created_at, updated_at, pinned, lines_added, lines_removed
+    SELECT id, title, provider, model, system_prompt, created_at, updated_at, pinned, lines_added, lines_removed, original_created_at
     FROM conversations
     ORDER BY pinned DESC, updated_at DESC
     LIMIT :limit OFFSET :offset
@@ -180,13 +188,13 @@ const SQL = {
   `,
   insertConversation: `
     INSERT INTO conversations (
-      id, title, provider, model, system_prompt, created_at, updated_at, pinned, lines_added, lines_removed
+      id, title, provider, model, system_prompt, created_at, updated_at, pinned, lines_added, lines_removed, original_created_at
     ) VALUES (
-      :id, :title, :provider, :model, :systemPrompt, :createdAt, :updatedAt, :pinned, :linesAdded, :linesRemoved
+      :id, :title, :provider, :model, :systemPrompt, :createdAt, :updatedAt, :pinned, :linesAdded, :linesRemoved, :originalCreatedAt
     )
   `,
   getConversation: `
-    SELECT id, title, provider, model, system_prompt, created_at, updated_at, pinned, lines_added, lines_removed
+    SELECT id, title, provider, model, system_prompt, created_at, updated_at, pinned, lines_added, lines_removed, original_created_at
     FROM conversations
     WHERE id = :id
   `,
@@ -201,7 +209,8 @@ const SQL = {
       updated_at = :updatedAt,
       pinned = :pinned,
       lines_added = :linesAdded,
-      lines_removed = :linesRemoved
+      lines_removed = :linesRemoved,
+      original_created_at = :originalCreatedAt
     WHERE id = :id
   `,
   deleteConversation: `
@@ -332,6 +341,13 @@ function createChatStore(dbPath = resolveDbPath()) {
         console.warn('[chat-store] Failed to add lines_removed column:', error instanceof Error ? error.message : String(error));
       }
     }
+    if (!colNames.has('original_created_at')) {
+      try {
+        db.exec('ALTER TABLE conversations ADD COLUMN original_created_at TEXT');
+      } catch (error) {
+        console.warn('[chat-store] Failed to add original_created_at column:', error instanceof Error ? error.message : String(error));
+      }
+    }
   }
 
   function openDb() {
@@ -387,7 +403,49 @@ function createChatStore(dbPath = resolveDbPath()) {
         pinned: conversation.pinned ? 1 : 0,
         linesAdded: conversation.linesAdded ?? 0,
         linesRemoved: conversation.linesRemoved ?? 0,
+        originalCreatedAt: conversation.originalCreatedAt ?? null,
       }));
+    },
+
+    importConversation(conversation: Conversation, messages: Message[]): Conversation {
+      return run(() => {
+        db.exec('BEGIN');
+        try {
+          stmt('insertConversation').run({
+            id: conversation.id,
+            title: conversation.title,
+            provider: conversation.provider,
+            model: conversation.model,
+            systemPrompt: conversation.systemPrompt,
+            createdAt: conversation.createdAt,
+            updatedAt: conversation.updatedAt,
+            pinned: conversation.pinned ? 1 : 0,
+            linesAdded: conversation.linesAdded ?? 0,
+            linesRemoved: conversation.linesRemoved ?? 0,
+            originalCreatedAt: conversation.originalCreatedAt ?? null,
+          });
+
+          for (const message of messages) {
+            stmt('saveMessage').run({
+              id: message.id,
+              conversationId: message.conversationId,
+              role: message.role,
+              content: message.content,
+              timestamp: message.timestamp,
+              tokenCount: typeof message.tokenCount === 'number' ? message.tokenCount : null,
+              error: message.error ?? null,
+              partsJson: message.parts ? JSON.stringify(message.parts) : null,
+              toolInvocationsJson: message.toolInvocations ? JSON.stringify(message.toolInvocations) : null,
+            });
+          }
+
+          db.exec('COMMIT');
+          return conversation;
+        } catch (error) {
+          db.exec('ROLLBACK');
+          throw error;
+        }
+      });
     },
 
     updateConversation(id: string, fields: Partial<Conversation>): boolean {
@@ -416,6 +474,7 @@ function createChatStore(dbPath = resolveDbPath()) {
             pinned: next.pinned ? 1 : 0,
             linesAdded: next.linesAdded ?? 0,
             linesRemoved: next.linesRemoved ?? 0,
+            originalCreatedAt: next.originalCreatedAt ?? null,
           });
           db.exec('COMMIT');
           return true;
@@ -597,6 +656,40 @@ export function registerChatStoreRoutes(app: express.Express) {
         return;
       }
 
+      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.post('/functions/v1/chat-store/import', (req, res) => {
+    try {
+      const body = req.body as { conversation?: Conversation; messages?: Message[] };
+      const conversation = body?.conversation;
+      const messages = body?.messages;
+
+      if (!conversation || typeof conversation !== 'object') {
+        res.status(400).json({ error: 'Missing "conversation" in request body' });
+        return;
+      }
+      if (!isNonEmptyString(conversation.id)) {
+        res.status(400).json({ error: 'Missing or empty conversation id' });
+        return;
+      }
+      if (!isNonEmptyString(conversation.title)) {
+        res.status(400).json({ error: 'Missing or empty conversation title' });
+        return;
+      }
+      if (!Array.isArray(messages)) {
+        res.status(400).json({ error: 'Missing "messages" array in request body' });
+        return;
+      }
+
+      const imported = chatStore.importConversation(conversation, messages);
+      res.status(201).json({ conversation: imported });
+    } catch (error) {
+      if (isConstraintError(error)) {
+        res.status(409).json({ error: 'Conversation already exists' });
+        return;
+      }
       res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });

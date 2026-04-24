@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useMemo } from 'react';
-import { Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork, Search, ChevronRight, Zap, Clock, House, BookOpen, Sparkles, BarChart3, User, Network, Image, Download } from 'lucide-react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
+import { Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork, Search, ChevronRight, Zap, Clock, House, BookOpen, Sparkles, BarChart3, User, Network, Image, Download, Upload } from 'lucide-react';
 import { Github } from 'lucide-react';
 import { GhostIcon } from '@/components/chat/GhostIcon';
 import { useChatStore } from '@/stores/chat-store';
@@ -22,7 +22,8 @@ import { HermesUsagePanel } from '@/components/sidebar/HermesUsagePanel';
 import { ImagesPanel } from '@/components/sidebar/ImagesPanel';
 import { ConversationTreeOverlay } from '@/components/workflow/ConversationTreeOverlay';
 import type { Conversation } from '@/lib/db';
-import { exportConversationJson, exportConversationMarkdown } from '@/lib/db';
+import { exportConversationJson, exportConversationMarkdown, importConversationJson } from '@/lib/db';
+import { toast } from '@/lib/toast';
 
 import type { SubTab } from '@/stores/ui-store';
 import { relativeTime } from '@/lib/relative-time';
@@ -106,6 +107,7 @@ export const ChatSidebar: React.FC = () => {
   const [cleanupCount, setCleanupCount] = useState(0);
   const [showTreeOverlay, setShowTreeOverlay] = useState(false);
   const [exportMenuId, setExportMenuId] = useState<string | null>(null);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
   const isHermes = activeProvider === 'hermes';
 
   // Get active repo from focused panel's changeset
@@ -184,6 +186,18 @@ export const ChatSidebar: React.FC = () => {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
     setExportMenuId(null);
+  };
+
+  const handleImportFile = async (file: File) => {
+    try {
+      const imported = await importConversationJson(file);
+      await loadConversations();
+      setActiveTab('chat');
+      setConversationForPanel(focusedPanelId, imported.id);
+      toast.success(`Imported "${imported.title}"`);
+    } catch (error) {
+      toast.error(`Import failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
   };
 
   const handleSelectConversation = (convId: string) => {
@@ -276,6 +290,27 @@ export const ChatSidebar: React.FC = () => {
 
         {/* Secondary actions */}
         <div className="flex items-center gap-1">
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) void handleImportFile(file);
+              e.target.value = '';
+            }}
+          />
+          <button
+            onClick={() => importInputRef.current?.click()}
+            className="group/imp relative inline-flex h-9 w-9 items-center justify-center overflow-hidden rounded-[8px] border border-[#2F2F2F] bg-[hsl(var(--card))] text-[#888888] transition-colors duration-100 hover:text-[hsl(var(--text-secondary))]"
+            title="Import conversation"
+            aria-label="Import conversation"
+            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          >
+            <Upload className="relative z-[1] h-4 w-4 group-hover/imp:[stroke:url(#sidebar-rainbow)]" />
+            <span className="pointer-events-none absolute inset-0 z-0 translate-x-[-120%] bg-[linear-gradient(115deg,transparent_0%,transparent_30%,hsl(var(--foreground)/0.12)_48%,transparent_62%,transparent_100%)] opacity-0 group-hover/imp:animate-[sidebar-btn-glimmer_4s_ease-in-out_infinite] group-hover/imp:opacity-100" />
+          </button>
           <button
             onClick={() => setRepoBrowserOpen(true)}
             className="group/gh relative inline-flex h-9 w-9 items-center justify-center overflow-hidden rounded-[8px] border border-[#2F2F2F] bg-[hsl(var(--card))] text-[#888888] transition-colors duration-100 hover:text-[hsl(var(--text-secondary))]"

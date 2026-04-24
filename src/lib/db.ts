@@ -16,6 +16,7 @@ export interface Conversation {
   parentConversationId?: string;
   forkPointMessageId?: string;
   forkNumber?: number;
+  originalCreatedAt?: string;
 }
 
 export interface Message {
@@ -532,6 +533,91 @@ async function loadConversationForExport(id: string): Promise<{ conversation: Co
   }
   const messages = await db.messages.getByConversation(id);
   return { conversation, messages };
+}
+
+interface ImportPayload {
+  conversation: Conversation;
+  messages: Message[];
+}
+
+async function serverImportConversation(payload: ImportPayload): Promise<Conversation> {
+  const response = await requestServer<{ conversation: Conversation }>(
+    '/functions/v1/chat-store/import',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+  );
+  if (!response?.conversation) {
+    throw new Error('Import failed: server did not return a conversation');
+  }
+  return response.conversation;
+}
+
+async function legacyImportConversation(payload: ImportPayload): Promise<Conversation> {
+  await legacyDb.conversations.add(payload.conversation);
+  for (const message of payload.messages) {
+    await legacyDb.messages.add(message);
+  }
+  return payload.conversation;
+}
+
+export async function importConversationJson(file: File): Promise<Conversation> {
+  const text = await file.text();
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error('File is not valid JSON');
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('File is not a CloudChat conversation export');
+  }
+
+  const { schemaVersion, conversation: rawConversation, messages: rawMessages } = parsed as {
+    schemaVersion?: unknown;
+    conversation?: unknown;
+    messages?: unknown;
+  };
+
+  if (schemaVersion !== 1) {
+    throw new Error(`Unsupported schemaVersion: ${String(schemaVersion)}. Expected 1.`);
+  }
+
+  if (!rawConversation || typeof rawConversation !== 'object') {
+    throw new Error('Missing "conversation" field in import file');
+  }
+
+  if (!Array.isArray(rawMessages)) {
+    throw new Error('Missing "messages" array in import file');
+  }
+
+  const source = rawConversation as Conversation;
+  const newId = crypto.randomUUID();
+  const now = new Date().toISOString();
+
+  const newConversation: Conversation = {
+    ...source,
+    id: newId,
+    createdAt: now,
+    updatedAt: now,
+    originalCreatedAt: source.createdAt,
+  };
+
+  const newMessages: Message[] = (rawMessages as Message[]).map((message) => ({
+    ...message,
+    id: crypto.randomUUID(),
+    conversationId: newId,
+  }));
+
+  const payload: ImportPayload = { conversation: newConversation, messages: newMessages };
+
+  return withBackend(
+    () => serverImportConversation(payload),
+    () => legacyImportConversation(payload),
+  );
 }
 
 export async function exportConversationJson(id: string): Promise<Blob> {
