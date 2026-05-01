@@ -13,16 +13,44 @@ import { Agent } from 'undici';
 type ReasoningEffort = 'low' | 'medium' | 'high';
 
 export const HERMES_TOOL_CAPABLE_MODELS = [
+  // OpenRouter-proxied models
   'anthropic/claude-sonnet-4',
   'google/gemini-3.1-flash-lite-preview',
-  'MiniMax-M2.7',
-  'MiniMax-M2.7-highspeed',
   'deepseek/deepseek-v3.2',
   'meta-llama/llama-4-maverick',
   'openai/gpt-4.1-mini',
   'google/gemini-2.5-flash',
   'deepseek/deepseek-chat-v3.1',
   'meta-llama/llama-4-scout',
+  // MiniMax direct
+  'MiniMax-M2.7',
+  'MiniMax-M2.7-highspeed',
+  // Nous direct
+  'nousresearch/hermes-3-llama-3.3-70b',
+  // DeepSeek direct
+  'deepseek-chat',
+  'deepseek-reasoner',
+  // Anthropic direct
+  'claude-sonnet-4-5-20250929',
+  'claude-opus-4-7',
+  // Google direct
+  'gemini-2.5-pro',
+  'gemini-2.5-flash-lite',
+  // OpenAI direct
+  'gpt-5.4',
+  'gpt-5-mini',
+  // xAI direct
+  'grok-4-fast-reasoning',
+  'grok-code-fast-1',
+  // Kimi direct
+  'kimi-k2.6',
+  'kimi-k2.5',
+  // Z.AI direct
+  'glm-5.1',
+  'glm-5',
+  // Mistral direct
+  'mistral-large-latest',
+  'mistral-small-latest',
 ] as const;
 
 // Disable body timeout for streaming LLM responses — models can pause for
@@ -404,6 +432,7 @@ export function supportsReasoningEffort(provider: string, model?: string): boole
 export const CONTEXT_WINDOW_SIZES: Record<string, number> = {
   'claude-sonnet-4': 200_000,
   'claude-sonnet-4-20250514': 200_000,
+  'claude-sonnet-4-5-20250929': 200_000,
   'claude-opus-4': 200_000,
   'claude-opus-4-7': 200_000,
   'claude-haiku-4': 200_000,
@@ -413,17 +442,29 @@ export const CONTEXT_WINDOW_SIZES: Record<string, number> = {
   'gpt-4.1-nano': 1_047_576,
   'gpt-4o': 128_000,
   'gpt-4o-mini': 128_000,
-  'gpt-5.4': 128_000,
-  'gpt-5.2': 128_000,
+  'gpt-5.4': 400_000,
+  'gpt-5.2': 400_000,
+  'gpt-5-mini': 400_000,
   'gemini-2.5-flash': 1_048_576,
-  'gemini-2.5-pro': 1_048_576,
+  'gemini-2.5-pro': 2_097_152,
+  'gemini-2.5-flash-lite': 1_048_576,
   'gemini-3.1-flash-lite-preview': 1_048_576,
   'deepseek/deepseek-v3.2': 128_000,
   'deepseek/deepseek-chat-v3.1': 128_000,
+  'deepseek-chat': 128_000,
+  'deepseek-reasoner': 64_000,
   'meta-llama/llama-4-maverick': 128_000,
   'meta-llama/llama-4-scout': 128_000,
   'MiniMax-M2.7': 4_000_000,
   'MiniMax-M2.7-highspeed': 4_000_000,
+  'grok-4-fast-reasoning': 1_000_000,
+  'grok-code-fast-1': 1_000_000,
+  'kimi-k2.6': 128_000,
+  'kimi-k2.5': 128_000,
+  'glm-5.1': 1_000_000,
+  'glm-5': 1_000_000,
+  'mistral-large-latest': 256_000,
+  'mistral-small-latest': 256_000,
 };
 
 export function getContextWindow(modelName: string): number {

@@ -934,17 +934,41 @@ class HermesAgentAdapter:
             f"{date_preamble}\n\n{repo_prompt}".strip() if repo_prompt else date_preamble
         )
 
-        # Determine provider from base_url or hermes config
+        # Determine provider from base_url or hermes config.
+        # Maps the base_url host to the corresponding hermes-agent provider ID.
         provider = None
-        if "openrouter.ai" in (base_url or ""):
+        _bu = (base_url or "").lower()
+        if "openrouter.ai" in _bu:
             provider = "openrouter"
-        elif "minimax" in (base_url or ""):
+        elif "minimax" in _bu:
             provider = "minimax"
-        elif "anthropic" in (base_url or ""):
+        elif "api.anthropic.com" in _bu:
             provider = "anthropic"
-        elif "openai.com" in (base_url or ""):
+        elif "api.openai.com" in _bu:
             provider = "openai"
-        elif "nousresearch" in (base_url or "") or "nous" in (base_url or ""):
+        elif "api.deepseek.com" in _bu:
+            provider = "deepseek"
+        elif "generativelanguage.googleapis.com" in _bu or "googleapis.com" in _bu:
+            provider = "gemini"
+        elif "api.x.ai" in _bu:
+            provider = "xai"
+        elif "api.groq.com" in _bu:
+            provider = "groq"
+        elif "api.mistral.ai" in _bu:
+            provider = "mistral"
+        elif "moonshot" in _bu or "kimi" in _bu:
+            provider = "kimi-coding"
+        elif "z.ai" in _bu or "bigmodel" in _bu:
+            provider = "zai"
+        elif "dashscope" in _bu or "aliyuncs.com" in _bu:
+            provider = "alibaba"
+        elif "huggingface" in _bu:
+            provider = "huggingface"
+        elif "cerebras" in _bu:
+            provider = "cerebras"
+        elif "together.xyz" in _bu:
+            provider = "together"
+        elif "nousresearch" in _bu or "nous" in _bu:
             provider = "nous"
         # If base_url doesn't match known providers, check hermes config
         if not provider:

@@ -1805,18 +1805,167 @@ class CircuitBreaker:
         return self.state
 
 
-# Circuit breakers per upstream provider
-_openrouter_circuit = CircuitBreaker(failure_threshold=5, recovery_timeout=30.0)
-_minimax_circuit = CircuitBreaker(failure_threshold=5, recovery_timeout=30.0)
-_nous_circuit = CircuitBreaker(failure_threshold=5, recovery_timeout=30.0)
+# Circuit breakers per upstream provider (created lazily below)
+_provider_circuits: dict[str, CircuitBreaker] = {}
 _brain_circuit = CircuitBreaker(failure_threshold=3, recovery_timeout=15.0)
 
-# Model prefix constants for routing
-MINIMAX_MODEL_PREFIX = "MiniMax-"
+def _get_circuit(provider: str) -> CircuitBreaker:
+    """Get or create a circuit breaker for a provider."""
+    if provider not in _provider_circuits:
+        _provider_circuits[provider] = CircuitBreaker(failure_threshold=5, recovery_timeout=30.0)
+    return _provider_circuits[provider]
+
+# Backward-compatible circuit references (evaluated at each use via _get_circuit)
+_openrouter_circuit_ref = "openrouter"
+_minimax_circuit_ref = "minimax"
+_nous_circuit_ref = "nous"
+
+# ── Provider base URL registry ──────────────────────────────────────────────
+# Mirrors the hermes-agent PROVIDER_REGISTRY in hermes_cli/auth.py.
+# Each entry maps a provider_id → (base_url, description, model_prefixes).
+# Model prefixes are used for automatic routing when the model name starts with
+# one of these prefixes (e.g. "anthropic/" → Anthropic, "deepseek/" → DeepSeek).
+# OpenRouter handles everything else as the universal fallback.
 import os
 MINIMAX_BASE_URL = os.environ.get("MINIMAX_BASE_URL", "https://api.minimax.io/anthropic")
+
+_PROVIDER_CONFIG: dict[str, dict] = {
+    "openrouter": {
+        "base_url": "https://openrouter.ai/api/v1",
+        "name": "OpenRouter",
+        "model_prefixes": [],  # Default — handles everything not explicitly routed
+        "auth_json_provider": "openrouter",
+        "env_var": "HERMES_OPENROUTER_KEY",
+    },
+    "minimax": {
+        "base_url": MINIMAX_BASE_URL,
+        "name": "MiniMax",
+        "model_prefixes": ["MiniMax-", "minimax-"],
+        "auth_json_provider": "minimax",
+        "env_var": "HERMES_MINIMAX_KEY",
+    },
+    "nous": {
+        "base_url": "https://inference-api.nousresearch.com/v1",
+        "name": "Nous Research",
+        "model_prefixes": ["nousresearch/", "nous/"],
+        "auth_json_provider": "nous",
+    },
+    "anthropic": {
+        "base_url": "https://api.anthropic.com",
+        "name": "Anthropic",
+        "model_prefixes": ["anthropic/", "claude-"],
+        "auth_json_provider": "anthropic",
+        "env_var": "ANTHROPIC_API_KEY",
+    },
+    "deepseek": {
+        "base_url": "https://api.deepseek.com",
+        "name": "DeepSeek",
+        "model_prefixes": ["deepseek/"],
+        "auth_json_provider": "deepseek",
+        "env_var": "DEEPSEEK_API_KEY",
+    },
+    "google": {
+        "base_url": "https://generativelanguage.googleapis.com/v1beta",
+        "name": "Google AI Studio",
+        "model_prefixes": ["google/", "gemini-"],
+        "auth_json_provider": "google",
+        "env_var": "GOOGLE_API_KEY",
+    },
+    "openai": {
+        "base_url": "https://api.openai.com/v1",
+        "name": "OpenAI",
+        "model_prefixes": ["openai/", "gpt-", "o1-", "o3-", "o4-"],
+        "auth_json_provider": "openai",
+        "env_var": "OPENAI_API_KEY",
+    },
+    "xai": {
+        "base_url": "https://api.x.ai/v1",
+        "name": "xAI (Grok)",
+        "model_prefixes": ["xai/", "grok-"],
+        "auth_json_provider": "xai",
+        "env_var": "XAI_API_KEY",
+    },
+    "groq": {
+        "base_url": "https://api.groq.com/openai/v1",
+        "name": "Groq",
+        "model_prefixes": ["groq/"],
+        "auth_json_provider": "groq",
+        "env_var": "GROQ_API_KEY",
+    },
+    "mistral": {
+        "base_url": "https://api.mistral.ai/v1",
+        "name": "Mistral",
+        "model_prefixes": ["mistral/", "mistral-", "mistralai/", "codestral/", "codestral-"],
+        "auth_json_provider": "mistral",
+        "env_var": "MISTRAL_API_KEY",
+    },
+    "kimi": {
+        "base_url": "https://api.moonshot.ai/v1",
+        "name": "Kimi / Moonshot",
+        "model_prefixes": ["kimi/", "kimi-", "moonshot/", "moonshotai/"],
+        "auth_json_provider": "kimi-coding",
+        "env_var": "KIMI_API_KEY",
+    },
+    "zai": {
+        "base_url": "https://api.z.ai/api/paas/v4",
+        "name": "Z.AI / GLM",
+        "model_prefixes": ["z-ai/", "glm-", "z.ai/"],
+        "auth_json_provider": "zai",
+        "env_var": "GLM_API_KEY",
+    },
+    "alibaba": {
+        "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        "name": "Alibaba DashScope",
+        "model_prefixes": ["alibaba/", "qwen/"],
+        "auth_json_provider": "alibaba",
+        "env_var": "DASHSCOPE_API_KEY",
+    },
+    "huggingface": {
+        "base_url": "https://api-inference.huggingface.co/v1",
+        "name": "Hugging Face",
+        "model_prefixes": ["huggingface/", "hf/"],
+        "auth_json_provider": "huggingface",
+        "env_var": "HF_TOKEN",
+    },
+    "kilocode": {
+        "base_url": "https://api.kilocode.ai/v1",
+        "name": "Kilo Code",
+        "model_prefixes": ["kilocode/"],
+        "auth_json_provider": "kilocode",
+        "env_var": "KILOCODE_API_KEY",
+    },
+    "cerebras": {
+        "base_url": "https://api.cerebras.ai/v1",
+        "name": "Cerebras",
+        "model_prefixes": ["cerebras/"],
+        "auth_json_provider": "cerebras",
+        "env_var": "CEREBRAS_API_KEY",
+    },
+    "together": {
+        "base_url": "https://api.together.xyz/v1",
+        "name": "Together AI",
+        "model_prefixes": ["together/", "together_ai/"],
+        "auth_json_provider": "together",
+        "env_var": "TOGETHER_API_KEY",
+    },
+}
+
+# Build a reverse lookup: model_prefix → provider_id
+_MODEL_PREFIX_TO_PROVIDER: dict[str, str] = {}
+for _pid, _cfg in _PROVIDER_CONFIG.items():
+    for _pfx in _cfg.get("model_prefixes", []):
+        _MODEL_PREFIX_TO_PROVIDER[_pfx] = _pid
+
+# Known hosts for custom base_url detection
+_KNOWN_HOSTS: tuple[str, ...] = tuple(
+    {u.split("://")[-1].split("/")[0].replace("api.", "").replace("www.", "")
+     for u in [_c["base_url"] for _c in _PROVIDER_CONFIG.values()]}
+)
+
+# Backward-compatible constants
+MINIMAX_MODEL_PREFIX = "MiniMax-"
 NOUS_MODEL_PREFIX = "nousresearch/"
-NOUS_BASE_URL = "https://inference-api.nousresearch.com/v1"
+NOUS_BASE_URL = _PROVIDER_CONFIG["nous"]["base_url"]
 
 # Vision-capable models — these support image input (base64, URLs, or multimodal content)
 # Models NOT in this list will have image content stripped before being sent upstream
@@ -1888,15 +2037,26 @@ def _retry_brain_call(func, *args, retries: int = 2, backoff: float = 0.5, **kwa
 # Error message helpers for common failures
 # ------------------------------------------------------------------
 def _no_api_key_error(provider: str) -> JSONResponse:
+    """Build a user-friendly 401 error for a missing API key."""
+    cfg = _PROVIDER_CONFIG.get(provider, {})
+    name = cfg.get("name", provider)
+    env_var = cfg.get("env_var", f"HERMES_{provider.upper()}_KEY")
     messages = {
         "openrouter": "No API key provided. Set HERMES_OPENROUTER_KEY, pass Authorization: Bearer *** header, or run the local OpenClaw gateway.",
         "minimax": "MiniMax API key required. Set HERMES_MINIMAX_KEY, configure a MiniMax key in Settings, or run the local OpenClaw gateway.",
         "nous": "Nous API key required. Configure a Nous agent key in ~/.hermes/auth.json or run `hermes auth login --provider nous`.",
         "github": "GitHub token required for repository operations. Provide x-hermes-github-pat header or configure a GitHub token in Settings.",
     }
+    if provider in messages:
+        return JSONResponse(
+            status_code=401,
+            content={"error": {"message": messages[provider]}},
+        )
+    # Generic message for all other providers
     return JSONResponse(
         status_code=401,
-        content={"error": {"message": messages.get(provider, "API key required.")}},
+        content={"error": {"message": f"{name} API key required. Set {env_var} environment variable, "
+                                      f"add {provider} credentials to ~/.hermes/auth.json, or run `hermes auth add`."}},
     )
 
 
@@ -2230,21 +2390,25 @@ async def diag():
 @app.get("/health")
 async def health():
     local_gateway_key = bool(_get_local_gateway_key())
-    credential_sources: dict[str, bool] = {
-        "env": bool(OPENROUTER_KEY),
-        "auth_json": bool(_get_openrouter_key_from_hermes_creds()),
-        "openclaw_gateway": local_gateway_key,
-    }
-    credential_sources_minimax: dict[str, bool] = {
-        "env": bool(MINIMAX_KEY),
-        "openclaw_gateway": local_gateway_key,
-    }
+    # Check credential availability for all configured providers
+    provider_credentials: dict[str, bool] = {}
+    for pid, pcfg in _PROVIDER_CONFIG.items():
+        env_var = pcfg.get("env_var", "")
+        auth_provider = pcfg.get("auth_json_provider", pid)
+        has_cred = bool(
+            (env_var and os.environ.get(env_var))
+            or _get_credential_pool_key(auth_provider)
+            or (pid == "nous" and _get_nous_agent_key())
+            or (pid == "openrouter" and _get_openrouter_key_from_hermes_creds())
+            or local_gateway_key
+        )
+        provider_credentials[pid] = has_cred
+
     return {
         "status": "ok",
-        "has_openrouter_creds": any(credential_sources.values()),
-        "has_minimax_creds": any(credential_sources_minimax.values()),
-        "credential_sources": credential_sources,
-        "credential_sources_minimax": credential_sources_minimax,
+        "has_openrouter_creds": provider_credentials.get("openrouter", False),
+        "has_minimax_creds": provider_credentials.get("minimax", False),
+        "provider_credentials": provider_credentials,
         "launch_token_present": bool(HERMES_BRIDGE_TOKEN),
         "brain_initialized": _brain_initialized,
         "active_requests": _bridge_active_requests,
@@ -2524,20 +2688,20 @@ async def _passthrough_chat_completions(
             await upstream.aclose()
             await _close_client()
             if "minimax" in body.model.lower():
-                _minimax_circuit.record_failure()
+                _get_circuit("minimax").record_failure()
             elif body.model.startswith(NOUS_MODEL_PREFIX):
-                _nous_circuit.record_failure()
+                _get_circuit("nous").record_failure()
             else:
-                _openrouter_circuit.record_failure()
+                _get_circuit("openrouter").record_failure()
             await _finalize(False)
             return _passthrough_error_response(upstream.status_code, error_body)
 
         if "minimax" in body.model.lower():
-            _minimax_circuit.record_success()
+            _get_circuit("minimax").record_success()
         elif body.model.startswith(NOUS_MODEL_PREFIX):
-            _nous_circuit.record_success()
+            _get_circuit("nous").record_success()
         else:
-            _openrouter_circuit.record_success()
+            _get_circuit("openrouter").record_success()
 
         media_type = upstream.headers.get("content-type", "text/event-stream")
         if not payload.get("stream", True) or not media_type.startswith("text/event-stream"):
@@ -2700,54 +2864,50 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
         or _get_local_gateway_key()
     )
 
-    # Routing priority — ordered so CLI config is always authoritative.
-    # The Electron app calls this endpoint after running `hermes model …` in
-    # a terminal; the CLI writes ~/.hermes/config.yaml with the chosen model
-    # and provider, but does NOT always update ~/.hermes/auth.json's
-    # active_provider. Routing must therefore trust config.yaml first.
-    #
-    #   1. config.yaml model.provider (explicit CLI declaration)          → that provider
-    #   2. config.yaml model.base_url (custom, non-hardcoded endpoint)    → custom passthrough
-    #   3. model-name prefix (MiniMax-*, nousresearch/*)                  → that provider
-    #   4. auth.json active_provider (legacy fallback)                    → that provider
-    #   5. default                                                        → OpenRouter
-    is_minimax_model = body.model.startswith(MINIMAX_MODEL_PREFIX)
+    # ── Provider Routing ──────────────────────────────────────────────────
+    # Priority, strongest first:
+    #   1. model-name prefix match in MODEL_PREFIX_TO_PROVIDER (e.g. anthropic/* → Anthropic)
+    #   2. config.yaml model.provider (explicit CLI declaration via `hermes model`)
+    #   3. config.yaml model.base_url is a custom non-known host → custom passthrough
+    #   4. auth.json active_provider (legacy fallback)
+    #   5. OpenRouter (default)
     active_provider = _get_active_provider()
 
     cli_cfg = _load_cli_model_config()
     cli_base_url = (cli_cfg.get("base_url") or "").strip()
     cli_provider = (cli_cfg.get("provider") or "").strip().lower()
-    _known_hosts = ("openrouter.ai", "minimax.io", "nousresearch.com", "anthropic.com", "openai.com")
-    cli_is_custom = bool(cli_base_url) and not any(h in cli_base_url for h in _known_hosts)
 
-    # Resolve the effective provider. Priority:
-    #   a) Explicit model-name prefix (MiniMax-*, nousresearch/*) — the caller
-    #      directly names the provider via the model, strongest possible signal.
-    #   b) config.yaml model.provider — CLI's declared intent. Wins over
-    #      auth.json because the CLI writes config.yaml on `hermes model …`
-    #      but doesn't always rewrite auth.json, so auth.json can be stale.
-    #   c) auth.json active_provider — legacy fallback for older installs.
-    #   d) OpenRouter default.
-    if is_minimax_model:
-        resolved_provider = "minimax"
+    # Detect custom (non-whitelisted) base_urls
+    cli_is_custom = bool(cli_base_url) and not any(h in cli_base_url for h in _KNOWN_HOSTS)
+
+    # Resolve provider from model prefix
+    def _resolve_provider_from_model(model: str) -> Optional[str]:
+        model_lower = model.lower()
+        for prefix, provider_id in sorted(_MODEL_PREFIX_TO_PROVIDER.items(), key=lambda x: -len(x[0])):
+            if model_lower.startswith(prefix):
+                return provider_id
+        return None
+
+    #   1. Model prefix match (strongest signal — the model identifier names the provider)
+    model_prefix_provider = _resolve_provider_from_model(body.model)
+    if model_prefix_provider:
+        resolved_provider = model_prefix_provider
         route_source = "model-prefix"
-    elif body.model.startswith(NOUS_MODEL_PREFIX):
-        resolved_provider = "nous"
-        route_source = "model-prefix"
-    elif cli_provider in ("openrouter", "nous", "minimax"):
+    #   2. CLI config.yaml provider
+    elif cli_provider and cli_provider in _PROVIDER_CONFIG:
         resolved_provider = cli_provider
         route_source = "config.yaml"
-    elif active_provider in ("openrouter", "nous", "minimax"):
+    #   3. auth.json active_provider
+    elif active_provider and active_provider in _PROVIDER_CONFIG:
         resolved_provider = active_provider
         route_source = "auth.json"
+    #   4. Default
     else:
         resolved_provider = "openrouter"
         route_source = "default"
 
-    # Custom non-hardcoded base_url takes precedence over the resolved provider
-    # — but only when the CLI didn't explicitly choose a known provider (that
-    # would be contradictory: declaring "openrouter" + a custom base_url).
-    if cli_is_custom and cli_provider not in ("openrouter", "nous", "minimax"):
+    # Custom non-hardcoded base_url overrides the resolved provider
+    if cli_is_custom and cli_provider not in _PROVIDER_CONFIG:
         cli_key = _get_credential_pool_key(cli_provider) or _get_local_gateway_key()
         if not cli_key:
             return _no_api_key_error(cli_provider or "cli-config")
@@ -2758,49 +2918,49 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
             f"provider={cli_provider} base_url={cli_base_url} model={body.model}",
             flush=True,
         )
-    elif resolved_provider == "minimax":
-        if not _minimax_circuit.is_available():
-            return _circuit_open_error("MiniMax")
-        minimax_key = (
-            request.headers.get("x-hermes-minimax-key", "").strip()
-            or getattr(body, "hermes_minimax_key", "").strip()
-            or MINIMAX_KEY
-            or _get_local_gateway_key()
-        )
-        if not minimax_key:
-            return _no_api_key_error("minimax")
-        # The real Hermes agent only treats gateway-supplied credentials as
-        # explicit when it receives both api_key and base_url. Passing only the
-        # key makes it fall back to ~/.hermes/config.yaml provider resolution,
-        # which can emit a misleading "no API key found" error even though the
-        # bridge already forwarded a request-scoped MiniMax key.
-        agent_base_url = MINIMAX_BASE_URL
-        agent_api_key = minimax_key
-        print(
-            f"[hermes-bridge] Routing via MiniMax. source={route_source} model={body.model}",
-            flush=True,
-        )
-    elif resolved_provider == "nous":
-        if not _nous_circuit.is_available():
-            return _circuit_open_error("Nous")
-        nous_key = _get_nous_agent_key()
-        if not nous_key:
-            return _no_api_key_error("nous")
-        agent_base_url = NOUS_BASE_URL
-        agent_api_key = nous_key
-        print(
-            f"[hermes-bridge] Routing via Nous. source={route_source} model={body.model}",
-            flush=True,
-        )
     else:
-        if not _openrouter_circuit.is_available():
-            return _circuit_open_error("OpenRouter")
-        if not api_key:
-            return _no_api_key_error("openrouter")
-        agent_base_url = "https://openrouter.ai/api/v1"
-        agent_api_key = api_key
+        # Resolve provider from the central config table
+        provider_cfg = _PROVIDER_CONFIG.get(resolved_provider)
+        if not provider_cfg:
+            # Unknown provider — fall back to OpenRouter
+            provider_cfg = _PROVIDER_CONFIG["openrouter"]
+            resolved_provider = "openrouter"
+            route_source = "fallback"
+
+        circuit = _get_circuit(resolved_provider)
+        if not circuit.is_available():
+            return _circuit_open_error(provider_cfg["name"])
+
+        # Resolve API key — try credential pool first, then env var, then gateway
+        agent_api_key = ""
+        if resolved_provider == "nous":
+            agent_api_key = _get_nous_agent_key() or ""
+        elif resolved_provider == "openrouter":
+            agent_api_key = api_key or ""
+        elif resolved_provider == "minimax":
+            agent_api_key = (
+                request.headers.get("x-hermes-minimax-key", "").strip()
+                or getattr(body, "hermes_minimax_key", "").strip()
+                or MINIMAX_KEY
+                or ""
+            )
+        else:
+            # Generic provider: try credential pool first, then env var
+            auth_provider = provider_cfg.get("auth_json_provider", resolved_provider)
+            agent_api_key = (
+                _get_credential_pool_key(auth_provider)
+                or os.environ.get(provider_cfg.get("env_var", ""), "")
+                or _get_local_gateway_key()
+                or ""
+            )
+
+        if not agent_api_key:
+            return _no_api_key_error(resolved_provider)
+
+        agent_base_url = provider_cfg["base_url"]
         print(
-            f"[hermes-bridge] Routing via OpenRouter. source={route_source} model={body.model}",
+            f"[hermes-bridge] Routing via {provider_cfg['name']}. "
+            f"source={route_source} model={body.model} base_url={agent_base_url}",
             flush=True,
         )
 

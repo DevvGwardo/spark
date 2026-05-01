@@ -17,19 +17,44 @@ export interface ProviderInfo {
 }
 
 export const HERMES_RECOMMENDED_MODELS = [
-  // Paid — best budget-to-performance
+  // OpenRouter — best budget-to-performance (routes through OpenRouter by default)
   'anthropic/claude-sonnet-4',
   'google/gemini-3.1-flash-lite-preview',
-  'MiniMax-M2.7',
-  'MiniMax-M2.7-highspeed',
-  'xiaomi/mimo-v2-pro',
   'deepseek/deepseek-v3.2',
   'meta-llama/llama-4-maverick',
   'openai/gpt-4.1-mini',
   'google/gemini-2.5-flash',
   'deepseek/deepseek-chat-v3.1',
   'meta-llama/llama-4-scout',
-  // Free
+  'xiaomi/mimo-v2-pro',
+  // MiniMax direct API (no OpenRouter needed)
+  'MiniMax-M2.7',
+  'MiniMax-M2.7-highspeed',
+  // DeepSeek direct API
+  'deepseek-chat',
+  'deepseek-reasoner',
+  // Anthropic direct API
+  'claude-sonnet-4-5-20250929',
+  'claude-opus-4-7',
+  // Google direct API
+  'gemini-2.5-pro',
+  'gemini-2.5-flash-lite',
+  // OpenAI direct API
+  'gpt-5.4',
+  'gpt-5-mini',
+  // xAI direct API
+  'grok-4-fast-reasoning',
+  'grok-code-fast-1',
+  // Kimi direct API
+  'kimi-k2.6',
+  'kimi-k2.5',
+  // Z.AI / GLM direct API
+  'glm-5.1',
+  'glm-5',
+  // Mistral direct API
+  'mistral-large-latest',
+  'mistral-small-latest',
+  // Free models (OpenRouter free tier)
   'deepseek/deepseek-r1-0528',
   'google/gemini-2.0-flash-001',
   'nousresearch/hermes-3-llama-3.1-405b:free',
