@@ -9,6 +9,7 @@ import '@shoelace-style/shoelace/dist/themes/dark.css';
 import App from './App.tsx';
 import './index.css';
 import { useActivityStore } from './stores/activity-store';
+import { ToastProvider } from './components/ui/toast';
 
 // Shoelace assets base path (icons, etc.)
 setBasePath('https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.20.1/cdn/');
@@ -20,4 +21,8 @@ setBasePath('https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.20.1/cdn/')
   return Object.values(activities).some((a) => a.streaming);
 };
 
-createRoot(document.getElementById("root")!).render(<App />);
+createRoot(document.getElementById("root")!).render(
+  <ToastProvider>
+    <App />
+  </ToastProvider>
+);

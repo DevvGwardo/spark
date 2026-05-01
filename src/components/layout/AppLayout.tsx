@@ -30,6 +30,7 @@ import { SlotNumber } from '@/components/ui/SlotNumber';
 import { HermesUpdateButton } from '@/components/chat/HermesUpdateButton';
 import { FeedbackButton } from '@/components/feedback/FeedbackButton';
 import { BridgeSetupModal } from '@/components/setup/BridgeSetupModal';
+import { CommandPalette } from '@/components/overlay/CommandPalette';
 import { cn } from '@/lib/utils';
 
 export const AppLayout: React.FC = () => {
@@ -69,6 +70,7 @@ export const AppLayout: React.FC = () => {
   const [prPanelId, setPrPanelId] = useState<string | null>(null); // which panel triggered the PR modal
   const [prModalMode, setPrModalMode] = useState<'create' | 'review'>('create');
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const headerMenuRef = useRef<HTMLDivElement>(null);
   const hermesTerminalRef = useRef<HermesPTYPanelHandle>(null);
   const focusedPanel = panels.find((p) => p.id === focusedPanelId);
@@ -104,12 +106,17 @@ export const AppLayout: React.FC = () => {
     ? conversations.find((c) => c.id === focusedPanel.conversationId)
     : null;
 
-  // Keyboard shortcut: Ctrl+` to toggle terminal
+  // Keyboard shortcut: Ctrl+` to toggle terminal, Ctrl/Cmd+K to open command palette
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === '`') {
         e.preventDefault();
         toggleTerminal();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        setCommandPaletteOpen((prev) => !prev);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -316,6 +323,7 @@ const headerSecondaryLabel = selectedCronJobId
       )}
       {!isSetupComplete && <SetupWizard />}
       <SettingsModal />
+      <CommandPalette open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen} />
       <RepoIssueBrowser isOpen={repoBrowserOpen} onClose={() => setRepoBrowserOpen(false)} />
       {prActiveRepo && (
         <CreatePRModal

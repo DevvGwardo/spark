@@ -26,7 +26,7 @@
     "electron:publish:all": "electron-vite build && electron-builder --mac --win --publish always",
     "test:e2e": "npx playwright test --config playwright-electron.config.ts",
     "test:e2e:headed": "npx playwright test --config playwright-electron.config.ts --headed",
-    "dev:electron": "npx concurrently -n server,bridge,electron -c blue,green,cyan \"npm run server\" \"cd hermes-bridge && .venv/bin/python main.py\" \"npm run electron:dev\""
+    "dev:electron": "npx concurrently --kill-others --kill-signal SIGTERM -n server,electron -c blue,cyan \"npm run server\" \"npm run electron:dev\""
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1",

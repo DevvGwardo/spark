@@ -1,5 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { BarChart3, Coins, Loader2, RefreshCw } from 'lucide-react';
+import {
+  AreaChart,
+  Area,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+} from 'recharts';
 import { fetchHermesWorkspaceUsage, type HermesUsageOverview } from '@/lib/hermes-api';
 import { relativeTime } from '@/lib/relative-time';
 import { formatCompactNumber, formatUsd } from '@/components/sidebar/hermesSidebarUtils';
@@ -174,6 +184,110 @@ export function HermesUsagePanel() {
                 : 'No session history recorded yet.'}
             </p>
           </div>
+
+          {/* Token history area chart */}
+
+          <div className="rounded-xl border border-border/40 bg-background/40 p-3">
+            <div className="mb-3 text-[11px] uppercase tracking-[0.18em] text-muted-foreground/45">
+              Token Usage Over Time
+            </div>
+            <div className="h-40 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={usage.recent_days}>
+                  <defs>
+                    <linearGradient id="tokenGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#59d4ff" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#59d4ff" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <XAxis
+                    dataKey="day"
+                    tick={{ fontSize: 9, fill: 'hsl(var(--muted-foreground) / 0.6)' }}
+                    tickLine={false}
+                    axisLine={false}
+                    tickFormatter={(value: string) => value.slice(5).replace('-', '/')}
+                    minTickGap={16}
+                  />
+                  <YAxis
+                    tick={{ fontSize: 9, fill: 'hsl(var(--muted-foreground) / 0.6)' }}
+                    tickLine={false}
+                    axisLine={false}
+                    tickFormatter={(value) => formatCompactNumber(value)}
+                    width={32}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      fontSize: '11px',
+                      background: 'hsl(var(--popover))',
+                      border: '1px solid hsl(var(--border))',
+                      borderRadius: '6px',
+                      color: 'hsl(var(--popover-foreground))',
+                    }}
+                    formatter={(value: number) => [formatCompactNumber(value), 'Tokens']}
+                    labelFormatter={(label) => `Day: ${label}`}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="total_tokens"
+                    stroke="#59d4ff"
+                    strokeWidth={2}
+                    fill="url(#tokenGradient)"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Top Models bar chart */}
+
+          {usage.top_models.length > 0 && (
+            <div className="rounded-xl border border-border/40 bg-background/40 p-3">
+              <div className="mb-3 text-[11px] uppercase tracking-[0.18em] text-muted-foreground/45">
+                Model Token Distribution
+              </div>
+              <div className="h-60 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={usage.top_models}
+                    layout="vertical"
+                    margin={{ top: 0, right: 4, left: 0, bottom: 0 }}
+                  >
+                    <XAxis
+                      type="number"
+                      tick={{ fontSize: 9, fill: 'hsl(var(--muted-foreground) / 0.6)' }}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(value) => formatCompactNumber(value)}
+                    />
+                    <YAxis
+                      type="category"
+                      dataKey="model"
+                      tick={{ fontSize: 9, fill: 'hsl(var(--muted-foreground) / 0.6)' }}
+                      tickLine={false}
+                      axisLine={false}
+                      width={90}
+                      interval={0}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        fontSize: '11px',
+                        background: 'hsl(var(--popover))',
+                        border: '1px solid hsl(var(--border))',
+                        borderRadius: '6px',
+                        color: 'hsl(var(--popover-foreground))',
+                      }}
+                      formatter={(value: number) => [formatCompactNumber(value), 'Tokens']}
+                    />
+                    <Bar
+                      dataKey="total_tokens"
+                      fill="#59d4ff"
+                      radius={[0, 4, 4, 0]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

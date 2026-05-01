@@ -11,6 +11,7 @@ export interface ElectronAPI {
   getAppVersion?: () => Promise<string>
   openrouterOAuth?: () => Promise<string>
   openExternal?: (url: string) => Promise<boolean>
+  saveFile?: (defaultFilename: string, content: string) => Promise<{ saved: boolean; path?: string; error?: string }>
   snapshotLocalImage?: (path: string) => Promise<{ url: string; hash: string; path: string }>
   notifyAttentionRequest?: (payload?: { title?: string; body?: string }) => Promise<void>
   clearAttentionRequest?: () => Promise<void>

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { User, Plus, Trash2, Check, Loader2, Braces } from 'lucide-react';
+import { Plus, Trash2, Loader2, Braces } from 'lucide-react';
 import { useProfilesStore, type Profile } from '@/stores/profiles-store';
 import { cn } from '@/lib/utils';
 
@@ -51,33 +51,32 @@ export function ProfilesPanel() {
   };
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
-        <div className="flex items-center gap-2">
-          <User className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm font-medium">Profiles</span>
-        </div>
+    <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-2">
+        <span className="text-[12px] font-semibold uppercase tracking-wide text-muted-foreground">Profiles</span>
         <button
           onClick={() => setCreating(!creating)}
-          className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground/60 transition-colors hover:bg-[hsl(var(--sidebar-active))] hover:text-foreground"
           title="New profile"
         >
-          <Plus className="h-4 w-4" />
+          <Plus className="h-3.5 w-3.5" />
         </button>
       </div>
 
       {error && (
-        <div className="px-4 py-2 text-xs text-destructive bg-destructive/10">{error}</div>
+        <div className="mx-3 mb-2 rounded-xl border border-red-500/20 bg-red-500/10 p-2 text-[11px] text-red-300">
+          {error}
+        </div>
       )}
 
       {creating && (
-        <div className="px-4 py-3 border-b border-border/40 space-y-2">
+        <div className="mx-3 mb-2 space-y-2 rounded-xl border border-border/40 bg-background/40 p-3">
           <input
             type="text"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             placeholder="Profile name"
-            className="w-full text-sm px-2 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-1 focus:ring-accent-100"
+            className="w-full rounded-md border border-border/60 bg-background px-2 py-1.5 text-[12px] focus:border-primary/60 focus:outline-none"
             onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
             autoFocus
           />
@@ -85,7 +84,7 @@ export function ProfilesPanel() {
             <select
               value={cloneFrom}
               onChange={(e) => setCloneFrom(e.target.value)}
-              className="text-xs px-2 py-1 rounded border border-border bg-background flex-1"
+              className="flex-1 rounded-md border border-border/60 bg-background px-2 py-1 text-[11px]"
             >
               <option value="default">Clone from: default</option>
               {profiles.filter((p) => p.name !== 'default').map((p) => (
@@ -95,19 +94,25 @@ export function ProfilesPanel() {
             <button
               onClick={handleCreate}
               disabled={!newName.trim()}
-              className="text-xs px-2 py-1 rounded bg-accent-100 text-white hover:bg-accent-200 disabled:opacity-50"
+              className="rounded-md bg-primary px-2.5 py-1 text-[11px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
             >
               Create
+            </button>
+            <button
+              onClick={() => { setCreating(false); setNewName(''); }}
+              className="text-[11px] text-muted-foreground/60 hover:text-foreground"
+            >
+              Cancel
             </button>
           </div>
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 space-y-1 overflow-y-auto px-3 pb-3">
         {loading && profiles.length === 0 && (
-          <div className="flex items-center justify-center py-8 text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin mr-2" />
-            <span className="text-xs">Loading profiles...</span>
+          <div className="flex items-center justify-center py-8 text-muted-foreground/60">
+            <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+            <span className="text-[11px]">Loading profiles...</span>
           </div>
         )}
 
@@ -126,10 +131,10 @@ export function ProfilesPanel() {
         ))}
 
         {profiles.length === 0 && !loading && (
-          <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
-            <Braces className="h-8 w-8 mb-2 opacity-40" />
-            <span className="text-xs">No Hermes profiles found</span>
-            <span className="text-[10px] mt-1 opacity-60">~/.hermes/profiles/</span>
+          <div className="flex flex-col items-center justify-center py-8 text-muted-foreground/50">
+            <Braces className="mb-2 h-7 w-7 opacity-40" />
+            <span className="text-[11px]">No Hermes profiles found</span>
+            <span className="mt-1 text-[10px] opacity-60">~/.hermes/profiles/</span>
           </div>
         )}
       </div>
@@ -156,41 +161,63 @@ function ProfileRow({
   onDeleteConfirm: () => void;
   onDeleteCancel: () => void;
 }) {
+  const metadata: string[] = [];
+  if (profile.model) metadata.push(profile.model);
+  metadata.push(`${profile.skillCount} skills`);
+  metadata.push(`${profile.sessionCount} sessions`);
+
   return (
     <div
       className={cn(
-        'flex items-center gap-3 px-4 py-2.5 border-b border-border/20 hover:bg-muted/40 transition-colors group',
-        isActive && 'bg-accent-100/5',
+        'group relative rounded-lg border px-2.5 py-2 transition-colors',
+        isActive
+          ? 'border-primary/40 bg-primary/5'
+          : 'border-border/40 bg-background/40 hover:border-border/70 hover:bg-background/60',
       )}
     >
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className={cn('text-sm font-medium truncate', isActive && 'text-accent-100')}>
-            {profile.name}
-          </span>
-          {isActive && (
-            <Check className="h-3 w-3 text-accent-100 shrink-0" />
+      <div className="flex items-center gap-2">
+        <div
+          className={cn(
+            'h-1.5 w-1.5 flex-shrink-0 rounded-full',
+            isActive ? 'bg-primary shadow-[0_0_6px_hsl(var(--primary)/0.6)]' : 'bg-muted-foreground/20',
           )}
-        </div>
-        <div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted-foreground/60">
-          {profile.model && <span>{profile.model}</span>}
-          <span>{profile.skillCount} skills</span>
-          <span>{profile.sessionCount} sessions</span>
-        </div>
+        />
+        <span
+          className={cn(
+            'min-w-0 flex-1 truncate text-[12px] font-medium',
+            isActive ? 'text-foreground' : 'text-foreground/90',
+          )}
+        >
+          {profile.name}
+        </span>
+        {isActive && (
+          <span className="rounded-sm bg-primary/15 px-1.5 py-px text-[9px] font-semibold uppercase tracking-[0.1em] text-primary">
+            Active
+          </span>
+        )}
       </div>
 
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+      <div className="mt-1 flex items-center gap-1.5 pl-3.5 text-[10px] text-muted-foreground/50">
+        {metadata.map((item, i) => (
+          <React.Fragment key={i}>
+            {i > 0 && <span className="text-muted-foreground/30">·</span>}
+            <span className="truncate">{item}</span>
+          </React.Fragment>
+        ))}
+      </div>
+
+      <div className="absolute right-2 top-1.5 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
         {isDeleting ? (
           <>
             <button
               onClick={onDeleteConfirm}
-              className="text-[10px] px-1.5 py-0.5 rounded bg-destructive/20 text-destructive hover:bg-destructive/30"
+              className="rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] text-red-300 hover:bg-red-500/30"
             >
               Delete
             </button>
             <button
               onClick={onDeleteCancel}
-              className="text-[10px] px-1.5 py-0.5 rounded text-muted-foreground hover:bg-muted"
+              className="rounded px-1.5 py-0.5 text-[10px] text-muted-foreground/70 hover:bg-background/50"
             >
               Cancel
             </button>
@@ -201,7 +228,7 @@ function ProfileRow({
               <button
                 onClick={onActivate}
                 disabled={isActivating}
-                className="text-[10px] px-1.5 py-0.5 rounded bg-accent-100/10 text-accent-100 hover:bg-accent-100/20 disabled:opacity-50"
+                className="rounded-md bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/25 disabled:opacity-50"
               >
                 {isActivating ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Activate'}
               </button>
@@ -209,8 +236,8 @@ function ProfileRow({
             {profile.name !== 'default' && (
               <button
                 onClick={onDelete}
-                className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
-                title="Delete"
+                className="rounded p-1 text-muted-foreground/60 hover:bg-red-500/10 hover:text-red-400"
+                title="Delete profile"
               >
                 <Trash2 className="h-3 w-3" />
               </button>

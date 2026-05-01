@@ -209,22 +209,37 @@ export const ChatSidebar: React.FC = () => {
   };
 
   const handleExport = async (conv: Conversation, format: 'md' | 'json') => {
-    const blob = format === 'md' ? await exportConversationMarkdown(conv.id) : await exportConversationJson(conv.id);
-    const slug = (conv.title || 'conversation')
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 60) || 'conversation';
-    const idPrefix = conv.id.slice(0, 8);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${slug}-${idPrefix}.${format}`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    setExportMenuId(null);
+    try {
+      const blob = format === 'md' ? await exportConversationMarkdown(conv.id) : await exportConversationJson(conv.id);
+      const slug = (conv.title || 'conversation')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 60) || 'conversation';
+      const idPrefix = conv.id.slice(0, 8);
+      const filename = `${slug}-${idPrefix}.${format}`;
+
+      if (window.electronAPI?.saveFile) {
+        const content = await blob.text();
+        const result = await window.electronAPI.saveFile(filename, content);
+        if (result.saved) {
+          toast.success(`Exported to ${result.path}`);
+        } else if (result.error) {
+          toast.error(`Export failed: ${result.error}`);
+        }
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+    } finally {
+      setExportMenuId(null);
+    }
   };
 
   const handleImportFile = async (file: File) => {

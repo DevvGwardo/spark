@@ -103,6 +103,162 @@ else:
 
 print(f"[hermes-adapter] Loaded real Hermes agent from {_HERMES_AGENT_DIR}", flush=True)
 
+
+# ---------------------------------------------------------------------------
+# Fallback web_search / web_extract
+#
+# The real Hermes agent registers web_search/web_extract with
+# check_fn=check_web_api_key, which requires FIRECRAWL/EXA/TAVILY/PARALLEL
+# credentials.  When none are configured, registry.get_definitions() silently
+# drops both tools — so the "Web" toggle in CloudChat is a no-op and models
+# hallucinate an "I don't have internet access" response instead of calling a
+# tool.  Register a DuckDuckGo-based fallback (same name, same toolset) so
+# web_search is always available.  If a real backend key is configured, skip
+# this so users keep the better Firecrawl/Exa/Tavily/Parallel results.
+# ---------------------------------------------------------------------------
+
+def _register_fallback_web_tools() -> None:
+    try:
+        from tools.web_tools import check_web_api_key
+    except Exception as e:
+        print(f"[hermes-adapter] Skipping web fallback — real web_tools not importable: {e}", flush=True)
+        return
+
+    try:
+        if check_web_api_key():
+            return  # Real backend available; leave the real handlers alone
+    except Exception:
+        pass  # Treat check errors as "not available"
+
+    import re
+    from urllib.parse import quote_plus, unquote
+
+    _TAG_RE = re.compile(r"<[^>]+>")
+    _SCRIPT_RE = re.compile(r"<script[^>]*>.*?</script>", re.DOTALL)
+    _STYLE_RE = re.compile(r"<style[^>]*>.*?</style>", re.DOTALL)
+    _DDG_RESULT_RE = re.compile(
+        r'class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)</a>.*?'
+        r'class="result__snippet"[^>]*>(.*?)</(?:a|td|div)',
+        re.DOTALL,
+    )
+    _UA = "Mozilla/5.0 (compatible; CloudChat/1.0; +hermes-bridge)"
+
+    def _strip_html(html: str) -> str:
+        text = _SCRIPT_RE.sub("", html)
+        text = _STYLE_RE.sub("", text)
+        text = _TAG_RE.sub(" ", text)
+        return re.sub(r"\s+", " ", text).strip()
+
+    def _ddg_web_search(args, **_kw):
+        query = (args or {}).get("query", "").strip()
+        if not query:
+            return json.dumps({"error": "query is required"})
+        url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
+        try:
+            with httpx.Client(timeout=15, follow_redirects=True) as client:
+                resp = client.get(url, headers={"User-Agent": _UA})
+                resp.raise_for_status()
+        except Exception as e:
+            return json.dumps({"error": f"web_search failed: {e}"})
+        results = []
+        for href, title, snippet in _DDG_RESULT_RE.findall(resp.text)[:8]:
+            real_url = href
+            m = re.search(r"uddg=([^&]+)", href)
+            if m:
+                real_url = unquote(m.group(1))
+            results.append({
+                "title": _strip_html(title),
+                "url": real_url,
+                "snippet": _strip_html(snippet),
+            })
+        if not results:
+            return json.dumps({"results": [], "note": "No results found."})
+        return json.dumps({"results": results, "backend": "duckduckgo-fallback"}, indent=2)
+
+    def _ddg_web_extract(args, **_kw):
+        urls = (args or {}).get("urls") or []
+        if not isinstance(urls, list) or not urls:
+            return json.dumps({"error": "urls must be a non-empty array"})
+        out = []
+        for u in urls[:5]:
+            if not isinstance(u, str) or not u.strip():
+                out.append({"url": u, "error": "invalid url"})
+                continue
+            try:
+                with httpx.Client(timeout=20, follow_redirects=True) as client:
+                    resp = client.get(u, headers={"User-Agent": _UA})
+                    resp.raise_for_status()
+                text = _strip_html(resp.text)
+                if len(text) > 5000:
+                    text = text[:5000] + "\n\n[truncated at 5000 chars]"
+                out.append({"url": u, "content": text})
+            except Exception as e:
+                out.append({"url": u, "error": f"fetch failed: {e}"})
+        return json.dumps(out, indent=2)
+
+    web_search_schema = {
+        "name": "web_search",
+        "description": (
+            "Search the web via DuckDuckGo (CloudChat fallback — no API key required). "
+            "Returns up to 8 results with titles, URLs, and snippets. Use this for current "
+            "information, news, or anything beyond your training data."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "The search query."},
+            },
+            "required": ["query"],
+        },
+    }
+    web_extract_schema = {
+        "name": "web_extract",
+        "description": (
+            "Fetch and extract plain-text content from URLs (CloudChat fallback). "
+            "Pass up to 5 URLs per call; content over 5000 chars is truncated."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "urls": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "URLs to fetch (max 5).",
+                    "maxItems": 5,
+                },
+            },
+            "required": ["urls"],
+        },
+    }
+
+    registry.register(
+        name="web_search",
+        toolset="web",
+        schema=web_search_schema,
+        handler=_ddg_web_search,
+        check_fn=lambda: True,
+        emoji="🔍",
+        max_result_size_chars=100_000,
+    )
+    registry.register(
+        name="web_extract",
+        toolset="web",
+        schema=web_extract_schema,
+        handler=_ddg_web_extract,
+        check_fn=lambda: True,
+        emoji="📄",
+        max_result_size_chars=100_000,
+    )
+    print(
+        "[hermes-adapter] No Firecrawl/Exa/Tavily/Parallel backend configured — "
+        "registered DuckDuckGo fallback for web_search / web_extract.",
+        flush=True,
+    )
+
+
+_register_fallback_web_tools()
+
+
 # ---------------------------------------------------------------------------
 # Toolset name mapping: CloudChat names → real agent toolset names
 # ---------------------------------------------------------------------------
@@ -766,10 +922,17 @@ class HermesAgentAdapter:
             # Pre-register tools so the agent discovers them during __init__
             self._repo_provider._register_tools()
 
-        # Build ephemeral system prompt for repo context
-        self._ephemeral_system_prompt = None
-        if self._repo_provider:
-            self._ephemeral_system_prompt = self._repo_provider.build_repo_system_prompt()
+        # Build ephemeral system prompt for repo context.
+        # Always include today's date so web_search / news-style queries
+        # aren't anchored to the model's training cutoff year.
+        from datetime import datetime
+        date_preamble = f"Today's date is {datetime.now().astimezone().strftime('%Y-%m-%d')}."
+        repo_prompt = (
+            self._repo_provider.build_repo_system_prompt() if self._repo_provider else ""
+        )
+        self._ephemeral_system_prompt = (
+            f"{date_preamble}\n\n{repo_prompt}".strip() if repo_prompt else date_preamble
+        )
 
         # Determine provider from base_url or hermes config
         provider = None

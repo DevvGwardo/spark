@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getAppVersion: (): Promise<string> => ipcRenderer.invoke('app:get-version'),
   openrouterOAuth: (): Promise<string> => ipcRenderer.invoke('openrouter:oauth'),
   openExternal: (url: string): Promise<boolean> => ipcRenderer.invoke('shell:open-external', url),
+  saveFile: (defaultFilename: string, content: string): Promise<{ saved: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke('file:save-dialog', { defaultFilename, content }),
   snapshotLocalImage: (path: string): Promise<{ url: string; hash: string; path: string }> =>
     ipcRenderer.invoke('cloudchat:snapshotLocalImage', path),
   notifyAttentionRequest: (payload?: { title?: string; body?: string }) => ipcRenderer.invoke('app:notify-attention', payload),

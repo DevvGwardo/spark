@@ -1,5 +1,5 @@
-import { app, BrowserView, BrowserWindow, globalShortcut, ipcMain, Menu, Notification, Tray, nativeImage, net, protocol, shell } from 'electron'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync } from 'fs'
+import { app, BrowserView, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, Notification, Tray, nativeImage, net, protocol, shell } from 'electron'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import { createHash } from 'crypto'
 import { extname, join, resolve } from 'path'
@@ -448,6 +448,22 @@ ipcMain.handle('bridge:install-hermes-agent', async (event) => {
 })
 ipcMain.handle('openrouter:oauth', () => startOpenRouterOAuth())
 
+ipcMain.handle('file:save-dialog', async (_event, payload: { defaultFilename?: string; content?: string }) => {
+  const defaultFilename = typeof payload?.defaultFilename === 'string' ? payload.defaultFilename : 'export.txt'
+  const content = typeof payload?.content === 'string' ? payload.content : ''
+  const parent = BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined
+  const result = parent
+    ? await dialog.showSaveDialog(parent, { defaultPath: defaultFilename })
+    : await dialog.showSaveDialog({ defaultPath: defaultFilename })
+  if (result.canceled || !result.filePath) return { saved: false as const }
+  try {
+    writeFileSync(result.filePath, content, 'utf-8')
+    return { saved: true as const, path: result.filePath }
+  } catch (error) {
+    return { saved: false as const, error: error instanceof Error ? error.message : String(error) }
+  }
+})
+
 ipcMain.handle('shell:open-external', async (_event, url: string) => {
   if (typeof url !== 'string') return false
   if (!/^(https?:\/\/|file:\/\/\/)/i.test(url)) return false
@@ -725,6 +741,20 @@ app.on('window-all-closed', () => {
     app.quit()
   }
 })
+
+// In dev, Ctrl+C in the terminal sends SIGINT to the whole process group.
+// Electron's main process ignores it by default, which leaves the window up
+// and causes `concurrently` to hang waiting for us. Translate the signal
+// into a proper quit so `before-quit` cleanup runs and electron-vite exits.
+if (is.dev) {
+  const quitOnSignal = (signal: NodeJS.Signals) => {
+    console.log(`[electron] received ${signal}, quitting`)
+    app.quit()
+  }
+  process.once('SIGINT', () => quitOnSignal('SIGINT'))
+  process.once('SIGTERM', () => quitOnSignal('SIGTERM'))
+  process.once('SIGHUP', () => quitOnSignal('SIGHUP'))
+}
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()

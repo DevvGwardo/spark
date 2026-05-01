@@ -5,12 +5,20 @@ import { useSessionsStore } from '@/stores/sessions-store';
 import { getSession, type HermesSessionDetail, type HermesSessionMessage } from '@/lib/hermes-api';
 import { cn } from '@/lib/utils';
 import { relativeTime } from '@/lib/relative-time';
-import { parseToolCalls, type Segment, type ToolCallSegment } from '@/lib/tool-call-parser';
+import { parseToolCalls } from '@/lib/tool-call-parser';
 import { ToolCallAccordion } from './ToolCallAccordion';
+import { ToolMessageAccordion } from './ToolMessageAccordion';
+
+// Above this length, long non-tool messages are shown as a collapsed accordion
+// to prevent walls of text (e.g. giant system prompts).
+const LONG_CONTENT_THRESHOLD = 1200;
 
 function renderMessageContent(content: string, role: string) {
-  // Only parse tool calls for assistant messages
+  // Only parse tool-call markdown for assistant messages
   if (role !== 'assistant') {
+    if (role === 'system' && content.length > LONG_CONTENT_THRESHOLD) {
+      return <ToolMessageAccordion content={content} label="SYSTEM PROMPT" tone="violet" />;
+    }
     return (
       <p className="text-[12px] leading-relaxed whitespace-pre-wrap break-words text-foreground/90">
         {content}
@@ -176,10 +184,18 @@ export function SessionHistoryChat() {
           chat
             .filter((msg) => typeof msg.content === 'string' && msg.content.trim().length > 0)
             .map((msg, index) => {
+              const key = `${selectedSessionId}-${index}-${msg.role}`;
+
+              // Tool results render as a standalone accordion — no outer role wrapper,
+              // since the accordion itself carries the tool affordance.
+              if (msg.role === 'tool') {
+                return <ToolMessageAccordion key={key} content={msg.content} label="TOOL RESULT" tone="amber" />;
+              }
+
               const style = ROLE_STYLES[msg.role] ?? { border: 'border-border/30', bg: 'bg-background/50', label: 'text-muted-foreground/60' };
               return (
                 <div
-                  key={`${selectedSessionId}-${index}-${msg.role}`}
+                  key={key}
                   className={cn(
                     'rounded-lg border-l-2 border-r border-t border-b px-4 py-3',
                     style.border,
