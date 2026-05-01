@@ -15,6 +15,10 @@ const providerConfigMocks = vi.hoisted(() => ({
   createProviderModel: vi.fn(),
 }))
 
+const hermesProfileMocks = vi.hoisted(() => ({
+  getHubSelectedProfileName: vi.fn(() => 'agent-two'),
+}))
+
 vi.mock('ai', async () => {
   const actual = await vi.importActual<typeof import('ai')>('ai')
   return {
@@ -30,6 +34,14 @@ vi.mock('../provider-config', async () => {
   return {
     ...actual,
     createProviderModel: providerConfigMocks.createProviderModel,
+  }
+})
+
+vi.mock('../lib/hermes-profiles', async () => {
+  const actual = await vi.importActual<typeof import('../lib/hermes-profiles')>('../lib/hermes-profiles')
+  return {
+    ...actual,
+    getHubSelectedProfileName: hermesProfileMocks.getHubSelectedProfileName,
   }
 })
 
