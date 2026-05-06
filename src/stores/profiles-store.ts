@@ -14,14 +14,31 @@ export interface Profile {
   hasEnv: boolean;
 }
 
+export interface ProfileDetail {
+  name: string;
+  path: string;
+  provider: string;
+  model: string;
+  configYaml: string;
+  hasEnv: boolean;
+  envKeys: string[];
+  skillCount: number;
+  sessionCount: number;
+  skills: string[];
+}
+
 interface ProfilesState {
   profiles: Profile[];
   activeProfile: string;
+  selectedProfile: string | null;
+  profileDetail: ProfileDetail | null;
+  detailLoading: boolean;
   loading: boolean;
   fetchProfiles: () => Promise<void>;
   activateProfile: (name: string) => Promise<void>;
   createProfile: (name: string, cloneFrom?: string) => Promise<void>;
   deleteProfile: (name: string) => Promise<void>;
+  fetchProfileDetail: (name: string) => Promise<void>;
 }
 
 // The active profile is stored client-side and sent to the server on every
@@ -53,6 +70,9 @@ export const useProfilesStore = create<ProfilesState>()(
     (set, get) => ({
       profiles: [],
       activeProfile: 'default',
+      selectedProfile: null,
+      profileDetail: null,
+      detailLoading: false,
       loading: false,
 
       fetchProfiles: async () => {
@@ -98,6 +118,17 @@ export const useProfilesStore = create<ProfilesState>()(
           body: JSON.stringify({ name }),
         });
         await get().fetchProfiles();
+      },
+
+      fetchProfileDetail: async (name: string) => {
+        set({ detailLoading: true, selectedProfile: name });
+        try {
+          const data = await apiFetch(`/api/hermes/profiles/${encodeURIComponent(name)}/detail`);
+          set({ profileDetail: data, detailLoading: false });
+        } catch (e) {
+          console.error('Failed to fetch profile detail:', e);
+          set({ detailLoading: false, profileDetail: null });
+        }
       },
     }),
     {

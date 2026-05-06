@@ -10,6 +10,7 @@ import { registerHermesAdminRoute } from './routes/hermes-admin';
 import { registerHermesRuntimesRoute } from './routes/hermes-runtimes';
 import { registerHermesUpdateRoute } from './routes/hermes-update';
 import { registerProfilesRoutes } from './routes/profiles';
+import { registerKanbanRoutes } from './routes/kanban';
 import { registerTranscribeRoute } from './routes/transcribe';
 import { sendJson } from './lib/helpers';
 import { MAX_BODY_SIZE } from './config';
@@ -42,6 +43,7 @@ export const HEALTH_ROUTES = [
   '/api/hermes/update/status',
   '/api/hermes/update',
   '/api/hermes/profiles',
+  '/api/hermes/kanban',
   '/functions/v1/transcribe',
 ] as const;
 
@@ -60,6 +62,7 @@ export function createApp() {
   registerHermesRuntimesRoute(app);
   registerHermesUpdateRoute(app);
   registerProfilesRoutes(app);
+  registerKanbanRoutes(app);
   registerTranscribeRoute(app);
   registerHermesStreamResumeRoute(app);
 

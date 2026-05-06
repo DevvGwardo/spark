@@ -65,7 +65,10 @@ export function registerHermesUpdateRoute(app: Express) {
       if (hasConflicts) {
         blockedReason = 'Hermes repo has unresolved merge conflicts. Resolve manually in ~/.hermes/hermes-agent.';
       } else if (currentBranch !== 'main') {
-        blockedReason = `Hermes repo is on branch ${currentBranch}, expected main.`;
+        // local-main is a fork branch — updates still pull from origin/main
+        if (currentBranch !== 'local-main') {
+          blockedReason = `Hermes repo is on branch ${currentBranch}, expected main.`;
+        }
       }
 
       // Get current version from hermes --version
@@ -109,14 +112,14 @@ export function registerHermesUpdateRoute(app: Express) {
     updateInProgress = true;
 
     try {
-      // Step 0: refuse if not on main — we will not create merge commits onto other branches
+      // Step 0: refuse if not on main or local-main — we will not create merge commits onto other branches
       const { stdout: branchOut } = await execFileAsync(
         'git',
         ['rev-parse', '--abbrev-ref', 'HEAD'],
         { cwd: HERMES_DIR, timeout: 10000 }
       );
       const currentBranch = branchOut.trim();
-      if (currentBranch !== 'main') {
+      if (currentBranch !== 'main' && currentBranch !== 'local-main') {
         return sendJson(res, 409, {
           success: false,
           error: `hermes repo is on branch ${currentBranch}, expected main`,

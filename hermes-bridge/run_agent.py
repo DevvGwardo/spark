@@ -669,6 +669,35 @@ def _extract_think_blocks(content: str) -> tuple[str, str]:
     return visible, reasoning_text
 
 
+# Regex for tool-call XML blocks that some models emit inline
+# instead of via the structured tool_calls field.
+_TOOL_CALL_XML_RE = re.compile(
+    r'<(?P<tag>function_calls|function_call|tool_calls|tool_call|tool_result)\b[^>]*>.*?</(?P=tag)>',
+    re.DOTALL | re.IGNORECASE,
+)
+# Stray orphan closers that slip through after content extraction
+_STRAY_TOOL_CLOSER_RE = re.compile(
+    r'</(?:tool_call|tool_calls|tool_result|function_call|function_calls|function)>\s*',
+    re.IGNORECASE,
+)
+
+
+def _strip_tool_call_xml(content: str) -> str:
+    """Strip inline tool-call XML blocks from model output.
+
+    Some providers (Gemma, MiniMax, DeepSeek variants) emit
+    ``<function_calls>...</function_calls>`` or ``<invoke>...</invoke>``
+    blocks as plain text alongside or instead of structured
+    ``tool_calls``. Remove these so they don't leak to the user.
+    """
+    if not content:
+        return content
+    content = _TOOL_CALL_XML_RE.sub('', content)
+    # Strip stray orphan closers
+    content = _STRAY_TOOL_CLOSER_RE.sub('', content)
+    return content.strip()
+
+
 def _strip_think_blocks(content: str) -> str:
     """Remove <think>...</think> reasoning blocks (DeepSeek, QwQ, etc.)."""
     visible, _ = _extract_think_blocks(content)
@@ -1968,6 +1997,9 @@ class AIAgent:
                     self.on_reasoning(reasoning_text)
             else:
                 visible_content = raw_content
+            # Strip inline tool-call XML (function_calls, tool_call, invoke, etc.)
+            # that some models emit as text alongside structured tool_calls
+            visible_content = _strip_tool_call_xml(visible_content)
 
             # OpenRouter returns reasoning_content for some models (o-series, DeepSeek-R1)
             api_reasoning = message.get("reasoning_content") or ""

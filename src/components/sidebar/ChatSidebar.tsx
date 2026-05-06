@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork, Search, ChevronRight, Zap, Clock, House, BookOpen, Sparkles, BarChart3, User, Network, Image, Download, Upload, Archive, ArchiveRestore, ChevronDown, Tag, X } from 'lucide-react';
+import { Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork, Search, ChevronRight, Zap, Clock, House, BookOpen, Sparkles, BarChart3, User, Network, Image, Download, Upload, Archive, ArchiveRestore, ChevronDown, Tag, X, Kanban } from 'lucide-react';
 import { Github } from 'lucide-react';
 import { GhostIcon } from '@/components/chat/GhostIcon';
 import { useChatStore } from '@/stores/chat-store';
@@ -20,6 +20,7 @@ import { ProfilesPanel } from '@/components/sidebar/ProfilesPanel';
 import { HermesSkillsPanel } from '@/components/sidebar/HermesSkillsPanel';
 import { HermesUsagePanel } from '@/components/sidebar/HermesUsagePanel';
 import { ImagesPanel } from '@/components/sidebar/ImagesPanel';
+import { KanbanPanel } from '@/components/sidebar/KanbanPanel';
 import { ConversationTreeOverlay } from '@/components/workflow/ConversationTreeOverlay';
 import type { Conversation } from '@/lib/db';
 import { exportConversationJson, exportConversationMarkdown, importConversationJson } from '@/lib/db';
@@ -82,6 +83,7 @@ const HERMES_SUB_TABS: Array<{ key: SubTab; label: string; icon: React.Component
   { key: 'skills', label: 'Skills', icon: Sparkles },
   { key: 'usage', label: 'Usage', icon: BarChart3 },
   { key: 'images', label: 'Images', icon: Image },
+  { key: 'kanban', label: 'Board', icon: Kanban },
 ];
 
 export const ChatSidebar: React.FC = () => {
@@ -953,6 +955,8 @@ export const ChatSidebar: React.FC = () => {
         <HermesUsagePanel />
       ) : activeSubTab === 'images' ? (
         <ImagesPanel />
+      ) : activeSubTab === 'kanban' ? (
+        <KanbanPanel />
       ) : (
         <CronJobsPanel
           conversationId={focusedConversation?.id ?? null}

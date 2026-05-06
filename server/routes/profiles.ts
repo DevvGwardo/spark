@@ -1,4 +1,4 @@
-import { type Express } from 'express';
+import type { Express, Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import {
@@ -6,7 +6,9 @@ import {
   getProfilesRoot,
   getProfileFromRequest,
   validateProfileName,
+  resolveHermesHome,
 } from '../lib/hermes-profiles';
+import { sendJson } from '../lib/helpers';
 
 function readYamlConfig(configPath: string): Record<string, unknown> {
   if (!fs.existsSync(configPath)) return {};
@@ -47,7 +49,7 @@ export function registerProfilesRoutes(app: Express) {
   // GET /api/hermes/profiles - list all profiles. The `active` flag reflects
   // the requesting window's selection (sent via X-Hermes-Profile header);
   // the server itself holds no active-profile state.
-  app.get('/api/hermes/profiles', (req, res) => {
+  app.get('/api/hermes/profiles', (req: Request, res: Response) => {
     try {
       const profilesRoot = getProfilesRoot();
       const requestProfile = getProfileFromRequest(req);
@@ -92,20 +94,21 @@ export function registerProfilesRoutes(app: Express) {
         return a.name.localeCompare(b.name);
       });
 
-      res.json({ profiles: results, activeProfile: requestProfile });
+      sendJson(res, 200, { profiles: results, activeProfile: requestProfile });
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to list profiles' });
+      const message = error instanceof Error ? error.message : 'Failed to list profiles';
+      sendJson(res, 500, { error: message });
     }
   });
 
   // POST /api/hermes/profiles/create - create new profile
-  app.post('/api/hermes/profiles/create', (req, res) => {
+  app.post('/api/hermes/profiles/create', (req: Request, res: Response) => {
     try {
       const { name, cloneFrom } = req.body;
-      if (!name) return res.status(400).json({ error: 'Profile name required' });
+      if (!name) return sendJson(res, 400, { error: 'Profile name required' });
       const normalized = validateProfileName(name);
       const profilePath = path.join(getProfilesRoot(), normalized);
-      if (fs.existsSync(profilePath)) return res.status(409).json({ error: 'Profile already exists' });
+      if (fs.existsSync(profilePath)) return sendJson(res, 409, { error: 'Profile already exists' });
 
       fs.mkdirSync(profilePath, { recursive: true });
       fs.mkdirSync(path.join(profilePath, 'skills'), { recursive: true });
@@ -121,29 +124,236 @@ export function registerProfilesRoutes(app: Express) {
       if (!configContent) configContent = 'model: ""\nprovider: ""\n';
       fs.writeFileSync(path.join(profilePath, 'config.yaml'), configContent, 'utf-8');
 
-      res.json({ ok: true, profile: { name: normalized, path: profilePath } });
+      sendJson(res, 200, { ok: true, profile: { name: normalized, path: profilePath } });
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to create profile' });
+      const message = error instanceof Error ? error.message : 'Failed to create profile';
+      sendJson(res, 500, { error: message });
     }
   });
 
   // POST /api/hermes/profiles/delete - delete profile (moves to trash). The
   // client enforces "can't delete the profile I'm currently using" — other
   // windows' selections are not visible to the server.
-  app.post('/api/hermes/profiles/delete', (req, res) => {
+  app.post('/api/hermes/profiles/delete', (req: Request, res: Response) => {
     try {
       const { name } = req.body;
-      if (!name) return res.status(400).json({ error: 'Profile name required' });
+      if (!name) return sendJson(res, 400, { error: 'Profile name required' });
       const normalized = validateProfileName(name);
       const profilePath = path.join(getProfilesRoot(), normalized);
-      if (!fs.existsSync(profilePath)) return res.status(404).json({ error: 'Profile not found' });
+      if (!fs.existsSync(profilePath)) return sendJson(res, 404, { error: 'Profile not found' });
 
       const trashDir = path.join(getHermesRoot(), 'trash');
       fs.mkdirSync(trashDir, { recursive: true });
       fs.renameSync(profilePath, path.join(trashDir, `${normalized}-${Date.now()}`));
-      res.json({ ok: true });
+      sendJson(res, 200, { ok: true });
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to delete profile' });
+      const message = error instanceof Error ? error.message : 'Failed to delete profile';
+      sendJson(res, 500, { error: message });
     }
   });
+
+  // ─── Profile detail ────────────────────────────────────────────────────────
+
+  // GET /api/hermes/profiles/:name/detail — full profile detail
+  app.get('/api/hermes/profiles/:name/detail', (req: Request, res: Response) => {
+    try {
+      const { name } = req.params;
+
+      if (name === 'default') {
+        const root = getHermesRoot();
+        const config = readYamlConfig(path.join(root, 'config.yaml'));
+        return sendJson(res, 200, {
+          name: 'default',
+          path: root,
+          config,
+          hasEnv: fs.existsSync(path.join(root, '.env')),
+          skillCount: countFilesRecursive(path.join(root, 'skills'), (p) => path.basename(p) === 'SKILL.md'),
+          sessionCount: countFilesRecursive(path.join(root, 'sessions'), (p) => /\.(jsonl|json|sqlite|db)$/i.test(p)),
+          updatedAt: getMtime(path.join(root, 'config.yaml')),
+        });
+      }
+
+      const profilePath = resolveHermesHome(name);
+      if (!fs.existsSync(profilePath)) {
+        return sendJson(res, 404, { error: `Profile "${name}" not found` });
+      }
+
+      const config = readYamlConfig(path.join(profilePath, 'config.yaml'));
+      sendJson(res, 200, {
+        name,
+        path: profilePath,
+        config,
+        hasEnv: fs.existsSync(path.join(profilePath, '.env')),
+        skillCount: countFilesRecursive(path.join(profilePath, 'skills'), (p) => path.basename(p) === 'SKILL.md'),
+        sessionCount: countFilesRecursive(path.join(profilePath, 'sessions'), (p) => /\.(jsonl|json|sqlite|db)$/i.test(p)),
+        updatedAt: getMtime(path.join(profilePath, 'config.yaml')),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to get profile detail';
+      sendJson(res, 500, { error: message });
+    }
+  });
+
+  // GET /api/hermes/profiles/:name/config — return config.yaml content as raw text + parsed JSON
+  app.get('/api/hermes/profiles/:name/config', (req: Request, res: Response) => {
+    try {
+      const { name } = req.params;
+
+      let configPath: string;
+      if (name === 'default') {
+        configPath = path.join(getHermesRoot(), 'config.yaml');
+      } else {
+        const profilePath = resolveHermesHome(name);
+        if (!fs.existsSync(profilePath)) {
+          return sendJson(res, 404, { error: `Profile "${name}" not found` });
+        }
+        configPath = path.join(profilePath, 'config.yaml');
+      }
+
+      if (!fs.existsSync(configPath)) {
+        return sendJson(res, 200, { content: '', parsed: {} });
+      }
+
+      const content = fs.readFileSync(configPath, 'utf-8');
+      const parsed = readYamlConfig(configPath);
+      sendJson(res, 200, { content, parsed });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to read config';
+      sendJson(res, 500, { error: message });
+    }
+  });
+
+  // PUT /api/hermes/profiles/:name/config — write config.yaml from { content: string }
+  app.put('/api/hermes/profiles/:name/config', (req: Request, res: Response) => {
+    try {
+      const { name } = req.params;
+      const { content } = req.body;
+
+      if (typeof content !== 'string') {
+        return sendJson(res, 400, { error: 'content must be a string' });
+      }
+
+      if (name === 'default') {
+        return sendJson(res, 400, { error: 'Default profile cannot be modified via this endpoint' });
+      }
+
+      const profilePath = resolveHermesHome(name);
+      if (!fs.existsSync(profilePath)) {
+        return sendJson(res, 404, { error: `Profile "${name}" not found` });
+      }
+
+      const configPath = path.join(profilePath, 'config.yaml');
+      fs.writeFileSync(configPath, content, 'utf-8');
+
+      const parsed = readYamlConfig(configPath);
+      sendJson(res, 200, { ok: true, parsed });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to write config';
+      sendJson(res, 500, { error: message });
+    }
+  });
+
+  // GET /api/hermes/profiles/:name/env — return .env content or { exists: false }
+  app.get('/api/hermes/profiles/:name/env', (req: Request, res: Response) => {
+    try {
+      const { name } = req.params;
+
+      let envPath: string;
+      if (name === 'default') {
+        envPath = path.join(getHermesRoot(), '.env');
+      } else {
+        const profilePath = resolveHermesHome(name);
+        if (!fs.existsSync(profilePath)) {
+          return sendJson(res, 404, { error: `Profile "${name}" not found` });
+        }
+        envPath = path.join(profilePath, '.env');
+      }
+
+      if (!fs.existsSync(envPath)) {
+        return sendJson(res, 200, { exists: false });
+      }
+
+      const content = fs.readFileSync(envPath, 'utf-8');
+      sendJson(res, 200, { exists: true, content });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to read .env';
+      sendJson(res, 500, { error: message });
+    }
+  });
+
+  // PUT /api/hermes/profiles/:name/env — write .env content
+  app.put('/api/hermes/profiles/:name/env', (req: Request, res: Response) => {
+    try {
+      const { name } = req.params;
+      const { content } = req.body;
+
+      if (typeof content !== 'string') {
+        return sendJson(res, 400, { error: 'content must be a string' });
+      }
+
+      if (name === 'default') {
+        return sendJson(res, 400, { error: 'Default profile cannot be modified via this endpoint' });
+      }
+
+      const profilePath = resolveHermesHome(name);
+      if (!fs.existsSync(profilePath)) {
+        return sendJson(res, 404, { error: `Profile "${name}" not found` });
+      }
+
+      const envPath = path.join(profilePath, '.env');
+      fs.writeFileSync(envPath, content, 'utf-8');
+      sendJson(res, 200, { ok: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to write .env';
+      sendJson(res, 500, { error: message });
+    }
+  });
+
+  // POST /api/hermes/profiles/rename — rename profile directory
+  app.post('/api/hermes/profiles/rename', (req: Request, res: Response) => {
+    try {
+      const { name, newName } = req.body;
+
+      if (!name || !newName) {
+        return sendJson(res, 400, { error: 'Both name and newName are required' });
+      }
+
+      const normalized = validateProfileName(name);
+      const normalizedNew = validateProfileName(newName);
+
+      if (normalized === 'default' || normalizedNew === 'default') {
+        return sendJson(res, 400, { error: 'Default profile cannot be renamed' });
+      }
+
+      const profilesRoot = getProfilesRoot();
+      const oldPath = path.join(profilesRoot, normalized);
+      const newPath = path.join(profilesRoot, normalizedNew);
+
+      if (!fs.existsSync(oldPath)) {
+        return sendJson(res, 404, { error: `Profile "${normalized}" not found` });
+      }
+
+      if (fs.existsSync(newPath)) {
+        return sendJson(res, 409, { error: `Profile "${normalizedNew}" already exists` });
+      }
+
+      fs.renameSync(oldPath, newPath);
+      sendJson(res, 200, { ok: true, profile: { name: normalizedNew, path: newPath } });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to rename profile';
+      sendJson(res, 500, { error: message });
+    }
+  });
+}
+
+/**
+ * Get the mtime of a file as a Unix timestamp (ms), or null if the file doesn't exist.
+ */
+function getMtime(filePath: string): number | null {
+  try {
+    const stat = fs.statSync(filePath);
+    return stat.isFile() ? stat.mtimeMs : null;
+  } catch {
+    return null;
+  }
 }

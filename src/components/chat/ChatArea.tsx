@@ -12,6 +12,7 @@ import { ApiKeyModal } from './ApiKeyModal';
 import { ChangeApprovalModal } from './ChangeApprovalModal';
 import { ChatErrorBanner } from './ChatErrorBanner';
 import { ChatSurfaceBackground } from './ChatSurfaceBackground';
+import { BuddyComparisonPanel, type BuddyResponse } from './BuddyComparisonPanel';
 import { getProviderLabel } from '@/lib/providers';
 import type { Provider } from '@/stores/settings-store';
 import { getErrorMessage } from '@/lib/errors';
@@ -352,6 +353,10 @@ interface ChatAreaProps {
   agentStatus?: AgentStatusEvent | null;
   conversationAutoApproveEnabled?: boolean;
   setConversationAutoApprove?: (value: boolean) => void;
+  /** Buddy/secondary model response for comparison after Hermes completes */
+  buddyResponse?: BuddyResponse | null;
+  /** Callback when user wants to use the buddy response */
+  onUseBuddyResponse?: (content: string) => void;
 }
 
 export const ChatArea: React.FC<ChatAreaProps> = ({
@@ -377,6 +382,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   agentStatus,
   conversationAutoApproveEnabled = false,
   setConversationAutoApprove,
+  buddyResponse,
+  onUseBuddyResponse,
 }) => {
   const panelId = usePanelId();
   const scopeId = useChatScopeId();
@@ -886,6 +893,19 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                       onUpdateIssue={handleIssueUpdate}
                       onFix={handleIssueFix}
                       disabled={repoComposerLocked}
+                    />
+                  </div>
+                )}
+                {buddyResponse && (
+                  <div className="mx-auto max-w-[720px] px-20 pb-4">
+                    <BuddyComparisonPanel
+                      buddyResponse={buddyResponse}
+                      primaryResponse={lastAssistantMessage ? {
+                        content: lastAssistantMessage.content,
+                        modelName: activeModel,
+                      } : undefined}
+                      autoExpandOnArrival={true}
+                      onUseBuddyResponse={onUseBuddyResponse}
                     />
                   </div>
                 )}
