@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -15,6 +17,28 @@ export interface OrchestratorStatus {
   activeTasks: ActiveTask[];
   maxConcurrent: number;
   stats: { completed: number; failed: number; startedAt: number | null };
+};
+
+export type QueueCardStatus = 'queued' | 'running' | 'done' | 'review' | 'blocked' | 'failed';
+
+export interface QueueCard {
+  id: string;
+  title: string;
+  spec: string;
+  acceptanceCriteria: string[];
+  assignedWorker: string | null;
+  status: QueueCardStatus;
+  startedAt?: number;
+  completedAt?: number;
+  reportSummary?: string;
+}
+
+export interface QueueState {
+  queued: QueueCard[];
+  running: QueueCard[];
+  completed: QueueCard[];
+  stats: { completed: number; failed: number };
+  enabled: boolean;
 }
 
 interface CardRecord {
@@ -73,7 +97,7 @@ async function createConversation(title: string, systemPrompt?: string, tags?: s
       title,
       provider: 'hermes',
       model: 'default',
-      system_prompt: systemPrompt || '',
+      systemPrompt: systemPrompt || '',
       tags: tags || [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -203,6 +227,12 @@ async function tick(): Promise<void> {
         console.log(
           `[orchestrator] Dispatched card "${card.title}" (${card.id}) → conversation ${conversationId}`,
         );
+        // Spawn background agent process
+        if (!card.id) {
+          console.warn(`[orchestrator] Cannot spawn agent: missing card ID`);
+        } else {
+          void spawnKanbanAgent(card.id);
+        }
       } catch (err) {
         console.error(`[orchestrator] Failed to dispatch card ${card.id}:`, err);
         // Roll back: remove from active tasks, set card back to ready
@@ -213,6 +243,80 @@ async function tick(): Promise<void> {
   } finally {
     state.isProcessing = false;
   }
+}
+
+// ─── Background agent runner ────────────────────────────────────────────────
+
+// Resolve scripts directory relative to project root. Works for both tsx (live)
+// and bundled Electron (where import.meta.url points to out/main/index.js).
+const SCRIPTS_DIR = (() => {
+  // Check if we're running from source (tsx) or bundle (Electron)
+  const sourceDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'scripts');
+  if (fs.existsSync(sourceDir)) return sourceDir;
+  // Fallback: bundle path — go up from out/main/ to project root
+  return path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'server', 'scripts');
+})();
+
+/**
+ * Spawn a background kanban agent process for a specific card.
+ * The agent runs via the Python runner script which loads AIAgent from
+ * the hermes-agent and processes the card autonomously.
+ * The agent uses kanban_tools (kanban_read_current_card, kanban_update_status,
+ * kanban_append_report) to report progress back to the kanban API.
+ */
+async function spawnKanbanAgent(cardId: string): Promise<void> {
+  const venvDir = process.env.HERMES_BRIDGE_VENV || (
+    fs.existsSync('/Users/devgwardo/cloud-chat-hub/hermes-bridge/.venv')
+      ? '/Users/devgwardo/cloud-chat-hub/hermes-bridge/.venv'
+      : '/Users/devgwardo/cloud-chat-hub/hermes-bridge/venv'
+  );
+  const pythonBin = path.join(venvDir, 'bin', 'python3');
+  const scriptPath = path.join(SCRIPTS_DIR, 'run-kanban-agent.py');
+
+  if (!fs.existsSync(scriptPath)) {
+    console.error(`[orchestrator] Kanban agent runner script not found: ${scriptPath}`);
+    return;
+  }
+
+  const child = spawn(pythonBin, [scriptPath], {
+    env: {
+      ...process.env,
+      KANBAN_CARD_ID: cardId,
+      CLOUDCHAT_API_BASE: API_BASE,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: false,
+  });
+
+  let stdout = '';
+  let stderr = '';
+
+  child.stdout.on('data', (data: Buffer) => {
+    stdout += data.toString();
+  });
+
+  child.stderr.on('data', (data: Buffer) => {
+    stderr += data.toString();
+  });
+
+  child.on('close', (code: number | null) => {
+    const exitCode = code ?? -1;
+    if (exitCode !== 0) {
+      console.error(`[orchestrator] Kanban agent for card ${cardId.slice(0, 12)}... exited with code ${exitCode}`);
+      if (stderr) console.error(`[orchestrator] stderr: ${stderr.slice(0, 500)}`);
+    } else {
+      console.log(`[orchestrator] Kanban agent for card ${cardId.slice(0, 12)}... completed successfully`);
+    }
+    // Log brief stdout summary
+    const stdoutLines = stdout.trim().split('\n').filter(l => l.includes('[kanban-runner]'));
+    for (const line of stdoutLines) {
+      console.log(line);
+    }
+  });
+
+  child.on('error', (err: Error) => {
+    console.error(`[orchestrator] Failed to spawn kanban agent: ${err.message}`);
+  });
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -252,6 +356,75 @@ export const taskOrchestrator = {
     return { dispatched: state.activeTasks.size - before };
   },
 
+  /**
+   * Dispatch a specific kanban card as a background agent task.
+   * Spawns a Python subprocess that runs the Hermes AIAgent with
+   * kanban tools. Does NOT create a chat panel or use any chat UI.
+   */
+  async dispatchCard(cardId: string): Promise<{ ok: boolean; error?: string }> {
+    // Already running in this process — treat as success
+    if (state.activeTasks.has(cardId)) {
+      return { ok: true };
+    }
+
+    try {
+      // Fetch the card
+      const allCards = await fetchCards('');
+      const card = allCards.find((c) => c.id === cardId);
+      if (!card) {
+        return { ok: false, error: 'Card not found' };
+      }
+
+      // Card is already running (dispatched by another process) — ack without spawning
+      if (card.status === 'running') {
+        state.activeTasks.set(cardId, {
+          cardId,
+          conversationId: '',
+          startedAt: Date.now(),
+        });
+        return { ok: true };
+      }
+
+      // Build system prompt
+      const systemPrompt = buildKanbanTaskPrompt(card);
+
+      // Create a conversation to track the task
+      const conversationId = await createConversation(
+        `[Task] ${card.title}`,
+        systemPrompt,
+        ['kanban-task'],
+      );
+      if (!conversationId) {
+        return { ok: false, error: 'Failed to create conversation' };
+      }
+
+      // Track the task
+      state.activeTasks.set(cardId, {
+        cardId,
+        conversationId,
+        startedAt: Date.now(),
+      });
+
+      // Mark card as running
+      await updateCardStatus(cardId, 'running');
+
+      // Spawn the background agent process
+      console.log(
+        `[orchestrator] Dispatching card "${card.title}" (${cardId.slice(0, 12)}...) → background agent`,
+      );
+      void spawnKanbanAgent(cardId);
+
+      return { ok: true };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      console.error(`[orchestrator] Failed to dispatch card ${cardId}:`, err);
+      // Roll back
+      state.activeTasks.delete(cardId);
+      await updateCardStatus(cardId, 'ready');
+      return { ok: false, error: msg };
+    }
+  },
+
   async handleCardCompletion(cardId: string, cardStatus: 'review' | 'done' | 'blocked'): Promise<boolean> {
     const task = state.activeTasks.get(cardId);
     if (!task) return false;
@@ -267,7 +440,89 @@ export const taskOrchestrator = {
     return true;
   },
 
-  async cancelTask(cardId: string): Promise<boolean> {
+    /**
+   * Get full queue state with enriched card details.
+   * Returns categorized cards (queued/ready, running, completed) with
+   * kanban card data joined with orchestrator state.
+   */
+  async getQueueState(): Promise<QueueState> {
+    // Fetch all kanban cards
+    let allCards: any[] = [];
+    try {
+      const res = await fetch(`${API_BASE}/api/hermes/kanban`);
+      if (res.ok) {
+        const data = await res.json();
+        allCards = data.cards ?? [];
+      }
+    } catch {
+      // fallback to empty
+    }
+
+    // Build lookup map
+    const cardMap = new Map<string, any>();
+    for (const card of allCards) {
+      cardMap.set(card.id, card);
+    }
+
+    const queuedCards: QueueCard[] = [];
+    const runningCards: QueueCard[] = [];
+    const completedCards: QueueCard[] = [];
+    const now = Date.now();
+
+    for (const card of allCards) {
+      const status = card.status;
+      const activeTask = state.activeTasks.get(card.id);
+      const isRunning = status === 'running' || activeTask !== undefined;
+
+      const queueCard: QueueCard = {
+        id: card.id,
+        title: card.title || 'Untitled',
+        spec: card.spec || '',
+        acceptanceCriteria: Array.isArray(card.acceptanceCriteria) ? card.acceptanceCriteria : [],
+        assignedWorker: card.assignedWorker || null,
+        status: 'queued',
+        reportSummary: card.reportPath || undefined,
+      };
+
+      if (status === 'ready') {
+        queueCard.status = 'queued';
+        queuedCards.push(queueCard);
+      } else if (isRunning) {
+        queueCard.status = 'running';
+        queueCard.startedAt = activeTask?.startedAt ?? now;
+        runningCards.push(queueCard);
+      } else if (status === 'done' || status === 'review') {
+        queueCard.status = status;
+        queueCard.completedAt = card.updatedAt || now;
+        completedCards.push(queueCard);
+        if (status === 'done') state.stats.completed++;
+      } else if (status === 'blocked') {
+        queueCard.status = 'blocked';
+        queueCard.completedAt = card.updatedAt || now;
+        completedCards.push(queueCard);
+        state.stats.failed++;
+      }
+    }
+
+    // Sort queued by updatedAt (oldest first), running by startedAt, completed by completedAt (newest first)
+    const sortBy = (arr: QueueCard[], key: 'startedAt' | 'completedAt' | undefined, asc: boolean) => {
+      return arr.sort((a, b) => {
+        const aVal = key ? (a[key] ?? 0) : 0;
+        const bVal = key ? (b[key] ?? 0) : 0;
+        return asc ? aVal - bVal : bVal - aVal;
+      });
+    };
+
+    return {
+      queued: sortBy(queuedCards, undefined, true),
+      running: sortBy(runningCards, 'startedAt', true),
+      completed: sortBy(completedCards, 'completedAt', false).slice(0, 20), // keep last 20
+      stats: { completed: state.stats.completed, failed: state.stats.failed },
+      enabled: state.enabled,
+    };
+  },
+
+async cancelTask(cardId: string): Promise<boolean> {
     const task = state.activeTasks.get(cardId);
     if (!task) return false;
 

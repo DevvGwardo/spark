@@ -1,11 +1,9 @@
-import React, { useEffect, useState, useMemo } from 'react';
-import { Loader2, Play, Plus, Trash2, Columns3, Square } from 'lucide-react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
+import { Loader2, Play, Plus, Trash2, Columns3, Square, Clock, ExternalLink } from 'lucide-react';
 import { useKanbanStore, type KanbanLane } from '@/stores/kanban-store';
 import { useTaskOrchestratorStore } from '@/stores/task-orchestrator-store';
-import { useUIStore } from '@/stores/ui-store';
-import { usePanelStore } from '@/stores/panel-store';
+import { getApiBaseUrl } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import { buildKanbanExecutionPrompt } from '@/lib/kanban-prompts';
 import { toast } from '@/lib/toast';
 
 const LANE_CONFIG: Record<KanbanLane, { label: string; color: string }> = {
@@ -18,6 +16,24 @@ const LANE_CONFIG: Record<KanbanLane, { label: string; color: string }> = {
 };
 
 const LANE_ORDER: KanbanLane[] = ['backlog', 'ready', 'running', 'review', 'blocked', 'done'];
+
+function elapsed(ms: number): string {
+  const secs = Math.floor((Date.now() - ms) / 1000);
+  if (secs < 60) return `${secs}s`;
+  const mins = Math.floor(secs / 60);
+  const rem = secs % 60;
+  return `${mins}m ${rem}s`;
+}
+
+function ElapsedTimer({ startedAt }: { startedAt: number }) {
+  const [now, setNow] = useState(Date.now());
+  const idRef = useRef<ReturnType<typeof setInterval>>();
+  useEffect(() => {
+    idRef.current = setInterval(() => setNow(Date.now()), 1000);
+    return () => { if (idRef.current) clearInterval(idRef.current); };
+  }, []);
+  return <>{elapsed(startedAt)}</>;
+}
 
 function OrchestratorToggle() {
   const { enabled, startOrchestrator, stopOrchestrator } = useTaskOrchestratorStore();
@@ -38,19 +54,36 @@ function OrchestratorToggle() {
 }
 
 export function KanbanPanel() {
-  const { cards, loading, error, fetchCards, createCard, deleteCard, updateCard } = useKanbanStore();
-  const openPanel = usePanelStore((s) => s.openPanel);
-  const setActiveTab = useUIStore((s) => s.setActiveTab);
-  const setSidebarOpen = useUIStore((s) => s.setSidebarOpen);
-  const queuePanelPrompt = useUIStore((s) => s.queuePanelPrompt);
+  const { cards, loading, error, fetchCards, createCard, deleteCard } = useKanbanStore();
+  const { enabled: autoDispatchOn } = useTaskOrchestratorStore();
   const [quickInput, setQuickInput] = useState('');
   const [filterLane, setFilterLane] = useState<KanbanLane | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [dispatching, setDispatching] = useState<Set<string>>(new Set());
+  const [dispatched, setDispatched] = useState<Set<string>>(new Set());
+  const [changingStatus, setChangingStatus] = useState<string | null>(null);
 
   useEffect(() => {
     fetchCards();
+    useTaskOrchestratorStore.getState().fetchStatus();
+    const id = setInterval(() => {
+      fetchCards();
+      useTaskOrchestratorStore.getState().fetchStatus();
+    }, 5000);
+    return () => clearInterval(id);
   }, [fetchCards]);
+
+  // Close status dropdown on outside click
+  useEffect(() => {
+    if (!changingStatus) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('.kanban-card-status')) setChangingStatus(null);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [changingStatus]);
 
   const filteredCards = useMemo(() => {
     if (!filterLane) return cards;
@@ -101,18 +134,42 @@ export function KanbanPanel() {
     const card = cards.find((entry) => entry.id === cardId);
     if (!card) return;
 
+    // Don't re-dispatch if already dispatched, running, or tracked by orchestrator
+    if (
+      dispatching.has(cardId) ||
+      dispatched.has(cardId) ||
+      card.status === 'running' ||
+      useTaskOrchestratorStore.getState().activeTasks.some(t => t.cardId === cardId)
+    ) return;
+
+    setDispatching((prev) => new Set(prev).add(cardId));
+
     try {
-      const panelId = openPanel(null);
-      queuePanelPrompt(panelId, {
-        content: buildKanbanExecutionPrompt(card),
-        autoSend: true,
+      const res = await fetch(`${getApiBaseUrl()}/api/hermes/orchestrator/dispatch-card/${encodeURIComponent(cardId)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
       });
-      setActiveTab('chat');
-      setSidebarOpen(true);
-      await updateCard(cardId, { status: 'running' });
-      toast.success(`Launched "${card.title}" in a new chat panel`);
+
+      if (!res.ok) {
+        // 409 means the card was already picked up — treat as success
+        if (res.status === 409) {
+          setDispatched((prev) => new Set(prev).add(cardId));
+          return;
+        }
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Dispatch failed: ${res.status}`);
+      }
+
+      setDispatched((prev) => new Set(prev).add(cardId));
+      toast.success(`Dispatched "${card.title}" to background agent`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to launch card');
+      toast.error(error instanceof Error ? error.message : 'Failed to dispatch card');
+    } finally {
+      setDispatching((prev) => {
+        const next = new Set(prev);
+        next.delete(cardId);
+        return next;
+      });
     }
   };
 
@@ -131,7 +188,7 @@ export function KanbanPanel() {
 
       <div className="px-3 pb-2">
         <div className="rounded-lg border border-border/40 bg-background/30 px-2.5 py-2 text-[10px] leading-relaxed text-muted-foreground/65">
-          Cards are local planning items. Use <span className="font-medium text-foreground/75">Run in chat</span> to open a dedicated panel and start the work.
+          Cards are local planning items. Use <span className="font-medium text-foreground/75">Run</span> to dispatch as a background agent task.
         </div>
       </div>
 
@@ -212,6 +269,9 @@ export function KanbanPanel() {
 
         {filteredCards.map((card) => {
           const laneCfg = LANE_CONFIG[card.status];
+          const isDispatching = dispatching.has(card.id);
+          const wasDispatched = dispatched.has(card.id);
+          const isActive = card.status === 'running' || wasDispatched;
           return (
             <div
               key={card.id}
@@ -233,17 +293,65 @@ export function KanbanPanel() {
                 >
                   {card.title}
                 </span>
-                <span className="shrink-0 rounded-md border border-border/30 bg-background/50 px-1.5 py-px text-[9px] font-medium text-muted-foreground/70">
-                  {laneCfg.label}
-                </span>
+                <div className="relative shrink-0 kanban-card-status">
+                  <button
+                    onClick={() => setChangingStatus(changingStatus === card.id ? null : card.id)}
+                    className="shrink-0 rounded-md border border-border/30 bg-background/50 px-1.5 py-px text-[9px] font-medium text-muted-foreground/70 hover:border-border/50 hover:text-foreground transition-colors"
+                    title="Change status"
+                  >
+                    {laneCfg.label}
+                  </button>
+                  {changingStatus === card.id && (
+                    <div className="absolute right-0 top-full z-50 mt-1 w-28 rounded-lg border border-border/40 bg-popover p-1 shadow-lg">
+                      {LANE_ORDER.map((lane) => {
+                        const cfg = LANE_CONFIG[lane];
+                        return (
+                          <button
+                            key={lane}
+                            onClick={() => {
+                              useKanbanStore.getState().updateCard(card.id, { status: lane }).catch(() => {});
+                              setChangingStatus(null);
+                            }}
+                            className={cn(
+                              'flex w-full items-center gap-2 rounded-md px-2 py-1 text-[10px] transition-colors',
+                              lane === card.status
+                                ? 'bg-primary/10 text-primary'
+                                : 'text-muted-foreground/70 hover:bg-accent hover:text-foreground'
+                            )}
+                          >
+                            <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', cfg.color)} />
+                            {cfg.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
                 <button
                   onClick={() => void handleRunCard(card.id)}
-                  className="shrink-0 rounded-md border border-border/40 bg-background/40 px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground/70 transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-primary"
-                  title="Run in chat"
+                  disabled={isDispatching || isActive || (autoDispatchOn && card.status === 'ready')}
+                  className={cn(
+                    'shrink-0 rounded-md border px-1.5 py-0.5 text-[9px] font-medium transition-colors',
+                    isDispatching
+                      ? 'border-amber-500/30 bg-amber-500/10 text-amber-400'
+                      : isActive || (autoDispatchOn && card.status === 'ready')
+                        ? 'border-border/20 bg-background/20 text-muted-foreground/30 cursor-not-allowed'
+                        : 'border-border/40 bg-background/40 text-muted-foreground/70 hover:border-primary/40 hover:bg-primary/10 hover:text-primary'
+                  )}
+                  title={
+                    isDispatching ? 'Dispatching...'
+                    : isActive ? 'Already running'
+                    : autoDispatchOn && card.status === 'ready' ? 'Auto will pick this up'
+                    : 'Dispatch as background agent'
+                  }
                 >
                   <span className="inline-flex items-center gap-1">
-                    <Play className="h-2.5 w-2.5" />
-                    Run
+                    {isDispatching ? (
+                      <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                    ) : (
+                      <Play className="h-2.5 w-2.5" />
+                    )}
+                    {isDispatching ? '...' : isActive ? 'Active' : autoDispatchOn && card.status === 'ready' ? 'Auto' : 'Run'}
                   </span>
                 </button>
               </div>
@@ -258,6 +366,27 @@ export function KanbanPanel() {
               {/* Expanded spec preview */}
               {expandedId === card.id && (
                 <div className="mt-2 space-y-1.5 border-t border-border/20 pt-2 pl-3.5">
+
+                  {/* Running card status */}
+                  {card.status === 'running' && (() => {
+                    const activeTask = useTaskOrchestratorStore.getState().activeTasks.find(t => t.cardId === card.id);
+                    if (!activeTask) return null;
+                    return (
+                      <div className="mb-2 rounded-md border border-amber-500/20 bg-amber-500/[0.04] px-2 py-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <Loader2 className="h-2.5 w-2.5 animate-spin text-amber-400" />
+                          <span className="text-[10px] font-medium text-amber-400/90">Agent running</span>
+                          <span className="ml-auto font-mono text-[9px] text-muted-foreground/50">
+                            <ElapsedTimer startedAt={activeTask.startedAt} />
+                          </span>
+                        </div>
+                        <div className="mt-1 text-[9px] text-muted-foreground/50 flex items-center gap-1">
+                          <ExternalLink className="h-2.5 w-2.5" />
+                          <span>See <span className="font-medium text-foreground/60">Tasks</span> tab for full progress</span>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {card.spec && (
                     <p className="text-[10px] leading-relaxed text-muted-foreground/70">
                       {card.spec}
@@ -313,7 +442,7 @@ export function KanbanPanel() {
           <div className="flex flex-col items-center justify-center py-8 text-muted-foreground/50">
             <Columns3 className="mb-2 h-7 w-7 opacity-40" />
             <span className="text-[11px]">No cards yet</span>
-            <span className="mt-1 text-[10px] opacity-60">Add one with the input above, then run it in chat when ready.</span>
+            <span className="mt-1 text-[10px] opacity-60">Add one with the input above, then run it when ready.</span>
           </div>
         )}
       </div>

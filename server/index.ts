@@ -146,16 +146,13 @@ export function startServer(port?: number) {
   });
 }
 
-// ─── Auto-start when run directly (npm run server), not when imported by Electron
-const isElectron = typeof process !== 'undefined' && !!process.versions?.electron;
-if (!isElectron) {
-  const isEntry = process.argv[1] && import.meta.url.includes(process.argv[1].replace(/\\/g, '/'));
-  if (isEntry) {
-    startServer();
+// ─── Auto-start when run directly (npm run server)
+const isEntry = process.argv[1] && import.meta.url.includes(process.argv[1].replace(/\\/g, '/'));
+if (isEntry) {
+  startServer();
 
-    // Start orchestrator on server boot (configurable)
-    if (process.env.KANBAN_AUTO_START !== 'false') {
-      taskOrchestrator.start();
-    }
+  // Start orchestrator on standalone server boot (configurable via env)
+  if (process.env.KANBAN_AUTO_START !== 'false') {
+    taskOrchestrator.start();
   }
 }

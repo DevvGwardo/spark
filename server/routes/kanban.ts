@@ -42,6 +42,7 @@ interface CreateKanbanCardInput {
   reviewer?: string | null;
   status?: string | null;
   createdBy?: string | null;
+  reportPath?: string | null;
 }
 
 type UpdateKanbanCardInput = Partial<Omit<CreateKanbanCardInput, 'createdBy'>>;
@@ -274,7 +275,7 @@ export function registerKanbanRoutes(app: Express) {
   app.patch('/api/hermes/kanban/:id', (req: Request, res: Response) => {
     try {
       const { id } = req.params;
-      const { title, spec, acceptanceCriteria, assignedWorker, reviewer, status } = req.body;
+      const { title, spec, acceptanceCriteria, assignedWorker, reviewer, status, reportPath } = req.body;
 
       if (!id) {
         return sendJson(res, 400, { error: 'Card ID is required' });
@@ -298,6 +299,7 @@ export function registerKanbanRoutes(app: Express) {
       if (assignedWorker !== undefined) updates.assignedWorker = assignedWorker;
       if (reviewer !== undefined) updates.reviewer = reviewer;
       if (status !== undefined) updates.status = status;
+      if (reportPath !== undefined) updates.reportPath = String(reportPath);
 
       const updated = updateKanbanCard(id, updates);
       if (!updated) {

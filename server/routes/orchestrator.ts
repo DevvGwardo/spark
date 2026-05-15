@@ -82,4 +82,34 @@ export function registerOrchestratorRoutes(app: Express) {
       sendJson(res, 500, { error: message });
     }
   });
+
+    // GET /api/hermes/orchestrator/queue — full queue state with card details
+  app.get('/api/hermes/orchestrator/queue', async (_req: Request, res: Response) => {
+    try {
+      const state = await taskOrchestrator.getQueueState();
+      sendJson(res, 200, state);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to get queue state';
+      sendJson(res, 500, { error: message });
+    }
+  });
+
+// POST /api/hermes/orchestrator/dispatch-card/:cardId — dispatch a specific card
+  // as a background agent task (no chat panel, no tab switching)
+  app.post('/api/hermes/orchestrator/dispatch-card/:cardId', async (req: Request, res: Response) => {
+    try {
+      const { cardId } = req.params;
+      if (!cardId) {
+        return sendJson(res, 400, { error: 'cardId is required' });
+      }
+      const result = await taskOrchestrator.dispatchCard(cardId);
+      if (!result.ok) {
+        return sendJson(res, 409, { error: result.error || 'Failed to dispatch card' });
+      }
+      sendJson(res, 200, { ok: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to dispatch card';
+      sendJson(res, 500, { error: message });
+    }
+  });
 }

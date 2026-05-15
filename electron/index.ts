@@ -440,7 +440,11 @@ ipcMain.handle('app:get-version', () => app.getVersion())
 // ── Hermes Bridge & first-run setup ────────────────────────────────────────
 ipcMain.handle('bridge:status', () => getBridgeSetupStatus())
 ipcMain.handle('bridge:start', () => startBridge())
-ipcMain.handle('bridge:install-deps', () => installBridgeDeps())
+ipcMain.handle('bridge:install-deps', async (event) => {
+  const send = (line: string) =>
+    event.sender.send('bridge:install-progress', line)
+  return installBridgeDeps(send)
+})
 ipcMain.handle('bridge:install-hermes-agent', async (event) => {
   const send = (line: string) =>
     event.sender.send('bridge:install-progress', line)
