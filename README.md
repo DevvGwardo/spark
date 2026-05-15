@@ -10,7 +10,9 @@
 [![Node](https://img.shields.io/badge/node-%3E%3D20-green?style=flat-square)](package.json)
 [![Python](https://img.shields.io/badge/python-%3E%3D3.10-green?style=flat-square)](hermes-bridge/requirements.txt)
 
-<img src="public/cloudchat-screenshot-2026-03-17.png" alt="CloudChat interface showing a Hermes agent session with live code preview and tool calls" width="800">
+<p align="center">
+  <img src="docs/repo-banner.png" alt="CloudChat banner" width="100%">
+</p>
 
 [Quick Start](#-quick-start) · [Features](#-features) · [Architecture](#-architecture) · [Contributing](CONTRIBUTING.md)
 
@@ -181,14 +183,9 @@ Native desktop app for macOS and Windows with global hotkey, tray menu, and auto
 
 ## Architecture
 
-```
-CloudChat UI  →  Express Server (:3001)  →  Hermes Bridge (:3002)
-                      │                          │
-                      ├─ Chat proxy              ├─ FastAPI SSE streaming
-                      ├─ GitHub integration      ├─ Hermes AIAgent (tool loop)
-                      ├─ Orchestrator            ├─ RepoToolProvider (GitHub API)
-                      └─ Preview manager         └─ Credential routing (auth.json)
-```
+<p align="center">
+  <img src="docs/repo-architecture.png" alt="CloudChat system architecture" width="95%">
+</p>
 
 Three execution modes:
 - **agent-loop** (default) — Full Hermes agent with tool calling

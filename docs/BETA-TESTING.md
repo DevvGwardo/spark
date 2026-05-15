@@ -11,7 +11,7 @@ CloudChat is a desktop AI chat client built around the **Hermes Agent** — an a
 ### User prerequisites
 
 - **macOS Apple Silicon or Windows 10/11**.
-- **Git** (used to clone the Hermes Agent on first launch). macOS has it via Xcode CLT (`xcode-select --install`); on Windows, install [Git for Windows](https://git-scm.com/download/win).
+- **Git** only if CloudChat needs to download Hermes Agent on first launch. macOS has it via Xcode CLT (`xcode-select --install`); on Windows, install [Git for Windows](https://git-scm.com/download/win).
 
 ### macOS (Apple Silicon — M1/M2/M3/M4)
 
@@ -47,7 +47,8 @@ CloudChat ships with a portable Python interpreter and the Hermes bridge built i
    - ✓ Python interpreter — either bundled, the existing hermes-agent venv, or your system Python
    - ⬇ Bridge dependencies — one click installs FastAPI/uvicorn/httpx/pydantic to `~/.hermes/cloudchat-pkgs/`
    - ⬇ Hermes Agent — one click clones [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent) and installs its deps (~1–3 min)
-3. Once the bridge is healthy, the regular setup wizard appears and walks you through entering an API key for at least one provider.
+3. If everything is already installed but the bridge is simply offline, CloudChat now offers a direct **Start bridge** recovery path instead of telling the user to reinstall Hermes.
+4. Once the bridge is healthy, the regular setup wizard appears and walks you through entering an API key for at least one provider.
 
 You'll need an API key for one of: OpenRouter, Anthropic, OpenAI, MiniMax, or any of the supported providers. **OpenRouter is the easiest — one key gets you most models.**
 

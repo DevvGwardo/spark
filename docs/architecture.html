@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CloudChat Architecture</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #020617;
+    font-family: 'JetBrains Mono', monospace;
+    padding: 40px;
+    min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center;
+  }
+  .diagram-container {
+    background: #0f172a;
+    border: 1px solid #1e293b;
+    border-radius: 12px;
+    padding: 40px;
+    max-width: 1100px;
+    width: 100%;
+  }
+  .header {
+    margin-bottom: 36px;
+    display: flex; align-items: center; gap: 16px;
+  }
+  .pulse-dot {
+    width: 10px; height: 10px; background: #22d3ee; border-radius: 50%;
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(34,211,238,0.4); }
+    50% { opacity: 0.7; box-shadow: 0 0 0 10px rgba(34,211,238,0); }
+  }
+  .header h1 { color: #e2e8f0; font-size: 20px; font-weight: 700; letter-spacing: 1px; }
+  .header .subtitle { color: #64748b; font-size: 11px; }
+  svg { width: 100%; height: auto; }
+  .legend { margin-top: 32px; display: flex; gap: 32px; flex-wrap: wrap; }
+  .legend-item { display: flex; align-items: center; gap: 8px; font-size: 10px; color: #94a3b8; }
+  .legend-swatch { width: 14px; height: 14px; border-radius: 3px; border: 1.5px solid; }
+</style>
+</head>
+<body>
+<div class="diagram-container">
+  <div class="header">
+    <div class="pulse-dot"></div>
+    <div>
+      <h1>CloudChat Architecture</h1>
+      <span class="subtitle">AI Chat Client · Hermes Autonomous Agent · 15 Providers</span>
+    </div>
+  </div>
+
+  <svg viewBox="0 0 1000 800" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+        <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+      </pattern>
+      <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M 0 0 L 10 5 L 0 10 Z" fill="#22d3ee"/>
+      </marker>
+      <marker id="arrow-emerald" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M 0 0 L 10 5 L 0 10 Z" fill="#34d399"/>
+      </marker>
+      <marker id="arrow-violet" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M 0 0 L 10 5 L 0 10 Z" fill="#a78bfa"/>
+      </marker>
+      <marker id="arrow-slate" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M 0 0 L 10 5 L 0 10 Z" fill="#94a3b8"/>
+      </marker>
+      <filter id="glow">
+        <feGaussianBlur stdDeviation="3" result="blur"/>
+        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+    </defs>
+
+    <rect width="1000" height="800" fill="url(#grid)"/>
+
+    <!-- Desktop App Boundary -->
+    <rect x="30" y="30" width="940" height="180" rx="12" fill="rgba(8,51,68,0.08)" stroke="#22d3ee" stroke-width="1" stroke-dasharray="8,4" opacity="0.4"/>
+    <text x="50" y="55" fill="#22d3ee" font-size="9" font-weight="600" letter-spacing="1">ELECTRON DESKTOP APP</text>
+
+    <!-- Electron Shell -->
+    <rect x="50" y="70" width="180" height="60" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+    <text x="140" y="100" fill="#e2e8f0" font-size="11" text-anchor="middle" font-weight="600">Electron Shell</text>
+    <text x="140" y="115" fill="#64748b" font-size="8" text-anchor="middle">Window · Tray · Updater</text>
+
+    <!-- React UI -->
+    <rect x="260" y="70" width="220" height="60" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+    <text x="370" y="100" fill="#e2e8f0" font-size="11" text-anchor="middle" font-weight="600">React + TypeScript UI</text>
+    <text x="370" y="115" fill="#64748b" font-size="8" text-anchor="middle">Chat · Panels · Preview · Terminal</text>
+
+    <!-- Zustand Stores -->
+    <rect x="510" y="70" width="180" height="60" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+    <text x="600" y="100" fill="#e2e8f0" font-size="11" text-anchor="middle" font-weight="600">Zustand Stores</text>
+    <text x="600" y="115" fill="#64748b" font-size="8" text-anchor="middle">Chat · GitHub · Theme · Panels</text>
+
+    <!-- Vite -->
+    <rect x="720" y="70" width="230" height="60" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+    <text x="835" y="100" fill="#e2e8f0" font-size="11" text-anchor="middle" font-weight="600">Vite Dev Server</text>
+    <text x="835" y="115" fill="#64748b" font-size="8" text-anchor="middle">HMR · TS Transpile · Build</text>
+
+    <!-- Desktop to Server arrows -->
+    <line x1="370" y1="130" x2="370" y2="230" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrow)" stroke-dasharray="4,3"/>
+    <text x="385" y="185" fill="#22d3ee" font-size="8" opacity="0.6">HTTP SSE Streaming</text>
+    <line x1="600" y1="130" x2="600" y2="230" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrow)" stroke-dasharray="4,3"/>
+    <line x1="835" y1="130" x2="835" y2="230" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrow)" stroke-dasharray="4,3"/>
+
+    <!-- === LAYER 2: Express Server === -->
+
+    <!-- Backend Boundary -->
+    <rect x="30" y="240" width="940" height="220" rx="12" fill="rgba(6,78,59,0.08)" stroke="#34d399" stroke-width="1" stroke-dasharray="8,4" opacity="0.4"/>
+    <text x="50" y="265" fill="#34d399" font-size="9" font-weight="600" letter-spacing="1">NODE.JS EXPRESS API SERVER (:3001)</text>
+
+    <!-- Express Core -->
+    <rect x="50" y="280" width="200" height="70" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+    <text x="150" y="310" fill="#e2e8f0" font-size="11" text-anchor="middle" font-weight="600">Express Server</text>
+    <text x="150" y="325" fill="#64748b" font-size="8" text-anchor="middle">Model Discovery · Chat Store</text>
+    <text x="150" y="337" fill="#64748b" font-size="8" text-anchor="middle">Tool Definitions · Routes</text>
+
+    <!-- GitHub Integration -->
+    <rect x="290" y="280" width="200" height="70" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+    <text x="390" y="310" fill="#e2e8f0" font-size="11" text-anchor="middle" font-weight="600">GitHub Integration</text>
+    <text x="390" y="325" fill="#64748b" font-size="8" text-anchor="middle">Issue Browser · Changeset</text>
+    <text x="390" y="337" fill="#64748b" font-size="8" text-anchor="middle">PR Creation · Repo Clone</text>
+
+    <!-- Orchestrator -->
+    <rect x="530" y="280" width="200" height="70" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+    <text x="630" y="310" fill="#e2e8f0" font-size="11" text-anchor="middle" font-weight="600">Orchestrator</text>
+    <text x="630" y="325" fill="#64748b" font-size="8" text-anchor="middle">Decompose → Parallel Tasks</text>
+    <text x="630" y="337" fill="#64748b" font-size="8" text-anchor="middle">Retry · Fallback · Synthesize</text>
+
+    <!-- Preview Manager -->
+    <rect x="770" y="280" width="180" height="70" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+    <text x="860" y="310" fill="#e2e8f0" font-size="11" text-anchor="middle" font-weight="600">Preview Manager</text>
+    <text x="860" y="325" fill="#64748b" font-size="8" text-anchor="middle">HTML/CSS/JS</text>
+    <text x="860" y="337" fill="#64748b" font-size="8" text-anchor="middle">React · Mermaid</text>
+
+    <!-- Express to Bridge arrows -->
+    <line x1="150" y1="350" x2="150" y2="480" stroke="#34d399" stroke-width="1.5" marker-end="url(#arrow-emerald)"/>
+    <text x="165" y="420" fill="#34d399" font-size="8" opacity="0.6">WebSocket / SSE Proxy</text>
+    <line x1="390" y1="350" x2="390" y2="480" stroke="#34d399" stroke-width="1.5" marker-end="url(#arrow-emerald)"/>
+    <line x1="630" y1="350" x2="630" y2="480" stroke="#34d399" stroke-width="1.5" marker-end="url(#arrow-emerald)"/>
+    <line x1="860" y1="350" x2="860" y2="480" stroke="#34d399" stroke-width="1.5" marker-end="url(#arrow-emerald)"/>
+
+    <!-- === LAYER 3: Hermes Bridge === -->
+
+    <!-- Bridge Boundary -->
+    <rect x="30" y="490" width="940" height="190" rx="12" fill="rgba(76,29,149,0.08)" stroke="#a78bfa" stroke-width="1" stroke-dasharray="8,4" opacity="0.4"/>
+    <text x="50" y="515" fill="#a78bfa" font-size="9" font-weight="600" letter-spacing="1">PYTHON FASTAPI HERMES BRIDGE (:3002)</text>
+
+    <!-- FastAPI Core -->
+    <rect x="50" y="530" width="220" height="70" rx="6" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+    <text x="160" y="560" fill="#e2e8f0" font-size="11" text-anchor="middle" font-weight="600">FastAPI SSE Stream</text>
+    <text x="160" y="575" fill="#64748b" font-size="8" text-anchor="middle">Credential Routing</text>
+    <text x="160" y="587" fill="#64748b" font-size="8" text-anchor="middle">auth.json Provider Pool</text>
+
+    <!-- Hermes Agent -->
+    <rect x="310" y="530" width="220" height="70" rx="6" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+    <text x="420" y="560" fill="#e2e8f0" font-size="11" text-anchor="middle" font-weight="600">Hermes AI Agent</text>
+    <text x="420" y="575" fill="#64748b" font-size="8" text-anchor="middle">Tool Loop · Planning</text>
+    <text x="420" y="587" fill="#64748b" font-size="8" text-anchor="middle">Agent Loop / Passthrough / Swarm</text>
+
+    <!-- Repo Tool Provider -->
+    <rect x="570" y="530" width="200" height="70" rx="6" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+    <text x="670" y="560" fill="#e2e8f0" font-size="11" text-anchor="middle" font-weight="600">Repo Tool Provider</text>
+    <text x="670" y="575" fill="#64748b" font-size="8" text-anchor="middle">GitHub API Client</text>
+    <text x="670" y="587" fill="#64748b" font-size="8" text-anchor="middle">File Read/Write</text>
+
+    <!-- Brain Cache -->
+    <rect x="810" y="530" width="140" height="70" rx="6" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+    <text x="880" y="560" fill="#e2e8f0" font-size="11" text-anchor="middle" font-weight="600">Brain Cache</text>
+    <text x="880" y="575" fill="#64748b" font-size="8" text-anchor="middle">Cross-Agent</text>
+    <text x="880" y="587" fill="#64748b" font-size="8" text-anchor="middle">Shared State</text>
+
+    <!-- Provider row at bottom -->
+    <rect x="50" y="630" width="900" height="40" rx="6" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3,3"/>
+    <text x="500" y="655" fill="#94a3b8" font-size="9" text-anchor="middle">OpenAI · Anthropic · Google Gemini · xAI · Groq · DeepSeek · Mistral · Together · MiniMax · Kimi · Cerebras · OpenRouter · SambaNova · z.ai · OpenClaw</text>
+
+    <!-- External Boundary -->
+    <rect x="30" y="700" width="940" height="70" rx="12" fill="rgba(30,41,59,0.08)" stroke="#94a3b8" stroke-width="1" stroke-dasharray="8,4" opacity="0.3"/>
+    <text x="50" y="720" fill="#94a3b8" font-size="9" font-weight="600" letter-spacing="1">EXTERNAL</text>
+
+    <rect x="50" y="735" width="250" height="30" rx="6" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1"/>
+    <text x="175" y="754" fill="#94a3b8" font-size="9" text-anchor="middle">GitHub API</text>
+
+    <rect x="350" y="735" width="250" height="30" rx="6" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1"/>
+    <text x="475" y="754" fill="#94a3b8" font-size="9" text-anchor="middle">LLM Provider APIs</text>
+
+    <rect x="650" y="735" width="300" height="30" rx="6" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1"/>
+    <text x="800" y="754" fill="#94a3b8" font-size="9" text-anchor="middle">OpenClaw Gateway · Hermes Agent</text>
+  </svg>
+
+  <!-- Legend -->
+  <div class="legend">
+    <div class="legend-item"><div class="legend-swatch" style="background:rgba(8,51,68,0.4);border-color:#22d3ee"></div>Frontend (React + Electron)</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:rgba(6,78,59,0.4);border-color:#34d399"></div>Backend (Express Server)</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:rgba(76,29,149,0.4);border-color:#a78bfa"></div>Hermes Bridge (FastAPI)</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:rgba(30,41,59,0.5);border-color:#94a3b8"></div>External Services</div>
+  </div>
+</div>
+
+<div style="margin-top: 24px; display: flex; gap: 20px; width: 100%; max-width: 1100px;">
+  <div style="flex:1; background:#0f172a; border:1px solid #1e293b; border-radius:8px; padding:20px;">
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
+      <div style="width:8px;height:8px;border-radius:50%;background:#22d3ee;animation:pulse 2s ease-in-out infinite;"></div>
+      <h3 style="color:#94a3b8; font-size:11px; font-weight:600; letter-spacing:0.5px;">MODE: AGENT LOOP</h3>
+    </div>
+    <ul style="color:#64748b; font-size:10px; line-height:1.8; list-style:none;">
+      <li>→ Full Hermes agent with tool calling</li>
+      <li>→ Plan → Execute → Check → Iterate</li>
+      <li>→ Real-time SSE streaming to UI</li>
+    </ul>
+  </div>
+  <div style="flex:1; background:#0f172a; border:1px solid #1e293b; border-radius:8px; padding:20px;">
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
+      <div style="width:8px;height:8px;border-radius:50%;background:#34d399;animation:pulse 2s ease-in-out infinite;"></div>
+      <h3 style="color:#94a3b8; font-size:11px; font-weight:600; letter-spacing:0.5px;">MODE: PASSTHROUGH</h3>
+    </div>
+    <ul style="color:#64748b; font-size:10px; line-height:1.8; list-style:none;">
+      <li>→ Direct API forwarding</li>
+      <li>→ No agent tool loop</li>
+      <li>→ Regular chat client behavior</li>
+    </ul>
+  </div>
+  <div style="flex:1; background:#0f172a; border:1px solid #1e293b; border-radius:8px; padding:20px;">
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
+      <div style="width:8px;height:8px;border-radius:50%;background:#a78bfa;animation:pulse 2s ease-in-out infinite;"></div>
+      <h3 style="color:#94a3b8; font-size:11px; font-weight:600; letter-spacing:0.5px;">MODE: SWARM</h3>
+    </div>
+    <ul style="color:#64748b; font-size:10px; line-height:1.8; list-style:none;">
+      <li>→ Architect → Implementor → Reviewer</li>
+      <li>→ Parallel sub-task decomposition</li>
+      <li>→ Retry + fallback orchestration</li>
+    </ul>
+  </div>
+</div>
+</body>
+</html>
