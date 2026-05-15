@@ -16,6 +16,7 @@ import re
 from typing import Optional, Callable
 from urllib.parse import quote, quote_plus
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from kanban_tools import KANBAN_TOOL_DEFINITIONS, KANBAN_TOOL_NAMES, kanban_read_current_card, kanban_update_status, kanban_append_report
 
 
 class _SafeWriter:
@@ -406,6 +407,8 @@ TOOL_DEFINITIONS = {
             },
         },
     ],
+    "kanban": KANBAN_TOOL_DEFINITIONS,
+
     "code_execution": [
         {
             "type": "function",
@@ -435,6 +438,7 @@ _TOOL_NAME_ALIASES: dict[str, str] = {}
 def _build_tool_aliases():
     """Build aliases from CamelCase/PascalCase variants of every known tool name."""
     all_names: list[str] = list(REPO_TOOL_NAMES)
+    all_names.extend(KANBAN_TOOL_NAMES)
     for toolset in TOOL_DEFINITIONS.values():
         for t in toolset:
             all_names.append(t["function"]["name"])
@@ -484,6 +488,14 @@ _HALLUCINATED_TOOL_MAP: dict[str, str] = {
     "python": "execute_python",
     "run_python": "execute_python",
     "list_repos": "list_user_repos",
+
+    # Kanban tool aliases
+    "kanban_read_card": "kanban_read_current_card",
+    "read_card": "kanban_read_current_card",
+    "update_card_status": "kanban_update_status",
+    "update_status": "kanban_update_status",
+    "append_report": "kanban_append_report",
+    "append_notes": "kanban_append_report",
 }
 
 
@@ -831,6 +843,15 @@ def _execute_tool(name: str, arguments: dict) -> str:
             return _cap_tool_response(_tool_write_file(arguments["path"], arguments["content"]))
         elif name == "execute_python":
             return _cap_tool_response(_tool_execute_python(arguments["code"]))
+        elif name == "kanban_read_current_card":
+            return _cap_tool_response(kanban_read_current_card())
+        elif name == "kanban_update_status":
+            return _cap_tool_response(kanban_update_status(
+                arguments.get("status", ""),
+                arguments.get("report_summary"),
+            ))
+        elif name == "kanban_append_report":
+            return _cap_tool_response(kanban_append_report(arguments.get("notes", "")))
         else:
             # Self-correction: list available tools so the model can retry
             all_known: list[str] = []
@@ -838,6 +859,7 @@ def _execute_tool(name: str, arguments: dict) -> str:
                 for t in toolset:
                     all_known.append(t["function"]["name"])
             all_known.extend(REPO_TOOL_NAMES)
+            all_known.extend(KANBAN_TOOL_NAMES)
             return (
                 f"Error: Unknown tool '{name}'. "
                 f"Available tools: {', '.join(sorted(all_known))}. "

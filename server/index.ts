@@ -11,12 +11,14 @@ import { registerHermesRuntimesRoute } from './routes/hermes-runtimes';
 import { registerHermesUpdateRoute } from './routes/hermes-update';
 import { registerProfilesRoutes } from './routes/profiles';
 import { registerKanbanRoutes } from './routes/kanban';
+import { registerOrchestratorRoutes } from './routes/orchestrator';
 import { registerTranscribeRoute } from './routes/transcribe';
 import { sendJson } from './lib/helpers';
 import { MAX_BODY_SIZE } from './config';
 import { workspaceIndex } from './workspace-indexer';
 
 import { registerHermesStreamResumeRoute } from './lib/hermes';
+import { taskOrchestrator } from './task-orchestrator';
 
 // Re-export for external consumers
 export { shouldDirectProxyCompatibleProvider } from './lib/hermes';
@@ -40,10 +42,19 @@ export const HEALTH_ROUTES = [
   '/api/hermes/workspace/skills',
   '/api/hermes/workspace/skills/hub',
   '/api/hermes/workspace/skills/hub/install',
+  '/api/hermes/runtimes',
+  '/api/hermes/chat/start',
+  '/api/hermes/chat/stream',
   '/api/hermes/update/status',
   '/api/hermes/update',
   '/api/hermes/profiles',
   '/api/hermes/kanban',
+  '/api/hermes/orchestrator/status',
+  '/api/hermes/orchestrator/start',
+  '/api/hermes/orchestrator/stop',
+  '/api/hermes/orchestrator/dispatch-now',
+  '/api/hermes/orchestrator/cancel/:cardId',
+  '/api/hermes/orchestrator/card-complete',
   '/functions/v1/transcribe',
 ] as const;
 
@@ -63,6 +74,7 @@ export function createApp() {
   registerHermesUpdateRoute(app);
   registerProfilesRoutes(app);
   registerKanbanRoutes(app);
+  registerOrchestratorRoutes(app);
   registerTranscribeRoute(app);
   registerHermesStreamResumeRoute(app);
 
@@ -134,11 +146,16 @@ export function startServer(port?: number) {
   });
 }
 
-// Auto-start when run directly (npm run server), not when imported by Electron
+// ─── Auto-start when run directly (npm run server), not when imported by Electron
 const isElectron = typeof process !== 'undefined' && !!process.versions?.electron;
 if (!isElectron) {
   const isEntry = process.argv[1] && import.meta.url.includes(process.argv[1].replace(/\\/g, '/'));
   if (isEntry) {
     startServer();
+
+    // Start orchestrator on server boot (configurable)
+    if (process.env.KANBAN_AUTO_START !== 'false') {
+      taskOrchestrator.start();
+    }
   }
 }

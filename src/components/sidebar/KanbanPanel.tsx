@@ -1,8 +1,12 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Plus, Trash2, Loader2, Columns3, ChevronDown, ChevronRight, LayoutPanelTop } from 'lucide-react';
-import { useKanbanStore, type KanbanCard, type KanbanLane } from '@/stores/kanban-store';
+import { Loader2, Play, Plus, Trash2, Columns3, Square } from 'lucide-react';
+import { useKanbanStore, type KanbanLane } from '@/stores/kanban-store';
+import { useTaskOrchestratorStore } from '@/stores/task-orchestrator-store';
 import { useUIStore } from '@/stores/ui-store';
+import { usePanelStore } from '@/stores/panel-store';
 import { cn } from '@/lib/utils';
+import { buildKanbanExecutionPrompt } from '@/lib/kanban-prompts';
+import { toast } from '@/lib/toast';
 
 const LANE_CONFIG: Record<KanbanLane, { label: string; color: string }> = {
   backlog: { label: 'Backlog', color: 'bg-zinc-500' },
@@ -15,8 +19,30 @@ const LANE_CONFIG: Record<KanbanLane, { label: string; color: string }> = {
 
 const LANE_ORDER: KanbanLane[] = ['backlog', 'ready', 'running', 'review', 'blocked', 'done'];
 
+function OrchestratorToggle() {
+  const { enabled, startOrchestrator, stopOrchestrator } = useTaskOrchestratorStore();
+  return (
+    <button
+      onClick={enabled ? stopOrchestrator : startOrchestrator}
+      title={enabled ? 'Auto-dispatch: ON' : 'Auto-dispatch: OFF'}
+      className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[9px] font-medium transition-colors ${
+        enabled
+          ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+          : 'border-border/40 text-muted-foreground/50 hover:text-foreground'
+      }`}
+    >
+      {enabled ? <Square className="h-2.5 w-2.5" /> : <Play className="h-2.5 w-2.5" />}
+      {enabled ? 'Auto' : 'Manual'}
+    </button>
+  );
+}
+
 export function KanbanPanel() {
-  const { cards, loading, fetchCards, createCard, deleteCard } = useKanbanStore();
+  const { cards, loading, error, fetchCards, createCard, deleteCard, updateCard } = useKanbanStore();
+  const openPanel = usePanelStore((s) => s.openPanel);
+  const setActiveTab = useUIStore((s) => s.setActiveTab);
+  const setSidebarOpen = useUIStore((s) => s.setSidebarOpen);
+  const queuePanelPrompt = useUIStore((s) => s.queuePanelPrompt);
   const [quickInput, setQuickInput] = useState('');
   const [filterLane, setFilterLane] = useState<KanbanLane | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -55,8 +81,9 @@ export function KanbanPanel() {
         createdBy: '',
       });
       setQuickInput('');
-    } catch {
-      // error handled in store
+      toast.success(`Added "${title}" to ${filterLane ? LANE_CONFIG[filterLane].label : 'Backlog'}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to create card');
     }
   };
 
@@ -64,8 +91,28 @@ export function KanbanPanel() {
     try {
       await deleteCard(id);
       setDeleteConfirm(null);
-    } catch {
-      // error handled in store
+      toast.success('Card deleted');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to delete card');
+    }
+  };
+
+  const handleRunCard = async (cardId: string) => {
+    const card = cards.find((entry) => entry.id === cardId);
+    if (!card) return;
+
+    try {
+      const panelId = openPanel(null);
+      queuePanelPrompt(panelId, {
+        content: buildKanbanExecutionPrompt(card),
+        autoSend: true,
+      });
+      setActiveTab('chat');
+      setSidebarOpen(true);
+      await updateCard(cardId, { status: 'running' });
+      toast.success(`Launched "${card.title}" in a new chat panel`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to launch card');
     }
   };
 
@@ -79,7 +126,22 @@ export function KanbanPanel() {
           </span>
           <span className="text-[11px] font-mono text-muted-foreground/50">{cards.length}</span>
         </div>
+        <OrchestratorToggle />
       </div>
+
+      <div className="px-3 pb-2">
+        <div className="rounded-lg border border-border/40 bg-background/30 px-2.5 py-2 text-[10px] leading-relaxed text-muted-foreground/65">
+          Cards are local planning items. Use <span className="font-medium text-foreground/75">Run in chat</span> to open a dedicated panel and start the work.
+        </div>
+      </div>
+
+      {error && (
+        <div className="px-3 pb-2">
+          <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-2.5 py-2 text-[10px] leading-relaxed text-red-300">
+            {error}
+          </div>
+        </div>
+      )}
 
       {/* Quick-add input */}
       <div className="px-3 pb-2">
@@ -174,6 +236,16 @@ export function KanbanPanel() {
                 <span className="shrink-0 rounded-md border border-border/30 bg-background/50 px-1.5 py-px text-[9px] font-medium text-muted-foreground/70">
                   {laneCfg.label}
                 </span>
+                <button
+                  onClick={() => void handleRunCard(card.id)}
+                  className="shrink-0 rounded-md border border-border/40 bg-background/40 px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground/70 transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-primary"
+                  title="Run in chat"
+                >
+                  <span className="inline-flex items-center gap-1">
+                    <Play className="h-2.5 w-2.5" />
+                    Run
+                  </span>
+                </button>
               </div>
 
               {/* Worker */}
@@ -241,7 +313,7 @@ export function KanbanPanel() {
           <div className="flex flex-col items-center justify-center py-8 text-muted-foreground/50">
             <Columns3 className="mb-2 h-7 w-7 opacity-40" />
             <span className="text-[11px]">No cards yet</span>
-            <span className="mt-1 text-[10px] opacity-60">Add one with the input above</span>
+            <span className="mt-1 text-[10px] opacity-60">Add one with the input above, then run it in chat when ready.</span>
           </div>
         )}
       </div>

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork, Search, ChevronRight, Zap, Clock, House, BookOpen, Sparkles, BarChart3, User, Network, Image, Download, Upload, Archive, ArchiveRestore, ChevronDown, Tag, X, Kanban } from 'lucide-react';
+import { Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork, Search, ChevronRight, Zap, Clock, House, BookOpen, Sparkles, BarChart3, User, Network, Image, Download, Upload, Archive, ArchiveRestore, ChevronDown, Tag, X, Kanban, CornerDownLeft, ListChecks } from 'lucide-react';
 import { Github } from 'lucide-react';
 import { GhostIcon } from '@/components/chat/GhostIcon';
 import { useChatStore } from '@/stores/chat-store';
@@ -21,6 +21,8 @@ import { HermesSkillsPanel } from '@/components/sidebar/HermesSkillsPanel';
 import { HermesUsagePanel } from '@/components/sidebar/HermesUsagePanel';
 import { ImagesPanel } from '@/components/sidebar/ImagesPanel';
 import { KanbanPanel } from '@/components/sidebar/KanbanPanel';
+import { TaskQueuePanel } from '@/components/sidebar/TaskQueuePanel';
+import { HermesQueuePanel } from '@/components/sidebar/HermesQueuePanel';
 import { ConversationTreeOverlay } from '@/components/workflow/ConversationTreeOverlay';
 import type { Conversation } from '@/lib/db';
 import { exportConversationJson, exportConversationMarkdown, importConversationJson } from '@/lib/db';
@@ -29,6 +31,7 @@ import { tagColor } from '@/lib/tag-color';
 
 import type { SubTab } from '@/stores/ui-store';
 import { relativeTime } from '@/lib/relative-time';
+import { useChatQueueStore } from '@/stores/chat-queue-store';
 
 interface ConversationGroup {
   label: string;
@@ -76,6 +79,7 @@ function groupConversationsByDate(conversations: Conversation[]): ConversationGr
 const HERMES_SUB_TABS: Array<{ key: SubTab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
   { key: 'overview', label: 'Overview', icon: House },
   { key: 'threads', label: 'Threads', icon: MessageSquare },
+  { key: 'queue', label: 'Queue', icon: CornerDownLeft },
   { key: 'chats', label: 'Sessions', icon: Zap },
   { key: 'profiles', label: 'Profiles', icon: User },
   { key: 'cron', label: 'Cron', icon: Clock },
@@ -84,6 +88,7 @@ const HERMES_SUB_TABS: Array<{ key: SubTab; label: string; icon: React.Component
   { key: 'usage', label: 'Usage', icon: BarChart3 },
   { key: 'images', label: 'Images', icon: Image },
   { key: 'kanban', label: 'Board', icon: Kanban },
+  { key: 'tasks', label: 'Tasks', icon: ListChecks },
 ];
 
 export const ChatSidebar: React.FC = () => {
@@ -106,6 +111,7 @@ export const ChatSidebar: React.FC = () => {
   const { activeProvider } = useSettingsStore();
   const activities = useActivityStore((s) => s.activities);
   const getLineTotals = useChangesetStore((s) => s.getLineTotals);
+  const panelQueues = useChatQueueStore((s) => s.panelQueues);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
@@ -122,6 +128,10 @@ export const ChatSidebar: React.FC = () => {
   const [tagInput, setTagInput] = useState('');
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const isHermes = activeProvider === 'hermes';
+  const totalQueuedMessages = useMemo(
+    () => Object.values(panelQueues).reduce((sum, queue) => sum + queue.messages.length, 0),
+    [panelQueues],
+  );
 
   // Get active repo from focused panel's changeset
   const focusedPanel = panels.find((p) => p.id === focusedPanelId);
@@ -458,7 +468,14 @@ export const ChatSidebar: React.FC = () => {
                     : 'text-muted-foreground/60 hover:bg-[hsl(var(--muted))]/40 hover:text-muted-foreground'
                 )}
               >
-                <Icon className="h-[18px] w-[18px]" />
+                <span className="relative">
+                  <Icon className="h-[18px] w-[18px]" />
+                  {key === 'queue' && totalQueuedMessages > 0 && (
+                    <span className="absolute -right-2.5 -top-2 inline-flex min-w-[18px] items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[9px] font-semibold leading-none text-primary-foreground">
+                      {Math.min(totalQueuedMessages, 99)}
+                    </span>
+                  )}
+                </span>
                 <span className="leading-none">{label}</span>
               </button>
             ))}
@@ -943,6 +960,8 @@ export const ChatSidebar: React.FC = () => {
         </>
       ) : activeSubTab === 'overview' ? (
         <HermesOverviewPanel />
+      ) : activeSubTab === 'queue' ? (
+        <HermesQueuePanel />
       ) : activeSubTab === 'chats' ? (
         <HermesChatsPanel />
       ) : activeSubTab === 'profiles' ? (
@@ -957,6 +976,8 @@ export const ChatSidebar: React.FC = () => {
         <ImagesPanel />
       ) : activeSubTab === 'kanban' ? (
         <KanbanPanel />
+      ) : activeSubTab === 'tasks' ? (
+        <TaskQueuePanel />
       ) : (
         <CronJobsPanel
           conversationId={focusedConversation?.id ?? null}
