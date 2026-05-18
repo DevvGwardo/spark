@@ -1,0 +1,11 @@
+[phases.setup]
+nixPkgs = ["nodejs_22", "python311"]
+
+[phases.install]
+cmds = ["npm ci"]
+
+[phases.build]
+cmds = ["VITE_API_URL= npm run build"]
+
+[start]
+cmd = "SERVE_FRONTEND=true npx tsx server/index.ts"

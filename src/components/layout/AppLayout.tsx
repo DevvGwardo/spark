@@ -16,13 +16,14 @@ import { usePreviewStore } from '@/stores/preview-store';
 import { useChatStore } from '@/stores/chat-store';
 import { useCronStore } from '@/stores/cron-store';
 import { usePanelStore } from '@/stores/panel-store';
+import { useRoomStore } from '@/stores/room-store';
 import { useContextUsageStore } from '@/stores/context-usage-store';
 import { useTheme } from '@/hooks/useTheme';
 import { useGlobalStyles } from '@/hooks/useGlobalStyles';
 import { PROVIDERS } from '@/lib/providers';
 import { detectHermesBridge } from '@/lib/detect-hermes';
 import { getChatScopeId } from '@/lib/chat-scope';
-import { PanelLeft, GitPullRequest, MoreHorizontal, Circle, Pin, Pencil, Archive, Copy, PanelRight, Plus, FileCode2, MessageSquare, TerminalSquare, Globe, Sparkles } from 'lucide-react';
+import { PanelLeft, GitPullRequest, MoreHorizontal, Circle, Pin, Pencil, Archive, Copy, PanelRight, Plus, FileCode2, MessageSquare, TerminalSquare, Globe, Sparkles, Smartphone } from 'lucide-react';
 import { TerminalPanel } from '@/components/terminal/TerminalPanel';
 import { MiniBrowser, MiniBrowserToggle, DockedMiniBrowser, HermesPTYPanel, type HermesPTYPanelHandle } from '@/components/browser/MiniBrowser';
 import { DockedChatSidebar } from '@/components/chat/DockedChatSidebar';
@@ -31,6 +32,7 @@ import { HermesUpdateButton } from '@/components/chat/HermesUpdateButton';
 import { FeedbackButton } from '@/components/feedback/FeedbackButton';
 import { BridgeSetupModal } from '@/components/setup/BridgeSetupModal';
 import { CommandPalette } from '@/components/overlay/CommandPalette';
+import { RemoteAccessModal } from '@/components/remote/RemoteAccessModal';
 import { cn } from '@/lib/utils';
 
 export const AppLayout: React.FC = () => {
@@ -71,11 +73,17 @@ export const AppLayout: React.FC = () => {
   const [prModalMode, setPrModalMode] = useState<'create' | 'review'>('create');
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [remoteAccessOpen, setRemoteAccessOpen] = useState(false);
   const headerMenuRef = useRef<HTMLDivElement>(null);
   const hermesTerminalRef = useRef<HermesPTYPanelHandle>(null);
   const focusedPanel = panels.find((p) => p.id === focusedPanelId);
   const focusedScopeId = getChatScopeId(focusedPanelId, focusedPanel?.conversationId ?? null);
   const preview = usePreviewStore((s) => s.getPreview(focusedScopeId));
+
+  // Resolve room name if the focused panel is a room
+  const focusedRoom = focusedPanel?.roomId
+    ? useRoomStore.getState().rooms.find((r) => r.id === focusedPanel.roomId)
+    : null;
 
   // Get changeset for the focused panel (used in global header for single-panel mode)
   const focusedChangeset = getChangeset(focusedScopeId);
@@ -202,13 +210,15 @@ const headerSecondaryLabel = selectedCronJobId
   // Header title based on active tab
   const headerTitle = selectedCronJobId
     ? (cronJob?.name || 'Cron Job')
-    : activeTab === 'chat'
-      ? (activeConv?.title || 'New thread')
-      : activeTab === 'github'
-        ? 'GitHub'
-        : activeTab === 'analyzer'
-          ? 'Analyzer'
-          : 'Knowledge';
+    : focusedRoom
+      ? focusedRoom.name
+      : activeTab === 'chat'
+        ? (activeConv?.title || 'New thread')
+        : activeTab === 'github'
+          ? 'GitHub'
+          : activeTab === 'analyzer'
+            ? 'Analyzer'
+            : 'Knowledge';
 
   const handlePrSuccess = useCallback(() => {
     clearChanges(prScopeId);
@@ -253,7 +263,13 @@ const headerSecondaryLabel = selectedCronJobId
       try {
         const s = await bridge.status();
         if (cancelled) return;
-        const needsSetup = !s.bridgeReachable && (!s.pythonPath || !s.bridgeDepsInstalled || !s.hermesAgentPresent);
+        const needsSetup = !s.bridgeReachable && (
+          !s.pythonPath ||
+          (!s.hermesAgentPresent && !s.gitPath) ||
+          !s.bridgeDepsInstalled ||
+          !s.hermesAgentPresent ||
+          Boolean(s.lastStartError)
+        );
         // If the bridge is reachable, no setup needed.
         if (s.bridgeReachable) {
           setBridgeSetupVisible(false);
@@ -324,6 +340,7 @@ const headerSecondaryLabel = selectedCronJobId
       {!isSetupComplete && <SetupWizard />}
       <SettingsModal />
       <CommandPalette open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen} />
+      <RemoteAccessModal open={remoteAccessOpen} onOpenChange={setRemoteAccessOpen} />
       <RepoIssueBrowser isOpen={repoBrowserOpen} onClose={() => setRepoBrowserOpen(false)} />
       {prActiveRepo && (
         <CreatePRModal
@@ -531,6 +548,20 @@ const headerSecondaryLabel = selectedCronJobId
               {/* Repo attachment status removed — shown in sidebar footer instead */}
 
               <div className="flex-1" />
+
+              {/* Remote access QR button */}
+              <div className="flex items-center mr-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+                <button
+                  onClick={() => setRemoteAccessOpen(true)}
+                  className={cn(
+                    chromeIconButtonClass,
+                    remoteAccessOpen && 'border-primary/30 bg-primary/10 text-foreground'
+                  )}
+                  title="Remote access (QR code)"
+                >
+                  <Smartphone className="h-3.5 w-3.5" />
+                </button>
+              </div>
 
               {/* Terminal toggle */}
               <div className="flex items-center mr-2 gap-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
