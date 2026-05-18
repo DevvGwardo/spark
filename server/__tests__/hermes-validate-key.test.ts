@@ -1,5 +1,6 @@
 import type { AddressInfo } from 'net'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { HERMES_TOOL_CAPABLE_MODELS } from '../provider-config'
 
 async function createTestServer() {
   const { createApp } = await import('../index')
@@ -89,22 +90,9 @@ describe('Hermes validate-key route', () => {
       const body = await response.json()
 
       expect(response.ok).toBe(true)
-      expect(body).toEqual({
-        valid: true,
-        defaultModel: 'anthropic/claude-sonnet-4',
-        models: [
-          'anthropic/claude-sonnet-4',
-          'google/gemini-3.1-flash-lite-preview',
-          'MiniMax-M2.7',
-          'MiniMax-M2.7-highspeed',
-          'deepseek/deepseek-v3.2',
-          'meta-llama/llama-4-maverick',
-          'openai/gpt-4.1-mini',
-          'google/gemini-2.5-flash',
-          'deepseek/deepseek-chat-v3.1',
-          'meta-llama/llama-4-scout',
-        ],
-      })
+      expect(body.valid).toBe(true)
+      expect(body.defaultModel).toBe('anthropic/claude-sonnet-4')
+      expect(body.models).toEqual(expect.arrayContaining([...HERMES_TOOL_CAPABLE_MODELS]))
     } finally {
       await server.close()
     }

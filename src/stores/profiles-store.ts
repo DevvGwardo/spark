@@ -39,6 +39,7 @@ interface ProfilesState {
   createProfile: (name: string, cloneFrom?: string) => Promise<void>;
   deleteProfile: (name: string) => Promise<void>;
   fetchProfileDetail: (name: string) => Promise<void>;
+  getProfilesForRoomSelection: () => Profile[];
 }
 
 // The active profile is stored client-side and sent to the server on every
@@ -129,6 +130,10 @@ export const useProfilesStore = create<ProfilesState>()(
           console.error('Failed to fetch profile detail:', e);
           set({ detailLoading: false, profileDetail: null });
         }
+      },
+
+      getProfilesForRoomSelection: () => {
+        return get().profiles.filter((p) => !p.name.startsWith('session-'));
       },
     }),
     {

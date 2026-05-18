@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork, Search, ChevronRight, Zap, Clock, House, BookOpen, Sparkles, BarChart3, User, Network, Image, Download, Upload, Archive, ArchiveRestore, ChevronDown, Tag, X, Kanban, CornerDownLeft, ListChecks } from 'lucide-react';
+import { Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork, Search, ChevronRight, Zap, Clock, House, BookOpen, Sparkles, BarChart3, User, Network, Image, Download, Upload, Archive, ArchiveRestore, ChevronDown, Tag, X, Kanban, CornerDownLeft, ListChecks, Users } from 'lucide-react';
 import { Github } from 'lucide-react';
 import { GhostIcon } from '@/components/chat/GhostIcon';
 import { useChatStore } from '@/stores/chat-store';
@@ -32,6 +32,11 @@ import { tagColor } from '@/lib/tag-color';
 import type { SubTab } from '@/stores/ui-store';
 import { relativeTime } from '@/lib/relative-time';
 import { useChatQueueStore } from '@/stores/chat-queue-store';
+import { useRoomStore } from '@/stores/room-store';
+import { SwarmRoomPanel } from '@/components/chat/SwarmRoomPanel';
+import { CreateRoomDialog } from '@/components/rooms/CreateRoomDialog';
+import { RoomSettingsPanel } from '@/components/rooms/RoomSettingsPanel';
+import { useProfilesStore } from '@/stores/profiles-store';
 
 interface ConversationGroup {
   label: string;
@@ -89,6 +94,7 @@ const HERMES_SUB_TABS: Array<{ key: SubTab; label: string; icon: React.Component
   { key: 'images', label: 'Images', icon: Image },
   { key: 'kanban', label: 'Board', icon: Kanban },
   { key: 'tasks', label: 'Tasks', icon: ListChecks },
+  { key: 'rooms', label: 'Rooms', icon: Users },
 ];
 
 export const ChatSidebar: React.FC = () => {
@@ -106,7 +112,7 @@ export const ChatSidebar: React.FC = () => {
     removeTagFromConversation,
   } = useChatStore();
 
-  const { panels, focusedPanelId, setConversationForPanel, openPanel } = usePanelStore();
+  const { panels, focusedPanelId, setConversationForPanel, openPanel, openRoomPanel } = usePanelStore();
   const { activeTab, setActiveTab, setSettingsOpen, setRepoBrowserOpen, sidebarWidth, activeSubTab, setActiveSubTab } = useUIStore();
   const { activeProvider } = useSettingsStore();
   const activities = useActivityStore((s) => s.activities);
@@ -126,6 +132,9 @@ export const ChatSidebar: React.FC = () => {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [tagEditorId, setTagEditorId] = useState<string | null>(null);
   const [tagInput, setTagInput] = useState('');
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
+  const [activeRoomSettingsId, setActiveRoomSettingsId] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const isHermes = activeProvider === 'hermes';
   const totalQueuedMessages = useMemo(
@@ -157,6 +166,19 @@ export const ChatSidebar: React.FC = () => {
   }, [loadConversations]);
 
   const focusedConvId = focusedPanel?.conversationId;
+
+  // Room store
+  const { rooms, fetchRooms, createRoom, addMember, settingsRoomId, closeRoomSettings } = useRoomStore();
+  const profiles = useProfilesStore((s) => s.profiles);
+  const profilesLoading = useProfilesStore((s) => s.loading);
+  const fetchProfiles = useProfilesStore((s) => s.fetchProfiles);
+  const getProfilesForRoomSelection = useProfilesStore((s) => s.getProfilesForRoomSelection);
+  const roomProfiles = getProfilesForRoomSelection ? getProfilesForRoomSelection() : profiles;
+
+  useEffect(() => {
+    void fetchRooms();
+    void fetchProfiles();
+  }, [fetchRooms, fetchProfiles]);
 
   const handleNew = () => {
     setActiveTab('chat');
@@ -978,6 +1000,89 @@ export const ChatSidebar: React.FC = () => {
         <KanbanPanel />
       ) : activeSubTab === 'tasks' ? (
         <TaskQueuePanel />
+      ) : activeSubTab === 'rooms' && (settingsRoomId || activeRoomSettingsId) ? (
+        <RoomSettingsPanel
+          roomId={settingsRoomId || activeRoomSettingsId!}
+          onClose={() => {
+            closeRoomSettings();
+            setActiveRoomSettingsId(null);
+          }}
+        />
+      ) : activeSubTab === 'rooms' && activeRoomId ? (
+        <SwarmRoomPanel
+          roomId={activeRoomId}
+          onBack={() => setActiveRoomId(null)}
+          onSettings={() => {
+            setActiveRoomSettingsId(activeRoomId);
+            setActiveRoomId(null);
+          }}
+        />
+      ) : activeSubTab === 'rooms' ? (
+        <div className="flex h-full flex-col">
+          {/* Rooms list header */}
+          <div className="flex items-center justify-between px-4 py-3">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] font-semibold uppercase tracking-[1px] text-[#666666]">Rooms</span>
+              <span className="text-[11px] font-mono text-[#555555]">{rooms.length}</span>
+            </div>
+            <button
+              onClick={() => setShowCreateDialog(true)}
+              className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground hover:bg-[hsl(var(--muted))] transition-colors"
+            >
+              <Plus className="h-3 w-3" />
+              New Room
+            </button>
+          </div>
+
+          {/* Room list */}
+          <div className="flex-1 overflow-y-auto px-3 pb-3">
+            {rooms.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 px-4">
+                <Users className="h-8 w-8 text-muted-foreground/30 mb-3" />
+                <p className="text-[13px] font-medium text-muted-foreground/70 mb-1">No rooms yet</p>
+                <p className="text-[11px] text-muted-foreground/50 text-center">Create a swarm room to collaborate with agents</p>
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {rooms.map((room) => (
+                  <button
+                    key={room.id}
+                    onClick={() => {
+                      openRoomPanel(room.id);
+                      setActiveTab('chat');
+                    }}
+                    className="flex w-full items-center gap-3 rounded-[10px] px-4 py-3 text-left transition-colors hover:bg-[hsl(var(--sidebar-active))]/40 focus:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--ring))]"
+                  >
+                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[hsl(var(--muted))]">
+                      <Users className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                    <div className="flex min-w-0 flex-1 flex-col">
+                      <span className="truncate text-[13px] font-medium text-[hsl(var(--text-primary))]">
+                        {room.name}
+                      </span>
+                      <span className="text-[11px] text-muted-foreground/60">
+                        Created {new Date(room.createdAt).toLocaleDateString()}
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Create room dialog */}
+          <CreateRoomDialog
+            open={showCreateDialog}
+            profiles={roomProfiles}
+            profilesLoading={profilesLoading}
+            onClose={() => setShowCreateDialog(false)}
+            onCreated={(room) => {
+              setShowCreateDialog(false);
+              openRoomPanel(room.id);
+              setActiveTab('chat');
+            }}
+          />
+        </div>
       ) : (
         <CronJobsPanel
           conversationId={focusedConversation?.id ?? null}

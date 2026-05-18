@@ -44,6 +44,9 @@ describe('health route', () => {
       expect(body.ok).toBe(true)
       expect(body.routes).toContain('/functions/v1/chat-store/conversations')
       expect(body.routes).toContain('/functions/v1/chat-store/messages')
+      expect(body.routes).toContain('/api/hermes/runtimes')
+      expect(body.routes).toContain('/api/hermes/chat/start')
+      expect(body.routes).toContain('/api/hermes/chat/stream')
     } finally {
       await server.close()
     }

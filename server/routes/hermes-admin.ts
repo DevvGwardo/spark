@@ -4,6 +4,10 @@ import { getProfileFromRequest } from '../lib/hermes-profiles';
 
 const HERMES_BRIDGE_URL = process.env.HERMES_BRIDGE_URL || 'http://localhost:3002';
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
 async function proxyTo(
   req: Request,
   res: Response,
@@ -20,23 +24,25 @@ async function proxyTo(
       },
     });
 
+    const rawText = await response.text();
     let data: unknown = {};
     try {
-      data = await response.json();
+      data = rawText ? JSON.parse(rawText) : {};
     } catch {
       // Non-JSON response
     }
 
     if (!response.ok) {
-      const errorData = data as Record<string, unknown>;
+      const errorData = isObjectRecord(data) ? data : {};
+      const plainTextError = rawText.trim();
       const error =
         typeof errorData.error === 'string' && errorData.error
           ? errorData.error
-          : `Bridge returned ${response.status}`;
+          : plainTextError || `Bridge returned ${response.status}`;
       return sendJson(res, response.status, { error });
     }
 
-    return sendJson(res, response.status, data as Record<string, unknown>);
+    return sendJson(res, response.status, data);
   } catch (err) {
     const message =
       err instanceof Error ? err.message : 'Failed to reach hermes-bridge';

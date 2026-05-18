@@ -1,8 +1,9 @@
 import React, { useCallback, useRef, useState, useEffect } from 'react';
-import { X, MoreHorizontal, Pin, Pencil, Archive, Copy, PanelRight, GitPullRequest } from 'lucide-react';
+import { X, MoreHorizontal, Pin, Pencil, Archive, Copy, PanelRight, GitPullRequest, Users, AlertCircle } from 'lucide-react';
 import { useShallow } from 'zustand/shallow';
 import { ChatArea } from './ChatArea';
 import { useChat } from '@/hooks/useChat';
+import { useRoomChat } from '@/hooks/useRoomChat';
 import { usePanelStore } from '@/stores/panel-store';
 import { useChatStore } from '@/stores/chat-store';
 import { useChangesetStore } from '@/stores/changeset-store';
@@ -10,6 +11,7 @@ import { usePreviewStore } from '@/stores/preview-store';
 import { useActivityStore } from '@/stores/activity-store';
 import { PanelProvider } from '@/contexts/PanelContext';
 import { CommandCallbacksProvider } from '@/contexts/CommandCallbacksContext';
+import { useRoomStore } from '@/stores/room-store';
 import { cn } from '@/lib/utils';
 import { SlotNumber } from '@/components/ui/SlotNumber';
 import { getChatScopeId } from '@/lib/chat-scope';
@@ -103,6 +105,90 @@ function BackgroundStandardChatRuntime({
 }) {
   useChat(conversationId, undefined, undefined, panelId, undefined, conversationId);
   return null;
+}
+
+/**
+ * Room chat runtime that feeds room messages through the standard ChatArea.
+ * Matches the same interface as StandardChatRuntime so it works with ChatRuntimeArea.
+ */
+function RoomChatRuntime({ roomId }: { roomId: string }) {
+  const roomChat = useRoomChat(roomId);
+  const activeRoom = useRoomStore((s) => s.activeRoom);
+  const members = activeRoom?.members ?? [];
+
+  // Color helper for member dots
+  const MEMBER_COLORS = ['#3b82f6', '#22c55e', '#f97316', '#ef4444', '#a855f7', '#ec4899', '#14b8a6'];
+  const getColor = (name: string) => MEMBER_COLORS[Math.abs(name.split('').reduce((a, c) => a + c.charCodeAt(0), 0)) % MEMBER_COLORS.length];
+
+  return (
+    <div className="flex flex-col h-full relative">
+      {/* Compact agent indicator bar */}
+      {members.length > 0 && (
+        <div className="flex items-center gap-1.5 px-4 py-1.5 border-b border-border/40 bg-muted/10 shrink-0">
+          <Users className="h-3 w-3 text-muted-foreground/60" />
+          <span className="text-[10px] text-muted-foreground/60">
+            {members.map((m) => (
+              <span key={m.profileName} className="inline-flex items-center gap-1 mr-2">
+                <span className="h-1.5 w-1.5 rounded-full inline-block" style={{ backgroundColor: m.color || getColor(m.profileName) }} />
+                <span>@{m.displayName}</span>
+              </span>
+            ))}
+          </span>
+        </div>
+      )}
+
+      {/* @mention autocomplete dropdown */}
+      {roomChat.showMentions && roomChat.filteredMentions.length > 0 && (
+        <div className="absolute bottom-[120px] left-3 right-3 z-50 rounded-lg border border-border bg-popover py-1 shadow-lg max-h-40 overflow-y-auto">
+          {roomChat.filteredMentions.map((m, i) => {
+            const color = m.color || getColor(m.profileName);
+            return (
+              <button
+                key={m.profileName}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  roomChat.insertMention(m.displayName);
+                }}
+                className={`flex w-full items-center gap-2 px-3 py-1.5 text-[12px] transition-colors ${
+                  i === roomChat.mentionIndex ? 'bg-muted' : 'hover:bg-muted/50'
+                }`}
+              >
+                <span
+                  className="h-5 w-5 rounded-full flex items-center justify-center text-[9px] font-semibold shrink-0"
+                  style={{ backgroundColor: color + '20', color, border: `1px solid ${color}40` }}
+                >
+                  {m.displayName.charAt(0).toUpperCase()}
+                </span>
+                <span className="font-medium">{m.displayName}</span>
+                <span className="text-muted-foreground/60">@{m.profileName}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <ChatArea
+        conversationId={null}
+        messages={roomChat.messages}
+        input={roomChat.input}
+        setInput={roomChat.setInput}
+        handleSend={roomChat.handleSend}
+        handleQuickSend={roomChat.handleQuickSend}
+        queuedMessages={roomChat.queuedMessages}
+        handleRemoveQueuedMessage={roomChat.handleRemoveQueuedMessage}
+        handleSteerQueuedMessage={roomChat.handleSteerQueuedMessage}
+        handleStop={roomChat.handleStop}
+        handleRegenerate={roomChat.handleRegenerate}
+        isStreaming={roomChat.isStreaming}
+        isAnotherPanelStreamingSameProfile={roomChat.isAnotherPanelStreamingSameProfile}
+        error={roomChat.error}
+        apiKeyModalOpen={roomChat.apiKeyModalOpen}
+        setApiKeyModalOpen={roomChat.setApiKeyModalOpen}
+        activeProvider={roomChat.activeProvider}
+        activeModel={roomChat.activeModel}
+      />
+    </div>
+  );
 }
 
 export const ChatPanel: React.FC<ChatPanelProps> = ({
@@ -387,12 +473,18 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           </div>
         )}
         <div className="flex-1 min-h-0 overflow-hidden">
-          <StandardChatRuntime
-            panelId={panelId}
-            conversationId={conversationId}
-            onConversationCreated={handleConversationCreated}
-            onOpenPR={onOpenPR}
-          />
+          {(panels.find((p) => p.id === panelId)?.roomId)
+            ? (
+              <RoomChatRuntime roomId={panels.find((p) => p.id === panelId)!.roomId!} />
+            ) : (
+              <StandardChatRuntime
+                panelId={panelId}
+                conversationId={conversationId}
+                onConversationCreated={handleConversationCreated}
+                onOpenPR={onOpenPR}
+              />
+            )
+          }
         </div>
       </div>
     </PanelProvider>

@@ -1,0 +1,4 @@
+-e api
+v1
+prices
+candles

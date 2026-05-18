@@ -25,7 +25,7 @@ type BridgeStatus = NonNullable<NonNullable<typeof window.electronAPI>['bridge']
 type Phase = 'checking' | 'needs-action' | 'installing' | 'success' | 'failed' | 'no-electron';
 
 interface Requirement {
-  key: 'python' | 'deps' | 'agent';
+  key: 'python' | 'git' | 'deps' | 'agent';
   label: string;
   description: string;
   satisfied: boolean;
@@ -45,6 +45,7 @@ export const BridgeSetupModal: React.FC<{ onComplete: () => void }> = ({ onCompl
   const [phase, setPhase] = useState<Phase>(bridge ? 'checking' : 'no-electron');
   const [installLog, setInstallLog] = useState<string[]>([]);
   const [installing, setInstalling] = useState<Requirement['key'] | null>(null);
+  const [startingBridge, setStartingBridge] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
 
@@ -86,7 +87,7 @@ export const BridgeSetupModal: React.FC<{ onComplete: () => void }> = ({ onCompl
         setTimeout(onComplete, SUCCESS_AUTOCLOSE_MS);
         return;
       }
-      if (!next?.pythonPath || !next.bridgeDepsInstalled || !next.hermesAgentPresent) {
+      if (next && (!next.pythonPath || (!next.hermesAgentPresent && !next.gitPath) || !next.bridgeDepsInstalled || !next.hermesAgentPresent || next.lastStartError)) {
         setPhase((p) => (p === 'installing' ? 'installing' : 'needs-action'));
       }
       timer = setTimeout(tick, POLL_INTERVAL_MS);
@@ -119,6 +120,18 @@ export const BridgeSetupModal: React.FC<{ onComplete: () => void }> = ({ onCompl
           installing: false,
         },
         {
+          key: 'git',
+          label: 'Git',
+          description: status.hermesAgentPresent
+            ? 'Not required because Hermes Agent is already installed.'
+            : status.gitPath
+              ? `Found: ${status.gitPath}`
+              : 'Git is required to download Hermes Agent on first launch.',
+          satisfied: status.hermesAgentPresent || Boolean(status.gitPath),
+          installable: false,
+          installing: false,
+        },
+        {
           key: 'deps',
           label: 'Bridge dependencies',
           description: status.bridgeDepsInstalled
@@ -135,11 +148,18 @@ export const BridgeSetupModal: React.FC<{ onComplete: () => void }> = ({ onCompl
             ? 'Already installed at ~/.hermes/hermes-agent.'
             : 'Clone NousResearch/hermes-agent (~1 GB) and install its Python dependencies.',
           satisfied: status.hermesAgentPresent,
-          installable: Boolean(status.pythonPath),
+          installable: Boolean(status.pythonPath && status.gitPath),
           installing: installing === 'agent',
         },
       ]
     : [];
+
+  const canStartBridge = Boolean(
+    status?.pythonPath &&
+    status?.bridgeDepsInstalled &&
+    status?.hermesAgentPresent &&
+    !startingBridge,
+  );
 
   const handleInstall = useCallback(
     async (key: Requirement['key']) => {
@@ -179,6 +199,31 @@ export const BridgeSetupModal: React.FC<{ onComplete: () => void }> = ({ onCompl
     },
     [bridge, refreshStatus],
   );
+
+  const handleStartBridge = useCallback(async () => {
+    if (!bridge) return;
+    setStartingBridge(true);
+    setError(null);
+    setInstallLog((prev) => [...prev, '→ Starting Hermes bridge…']);
+    try {
+      const result = await bridge.start();
+      if (result.status === 'failed') {
+        setError(result.message ?? 'Bridge failed to start');
+        setPhase('needs-action');
+        return;
+      }
+      setInstallLog((prev) => [...prev, '✓ Hermes bridge started']);
+      const next = await refreshStatus();
+      if (!next?.bridgeReachable) {
+        setError(next?.lastStartError ?? 'Hermes bridge is still unavailable.');
+      }
+    } catch (err) {
+      setError((err as Error).message);
+      setPhase('needs-action');
+    } finally {
+      setStartingBridge(false);
+    }
+  }, [bridge, refreshStatus]);
 
   if (phase === 'no-electron') {
     // Browser/dev mode without Electron — bridge management isn't applicable.
@@ -254,6 +299,20 @@ export const BridgeSetupModal: React.FC<{ onComplete: () => void }> = ({ onCompl
                     , then click Refresh.
                   </div>
                 )}
+                {!req.satisfied && req.key === 'git' && (
+                  <div className="mt-2 text-[11px] text-muted-foreground">
+                    Install{' '}
+                    <a
+                      href="https://git-scm.com/downloads"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary underline underline-offset-2"
+                    >
+                      Git
+                    </a>
+                    , then click Refresh.
+                  </div>
+                )}
               </div>
               {!req.satisfied && req.installable && !req.installing && (
                 <button
@@ -273,6 +332,12 @@ export const BridgeSetupModal: React.FC<{ onComplete: () => void }> = ({ onCompl
             </div>
           )}
 
+          {!error && status?.lastStartError && !status.bridgeReachable && (
+            <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[12px] text-amber-200">
+              {status.lastStartError}
+            </div>
+          )}
+
           {installLog.length > 0 && (
             <div
               ref={logRef}
@@ -286,14 +351,26 @@ export const BridgeSetupModal: React.FC<{ onComplete: () => void }> = ({ onCompl
         </div>
 
         <div className="flex items-center justify-between gap-3 px-5 py-3 border-t border-border/60 bg-muted/10">
-          <button
-            onClick={() => refreshStatus()}
-            disabled={installing !== null}
-            className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border/60 bg-background/65 px-2.5 text-[11px] font-medium hover:bg-background/90 disabled:opacity-40"
-          >
-            <RefreshCw className="h-3 w-3" />
-            Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => refreshStatus()}
+              disabled={installing !== null || startingBridge}
+              className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border/60 bg-background/65 px-2.5 text-[11px] font-medium hover:bg-background/90 disabled:opacity-40"
+            >
+              <RefreshCw className="h-3 w-3" />
+              Refresh
+            </button>
+            {canStartBridge && !status?.bridgeReachable && (
+              <button
+                onClick={handleStartBridge}
+                disabled={startingBridge}
+                className="inline-flex h-7 items-center gap-1.5 rounded-md border border-primary/30 bg-primary/10 px-2.5 text-[11px] font-medium text-primary hover:bg-primary/15 disabled:opacity-40"
+              >
+                {startingBridge ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                Start bridge
+              </button>
+            )}
+          </div>
           <button
             onClick={onComplete}
             className="inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[11px] font-medium text-muted-foreground hover:text-foreground"

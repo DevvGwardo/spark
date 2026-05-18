@@ -5,7 +5,7 @@ import { useUIStore } from '@/stores/ui-store';
 
 // Commands that switch to a sidebar sub-tab — after running, open the sidebar
 const SUBTAB_NAV_COMMANDS = new Set([
-  'overview', 'cron', 'memories', 'skills', 'usage', 'chats', 'threads',
+  'overview', 'cron', 'memories', 'skills', 'usage', 'chats', 'threads', 'queue',
 ]);
 
 // Commands that switch to a main app tab

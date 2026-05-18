@@ -15,6 +15,7 @@ import { createQueuedMessage, moveQueuedMessageToFront, removeQueuedMessage, typ
 import { PROVIDERS, supportsReasoningEffort } from '@/lib/providers';
 import { useHermesStore } from '@/stores/hermes-store';
 import { getActiveProfile, useProfilesStore } from '@/stores/profiles-store';
+import { useChatQueueStore } from '@/stores/chat-queue-store';
 import { useStreamLockStore } from '@/stores/stream-lock-store';
 import { usePanelStore } from '@/stores/panel-store';
 
@@ -1857,6 +1858,30 @@ When the user asks you to make changes:
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- lock stays bound to profile captured at stream start
   }, [effectiveProvider, isStreaming, panelId]);
+
+  useEffect(() => {
+    useChatQueueStore.getState().setPanelQueue({
+      panelId,
+      conversationId,
+      profile: sessionProfile,
+      isStreaming,
+      waitingForOtherPanel: isAnotherPanelStreamingSameProfile,
+      messages: queuedMessages,
+    });
+  }, [
+    conversationId,
+    isAnotherPanelStreamingSameProfile,
+    isStreaming,
+    panelId,
+    queuedMessages,
+    sessionProfile,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      useChatQueueStore.getState().clearPanelQueue(panelId);
+    };
+  }, [panelId]);
 
   useLayoutEffect(() => {
     // Track which conversation owns the active stream. Set on false→true and

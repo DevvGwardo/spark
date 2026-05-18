@@ -32,6 +32,7 @@ const BRIDGE_TOKEN = randomBytes(32).toString('hex')
 
 let bridgeProcess: ChildProcess | null = null
 let bridgeStartPromise: Promise<BridgeStartResult> | null = null
+let lastBridgeStartError: string | null = null
 
 export interface BridgeStartResult {
   status: 'started' | 'reused-existing' | 'failed'
@@ -40,10 +41,12 @@ export interface BridgeStartResult {
 
 export interface BridgeSetupStatus {
   pythonPath: string | null
+  gitPath: string | null
   bridgeSource: string | null
   bridgeDepsInstalled: boolean
   hermesAgentPresent: boolean
   bridgeReachable: boolean
+  lastStartError: string | null
 }
 
 // ── Path resolution ────────────────────────────────────────────────────────
@@ -93,6 +96,22 @@ function findSystemPython(): string | null {
   const candidates = process.platform === 'win32'
     ? ['python', 'python3', 'py']
     : ['python3', 'python']
+
+  for (const cmd of candidates) {
+    try {
+      execFileSync(cmd, ['--version'], { stdio: 'ignore' })
+      return cmd
+    } catch {
+      // try next
+    }
+  }
+  return null
+}
+
+function findGit(): string | null {
+  const candidates = process.platform === 'win32'
+    ? ['git', 'git.exe']
+    : ['git']
 
   for (const cmd of candidates) {
     try {
@@ -248,6 +267,7 @@ async function waitForBridgeExit(timeoutMs = 5_000): Promise<boolean> {
 
 export async function getBridgeSetupStatus(): Promise<BridgeSetupStatus> {
   const pythonPath = resolvePython()
+  const gitPath = findGit()
   const bridgeSource = resolveBridgeSource()
   // bridgeDepsInstalled: heuristic — fastapi importable from our packages dir,
   // OR the hermes-agent venv's python already has it.
@@ -268,10 +288,12 @@ export async function getBridgeSetupStatus(): Promise<BridgeSetupStatus> {
   }
   return {
     pythonPath,
+    gitPath,
     bridgeSource,
     bridgeDepsInstalled,
     hermesAgentPresent: existsSync(join(hermesAgentDir(), 'run_agent.py')),
     bridgeReachable: await isBridgeReachable(),
+    lastStartError: lastBridgeStartError,
   }
 }
 
@@ -282,46 +304,43 @@ export async function startBridge(): Promise<BridgeStartResult> {
   if (bridgeStartPromise) return bridgeStartPromise
 
   bridgeStartPromise = (async (): Promise<BridgeStartResult> => {
+    const fail = (message: string): BridgeStartResult => {
+      lastBridgeStartError = message
+      console.warn('[bridge] ' + message)
+      return { status: 'failed', message }
+    }
+
     const bridgeReachable = await isBridgeReachable()
     const bridgePids = getBridgePidsOnPort()
     if (bridgeReachable) {
       if (await isOwnedBridge()) {
         console.log('[bridge] already running on :' + BRIDGE_PORT + ', reusing')
+        lastBridgeStartError = null
         return { status: 'reused-existing' }
       }
 
       console.warn('[bridge] replacing unowned bridge on :' + BRIDGE_PORT)
       if (!killUnownedBridge()) {
-        const msg = 'Bridge on :' + BRIDGE_PORT + ' is not owned by this launch and could not be stopped'
-        console.warn('[bridge] ' + msg)
-        return { status: 'failed', message: msg }
+        return fail('Bridge on :' + BRIDGE_PORT + ' is not owned by this launch and could not be stopped')
       }
     } else if (bridgePids.length > 0) {
       console.warn('[bridge] replacing unresponsive bridge on :' + BRIDGE_PORT)
       if (!killUnownedBridge()) {
-        const msg = 'Bridge on :' + BRIDGE_PORT + ' is not reachable and could not be stopped'
-        console.warn('[bridge] ' + msg)
-        return { status: 'failed', message: msg }
+        return fail('Bridge on :' + BRIDGE_PORT + ' is not reachable and could not be stopped')
       }
       if (!(await waitForBridgeExit())) {
-        const msg = 'Bridge on :' + BRIDGE_PORT + ' did not stop in time'
-        console.warn('[bridge] ' + msg)
-        return { status: 'failed', message: msg }
+        return fail('Bridge on :' + BRIDGE_PORT + ' did not stop in time')
       }
     }
 
     const python = resolvePython()
     if (!python) {
-      const msg = 'No Python interpreter found (bundled or system)'
-      console.warn('[bridge] ' + msg)
-      return { status: 'failed', message: msg }
+      return fail('No Python interpreter found (bundled or system)')
     }
 
     const source = resolveBridgeSource()
     if (!source) {
-      const msg = 'Bridge source directory not found'
-      console.warn('[bridge] ' + msg)
-      return { status: 'failed', message: msg }
+      return fail('Bridge source directory not found')
     }
 
     console.log(`[bridge] spawning ${python} ${join(source, 'main.py')}`)
@@ -347,17 +366,18 @@ export async function startBridge(): Promise<BridgeStartResult> {
     })
     bridgeProcess.on('exit', (code, signal) => {
       console.log(`[bridge] process exited code=${code} signal=${signal}`)
+      if (code !== 0) {
+        lastBridgeStartError = `Hermes bridge exited unexpectedly (code=${code ?? 'null'}, signal=${signal ?? 'none'})`
+      }
       bridgeProcess = null
       bridgeStartPromise = null
     })
 
     const ready = await waitForOwnedBridge()
     if (!ready) {
-      return {
-        status: 'failed',
-        message: 'Bridge did not become healthy and owned within ' + BRIDGE_HEALTH_TIMEOUT_MS + 'ms',
-      }
+      return fail('Bridge did not become healthy and owned within ' + BRIDGE_HEALTH_TIMEOUT_MS + 'ms')
     }
+    lastBridgeStartError = null
     return { status: 'started' }
   })()
 
@@ -390,7 +410,7 @@ export function stopBridge(): void {
  * Pip-install the bridge requirements into ~/.hermes/cloudchat-pkgs/.
  * Idempotent: re-running just upgrades.
  */
-export async function installBridgeDeps(): Promise<{ ok: boolean; message?: string }> {
+export async function installBridgeDeps(onProgress?: (line: string) => void): Promise<{ ok: boolean; message?: string }> {
   const python = resolvePython()
   if (!python) return { ok: false, message: 'No Python interpreter found' }
   const source = resolveBridgeSource()
@@ -399,6 +419,12 @@ export async function installBridgeDeps(): Promise<{ ok: boolean; message?: stri
   if (!existsSync(reqs)) return { ok: false, message: 'requirements.txt missing in bridge source' }
 
   return new Promise((res) => {
+    const log = (line: string) => {
+      const trimmed = line.trim()
+      if (!trimmed) return
+      onProgress?.(trimmed)
+      console.log('[install-bridge-deps] ' + trimmed)
+    }
     const proc = spawn(python, [
       '-m', 'pip', 'install',
       '--target', bridgePackagesDir(),
@@ -406,7 +432,14 @@ export async function installBridgeDeps(): Promise<{ ok: boolean; message?: stri
       '-r', reqs,
     ], { stdio: ['ignore', 'pipe', 'pipe'] })
     let err = ''
-    proc.stderr?.on('data', (c: Buffer) => { err += c.toString() })
+    proc.stdout?.on('data', (c: Buffer) => {
+      c.toString().split(/\r?\n/).forEach(log)
+    })
+    proc.stderr?.on('data', (c: Buffer) => {
+      const chunk = c.toString()
+      err += chunk
+      chunk.split(/\r?\n/).forEach(log)
+    })
     proc.on('close', (code) => {
       if (code === 0) res({ ok: true })
       else res({ ok: false, message: err.trim().slice(-2000) || `pip exited ${code}` })
@@ -420,15 +453,20 @@ export async function installBridgeDeps(): Promise<{ ok: boolean; message?: stri
  */
 export async function installHermesAgent(onProgress?: (line: string) => void): Promise<{ ok: boolean; message?: string }> {
   const target = hermesAgentDir()
+  const git = findGit()
   const log = (line: string) => {
     onProgress?.(line)
     console.log('[install-hermes] ' + line)
   }
 
+  if (!git) {
+    return { ok: false, message: 'Git is required to install Hermes Agent. Install Git and try again.' }
+  }
+
   if (!existsSync(target)) {
     log('Cloning NousResearch/hermes-agent…')
     const clone = await new Promise<{ ok: boolean; err?: string }>((res) => {
-      const proc = spawn('git', ['clone', '--depth', '1',
+      const proc = spawn(git, ['clone', '--depth', '1',
         'https://github.com/NousResearch/hermes-agent.git', target], { stdio: ['ignore', 'pipe', 'pipe'] })
       let err = ''
       proc.stderr?.on('data', (c: Buffer) => {

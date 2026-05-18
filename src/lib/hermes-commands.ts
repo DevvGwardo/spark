@@ -1,5 +1,5 @@
 export interface CommandContext {
-  setActiveSubTab: (tab: 'overview' | 'threads' | 'chats' | 'cron' | 'memories' | 'skills' | 'usage') => void;
+  setActiveSubTab: (tab: 'overview' | 'threads' | 'queue' | 'chats' | 'cron' | 'memories' | 'skills' | 'usage') => void;
   setActiveTab: (tab: 'chat' | 'github' | 'analyzer' | 'knowledge') => void;
   setMiniBrowserOpen: (open: boolean) => void;
   setMiniBrowserUrl: (url: string) => void;
@@ -119,6 +119,15 @@ const COMMANDS: HermesCommand[] = [
     handler: async (_args, context) => {
       context.setActiveSubTab('threads');
       return 'Switched to Threads tab.';
+    },
+  },
+  {
+    name: 'queue',
+    description: 'Open the Hermes queue monitor',
+    usage: '/queue',
+    handler: async (_args, context) => {
+      context.setActiveSubTab('queue');
+      return 'Switched to Queue tab.';
     },
   },
   {

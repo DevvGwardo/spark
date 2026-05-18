@@ -55,8 +55,19 @@ vi.mock('@/components/preview/PreviewSidebar', () => ({
   PreviewSidebar: () => <div data-testid="preview-sidebar" />,
 }));
 
+vi.mock('@/components/browser/MiniBrowser', () => ({
+  MiniBrowser: () => null,
+  MiniBrowserToggle: () => null,
+  DockedMiniBrowser: () => null,
+  HermesPTYPanel: () => null,
+}));
+
 vi.mock('@/components/terminal/TerminalPanel', () => ({
   TerminalPanel: () => null,
+}));
+
+vi.mock('@/components/overlay/CommandPalette', () => ({
+  CommandPalette: () => null,
 }));
 
 vi.mock('@/hooks/useTheme', () => ({

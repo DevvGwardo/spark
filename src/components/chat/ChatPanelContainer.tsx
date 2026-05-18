@@ -10,21 +10,23 @@ interface ChatPanelContainerProps {
 export const ChatPanelContainer: React.FC<ChatPanelContainerProps> = ({ onOpenPR }) => {
   const { panels, focusedPanelId, focusPanel, closePanel } = usePanelStore();
 
-  // Single panel — no resize handles, no header
+  const renderPanel = (panel: typeof panels[0], isFocused: boolean, onClose?: () => void) => (
+    <ChatPanel
+      panelId={panel.id}
+      conversationId={panel.conversationId}
+      isFocused={isFocused}
+      onFocus={() => focusPanel(panel.id)}
+      onClose={onClose}
+      onOpenPR={onOpenPR}
+    />
+  );
+
+  // Single panel
   if (panels.length === 1) {
-    return (
-      <ChatPanel
-        key={panels[0].id}
-        panelId={panels[0].id}
-        conversationId={panels[0].conversationId}
-        isFocused={true}
-        onFocus={() => {}}
-      />
-    );
+    return renderPanel(panels[0], true);
   }
 
-  // 3+ panels — auto-switch to tiled grid (resizable row gets too cramped).
-  // Each panel keeps streaming while unfocused; grid is purely presentational.
+  // 3+ panels — tiled grid
   if (panels.length > 2) {
     const cols = panels.length <= 4 ? 2 : panels.length <= 9 ? 3 : 4;
     return (
@@ -37,35 +39,21 @@ export const ChatPanelContainer: React.FC<ChatPanelContainerProps> = ({ onOpenPR
             key={panel.id}
             className="min-w-0 min-h-0 overflow-hidden border-r border-b border-border/40 last:border-r-0"
           >
-            <ChatPanel
-              panelId={panel.id}
-              conversationId={panel.conversationId}
-              isFocused={panel.id === focusedPanelId}
-              onFocus={() => focusPanel(panel.id)}
-              onClose={() => closePanel(panel.id)}
-              onOpenPR={onOpenPR}
-            />
+            {renderPanel(panel, panel.id === focusedPanelId, () => closePanel(panel.id))}
           </div>
         ))}
       </div>
     );
   }
 
-  // Multiple panels — resizable split view
+  // 2 panels — resizable split
   return (
     <ResizablePanelGroup direction="horizontal">
       {panels.map((panel, i) => (
         <React.Fragment key={panel.id}>
           {i > 0 && <ResizableHandle withHandle />}
           <ResizablePanel minSize={20}>
-            <ChatPanel
-              panelId={panel.id}
-              conversationId={panel.conversationId}
-              isFocused={panel.id === focusedPanelId}
-              onFocus={() => focusPanel(panel.id)}
-              onClose={() => closePanel(panel.id)}
-              onOpenPR={onOpenPR}
-            />
+            {renderPanel(panel, panel.id === focusedPanelId, () => closePanel(panel.id))}
           </ResizablePanel>
         </React.Fragment>
       ))}

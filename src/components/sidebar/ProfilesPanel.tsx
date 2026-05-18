@@ -237,7 +237,9 @@ function ProfileRow({
           {profile.name}
         </span>
         {profile.hasEnv && (
-          <CheckCircle className="h-3 w-3 text-emerald-500/70 shrink-0" title="Has .env file" />
+          <span className="shrink-0" title="Has .env file" aria-label="Has .env file">
+            <CheckCircle className="h-3 w-3 text-emerald-500/70" />
+          </span>
         )}
         {isActive && (
           <span className="rounded-sm bg-primary/15 px-1.5 py-px text-[9px] font-semibold uppercase tracking-[0.1em] text-primary">

@@ -4,7 +4,9 @@ import { ChatSidebar } from '@/components/sidebar/ChatSidebar';
 import { useActivityStore } from '@/stores/activity-store';
 import { useChangesetStore } from '@/stores/changeset-store';
 import { useChatStore } from '@/stores/chat-store';
+import { useChatQueueStore } from '@/stores/chat-queue-store';
 import { usePanelStore } from '@/stores/panel-store';
+import { useSettingsStore } from '@/stores/settings-store';
 import { useUIStore } from '@/stores/ui-store';
 
 describe('ChatSidebar', () => {
@@ -31,8 +33,13 @@ describe('ChatSidebar', () => {
       panels: [{ id: 'default', conversationId: null, profile: 'default' }],
       focusedPanelId: 'default',
     }));
+    useSettingsStore.setState((state) => ({
+      ...state,
+      activeProvider: 'openai',
+    }));
     useActivityStore.setState({ activities: {} });
     useChangesetStore.setState({ panelChangesets: {} });
+    useChatQueueStore.setState({ panelQueues: {} });
   });
 
   it('shows the attached repo name in the footer without file counts', () => {
@@ -113,6 +120,29 @@ describe('ChatSidebar', () => {
     expect(useUIStore.getState().activeTab).toBe('chat');
     expect(usePanelStore.getState().panels[0]?.conversationId).toBeNull();
     expect(createConversation).not.toHaveBeenCalled();
+  });
+
+  it('shows a queue badge for Hermes when queued messages exist', () => {
+    useSettingsStore.setState((state) => ({
+      ...state,
+      activeProvider: 'hermes',
+    }));
+    useChatQueueStore.getState().setPanelQueue({
+      panelId: 'default',
+      conversationId: null,
+      profile: 'default',
+      isStreaming: true,
+      waitingForOtherPanel: false,
+      messages: [
+        { id: 'queued-1', content: 'follow up', createdAt: '2026-05-14T12:00:00.000Z' },
+        { id: 'queued-2', content: 'then do this', createdAt: '2026-05-14T12:01:00.000Z' },
+      ],
+    });
+
+    render(<ChatSidebar />);
+
+    expect(screen.getByRole('button', { name: /queue/i })).toBeInTheDocument();
+    expect(screen.getByText('2')).toBeInTheDocument();
   });
 
 });

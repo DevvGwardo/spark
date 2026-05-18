@@ -167,4 +167,56 @@ describe('Hermes admin route', () => {
       await server.close()
     }
   })
+
+  it('preserves JSON bridge errors from admin proxy routes', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (url.includes('/api/hermes/workspace/overview')) {
+        return actualFetch(input, init)
+      }
+
+      return new Response(JSON.stringify({ error: 'Bridge workspace failed' }), {
+        status: 502,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+
+    const server = await createTestServer()
+
+    try {
+      const response = await actualFetch(`${server.url}/api/hermes/workspace/overview`)
+      const data = await response.json()
+
+      expect(response.status).toBe(502)
+      expect(data).toEqual({ error: 'Bridge workspace failed' })
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('preserves plain-text bridge errors from admin proxy routes', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (url.includes('/api/hermes/workspace/overview')) {
+        return actualFetch(input, init)
+      }
+
+      return new Response('Bridge exploded badly', {
+        status: 500,
+        headers: { 'Content-Type': 'text/plain' },
+      })
+    }))
+
+    const server = await createTestServer()
+
+    try {
+      const response = await actualFetch(`${server.url}/api/hermes/workspace/overview`)
+      const data = await response.json()
+
+      expect(response.status).toBe(500)
+      expect(data).toEqual({ error: 'Bridge exploded badly' })
+    } finally {
+      await server.close()
+    }
+  })
 })

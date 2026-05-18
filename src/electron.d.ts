@@ -38,10 +38,12 @@ export interface ElectronAPI {
   bridge?: {
     status: () => Promise<{
       pythonPath: string | null
+      gitPath: string | null
       bridgeSource: string | null
       bridgeDepsInstalled: boolean
       hermesAgentPresent: boolean
       bridgeReachable: boolean
+      lastStartError: string | null
     }>
     start: () => Promise<{ status: 'started' | 'reused-existing' | 'failed'; message?: string }>
     installDeps: () => Promise<{ ok: boolean; message?: string }>

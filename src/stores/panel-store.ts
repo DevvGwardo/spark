@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { useRoomStore } from '@/stores/room-store';
 
 // Each panel is an isolated session: its own Hermes profile (state.db, skills/,
 // working dir). Sessions can stream in parallel because the bridge resolves to
@@ -11,6 +12,7 @@ interface Panel {
   id: string;
   conversationId: string | null;
   profile: string;
+  roomId?: string;
 }
 
 interface DockedPanel {
@@ -30,6 +32,8 @@ interface PanelState {
   dockPanel: (panelId: string, conversationId: string) => void;
   undockPanel: () => void;
   setDockedPanelWidth: (width: number) => void;
+  openRoomPanel: (roomId: string) => string;
+  getRoomPanelId: (roomId: string) => string | undefined;
 }
 
 let panelCounter = 0;
@@ -129,13 +133,52 @@ export const usePanelStore = create<PanelState>()(
         set({
           panels: panels.map((p) =>
             p.id === targetId
-              ? { ...p, conversationId }
+              ? { ...p, conversationId, roomId: undefined }
               : conversationId && p.conversationId === conversationId
                 ? { ...p, conversationId: null }
                 : p
           ),
           focusedPanelId: targetId,
         });
+      },
+
+      openRoomPanel: (roomId) => {
+        const { panels, focusedPanelId } = get();
+        const existing = panels.find((p) => p.roomId === roomId);
+        if (existing) {
+          set({ focusedPanelId: existing.id });
+          return existing.id;
+        }
+
+        // Clear room store state so the new room doesn't inherit stale data
+        useRoomStore.getState().clearActiveData();
+
+        // Reuse the focused panel rather than creating a new one —
+        // this keeps the main area from splitting into multiple panels.
+        const targetId = panels.some((p) => p.id === focusedPanelId) ? focusedPanelId : panels[0]?.id;
+        if (targetId) {
+          set({
+            panels: panels.map((p) =>
+              p.id === targetId
+                ? { ...p, conversationId: null, profile: p.profile || 'default', roomId }
+                : p
+            ),
+            focusedPanelId: targetId,
+          });
+          return targetId;
+        }
+
+        // Fallback: no existing panel (shouldn't happen) — create new one
+        const id = generatePanelId();
+        set({
+          panels: [{ id, conversationId: null, profile: generateSessionProfile(), roomId }],
+          focusedPanelId: id,
+        });
+        return id;
+      },
+
+      getRoomPanelId: (roomId) => {
+        return get().panels.find((p) => p.roomId === roomId)?.id;
       },
 
       dockPanel: (panelId, conversationId) => {

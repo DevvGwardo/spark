@@ -9,6 +9,13 @@ import { detectHermesBridge, type HermesBridgeStatus } from '@/lib/detect-hermes
 
 const STEP_LABELS = ['Provider', 'API Key', 'Finish'] as const;
 const HERMES_AGENT_DOCS_URL = 'https://hermes-agent.nousresearch.com/docs/getting-started/quickstart';
+const GIT_DOWNLOADS_URL = 'https://git-scm.com/downloads';
+
+type LocalBridgeSetupStatus = NonNullable<NonNullable<typeof window.electronAPI>['bridge']> extends infer B
+  ? B extends { status: () => Promise<infer S> }
+    ? S
+    : never
+  : never;
 
 const PROVIDER_HELP_URLS: Partial<Record<Provider, string>> = {
   openai: 'platform.openai.com/api-keys',
@@ -41,10 +48,13 @@ export const SetupWizard: React.FC = () => {
   const [oauthLoading, setOauthLoading] = useState(false);
   const [validationError, setValidationError] = useState('');
   const [hermesBridgeStatus, setHermesBridgeStatus] = useState<HermesBridgeStatus | null>(null);
+  const [localBridgeSetupStatus, setLocalBridgeSetupStatus] = useState<LocalBridgeSetupStatus | null>(null);
   const [bridgeDetectionAttempts, setBridgeDetectionAttempts] = useState(0);
   const [showOtherProviders, setShowOtherProviders] = useState(false);
   const [showManualKeyEntry, setShowManualKeyEntry] = useState(false);
   const [installingHermesAgent, setInstallingHermesAgent] = useState(false);
+  const [installingBridgeDeps, setInstallingBridgeDeps] = useState(false);
+  const [startingHermesBridge, setStartingHermesBridge] = useState(false);
   const [hermesInstallLog, setHermesInstallLog] = useState<string[]>([]);
   const [hermesInstallError, setHermesInstallError] = useState('');
 
@@ -64,12 +74,28 @@ export const SetupWizard: React.FC = () => {
     measureHeight();
     window.addEventListener('resize', measureHeight);
     return () => window.removeEventListener('resize', measureHeight);
-  }, [step, measureHeight, validatedModels, validationError, showOtherProviders, showManualKeyEntry, oauthLoading, installingHermesAgent, hermesInstallError, hermesInstallLog]);
+  }, [step, measureHeight, validatedModels, validationError, showOtherProviders, showManualKeyEntry, oauthLoading, installingHermesAgent, installingBridgeDeps, startingHermesBridge, hermesInstallError, hermesInstallLog, localBridgeSetupStatus]);
 
   useEffect(() => {
     const t = setTimeout(measureHeight, 20);
     return () => clearTimeout(t);
-  }, [step, measureHeight, showOtherProviders, showManualKeyEntry, oauthLoading, installingHermesAgent, hermesInstallError, hermesInstallLog]);
+  }, [step, measureHeight, showOtherProviders, showManualKeyEntry, oauthLoading, installingHermesAgent, installingBridgeDeps, startingHermesBridge, hermesInstallError, hermesInstallLog, localBridgeSetupStatus]);
+
+  const refreshLocalBridgeSetupStatus = useCallback(async () => {
+    const bridge = window.electronAPI?.bridge;
+    if (!bridge?.status) {
+      setLocalBridgeSetupStatus(null);
+      return null;
+    }
+    try {
+      const next = await bridge.status();
+      setLocalBridgeSetupStatus(next);
+      return next;
+    } catch {
+      setLocalBridgeSetupStatus(null);
+      return null;
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -105,6 +131,9 @@ export const SetupWizard: React.FC = () => {
       if (bridgeStatus?.hermesDefaultModel) {
         setSelectedModel(bridgeStatus.hermesDefaultModel);
       }
+      if (!bridgeStatus) {
+        await refreshLocalBridgeSetupStatus();
+      }
 
       if (bridgeStatus?.hasOpenRouterCreds) {
         setActiveProvider('hermes');
@@ -126,13 +155,16 @@ export const SetupWizard: React.FC = () => {
       cancelled = true;
       if (retryTimer) clearTimeout(retryTimer);
     };
-  }, [completeSetup, isSetupComplete, setActiveProvider, updateProviderConfig]);
+  }, [completeSetup, isSetupComplete, refreshLocalBridgeSetupStatus, setActiveProvider, updateProviderConfig]);
 
   const retryBridgeDetection = useCallback(async () => {
     setHermesBridgeStatus(null);
     const result = await detectHermesBridge();
     setBridgeDetectionAttempts(prev => prev + 1);
     setHermesBridgeStatus(result);
+    if (!result) {
+      await refreshLocalBridgeSetupStatus();
+    }
     if (result?.hermesDefaultModel) {
       setSelectedModel(result.hermesDefaultModel);
     }
@@ -145,7 +177,7 @@ export const SetupWizard: React.FC = () => {
       });
       completeSetup();
     }
-  }, [completeSetup, setActiveProvider, updateProviderConfig]);
+  }, [completeSetup, refreshLocalBridgeSetupStatus, setActiveProvider, updateProviderConfig]);
 
   useEffect(() => {
     const bridge = window.electronAPI?.bridge;
@@ -174,6 +206,55 @@ export const SetupWizard: React.FC = () => {
   const hasHermesBridgeCreds = Boolean(hermesBridgeStatus?.hasOpenRouterCreds || hermesBridgeStatus?.hasMiniMaxCreds);
   const shouldOfferOpenRouterOAuth = selectedProvider === 'openrouter' || (selectedProvider === 'hermes' && hermesBridgeStatus !== null && !hasHermesBridgeCreds);
   const shouldShowHermesInstallFlow = selectedProvider === 'hermes' && hermesBridgeStatus === null;
+  const isHermesSetupBusy = installingHermesAgent || installingBridgeDeps || startingHermesBridge;
+  const isHermesBridgeReadyToStart = Boolean(
+    localBridgeSetupStatus?.pythonPath &&
+    localBridgeSetupStatus?.bridgeDepsInstalled &&
+    localBridgeSetupStatus?.hermesAgentPresent,
+  );
+  const isHermesSetupMissingGit = Boolean(
+    localBridgeSetupStatus &&
+    !localBridgeSetupStatus.hermesAgentPresent &&
+    !localBridgeSetupStatus.gitPath,
+  );
+  const hermesSetupChecklist = localBridgeSetupStatus
+    ? [
+        {
+          key: 'python',
+          label: 'Python',
+          satisfied: Boolean(localBridgeSetupStatus.pythonPath),
+          description: localBridgeSetupStatus.pythonPath
+            ? `Found: ${localBridgeSetupStatus.pythonPath}`
+            : 'Install Python 3.10+ so CloudChat can run the local Hermes bridge.',
+        },
+        {
+          key: 'git',
+          label: 'Git',
+          satisfied: localBridgeSetupStatus.hermesAgentPresent || Boolean(localBridgeSetupStatus.gitPath),
+          description: localBridgeSetupStatus.hermesAgentPresent
+            ? 'Not required because Hermes Agent is already installed.'
+            : localBridgeSetupStatus.gitPath
+              ? `Found: ${localBridgeSetupStatus.gitPath}`
+              : 'Install Git so CloudChat can download Hermes Agent on first launch.',
+        },
+        {
+          key: 'deps',
+          label: 'Bridge deps',
+          satisfied: localBridgeSetupStatus.bridgeDepsInstalled,
+          description: localBridgeSetupStatus.bridgeDepsInstalled
+            ? 'fastapi, uvicorn, httpx, pydantic are available.'
+            : 'CloudChat still needs the local bridge Python packages.',
+        },
+        {
+          key: 'agent',
+          label: 'Hermes Agent',
+          satisfied: localBridgeSetupStatus.hermesAgentPresent,
+          description: localBridgeSetupStatus.hermesAgentPresent
+            ? 'Already installed in ~/.hermes/hermes-agent.'
+            : 'CloudChat still needs a local Hermes Agent checkout.',
+        },
+      ]
+    : [];
 
   const getHermesMissingCredentialMessage = (status: HermesBridgeStatus) => {
     const missingSources = [
@@ -200,6 +281,7 @@ export const SetupWizard: React.FC = () => {
     setApiKey('');
     setValidationError('');
     setHermesBridgeStatus(null);
+    setLocalBridgeSetupStatus(null);
     setShowManualKeyEntry(false);
     setHermesInstallError('');
     setHermesInstallLog([]);
@@ -237,7 +319,29 @@ export const SetupWizard: React.FC = () => {
         try {
           const bridgeStatus = await detectHermesBridge();
           setHermesBridgeStatus(bridgeStatus);
+          const setupStatus = !bridgeStatus ? await refreshLocalBridgeSetupStatus() : null;
           if (!bridgeStatus) {
+            if (setupStatus?.pythonPath && setupStatus.bridgeDepsInstalled && setupStatus.hermesAgentPresent) {
+              const startResult = await window.electronAPI?.bridge?.start?.();
+              if (startResult?.status !== 'failed') {
+                const retriedBridgeStatus = await detectHermesBridge();
+                setHermesBridgeStatus(retriedBridgeStatus);
+                if (retriedBridgeStatus?.hermesDefaultModel) {
+                  setSelectedModel(retriedBridgeStatus.hermesDefaultModel);
+                }
+                if (retriedBridgeStatus) {
+                  if (!retriedBridgeStatus.hasOpenRouterCreds && !retriedBridgeStatus.hasMiniMaxCreds) {
+                    setValidationError('');
+                    goToStep(1);
+                    return;
+                  }
+                  goToStep(2);
+                  return;
+                }
+              } else if (startResult.message) {
+                setHermesInstallError(startResult.message);
+              }
+            }
             goToStep(1);
             return;
           }
@@ -311,38 +415,78 @@ export const SetupWizard: React.FC = () => {
 
   const handleInstallHermes = async () => {
     const bridge = window.electronAPI?.bridge;
-    if (!bridge?.installHermesAgent) {
+    if (!bridge?.installHermesAgent || !bridge?.start || !bridge?.status || !bridge?.installDeps) {
       setHermesInstallError('Hermes Agent install is only available in the desktop app.');
       return;
     }
 
-    setInstallingHermesAgent(true);
     setValidationError('');
     setHermesInstallError('');
-    setHermesInstallLog(['Starting Hermes Agent install…']);
+    setHermesInstallLog([]);
 
     try {
-      const result = await bridge.installHermesAgent();
-      if (!result.ok) {
-        const message = (result.message || 'Hermes Agent install failed.').trim();
-        const lines = message.split(/\r?\n/).filter(Boolean);
-        setHermesInstallError(lines[lines.length - 1] || message);
+      const setupStatus = await refreshLocalBridgeSetupStatus();
+      if (!setupStatus) {
+        setHermesInstallError('CloudChat could not inspect your local Hermes setup.');
         return;
       }
 
+      if (!setupStatus.pythonPath) {
+        setHermesInstallError('Install Python 3.10+ first, then try again.');
+        return;
+      }
+
+      if (!setupStatus.hermesAgentPresent && !setupStatus.gitPath) {
+        setHermesInstallError('Install Git first so CloudChat can download Hermes Agent.');
+        return;
+      }
+
+      if (!setupStatus.bridgeDepsInstalled) {
+        setInstallingBridgeDeps(true);
+        setHermesInstallLog((prev) => [...prev, 'Installing local bridge dependencies…']);
+        const depsResult = await bridge.installDeps();
+        setInstallingBridgeDeps(false);
+        if (!depsResult.ok) {
+          const message = (depsResult.message || 'Bridge dependency install failed.').trim();
+          const lines = message.split(/\r?\n/).filter(Boolean);
+          setHermesInstallError(lines[lines.length - 1] || message);
+          return;
+        }
+        setHermesInstallLog((prev) => [...prev, 'Bridge dependencies installed.']);
+      }
+
+      const refreshedStatus = await refreshLocalBridgeSetupStatus();
+      if (!refreshedStatus?.hermesAgentPresent) {
+        setInstallingHermesAgent(true);
+        setHermesInstallLog((prev) => [...prev, 'Installing Hermes Agent…']);
+        const result = await bridge.installHermesAgent();
+        setInstallingHermesAgent(false);
+        if (!result.ok) {
+          const message = (result.message || 'Hermes Agent install failed.').trim();
+          const lines = message.split(/\r?\n/).filter(Boolean);
+          setHermesInstallError(lines[lines.length - 1] || message);
+          return;
+        }
+        setHermesInstallLog((prev) => [...prev, 'Hermes Agent installed.']);
+      }
+
+      setStartingHermesBridge(true);
+      setHermesInstallLog((prev) => [...prev, 'Starting Hermes bridge…']);
       const startResult = await bridge.start();
+      setStartingHermesBridge(false);
       if (startResult.status === 'failed') {
         const message = (startResult.message || 'Hermes bridge failed to start.').trim();
         const lines = message.split(/\r?\n/).filter(Boolean);
         setHermesInstallError(lines[lines.length - 1] || message);
+        await refreshLocalBridgeSetupStatus();
         return;
       }
 
       const bridgeStatus = await detectHermesBridge();
       setHermesBridgeStatus(bridgeStatus);
-
       if (!bridgeStatus) {
         setHermesInstallError('Hermes Agent installed, but the bridge is still unavailable.');
+        await refreshLocalBridgeSetupStatus();
         return;
       }
 
@@ -362,6 +506,8 @@ export const SetupWizard: React.FC = () => {
       setHermesInstallError(lines[lines.length - 1] || message);
     } finally {
       setInstallingHermesAgent(false);
+      setInstallingBridgeDeps(false);
+      setStartingHermesBridge(false);
     }
   };
 
@@ -545,7 +691,9 @@ export const SetupWizard: React.FC = () => {
             <div className="rounded-xl border border-[#2A2A2A] bg-[#141414] px-3.5 py-3">
               <div className="flex items-center justify-between gap-2">
                 <p className="text-[11px] leading-relaxed text-[#666]">
-                  Hermes bridge is offline. Install Hermes Agent locally and CloudChat will start the bridge for this launch.
+                  {isHermesBridgeReadyToStart
+                    ? 'Hermes is installed locally, but the bridge is offline. Start it for this launch and continue.'
+                    : 'Hermes bridge is offline. CloudChat can fix the local setup from here before continuing.'}
                 </p>
                 <button
                   onClick={retryBridgeDetection}
@@ -557,7 +705,46 @@ export const SetupWizard: React.FC = () => {
               </div>
             </div>
 
-            {(installingHermesAgent || hermesInstallLog.length > 0) && (
+            {localBridgeSetupStatus && (
+              <div className="rounded-xl border border-[#2A2A2A] bg-[#111111] px-3 py-2.5">
+                <div className="grid grid-cols-2 gap-2 text-[10px] text-[#8A8A8A]">
+                  {hermesSetupChecklist.map((item) => (
+                    <div key={item.key} className="rounded-lg border border-[#222] bg-[#151515] px-2.5 py-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium text-[#B8B8B8]">{item.label}</span>
+                        <span className={cn('text-[9px] uppercase tracking-wide', item.satisfied ? 'text-[#00FF88]' : 'text-[#FFB86B]')}>
+                          {item.satisfied ? 'Ready' : 'Needed'}
+                        </span>
+                      </div>
+                      <p className="mt-1 leading-relaxed">{item.description}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {!localBridgeSetupStatus && (
+              <div className="rounded-xl border border-[#2A2A2A] bg-[#111111] px-3 py-2.5 text-[11px] leading-relaxed text-[#8A8A8A]">
+                CloudChat could not inspect the local Hermes setup yet. Refresh to retry the local checks.
+              </div>
+            )}
+
+            {isHermesSetupMissingGit && (
+              <p className="text-[11px] text-[#B8B8B8]">
+                Install{' '}
+                <a
+                  href={GIT_DOWNLOADS_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-primary hover:underline"
+                >
+                  Git
+                </a>{' '}
+                first so CloudChat can download Hermes Agent.
+              </p>
+            )}
+
+            {(isHermesSetupBusy || hermesInstallLog.length > 0) && (
               <div className="rounded-xl border border-[#2A2A2A] bg-[#111111] px-3 py-2.5">
                 <div className="flex flex-col gap-1 font-mono text-[10px] leading-[1.45] text-[#8A8A8A]">
                   {hermesInstallLog.map((line, index) => (
@@ -581,19 +768,31 @@ export const SetupWizard: React.FC = () => {
               </p>
             )}
 
+            {!hermesInstallError && localBridgeSetupStatus?.lastStartError && (
+              <p className="text-[11px] text-[#FFB86B] animate-in fade-in slide-in-from-top-1 duration-200">
+                {localBridgeSetupStatus.lastStartError}
+              </p>
+            )}
+
             <button
               onClick={handleInstallHermes}
-              disabled={installingHermesAgent}
+              disabled={isHermesSetupBusy || !localBridgeSetupStatus || !localBridgeSetupStatus.pythonPath || isHermesSetupMissingGit}
               className={cn(
                 'w-full flex items-center justify-center gap-2 h-11 rounded-xl text-[13px] font-medium transition-all duration-200 active:scale-[0.98]',
-                installingHermesAgent
+                isHermesSetupBusy || !localBridgeSetupStatus || !localBridgeSetupStatus.pythonPath || isHermesSetupMissingGit
                   ? 'bg-[#222] text-[#909090]'
                   : 'bg-primary text-primary-foreground hover:opacity-90'
               )}
             >
-              {installingHermesAgent
-                ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Installing Hermes Agent…</>
-                : <>Install Hermes Agent · ~30s <ArrowRight className="h-3.5 w-3.5" /></>
+              {installingBridgeDeps
+                ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Installing bridge deps…</>
+                : installingHermesAgent
+                  ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Installing Hermes Agent…</>
+                  : startingHermesBridge
+                    ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Starting Hermes bridge…</>
+                    : isHermesBridgeReadyToStart
+                      ? <>Start Hermes bridge <ArrowRight className="h-3.5 w-3.5" /></>
+                      : <>Fix local Hermes setup <ArrowRight className="h-3.5 w-3.5" /></>
               }
             </button>
           </div>
