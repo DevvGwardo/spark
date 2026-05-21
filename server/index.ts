@@ -22,13 +22,14 @@ import { MAX_BODY_SIZE } from './config';
 import { workspaceIndex } from './workspace-indexer';
 
 import { registerHermesStreamResumeRoute } from './lib/hermes';
+import { registerRemoteRevivalRoutes } from './routes/remote-revival';
 import { taskOrchestrator } from './task-orchestrator';
 import { getLanIp, generateTerminalQr, generateQrSvgDataUri, formatConnectionInfo } from './lib/qr-display';
 import { startTunnel, killTunnel, getTunnelState, cloudflaredAvailable, brewAvailable, installCloudflared } from './lib/tunnel';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const PROJECT_ROOT = join(__dirname, '..');
+const __serverFilename = fileURLToPath(import.meta.url);
+const __serverDirname = dirname(__serverFilename);
+const PROJECT_ROOT = join(__serverDirname, '..');
 
 // Re-export for external consumers
 export { shouldDirectProxyCompatibleProvider } from './lib/hermes';
@@ -65,6 +66,10 @@ export const HEALTH_ROUTES = [
   '/api/hermes/orchestrator/dispatch-now',
   '/api/hermes/orchestrator/cancel/:cardId',
   '/api/hermes/orchestrator/card-complete',
+  '/api/remote/hermes-status',
+  '/api/remote/wake',
+  '/api/remote/ping-bridge',
+  '/api/remote/smart-plug',
   '/functions/v1/transcribe',
 ] as const;
 
@@ -74,8 +79,8 @@ export function createApp(opts?: { serveFrontend?: boolean }) {
   app.use(express.json({ limit: MAX_BODY_SIZE }));
 
   // ─── Production: serve the built frontend ─────────────────────────────────
+  const distPath = join(PROJECT_ROOT, 'dist');
   if (opts?.serveFrontend) {
-    const distPath = join(PROJECT_ROOT, 'dist');
     if (existsSync(distPath)) {
       console.log(`[server] Serving frontend from ${distPath}`);
       app.use(express.static(distPath));
@@ -100,6 +105,7 @@ export function createApp(opts?: { serveFrontend?: boolean }) {
   registerTranscribeRoute(app);
   registerHermesStreamResumeRoute(app);
   registerRoomRoutes(app);
+  registerRemoteRevivalRoutes(app);
 
   // ─── Workspace search ───────────────────────────────────────────────────────
   app.get('/functions/v1/workspace/search', async (req, res) => {
@@ -274,6 +280,20 @@ export function createApp(opts?: { serveFrontend?: boolean }) {
   </div>
 </body>
 </html>`);
+    });
+  }
+
+  // ─── SPA fallback for client-routed paths ────────────────────────────────────
+  if (opts?.serveFrontend) {
+    const indexHtml = join(distPath, 'index.html');
+    app.get('*', (req, res, next) => {
+      if (req.path.startsWith('/api/')) return next();
+      if (!req.accepts('html')) return next();
+      if (existsSync(indexHtml)) {
+        res.sendFile(indexHtml);
+      } else {
+        next();
+      }
     });
   }
 
