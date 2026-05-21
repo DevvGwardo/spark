@@ -72,3 +72,7 @@ stats.html
 
 # Hermes bridge runtime data
 hermes-bridge/data/*.json
+
+# Agent runtime scratch
+.commandcode/
+.tasks/
