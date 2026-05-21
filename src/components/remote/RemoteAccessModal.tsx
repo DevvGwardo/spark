@@ -131,7 +131,7 @@ export const RemoteAccessModal: React.FC<{ open: boolean; onOpenChange: (v: bool
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[440px]">
+      <DialogContent className="sm:max-w-[440px] max-h-[85dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Smartphone className="h-4 w-4" />
@@ -155,53 +155,55 @@ export const RemoteAccessModal: React.FC<{ open: boolean; onOpenChange: (v: bool
         )}
 
         {info && (
-          <div className="flex flex-col items-center gap-4">
+          <div className="flex flex-col items-center gap-4 w-full min-w-0">
             {/* QR Code */}
             {isServerMode && info.qrSvg ? (
-              <div className="bg-white rounded-xl p-3 inline-flex">
+              <div className="bg-white rounded-xl p-3 flex items-center justify-center overflow-hidden">
                 <img
                   src={info.qrSvg}
                   alt="QR Code"
-                  className="w-44 h-44"
+                  className="w-44 h-44 max-w-full object-contain"
                 />
               </div>
             ) : (
-              <div className="w-44 h-44 rounded-xl bg-muted flex items-center justify-center text-muted-foreground text-sm">
+              <div className="w-44 h-44 rounded-xl bg-muted flex items-center justify-center text-muted-foreground text-sm shrink-0">
                 QR unavailable
               </div>
             )}
 
             {/* Active URL */}
             <div className="w-full space-y-2">
-              <div className="flex items-center gap-2 px-3 py-2 bg-muted rounded-lg">
+              <div className="flex items-center gap-2 px-3 py-2 bg-muted rounded-lg min-w-0">
                 {tunnel?.running ? (
                   <Globe className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
                 ) : (
                   <Wifi className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                 )}
-                <span className="text-xs font-mono text-foreground truncate flex-1 select-all">
+                <span className="text-xs font-mono text-foreground truncate flex-1 select-all min-w-0">
                   {activeUrl}
                 </span>
-                <button
-                  onClick={() => handleCopy(activeUrl)}
-                  className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
-                  title="Copy URL"
-                >
-                  {copied ? (
-                    <Check className="h-3.5 w-3.5 text-emerald-500" />
-                  ) : (
-                    <Copy className="h-3.5 w-3.5" />
-                  )}
-                </button>
-                <a
-                  href={activeUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
-                  title="Open URL"
-                >
-                  <ExternalLink className="h-3.5 w-3.5" />
-                </a>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={() => handleCopy(activeUrl)}
+                    className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+                    title="Copy URL"
+                  >
+                    {copied ? (
+                      <Check className="h-3.5 w-3.5 text-emerald-500" />
+                    ) : (
+                      <Copy className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                  <a
+                    href={activeUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+                    title="Open URL"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </a>
+                </div>
               </div>
 
               {/* LAN URL hint */}
@@ -239,9 +241,9 @@ export const RemoteAccessModal: React.FC<{ open: boolean; onOpenChange: (v: bool
                   )}
                 </div>
 
-                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                <p className="text-[11px] text-muted-foreground leading-relaxed break-words">
                   {tunnel?.running
-                    ? `Your CloudChat is publicly accessible at the URL above. Anyone with the link can access it — keep it private.`
+                    ? 'Your CloudChat is publicly accessible at the URL above. Anyone with the link can access it — keep it private.'
                     : tunnel?.cloudflaredAvailable
                     ? 'Start a public tunnel to access CloudChat from anywhere, even outside your home network.'
                     : tunnel?.brewAvailable

@@ -41,7 +41,7 @@ export async function generateQrSvgDataUri(url: string): Promise<string> {
     width: 300,
     margin: 2,
     color: {
-      dark: '#ffffff',
+      dark: '#000000',
       light: '#00000000', // transparent
     },
   });
