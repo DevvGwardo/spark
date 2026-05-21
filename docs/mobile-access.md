@@ -132,3 +132,21 @@ There is **no built-in auth** — the server is designed for local use. When dep
 - Use Cloudflare Tunnel with Access policies (email, Google, one-time pin)
 - Or add a reverse proxy with auth (Caddy, nginx, Traefik)
 - Or keep it on a VPN (Tailscale, WireGuard, ZeroTier)
+
+## Mobile Control App
+
+When you visit CloudChat from a mobile device (or scan the QR code shown in the Remote Access modal), you land on the `/m` mobile-optimized interface. This is a status-first view designed for quick Hermes checks and revival actions when you're away from home.
+
+### Environment Variables
+
+The revival panel uses these env vars on the server. None are required — actions degrade gracefully to "Not configured".
+
+| Variable | Description |
+|---|---|
+| `REMOTE_WAKE_MAC` | MAC address of the home PC for Wake-on-LAN (format: `aa:bb:cc:dd:ee:ff`) |
+| `REMOTE_WAKE_BROADCAST` | Broadcast address for the WoL magic packet (defaults to `255.255.255.255`) |
+| `REMOTE_SMART_PLUG_URL` | Webhook URL for smart plug power cycling (Kasa, Shelly, IFTTT, etc.) |
+
+### Security Warning
+
+The mobile control app exposes revival actions over the same tunnel as the rest of CloudChat. **Anyone with the tunnel URL can wake your computer or power-cycle your machine.** Strongly consider adding Cloudflare Access (email, Google, or one-time pin) on your tunnel to prevent unauthorized access. Without it, the tunnel URL is effectively an open door to your home machine.
