@@ -44,6 +44,9 @@ export interface ElectronAPI {
       hermesAgentPresent: boolean
       bridgeReachable: boolean
       lastStartError: string | null
+      bridgeRunning: boolean
+      bridgePort: number
+      processHealth: 'running' | 'stopped' | 'crashed' | 'starting'
     }>
     start: () => Promise<{ status: 'started' | 'reused-existing' | 'failed'; message?: string }>
     installDeps: () => Promise<{ ok: boolean; message?: string }>

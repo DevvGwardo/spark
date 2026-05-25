@@ -62,7 +62,7 @@ router.post('/', async (req, res) => {
   try {
     // Use global FormData/Blob (available in Node 18+ and Bun)
     const form = new FormData();
-    form.append('file', new Blob([audioBuffer]), fname);
+    form.append('file', new Blob([new Uint8Array(audioBuffer)]), fname);
     form.append('model', provider === 'groq' ? 'whisper-large-v3' : 'whisper-1');
     form.append('response_format', 'json');
     if (lang) form.append('language', lang);

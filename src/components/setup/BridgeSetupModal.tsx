@@ -22,7 +22,7 @@ type BridgeStatus = NonNullable<NonNullable<typeof window.electronAPI>['bridge']
     : never
   : never;
 
-type Phase = 'checking' | 'needs-action' | 'installing' | 'success' | 'failed' | 'no-electron';
+type Phase = 'checking' | 'needs-action' | 'installing' | 'success' | 'no-electron';
 
 interface Requirement {
   key: 'python' | 'git' | 'deps' | 'agent';
@@ -83,11 +83,15 @@ export const BridgeSetupModal: React.FC<{ onComplete: () => void }> = ({ onCompl
       if (cancelled) return;
 
       if (next?.bridgeReachable) {
+        setError(null);
         setPhase('success');
         setTimeout(onComplete, SUCCESS_AUTOCLOSE_MS);
         return;
       }
       if (next && (!next.pythonPath || (!next.hermesAgentPresent && !next.gitPath) || !next.bridgeDepsInstalled || !next.hermesAgentPresent || next.lastStartError)) {
+        setPhase((p) => (p === 'installing' ? 'installing' : 'needs-action'));
+      } else if (next?.pythonPath && next?.bridgeDepsInstalled && next?.hermesAgentPresent && !next.bridgeReachable && !next.lastStartError) {
+        // All prerequisites met, bridge just needs to be started.
         setPhase((p) => (p === 'installing' ? 'installing' : 'needs-action'));
       }
       timer = setTimeout(tick, POLL_INTERVAL_MS);
@@ -187,7 +191,14 @@ export const BridgeSetupModal: React.FC<{ onComplete: () => void }> = ({ onCompl
         setInstallLog((prev) => [...prev, `✓ ${key} installed`]);
         // Try to (re)start the bridge after every successful install — once
         // deps + agent are present it should come up.
-        await bridge.start();
+        const startResult = await bridge.start();
+        if (startResult.status === 'failed') {
+          setError(startResult.message ?? 'Bridge failed to start after install');
+          await refreshStatus();
+          setInstalling(null);
+          setPhase('needs-action');
+          return;
+        }
         await refreshStatus();
         setInstalling(null);
         setPhase('needs-action');
@@ -352,6 +363,18 @@ export const BridgeSetupModal: React.FC<{ onComplete: () => void }> = ({ onCompl
 
         <div className="flex items-center justify-between gap-3 px-5 py-3 border-t border-border/60 bg-muted/10">
           <div className="flex items-center gap-2">
+            {status?.processHealth && !status?.bridgeReachable && (
+              <span className={cn(
+                'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium',
+                status.processHealth === 'crashed' && 'bg-red-500/10 text-red-400',
+                status.processHealth === 'starting' && 'bg-sky-500/10 text-sky-300',
+                status.processHealth === 'stopped' && 'bg-amber-500/10 text-amber-300',
+              )}>
+                {status.processHealth === 'crashed' && 'Crashed'}
+                {status.processHealth === 'starting' && 'Starting…'}
+                {status.processHealth === 'stopped' && 'Stopped'}
+              </span>
+            )}
             <button
               onClick={() => refreshStatus()}
               disabled={installing !== null || startingBridge}

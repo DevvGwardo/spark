@@ -43,10 +43,12 @@ Current releases ship with an Apple-Silicon-native Python runtime, so on Intel M
 CloudChat ships with a portable Python interpreter and the Hermes bridge built in. On first launch:
 
 1. **If `~/.hermes/hermes-agent` is already installed** (you've used the Hermes CLI before), CloudChat detects it and skips the install step entirely.
-2. **Otherwise**, a setup checklist appears with three rows:
-   - ✓ Python interpreter — either bundled, the existing hermes-agent venv, or your system Python
-   - ⬇ Bridge dependencies — one click installs FastAPI/uvicorn/httpx/pydantic to `~/.hermes/cloudchat-pkgs/`
-   - ⬇ Hermes Agent — one click clones [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent) and installs its deps (~1–3 min)
+2. **Otherwise**, a setup checklist appears with four rows, each showing a specific status:
+   - ✓ **Python interpreter** — bundled, the existing hermes-agent venv, or your system Python
+   - ✓ **Git** — only needed if Hermes Agent must be downloaded
+   - ⬇ **Bridge dependencies** — one click installs FastAPI/uvicorn/httpx/pydantic to `~/.hermes/cloudchat-pkgs/`
+   - ⬇ **Hermes Agent** — one click clones [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent) and installs its deps (~1–3 min)
+   A status chip in the modal footer additionally shows the bridge process health: **Running**, **Starting…**, **Stopped**, or **Crashed**.
 3. If everything is already installed but the bridge is simply offline, CloudChat now offers a direct **Start bridge** recovery path instead of telling the user to reinstall Hermes.
 4. Once the bridge is healthy, the regular setup wizard appears and walks you through entering an API key for at least one provider.
 

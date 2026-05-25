@@ -59,6 +59,7 @@ export const SetupWizard: React.FC = () => {
   const [hermesInstallError, setHermesInstallError] = useState('');
 
   const contentRef = useRef<HTMLDivElement>(null);
+  const providerContinueLockRef = useRef(false);
   const [contentHeight, setContentHeight] = useState<number | undefined>(undefined);
 
   const measureHeight = useCallback(() => {
@@ -132,7 +133,16 @@ export const SetupWizard: React.FC = () => {
         setSelectedModel(bridgeStatus.hermesDefaultModel);
       }
       if (!bridgeStatus) {
-        await refreshLocalBridgeSetupStatus();
+        const setupStatus = await refreshLocalBridgeSetupStatus();
+        // Auto-start bridge when all prerequisites are already met.
+        if (
+          setupStatus?.pythonPath &&
+          setupStatus?.bridgeDepsInstalled &&
+          setupStatus?.hermesAgentPresent &&
+          !setupStatus.bridgeReachable
+        ) {
+          window.electronAPI?.bridge?.start().catch(() => {});
+        }
       }
 
       if (bridgeStatus?.hasOpenRouterCreds) {
@@ -253,6 +263,18 @@ export const SetupWizard: React.FC = () => {
             ? 'Already installed in ~/.hermes/hermes-agent.'
             : 'CloudChat still needs a local Hermes Agent checkout.',
         },
+        {
+          key: 'bridge',
+          label: 'Bridge process',
+          satisfied: localBridgeSetupStatus.bridgeReachable,
+          description: localBridgeSetupStatus.processHealth === 'running'
+            ? `Running on port ${localBridgeSetupStatus.bridgePort}.`
+            : localBridgeSetupStatus.processHealth === 'starting'
+              ? 'Starting… (bridge process is alive but not yet responding)'
+              : localBridgeSetupStatus.processHealth === 'crashed'
+                ? `Crashed: ${localBridgeSetupStatus.lastStartError || 'Unknown error'}`
+                : 'Not started. Click "Start" below to launch.',
+        },
       ]
     : [];
 
@@ -316,6 +338,8 @@ export const SetupWizard: React.FC = () => {
 
     if (selectedProvider === 'hermes') {
       void (async () => {
+        if (providerContinueLockRef.current) return;
+        providerContinueLockRef.current = true;
         try {
           const bridgeStatus = await detectHermesBridge();
           setHermesBridgeStatus(bridgeStatus);
@@ -356,6 +380,8 @@ export const SetupWizard: React.FC = () => {
           goToStep(2);
         } catch (error) {
           setValidationError('Failed to detect Hermes bridge status.');
+        } finally {
+          providerContinueLockRef.current = false;
         }
       })();
       return;

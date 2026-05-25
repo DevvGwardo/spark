@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>t3 — AI coding, amplified</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --black: #0a0a0a;
+    --white: #f5f5f5;
+    --gray: #888;
+    --border: #1f1f1f;
+    --accent: #fff;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    background: var(--black);
+    color: var(--white);
+    font-family: 'Geist Mono', 'SF Mono', 'Fira Code', monospace;
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    min-height: 100vh;
+  }
+
+  /* ── Grid scaffolding ── */
+  .grid-bg {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background-image:
+      linear-gradient(var(--border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border) 1px, transparent 1px);
+    background-size: 80px 80px;
+    opacity: 0.3;
+  }
+
+  /* ── Nav ── */
+  nav {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 100;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    padding: 20px 32px;
+    background: rgba(10,10,10,0.85);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .logo {
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+
+  .nav-cta {
+    color: var(--white);
+    text-decoration: none;
+    border: 1px solid var(--white);
+    padding: 8px 20px;
+    font-size: 12px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    transition: background 0.15s;
+  }
+  .nav-cta:hover { background: var(--white); color: var(--black); }
+
+  /* ── Hero ── */
+  .hero {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    min-height: 100vh;
+    padding: 120px 24px 80px;
+  }
+
+  .hero h1 {
+    font-size: clamp(40px, 8vw, 80px);
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+    max-width: 800px;
+  }
+
+  .hero p {
+    color: var(--gray);
+    font-size: 16px;
+    max-width: 480px;
+    margin-top: 20px;
+  }
+
+  .hero .cta {
+    display: inline-block;
+    margin-top: 36px;
+    padding: 12px 32px;
+    border: 1px solid var(--white);
+    color: var(--white);
+    text-decoration: none;
+    font-size: 13px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    transition: background 0.15s, color 0.15s;
+  }
+  .hero .cta:hover { background: var(--white); color: var(--black); }
+
+  .scroll-hint {
+    position: absolute;
+    bottom: 32px;
+    color: var(--gray);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+  }
+
+  /* ── Screenshot sections ── */
+  .section {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    place-items: center;
+    min-height: 100vh;
+    padding: 100px 32px;
+    border-top: 1px solid var(--border);
+  }
+
+  .section-label {
+    color: var(--gray);
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin-bottom: 40px;
+    text-align: center;
+  }
+
+  .screenshot-wrap {
+    width: 100%;
+    max-width: 960px;
+    border: 1px solid var(--border);
+    background: #0d0d0d;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .screenshot-wrap img {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  /* placeholder when no image yet */
+  .screenshot-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 16 / 10;
+    color: var(--gray);
+    font-size: 13px;
+    letter-spacing: 0.05em;
+    border: 1px dashed var(--border);
+    background: #0d0d0d;
+  }
+
+  .screenshot-caption {
+    margin-top: 16px;
+    color: var(--gray);
+    font-size: 12px;
+    text-align: center;
+    letter-spacing: 0.04em;
+  }
+
+  /* ── Feature grid ── */
+  .feature-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    max-width: 960px;
+    width: 100%;
+    background: var(--border);
+    border: 1px solid var(--border);
+  }
+  @media (max-width: 640px) {
+    .feature-grid { grid-template-columns: 1fr; }
+  }
+
+  .feature-cell {
+    background: var(--black);
+    padding: 40px 32px;
+  }
+
+  .feature-cell h3 {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin-bottom: 8px;
+  }
+
+  .feature-cell p {
+    color: var(--gray);
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  /* ── Footer ── */
+  footer {
+    position: relative;
+    z-index: 1;
+    border-top: 1px solid var(--border);
+    padding: 48px 32px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    max-width: 960px;
+    margin: 0 auto;
+    width: 100%;
+    font-size: 12px;
+    color: var(--gray);
+  }
+  @media (max-width: 640px) {
+    footer { grid-template-columns: 1fr; }
+  }
+
+  footer a {
+    color: var(--white);
+    text-decoration: none;
+  }
+  footer a:hover { text-decoration: underline; }
+
+  /* ── Scroll reveal ── */
+  .reveal {
+    opacity: 0;
+    transform: translateY(40px);
+    transition: opacity 0.8s ease, transform 0.8s ease;
+  }
+  .reveal.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+</style>
+</head>
+<body>
+
+<!-- Grid background -->
+<div class="grid-bg"></div>
+
+<!-- Nav -->
+<nav>
+  <div class="logo">t3</div>
+  <a href="#download" class="nav-cta">Download</a>
+</nav>
+
+<!-- Hero -->
+<section class="hero">
+  <h1>AI coding,<br>amplified.</h1>
+  <p>One desktop app. Every model. Claude, GPT, and your local agents — unified in a terminal-native interface built for developers who ship.</p>
+  <a href="#download" class="cta">Get started</a>
+  <div class="scroll-hint">Scroll</div>
+</section>
+
+<!-- Screenshot 1: Chat interface -->
+<section class="section reveal" id="chat">
+  <div>
+    <div class="section-label">Multi-model chat</div>
+    <div class="screenshot-wrap">
+      <!-- REPLACE src with your actual screenshot path -->
+      <img src="screenshots/chat.png" alt="t3 multi-model chat" onerror="this.style.display='none';this.parentElement.querySelector('.screenshot-placeholder').style.display='flex'" style="display:none">
+      <div class="screenshot-placeholder" style="display:flex">
+        Drop screenshot here → landing/screenshots/chat.png
+      </div>
+    </div>
+    <p class="screenshot-caption">Talk to Claude Opus, GPT-5.4, or local Hermes — in one interface.</p>
+  </div>
+</section>
+
+<!-- Screenshot 2: Terminal + agent -->
+<section class="section reveal" id="terminal">
+  <div>
+    <div class="section-label">Built-in terminal</div>
+    <div class="screenshot-wrap">
+      <img src="screenshots/terminal.png" alt="t3 terminal" onerror="this.style.display='none';this.parentElement.querySelector('.screenshot-placeholder').style.display='flex'" style="display:none">
+      <div class="screenshot-placeholder" style="display:flex">
+        Drop screenshot here → landing/screenshots/terminal.png
+      </div>
+    </div>
+    <p class="screenshot-caption">Agents that read, write, and run code — with full terminal access.</p>
+  </div>
+</section>
+
+<!-- Screenshot 3: Worktrees + parallel -->
+<section class="section reveal" id="worktrees">
+  <div>
+    <div class="section-label">Parallel worktrees</div>
+    <div class="screenshot-wrap">
+      <img src="screenshots/worktrees.png" alt="t3 worktrees" onerror="this.style.display='none';this.parentElement.querySelector('.screenshot-placeholder').style.display='flex'" style="display:none">
+      <div class="screenshot-placeholder" style="display:flex">
+        Drop screenshot here → landing/screenshots/worktrees.png
+      </div>
+    </div>
+    <p class="screenshot-caption">Fan out work across isolated git worktrees. Run 5 agents in parallel — zero conflicts.</p>
+  </div>
+</section>
+
+<!-- Feature grid -->
+<section class="section reveal" id="features">
+  <div style="width:100%; max-width:960px;">
+    <div class="section-label">Capabilities</div>
+    <div class="feature-grid">
+      <div class="feature-cell">
+        <h3>Claude + GPT</h3>
+        <p>Switch between Claude Opus, Sonnet, GPT-5.4, and more — pick the right model for the job.</p>
+      </div>
+      <div class="feature-cell">
+        <h3>Local agents</h3>
+        <p>Run Hermes and other local models. Your code never leaves your machine unless you want it to.</p>
+      </div>
+      <div class="feature-cell">
+        <h3>Terminal-native</h3>
+        <p>Built-in terminal with session persistence, command history, and agent access to your shell.</p>
+      </div>
+      <div class="feature-cell">
+        <h3>Skills &amp; plugins</h3>
+        <p>Extend t3 with the same SKILL.md ecosystem used by Claude Code and Codex CLI.</p>
+      </div>
+      <div class="feature-cell">
+        <h3>Worktree isolation</h3>
+        <p>Each agent runs in its own git worktree — parallel tasks, no conflicts, clean branches.</p>
+      </div>
+      <div class="feature-cell">
+        <h3>Keyboard-first</h3>
+        <p>Every action has a shortcut. Designed for developers who don't take their hands off the keyboard.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Download -->
+<section class="section" id="download" style="min-height:60vh">
+  <div style="text-align:center">
+    <div class="section-label">Download</div>
+    <p style="font-size:24px;font-weight:600;margin-bottom:8px">t3 for macOS</p>
+    <p style="color:var(--gray);margin-bottom:32px">Apple Silicon &amp; Intel. macOS 14+.</p>
+    <a href="https://t3.chat" class="cta">Download from t3.chat</a>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer>
+  <div>
+    <div style="color:var(--white);font-weight:600;margin-bottom:4px">t3</div>
+    <div>AI coding, amplified.</div>
+  </div>
+  <div style="text-align:right">
+    <a href="https://t3.chat">t3.chat</a>
+    <span style="margin:0 8px;color:var(--border)">|</span>
+    <a href="https://x.com/theo">@theo</a>
+  </div>
+</footer>
+
+<script>
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('visible');
+      }
+    });
+  }, { threshold: 0.15 });
+
+  document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+</script>
+
+</body>
+</html>

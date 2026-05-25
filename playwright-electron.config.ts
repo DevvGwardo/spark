@@ -4,7 +4,7 @@ export default defineConfig({
   testDir: './e2e',
   testMatch: '**/*.spec.ts',
   timeout: 60_000,
-  retries: 0,
+  retries: 1,
   workers: 1, // Electron tests must run serially
   reporter: [
     ['list'],

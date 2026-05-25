@@ -47,6 +47,9 @@ export interface BridgeSetupStatus {
   hermesAgentPresent: boolean
   bridgeReachable: boolean
   lastStartError: string | null
+  bridgeRunning: boolean
+  bridgePort: number
+  processHealth: 'running' | 'stopped' | 'crashed' | 'starting'
 }
 
 // ── Path resolution ────────────────────────────────────────────────────────
@@ -286,14 +289,28 @@ export async function getBridgeSetupStatus(): Promise<BridgeSetupStatus> {
       bridgeDepsInstalled = false
     }
   }
+  const bridgeReachable = await isBridgeReachable()
+  const processAlive = bridgeProcess !== null
+  let processHealth: BridgeSetupStatus['processHealth'] = 'stopped'
+  if (processAlive && bridgeReachable) {
+    processHealth = 'running'
+  } else if (processAlive && !bridgeReachable) {
+    processHealth = 'starting'
+  } else if (lastBridgeStartError && !bridgeReachable) {
+    processHealth = 'crashed'
+  }
+
   return {
     pythonPath,
     gitPath,
     bridgeSource,
     bridgeDepsInstalled,
     hermesAgentPresent: existsSync(join(hermesAgentDir(), 'run_agent.py')),
-    bridgeReachable: await isBridgeReachable(),
+    bridgeReachable,
     lastStartError: lastBridgeStartError,
+    bridgeRunning: processAlive,
+    bridgePort: BRIDGE_PORT,
+    processHealth,
   }
 }
 
@@ -390,6 +407,9 @@ export async function startBridge(): Promise<BridgeStartResult> {
 
 export function stopBridge(): void {
   if (!bridgeProcess) return
+  // Clear the start error so the exit handler's 'code !== 0' check doesn't
+  // misinterpret an intentional kill as a crash.
+  lastBridgeStartError = null
   try {
     if (process.platform === 'win32') {
       // SIGINT doesn't work cleanly on Windows for python; fall back to kill
