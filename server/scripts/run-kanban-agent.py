@@ -25,6 +25,10 @@ import traceback
 
 CLOUDCHAT_API_BASE = os.environ.get("CLOUDCHAT_API_BASE", "http://localhost:3001")
 KANBAN_CARD_ID = os.environ.get("KANBAN_CARD_ID", "")
+TEAM_ID = os.environ.get("TEAM_ID", "")
+TEAM_SUBTASK_ID = os.environ.get("TEAM_SUBTASK_ID", "")
+TEAM_SUBTASK_TITLE = os.environ.get("TEAM_SUBTASK_TITLE", "")
+TEAM_SUBTASK_DESC = os.environ.get("TEAM_SUBTASK_DESC", "")
 
 # Validate required env vars
 if not KANBAN_CARD_ID:
@@ -102,7 +106,7 @@ def main():
     # 4. Look up the LLM provider config from hermes config
     config_path = os.path.expanduser("~/.hermes/config.yaml")
     llm_base_url = "https://crof.ai/v1"
-    llm_api_key = os.environ.get("CROFAI_API_KEY", "nahcrof_PfvXMEvXUPZLYcjgfzUZ")
+    llm_api_key = os.environ.get("CROFAI_API_KEY", "")
     llm_model = "deepseek-v4-pro"
 
     try:
@@ -118,7 +122,11 @@ def main():
             if m.get("default"):
                 llm_model = m["default"]
     except Exception:
-        pass  # use defaults
+        pass  # config parse failure — rely on env or empty key
+
+    if not llm_api_key:
+        print("[kanban-runner] ERROR: No LLM API key found. Set CROFAI_API_KEY environment variable or configure model.api_key in ~/.hermes/config.yaml", flush=True)
+        sys.exit(1)
 
     # 5. Build the system prompt from card
     system_prompt_lines = [
@@ -126,6 +134,24 @@ def main():
         "",
         f"Title: {title}",
     ]
+
+    # Add team context when running as part of a team
+    is_team_task = bool(TEAM_ID)
+    if is_team_task:
+        system_prompt_lines.extend([
+            "",
+            "You are part of a **multi-agent team** working on a specific subtask of a larger task.",
+            "Collaboration is essential: use team tools to delegate, share context, and report progress.",
+            f"- Your Team ID: {TEAM_ID[:12]}...",
+            f"- Your Subtask ID: {TEAM_SUBTASK_ID[:12]}...",
+            f"- Your Subtask: {TEAM_SUBTASK_TITLE}",
+        ])
+        if TEAM_SUBTASK_DESC:
+            system_prompt_lines.append(f"- Subtask description: {TEAM_SUBTASK_DESC}")
+        system_prompt_lines.append(
+            "- Use team_signal_completion() when you finish your subtask, NOT kanban_update_status"
+        )
+
     if spec and spec.strip():
         system_prompt_lines.extend(["", "Spec:", spec.strip()])
     if acceptance_criteria:
@@ -134,12 +160,27 @@ def main():
             system_prompt_lines.append(f"- {c}")
     system_prompt_lines.extend([
         "",
-        "Available kanban tools:",
+        "Available tools:",
         "- kanban_read_current_card — read the full card details and status",
         "- kanban_update_status — update card status (review/blocked/done)",
         "- kanban_append_report — add progress notes",
+    ])
+    if is_team_task:
+        system_prompt_lines.extend([
+            "",
+            "Team collaboration tools:",
+            "- team_publish_finding — share findings/decisions with the team",
+            "- team_query_context — read what other team members have published",
+            "- team_delegate_to_agent — delegate work to another team member",
+            "- team_report_progress — report progress and blockers",
+            "- team_request_help — ask for help from another agent",
+            "- team_signal_completion — signal your subtask is done (use this instead of kanban_update_status)",
+        ])
+    system_prompt_lines.extend([
         "",
-        "When you complete the task, call kanban_update_status with status=\"done\" and a report_summary of what was accomplished.",
+        "When you complete the task, call kanban_update_status with status=\"done\" and a report_summary of what was accomplished."
+        if not is_team_task else
+        "When you complete your subtask, call team_signal_completion with a summary of what was accomplished.",
     ])
     system_prompt = "\n".join(system_prompt_lines)
 
@@ -169,13 +210,19 @@ def main():
 
     # 7. Create and run the agent
     try:
+        # Build toolset list — add "team" tools when running as part of a team
+        toolsets = ["web", "browser", "terminal", "files", "code_execution", "kanban"]
+        if TEAM_ID and TEAM_SUBTASK_ID:
+            toolsets.append("team")
+        print(f"[kanban-runner] Using toolsets: {toolsets}", flush=True)
+
         print(f"[kanban-runner] Creating AIAgent (model={llm_model})...", flush=True)
         agent = AIAgent(
             base_url=llm_base_url,
             api_key=llm_api_key,
             model=llm_model,
             max_iterations=30,
-            enabled_toolsets=["web", "browser", "terminal", "files", "code_execution", "kanban"],
+            enabled_toolsets=toolsets,
             on_text=on_text,
             on_tool_start=on_tool_start,
             on_tool_end=on_tool_end,

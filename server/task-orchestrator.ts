@@ -4,6 +4,9 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 
+import { teamCoordinator } from './team-coordinator';
+import { analyzeTask } from './team-formation';
+
 // ─── Types ─────────────────────────────────────────────────────────────────
 
 export interface ActiveTask {
@@ -47,6 +50,7 @@ interface CardRecord {
   status: string;
   spec: string;
   acceptanceCriteria: string[];
+  teamMode?: boolean;
 }
 
 // ─── Orchestrator Singleton ─────────────────────────────────────────────────
@@ -221,23 +225,37 @@ async function tick(): Promise<void> {
           startedAt: Date.now(),
         });
 
-        // Mark card as running
+        // Mark card as running BEFORE dispatch to prevent TOCTOU races
+        // (another tick picking up the same card while dispatch is in flight)
         await updateCardStatus(card.id, 'running');
 
         console.log(
           `[orchestrator] Dispatched card "${card.title}" (${card.id}) → conversation ${conversationId}`,
         );
-        // Spawn background agent process
-        if (!card.id) {
-          console.warn(`[orchestrator] Cannot spawn agent: missing card ID`);
+
+        // Check if this card should use team dispatch
+        const taskText = `${card.title} ${card.spec ?? ''}`;
+        const formation = analyzeTask(taskText, []);
+        if (card.teamMode || formation.strategy !== 'single_agent') {
+          console.log(`[orchestrator] Card "${card.title}" qualifies for team dispatch (strategy=${formation.strategy}, reason="${formation.reason}")`);
+          void dispatchAsTeam(card).catch((err) => {
+            console.error(`[orchestrator] Team dispatch failed for card ${card.id}, reverting:`, err);
+            state.activeTasks.delete(card.id);
+            updateCardStatus(card.id, 'ready').catch(() => {});
+          });
         } else {
-          void spawnKanbanAgent(card.id);
+          // Spawn background agent process
+          if (!card.id) {
+            console.warn(`[orchestrator] Cannot spawn agent: missing card ID`);
+          } else {
+            void spawnKanbanAgent(card.id);
+          }
         }
       } catch (err) {
         console.error(`[orchestrator] Failed to dispatch card ${card.id}:`, err);
         // Roll back: remove from active tasks, set card back to ready
         state.activeTasks.delete(card.id);
-        await updateCardStatus(card.id, 'ready');
+        await updateCardStatus(card.id, 'ready').catch(() => {});
       }
     }
   } finally {
@@ -317,6 +335,39 @@ async function spawnKanbanAgent(cardId: string): Promise<void> {
   child.on('error', (err: Error) => {
     console.error(`[orchestrator] Failed to spawn kanban agent: ${err.message}`);
   });
+}
+
+// ─── Team dispatch helper ───────────────────────────────────────────────────
+
+/**
+ * Dispatch a kanban card as a multi-agent team.
+ * Falls back to single-agent dispatch on failure.
+ */
+async function dispatchAsTeam(card: CardRecord): Promise<void> {
+  try {
+    // Create the team
+    const team = await teamCoordinator.createTeam(card);
+
+    // Decompose the task into subtasks
+    const subtasks = await teamCoordinator.decomposeTask(card);
+
+    // Assign subtasks to agents
+    const assigned = teamCoordinator.assignSubtasks(subtasks, team.agents);
+    team.subtasks = assigned;
+
+    // Dispatch the team
+    await teamCoordinator.dispatchTeam(team.id);
+
+    console.log(
+      `[orchestrator] Team dispatched for card "${card.title}" — ${team.agents.length} agents, ${assigned.length} subtasks`,
+    );
+  } catch (err) {
+    console.error(`[orchestrator] Team dispatch failed for card ${card.id}, falling back to single agent:`, err);
+    // Graceful degradation: fall back to single-agent
+    if (card.id) {
+      void spawnKanbanAgent(card.id).catch(() => {});
+    }
+  }
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -408,11 +459,25 @@ export const taskOrchestrator = {
       // Mark card as running
       await updateCardStatus(cardId, 'running');
 
-      // Spawn the background agent process
-      console.log(
-        `[orchestrator] Dispatching card "${card.title}" (${cardId.slice(0, 12)}...) → background agent`,
-      );
-      void spawnKanbanAgent(cardId);
+      // Check if this card should use team dispatch
+      const taskText = `${card.title} ${card.spec ?? ''}`;
+      const formation = analyzeTask(taskText, []);
+      if (card.teamMode || formation.strategy !== 'single_agent') {
+        console.log(
+          `[orchestrator] Dispatching card "${card.title}" (${cardId.slice(0, 12)}...) → team dispatch (${formation.strategy})`,
+        );
+        void dispatchAsTeam(card).catch((err) => {
+          console.error(`[orchestrator] Team dispatch failed for card ${cardId}, reverting:`, err);
+          state.activeTasks.delete(cardId);
+          updateCardStatus(cardId, 'ready').catch(() => {});
+        });
+      } else {
+        // Spawn the background agent process
+        console.log(
+          `[orchestrator] Dispatching card "${card.title}" (${cardId.slice(0, 12)}...) → background agent`,
+        );
+        void spawnKanbanAgent(cardId);
+      }
 
       return { ok: true };
     } catch (err) {

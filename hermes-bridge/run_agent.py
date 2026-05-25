@@ -17,6 +17,7 @@ from typing import Optional, Callable
 from urllib.parse import quote, quote_plus
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from kanban_tools import KANBAN_TOOL_DEFINITIONS, KANBAN_TOOL_NAMES, kanban_read_current_card, kanban_update_status, kanban_append_report
+from team_tools import TEAM_TOOL_DEFINITIONS, TEAM_TOOL_NAMES, team_delegate_to_agent, team_report_progress, team_query_context, team_publish_finding, team_request_help, team_signal_completion
 
 
 class _SafeWriter:
@@ -408,6 +409,7 @@ TOOL_DEFINITIONS = {
         },
     ],
     "kanban": KANBAN_TOOL_DEFINITIONS,
+    "team": TEAM_TOOL_DEFINITIONS,
 
     "code_execution": [
         {
@@ -496,6 +498,21 @@ _HALLUCINATED_TOOL_MAP: dict[str, str] = {
     "update_status": "kanban_update_status",
     "append_report": "kanban_append_report",
     "append_notes": "kanban_append_report",
+
+    # Team tool aliases
+    "delegate_to_agent": "team_delegate_to_agent",
+    "delegate": "team_delegate_to_agent",
+    "report_progress": "team_report_progress",
+    "progress": "team_report_progress",
+    "query_context": "team_query_context",
+    "context_query": "team_query_context",
+    "publish_finding": "team_publish_finding",
+    "share_finding": "team_publish_finding",
+    "request_help": "team_request_help",
+    "help": "team_request_help",
+    "signal_completion": "team_signal_completion",
+    "complete": "team_signal_completion",
+    "team_complete": "team_signal_completion",
 }
 
 
@@ -852,6 +869,38 @@ def _execute_tool(name: str, arguments: dict) -> str:
             ))
         elif name == "kanban_append_report":
             return _cap_tool_response(kanban_append_report(arguments.get("notes", "")))
+        elif name == "team_delegate_to_agent":
+            return _cap_tool_response(team_delegate_to_agent(
+                arguments.get("agent_name", ""),
+                arguments.get("subtask", ""),
+                arguments.get("context", ""),
+            ))
+        elif name == "team_report_progress":
+            return _cap_tool_response(team_report_progress(
+                arguments.get("summary", ""),
+                arguments.get("blockers"),
+            ))
+        elif name == "team_query_context":
+            return _cap_tool_response(team_query_context(
+                arguments.get("query_str", ""),
+                arguments.get("tags"),
+            ))
+        elif name == "team_publish_finding":
+            return _cap_tool_response(team_publish_finding(
+                arguments.get("title", ""),
+                arguments.get("content", ""),
+                arguments.get("tags", []),
+                arguments.get("importance", 2),
+            ))
+        elif name == "team_request_help":
+            return _cap_tool_response(team_request_help(
+                arguments.get("question", ""),
+                arguments.get("target_agent"),
+            ))
+        elif name == "team_signal_completion":
+            return _cap_tool_response(team_signal_completion(
+                arguments.get("final_summary", ""),
+            ))
         else:
             # Self-correction: list available tools so the model can retry
             all_known: list[str] = []
@@ -860,6 +909,7 @@ def _execute_tool(name: str, arguments: dict) -> str:
                     all_known.append(t["function"]["name"])
             all_known.extend(REPO_TOOL_NAMES)
             all_known.extend(KANBAN_TOOL_NAMES)
+            all_known.extend(TEAM_TOOL_NAMES)
             return (
                 f"Error: Unknown tool '{name}'. "
                 f"Available tools: {', '.join(sorted(all_known))}. "

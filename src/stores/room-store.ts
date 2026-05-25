@@ -39,15 +39,17 @@ interface RoomState {
   loading: boolean;
   pendingAgents: Array<{ profileName: string; displayName: string }>;
   settingsRoomId: string | null;
+  roomTeamIds: Record<string, string>;
   fetchRooms: () => Promise<void>;
   createRoom: (name: string) => Promise<Room>;
   fetchRoom: (id: string) => Promise<void>;
   addMember: (roomId: string, member: Omit<RoomMember, 'roomId'>) => Promise<void>;
   removeMember: (roomId: string, profileName: string) => Promise<void>;
   fetchMessages: (roomId: string, limit?: number, before?: string) => Promise<void>;
-  postMessage: (roomId: string, content: string, sender: string, mentions?: string[]) => Promise<{ triggeredAgents: Array<{ profileName: string; displayName: string }> }>;
+  postMessage: (roomId: string, content: string, sender: string, mentions?: string[], teamId?: string) => Promise<{ triggeredAgents: Array<{ profileName: string; displayName: string }> }>;
   addMessage: (roomId: string, message: RoomMessage) => void;
   setActiveRoomId: (id: string | null) => void;
+  setRoomTeamId: (roomId: string, teamId: string) => void;
   clearActiveData: () => void;
   openRoomSettings: (roomId: string) => void;
   closeRoomSettings: () => void;
@@ -76,6 +78,7 @@ export const useRoomStore = create<RoomState>()((set, get) => ({
   loading: false,
   pendingAgents: [],
   settingsRoomId: null,
+  roomTeamIds: {},
 
   fetchRooms: async () => {
     set({ loading: true });
@@ -165,10 +168,10 @@ export const useRoomStore = create<RoomState>()((set, get) => ({
     }
   },
 
-  postMessage: async (roomId, content, sender, mentions) => {
+  postMessage: async (roomId, content, sender, mentions, teamId) => {
     const data = await apiFetch(`/api/rooms/${encodeURIComponent(roomId)}/messages`, {
       method: 'POST',
-      body: JSON.stringify({ content, sender, mentions }),
+      body: JSON.stringify({ content, sender, mentions, teamId }),
     });
     const message = data.message ?? data;
     const triggered: Array<{ profileName: string; displayName: string }> = data.triggeredAgents ?? [];
@@ -197,6 +200,10 @@ export const useRoomStore = create<RoomState>()((set, get) => ({
   },
 
   setActiveRoomId: (id) => set({ activeRoomId: id, messages: id ? get().messages : [] }),
+
+  setRoomTeamId: (roomId, teamId) => {
+    set((s) => ({ roomTeamIds: { ...s.roomTeamIds, [roomId]: teamId } }));
+  },
 
   clearActiveData: () => set({
     activeRoomId: null,

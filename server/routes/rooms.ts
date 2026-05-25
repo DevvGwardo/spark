@@ -118,7 +118,7 @@ export function registerRoomRoutes(app: Express) {
   app.post('/api/rooms/:id/messages', async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
-      const { content, sender, senderDisplayName } = req.body;
+      const { content, sender, senderDisplayName, teamId } = req.body;
 
       if (!isNonEmptyString(content)) {
         return sendJson(res, 400, { error: 'Missing or empty message content' });
@@ -127,7 +127,7 @@ export function registerRoomRoutes(app: Express) {
         return sendJson(res, 400, { error: 'Missing or empty sender' });
       }
 
-      const { message, triggeredAgents } = await postToRoom(id, content, sender, senderDisplayName);
+      const { message, triggeredAgents } = await postToRoom(id, content, sender, senderDisplayName, teamId);
       sendJson(res, 201, { message, triggeredAgents });
     } catch (error) {
       sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) });

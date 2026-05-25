@@ -7,6 +7,7 @@ interface SwarmRoomPanelProps {
   roomId: string;
   onBack?: () => void;
   onSettings?: () => void;
+  teamId?: string;
 }
 
 const MEMBER_COLORS = ['#3b82f6', '#22c55e', '#f97316', '#ef4444', '#a855f7', '#ec4899', '#14b8a6'];
@@ -54,7 +55,7 @@ function extractMentionNames(content: string): string[] {
   return [...new Set(matches.map((m) => m.slice(1)))];
 }
 
-export const SwarmRoomPanel: React.FC<SwarmRoomPanelProps> = ({ roomId, onBack, onSettings }) => {
+export const SwarmRoomPanel: React.FC<SwarmRoomPanelProps> = ({ roomId, onBack, onSettings, teamId: teamIdProp }) => {
   const {
     activeRoom,
     messages,
@@ -64,7 +65,11 @@ export const SwarmRoomPanel: React.FC<SwarmRoomPanelProps> = ({ roomId, onBack, 
     fetchMessages,
     postMessage,
     setActiveRoomId,
+    roomTeamIds,
   } = useRoomStore();
+
+  // Use prop teamId or look up from room-store's team-room association
+  const teamId = teamIdProp || roomTeamIds[roomId];
 
   const [inputValue, setInputValue] = useState('');
   const [showMentions, setShowMentions] = useState(false);
@@ -201,7 +206,7 @@ export const SwarmRoomPanel: React.FC<SwarmRoomPanelProps> = ({ roomId, onBack, 
     setSending(true);
     try {
       const mentionNames = extractMentionNames(content);
-      await postMessage(roomId, content, 'user', mentionNames);
+      await postMessage(roomId, content, 'user', mentionNames, teamId);
       setInputValue('');
     } catch (e) {
       console.error('Failed to send message:', e);
@@ -209,7 +214,7 @@ export const SwarmRoomPanel: React.FC<SwarmRoomPanelProps> = ({ roomId, onBack, 
       setSending(false);
       textareaRef.current?.focus();
     }
-  }, [inputValue, sending, roomId, postMessage]);
+  }, [inputValue, sending, roomId, teamId, postMessage]);
 
   const isUser = (msg: RoomMessage) => msg.role === 'user' || msg.senderProfile === 'user';
 

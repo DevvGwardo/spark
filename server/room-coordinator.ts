@@ -11,6 +11,9 @@ const HERMES_BRIDGE_BASE = OPENAI_COMPATIBLE.hermes.replace(/\/v1\/?$/, '');
 const AGENT_TIMEOUT_MS = 120_000;
 const MAX_ROOM_HISTORY = 20;
 const MAX_AGENT_CHAIN_DEPTH = 1;
+const MAX_AGENT_CHAIN_DEPTH_TEAM = 3;
+const BASE_TOOLSETS = 'web,browser,terminal,files,code_execution';
+const TEAM_TOOLSETS = `${BASE_TOOLSETS},team`;
 
 /**
  * Resolve an API key for the Hermes bridge.
@@ -147,6 +150,8 @@ async function triggerAgent(
   store: ReturnType<typeof createRoomStore>,
   userMessage: string,
   depth = 0,
+  maxDepth = MAX_AGENT_CHAIN_DEPTH,
+  teamId?: string,
 ): Promise<void> {
   const room = store.getRoom(roomId);
   if (!room) return;
@@ -199,7 +204,7 @@ async function triggerAgent(
     'Content-Type': 'application/json',
     'X-Hermes-Profile': member.profileName,
     'X-Hermes-Execution-Mode': 'agent-loop',
-    'X-Hermes-Toolsets': 'web,browser,terminal,files,code_execution',
+    'X-Hermes-Toolsets': teamId ? TEAM_TOOLSETS : BASE_TOOLSETS,
   };
   if (apiKey) {
     headers['Authorization'] = `Bearer ${apiKey}`;
@@ -309,7 +314,7 @@ async function triggerAgent(
 
       // Agent-to-agent: if this response @mentions other members, trigger them
       // recursively so agents can delegate work to each other.
-      if (agentMentions.length > 0 && depth < MAX_AGENT_CHAIN_DEPTH) {
+      if (agentMentions.length > 0 && depth < maxDepth) {
         const newlyMentioned: RoomMember[] = [];
         const seen = new Set<string>([member.profileName]);
         for (const mention of agentMentions) {
@@ -326,7 +331,7 @@ async function triggerAgent(
           (async () => {
             for (let i = 0; i < newlyMentioned.length; i++) {
               if (i > 0) await new Promise((r) => setTimeout(r, 5000));
-              triggerAgent(roomId, newlyMentioned[i], allMembers, updatedMessages, store, delegatedMsg, depth + 1).catch((err) => {
+              triggerAgent(roomId, newlyMentioned[i], allMembers, updatedMessages, store, delegatedMsg, depth + 1, maxDepth, teamId).catch((err) => {
                 console.error(`[room-coordinator] Chain agent ${newlyMentioned[i].displayName} error:`, err);
               });
             }
@@ -377,6 +382,7 @@ export async function postToRoom(
   content: string,
   sender: string,
   senderDisplayName?: string,
+  teamId?: string,
 ): Promise<{ message: RoomMessage; triggeredAgents: Array<{ profileName: string; displayName: string }> }> {
   const store = createRoomStore();
 
@@ -425,6 +431,9 @@ export async function postToRoom(
         displayName: m.displayName,
       }));
 
+    // Team rooms get a deeper agent chain depth for collaboration
+    const maxDepth = teamId ? MAX_AGENT_CHAIN_DEPTH_TEAM : MAX_AGENT_CHAIN_DEPTH;
+
     // Trigger agents sequentially with a 5s stagger between each to
     // avoid hammering the provider with concurrent requests (rate limits).
     (async () => {
@@ -433,7 +442,7 @@ export async function postToRoom(
         if (i > 0) {
           await new Promise((r) => setTimeout(r, 5000));
         }
-        triggerAgent(roomId, member, allMembers, recentMessages, store, content).catch((err) => {
+        triggerAgent(roomId, member, allMembers, recentMessages, store, content, 0, maxDepth, teamId).catch((err) => {
           console.error(`[room-coordinator] Agent ${member.displayName} trigger error:`, err);
         });
       }

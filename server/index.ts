@@ -15,6 +15,7 @@ import { registerHermesUpdateRoute } from './routes/hermes-update';
 import { registerProfilesRoutes } from './routes/profiles';
 import { registerKanbanRoutes } from './routes/kanban';
 import { registerOrchestratorRoutes } from './routes/orchestrator';
+import { registerTeamRoutes } from './routes/team';
 import { registerTranscribeRoute } from './routes/transcribe';
 import { registerRoomRoutes } from './routes/rooms';
 import { sendJson } from './lib/helpers';
@@ -66,6 +67,19 @@ export const HEALTH_ROUTES = [
   '/api/hermes/orchestrator/dispatch-now',
   '/api/hermes/orchestrator/cancel/:cardId',
   '/api/hermes/orchestrator/card-complete',
+  '/api/hermes/team/create',
+  '/api/hermes/team/active',
+  '/api/hermes/team/delegation',
+  '/api/hermes/team/:id',
+  '/api/hermes/team/:id/dispatch',
+  '/api/hermes/team/:id/pause',
+  '/api/hermes/team/:id/resume',
+  '/api/hermes/team/:id/reassign',
+  '/api/hermes/team/:id/context',
+  '/api/hermes/team/:id/blocked',
+  '/api/hermes/team/delegation/:id',
+  '/api/hermes/team/synthesize/:id',
+  '/api/hermes/team/complexity-check',
   '/api/remote/hermes-status',
   '/api/remote/wake',
   '/api/remote/ping-bridge',
@@ -102,6 +116,7 @@ export function createApp(opts?: { serveFrontend?: boolean }) {
   registerProfilesRoutes(app);
   registerKanbanRoutes(app);
   registerOrchestratorRoutes(app);
+  registerTeamRoutes(app);
   registerTranscribeRoute(app);
   registerHermesStreamResumeRoute(app);
   registerRoomRoutes(app);
