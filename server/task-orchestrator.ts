@@ -283,11 +283,19 @@ const SCRIPTS_DIR = (() => {
  * kanban_append_report) to report progress back to the kanban API.
  */
 async function spawnKanbanAgent(cardId: string): Promise<void> {
-  const venvDir = process.env.HERMES_BRIDGE_VENV || (
-    fs.existsSync('/Users/devgwardo/cloud-chat-hub/hermes-bridge/.venv')
-      ? '/Users/devgwardo/cloud-chat-hub/hermes-bridge/.venv'
-      : '/Users/devgwardo/cloud-chat-hub/hermes-bridge/venv'
-  );
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const venvDir = process.env.HERMES_BRIDGE_VENV || (() => {
+    const candidates = [
+      path.join(repoRoot, 'hermes-bridge', '.venv'),
+      path.join(repoRoot, 'hermes-bridge', 'venv'),
+      path.join(SCRIPTS_DIR, '..', '..', 'hermes-bridge', '.venv'),
+      path.join(SCRIPTS_DIR, '..', '..', 'hermes-bridge', 'venv'),
+    ];
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) return candidate;
+    }
+    return path.join(repoRoot, 'hermes-bridge', 'venv'); // fallback
+  })();
   const pythonBin = path.join(venvDir, 'bin', 'python3');
   const scriptPath = path.join(SCRIPTS_DIR, 'run-kanban-agent.py');
 
