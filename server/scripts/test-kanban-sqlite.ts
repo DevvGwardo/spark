@@ -8,9 +8,22 @@ import Database from 'better-sqlite3';
 import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
 
-const HERMES_HOME = process.env.HERMES_HOME || path.join(os.homedir(), '.hermes');
-const DB_PATH = path.join(HERMES_HOME, 'kanban.db');
+// ─── Paths ──────────────────────────────────────────────────────────────────
+
+function resolveGlobalHermesHome(): string {
+  const envHome = process.env.HERMES_HOME;
+  if (!envHome) return path.join(os.homedir(), '.hermes');
+  const parent = path.dirname(envHome);
+  const grandparent = path.dirname(parent);
+  if (path.basename(parent) === 'profiles' && path.basename(grandparent) === '.hermes') {
+    return grandparent;
+  }
+  return envHome;
+}
+
+const DB_PATH = path.join(resolveGlobalHermesHome(), 'kanban.db');
 const KANBAN_LANES = ['backlog', 'ready', 'running', 'review', 'blocked', 'done'];
 
 const db = new Database(DB_PATH);
@@ -37,7 +50,7 @@ function normalizeStatus(value: string) {
 
 console.log(`\n📋 Kanban SQLite Integration Test`);
 console.log(`   DB: ${DB_PATH}`);
-console.log(`   HERMES_HOME: ${HERMES_HOME}\n`);
+console.log(`   resolveGlobalHermesHome: ${resolveGlobalHermesHome()}\n`);
 
 // ─── 1. Verify DB exists and has tasks table ────────────────────────────────
 console.log('1. DB schema check');
@@ -67,26 +80,18 @@ assert('status' in firstCard, 'card has status');
 assert('created_at' in firstCard, 'card has created_at');
 
 // ─── 3. Filter by status ────────────────────────────────────────────────────
-console.log('\n3. Filter cards by status');
+console.log('3. Filter cards by status');
 const doneCards = db
   .prepare('SELECT * FROM tasks WHERE status = ? ORDER BY updated_at DESC')
   .all('done') as Record<string, unknown>[];
 console.log(`   done cards: ${doneCards.length}`);
-assert(doneCards.length >= 3, 'at least 3 done cards');
+assert(doneCards.length >= 4, 'at least 4 done cards');
 
-const runningCards = db
+const readyCards = db
   .prepare('SELECT * FROM tasks WHERE status = ? ORDER BY updated_at DESC')
-  .all('running') as Record<string, unknown>[];
-console.log(`   running cards: ${runningCards.length}`);
-assert(runningCards.length >= 1, 'at least 1 running card');
-
-const theRunningCard = runningCards.find(
-  (r) => String(r.id) === 't_d12e0ce4',
-);
-assert(!!theRunningCard, 't_d12e0ce4 exists and is running');
-if (theRunningCard) {
-  assert(String(theRunningCard.assignee) === 'nub', 'assignee is nub');
-}
+  .all('ready') as Record<string, unknown>[];
+console.log(`   ready cards: ${readyCards.length}`);
+assert(readyCards.length >= 1, 'at least 1 ready card');
 
 // ─── 4. Create a new card ───────────────────────────────────────────────────
 console.log('\n4. Create card');
@@ -171,7 +176,7 @@ const cardFromSqlite = db
 assert(!!cardFromSqlite, 't_d12e0ce4 visible in SQLite');
 if (cardFromSqlite) {
   assert(String(cardFromSqlite.title).includes('kanban-to-sqlite'), 'title matches');
-  assert(String(cardFromSqlite.status) === 'running', 'status is running');
+  assert(String(cardFromSqlite.status) === 'done', 'status is done (kanban task lifecycle advanced)');
   assert(String(cardFromSqlite.assignee) === 'nub', 'assignee is nub');
 }
 

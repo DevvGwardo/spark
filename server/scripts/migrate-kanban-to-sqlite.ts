@@ -13,13 +13,20 @@ import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
 
-// ─── Paths ──────────────────────────────────────────────────────────────────
+// ─── Resolve global hermes home ────────────────────────────────────────────
+function resolveGlobalHermesHome(): string {
+  const envHome = process.env.HERMES_HOME;
+  if (!envHome) return path.join(os.homedir(), '.hermes');
+  const parent = path.dirname(envHome);
+  const grandparent = path.dirname(parent);
+  if (path.basename(parent) === 'profiles' && path.basename(grandparent) === '.hermes') {
+    return grandparent;
+  }
+  return envHome;
+}
 
-const HERMES_HOME =
-  process.env.HERMES_HOME ?? path.join(os.homedir(), '.hermes');
-
-const JSON_PATH = path.join(HERMES_HOME, 'kanban.json');
-const DB_PATH = path.join(HERMES_HOME, 'kanban.db');
+const JSON_PATH = path.join(resolveGlobalHermesHome(), 'kanban.json');
+const DB_PATH = path.join(resolveGlobalHermesHome(), 'kanban.db');
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 

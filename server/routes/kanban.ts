@@ -7,11 +7,28 @@ import { randomUUID } from 'node:crypto';
 import { sendJson } from '../lib/helpers';
 
 // ─── Hermes SQLite kanban DB ────────────────────────────────────────────────
+//
+// The kanban DB is a shared resource — all profiles read/write the same SQLite
+// database at ~/.hermes/kanban.db.  If HERMES_HOME points to a profile
+// subdirectory (profiles/<name>) we resolve upward to the global home.
 
-const HERMES_HOME =
-  process.env.HERMES_HOME ?? path.join(os.homedir(), '.hermes');
+function resolveGlobalHermesHome(): string {
+  const envHome = process.env.HERMES_HOME;
+  if (!envHome) return path.join(os.homedir(), '.hermes');
 
-const DB_PATH = path.join(HERMES_HOME, 'kanban.db');
+  // If HERMES_HOME looks like a profile subdirectory
+  // (<something>/.hermes/profiles/<name>), resolve upward to the global
+  // ~/.hermes so the kanban DB is shared across all profiles.
+  const parent = path.dirname(envHome);
+  const grandparent = path.dirname(parent);
+  if (path.basename(parent) === 'profiles' && path.basename(grandparent) === '.hermes') {
+    return grandparent;
+  }
+
+  return envHome;
+}
+
+const DB_PATH = path.join(resolveGlobalHermesHome(), 'kanban.db');
 
 const KANBAN_LANES = ['backlog', 'ready', 'running', 'review', 'blocked', 'done'] as const;
 type KanbanLane = (typeof KANBAN_LANES)[number];
