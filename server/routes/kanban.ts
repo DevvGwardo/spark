@@ -472,4 +472,98 @@ export function registerKanbanRoutes(app: Express) {
       sendJson(res, 500, { error: message });
     }
   });
+
+  /**
+   * POST /api/hermes/kanban/link — create a parent→child dependency link
+   * Body: { parent_id, child_id }
+   */
+  app.post('/api/hermes/kanban/link', (req: Request, res: Response) => {
+    try {
+      const { parent_id, child_id } = req.body;
+
+      if (!parent_id || !child_id) {
+        return sendJson(res, 400, { error: 'parent_id and child_id are required' });
+      }
+      if (parent_id === child_id) {
+        return sendJson(res, 400, { error: 'Cannot link a card to itself' });
+      }
+
+      const db = getDb();
+
+      // Ensure the links table exists
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS kanban_links (
+          parent_id TEXT NOT NULL,
+          child_id TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          PRIMARY KEY (parent_id, child_id),
+          FOREIGN KEY (parent_id) REFERENCES tasks(id) ON DELETE CASCADE,
+          FOREIGN KEY (child_id) REFERENCES tasks(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_kanban_links_parent ON kanban_links(parent_id);
+        CREATE INDEX IF NOT EXISTS idx_kanban_links_child ON kanban_links(child_id);
+      `);
+
+      // Verify both cards exist
+      const parent = db.prepare('SELECT id FROM tasks WHERE id = ?').get(parent_id);
+      const child = db.prepare('SELECT id FROM tasks WHERE id = ?').get(child_id);
+      if (!parent) return sendJson(res, 404, { error: 'Parent card not found' });
+      if (!child) return sendJson(res, 404, { error: 'Child card not found' });
+
+      // Insert link (ignore if already exists)
+      db.prepare(
+        'INSERT OR IGNORE INTO kanban_links (parent_id, child_id, created_at) VALUES (?, ?, ?)',
+      ).run(parent_id, child_id, Date.now());
+
+      // If parent isn't done, demote child from ready to backlog
+      const parentStatus = db.prepare('SELECT status FROM tasks WHERE id = ?').get(parent_id) as { status: string } | undefined;
+      if (parentStatus && parentStatus.status !== 'done') {
+        const childStatus = db.prepare('SELECT status FROM tasks WHERE id = ?').get(child_id) as { status: string } | undefined;
+        if (childStatus && childStatus.status === 'ready') {
+          db.prepare('UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?').run('backlog', Date.now(), child_id);
+        }
+      }
+
+      sendJson(res, 201, { ok: true, parent_id, child_id });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to link cards';
+      sendJson(res, 500, { error: message });
+    }
+  });
+
+  /**
+   * POST /api/hermes/kanban/:id/unblock — move a blocked task back to ready
+   * and reset failure counters so the dispatcher will re-pick it.
+   */
+  app.post('/api/hermes/kanban/:id/unblock', (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      if (!id) {
+        return sendJson(res, 400, { error: 'Card ID is required' });
+      }
+
+      const db = getDb();
+      const card = db.prepare('SELECT id, status FROM tasks WHERE id = ?').get(id) as { id: string; status: string } | undefined;
+
+      if (!card) {
+        return sendJson(res, 404, { error: 'Card not found' });
+      }
+
+      // Only unblock cards that are in blocked status
+      if (card.status !== 'blocked') {
+        return sendJson(res, 409, { error: `Card is not blocked (current status: ${card.status})` });
+      }
+
+      // Move to ready and clear the result/report
+      db.prepare('UPDATE tasks SET status = ?, result = NULL, updated_at = ? WHERE id = ?')
+        .run('ready', Date.now(), id);
+
+      sendJson(res, 200, { ok: true, id, status: 'ready' });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to unblock card';
+      sendJson(res, 500, { error: message });
+    }
+  });
 }

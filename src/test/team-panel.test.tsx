@@ -127,7 +127,7 @@ describe('TeamPanel', () => {
     });
   });
 
-  it('shows disabled Pause button for active teams', async () => {
+  it('shows active Pause button for active teams', async () => {
     useTeamStore.setState({
       teams: [
         {
@@ -148,7 +148,7 @@ describe('TeamPanel', () => {
 
     const pauseButton = await screen.findByText('Pause');
     expect(pauseButton).toBeDefined();
-    expect(pauseButton.closest('button')).toBeDisabled();
+    expect(pauseButton.closest('button')).not.toBeDisabled();
   });
 
   it('shows subtask progress and expandable detail', async () => {

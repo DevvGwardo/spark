@@ -57,7 +57,7 @@ function TeamCard({
   expanded: boolean;
   onToggle: () => void;
 }) {
-  const { dispatchTeam } = useTeamStore();
+  const { dispatchTeam, pauseTeam, resumeTeam } = useTeamStore();
   const [actionLoading, setActionLoading] = useState(false);
 
   const subtaskDone = team.subtasks.filter((s) => s.status === 'done').length;
@@ -67,6 +67,18 @@ function TeamCard({
   const handleDispatch = async () => {
     setActionLoading(true);
     await dispatchTeam(team.id);
+    setActionLoading(false);
+  };
+
+  const handlePause = async () => {
+    setActionLoading(true);
+    await pauseTeam(team.id);
+    setActionLoading(false);
+  };
+
+  const handleResume = async () => {
+    setActionLoading(true);
+    await resumeTeam(team.id);
     setActionLoading(false);
   };
 
@@ -128,21 +140,21 @@ function TeamCard({
         )}
         {team.status === 'active' && (
           <button
-            disabled
-            title="Subprocess suspension not yet implemented"
-            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium text-amber-400/40 cursor-not-allowed"
+            onClick={(e) => { e.stopPropagation(); void handlePause(); }}
+            disabled={actionLoading}
+            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium text-amber-400 hover:bg-amber-500/10 transition-colors disabled:opacity-50"
           >
-            <Pause className="h-3 w-3" />
+            {actionLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Pause className="h-3 w-3" />}
             Pause
           </button>
         )}
         {team.status === 'paused' && (
           <button
-            disabled
-            title="Subprocess resumption not yet implemented"
-            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium text-emerald-400/40 cursor-not-allowed"
+            onClick={(e) => { e.stopPropagation(); void handleResume(); }}
+            disabled={actionLoading}
+            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium text-emerald-400 hover:bg-emerald-500/10 transition-colors disabled:opacity-50"
           >
-            <Play className="h-3 w-3" />
+            {actionLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
             Resume
           </button>
         )}

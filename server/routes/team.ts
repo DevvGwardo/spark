@@ -145,31 +145,30 @@ export function registerTeamRoutes(app: Express) {
     }
   });
 
-  // POST /api/hermes/team/:id/pause — Pause team execution
+  // POST /api/hermes/team/:id/pause — Pause team execution (SIGSTOP child processes)
   app.post('/api/hermes/team/:id/pause', (req: Request, res: Response) => {
     try {
       const { id } = req.params;
-      const team = teamCoordinator.getTeam(id);
-      if (!team) {
-        return sendJson(res, 404, { error: 'Team not found' });
+      const ok = teamCoordinator.pauseTeam(id);
+      if (!ok) {
+        return sendJson(res, 409, { error: 'Team not found or not in a pausable status (active/forming)' });
       }
-      // Subprocess lifecycle management is not yet implemented
-      return sendJson(res, 501, { error: 'Pause not yet implemented' });
+      sendJson(res, 200, { ok: true, status: 'paused' });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to pause team';
       sendJson(res, 500, { error: message });
     }
   });
 
-  // POST /api/hermes/team/:id/resume — Resume team execution
+  // POST /api/hermes/team/:id/resume — Resume team execution (SIGCONT child processes)
   app.post('/api/hermes/team/:id/resume', (req: Request, res: Response) => {
     try {
       const { id } = req.params;
-      const team = teamCoordinator.getTeam(id);
-      if (!team) {
-        return sendJson(res, 404, { error: 'Team not found' });
+      const ok = teamCoordinator.resumeTeam(id);
+      if (!ok) {
+        return sendJson(res, 409, { error: 'Team not found or not in paused status' });
       }
-      return sendJson(res, 501, { error: 'Resume not yet implemented' });
+      sendJson(res, 200, { ok: true, status: 'active' });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to resume team';
       sendJson(res, 500, { error: message });

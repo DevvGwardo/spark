@@ -565,6 +565,68 @@ Provide a concise summary of what was accomplished.`;
   removeTeam(teamId: string): boolean {
     return teams.delete(teamId);
   },
+
+  /** Pause a team by sending SIGSTOP to all child processes. */
+  pauseTeam(teamId: string): boolean {
+    const team = teams.get(teamId);
+    if (!team || (team.status !== 'active' && team.status !== 'forming')) return false;
+
+    let paused = false;
+    for (const subtask of team.subtasks) {
+      const child = activeChildren.get(subtask.id);
+      if (child && child.pid) {
+        try {
+          process.kill(child.pid, 'SIGSTOP');
+          paused = true;
+        } catch {
+          // process already exited
+        }
+      }
+    }
+
+    if (paused) {
+      team.status = 'paused';
+      for (const agent of team.agents) {
+        if (agent.status === 'working') agent.status = 'idle';
+      }
+      console.log(`[team-coordinator] Paused team ${teamId.slice(0, 12)}...`);
+    }
+    return paused;
+  },
+
+  /** Resume a paused team by sending SIGCONT to all child processes. */
+  resumeTeam(teamId: string): boolean {
+    const team = teams.get(teamId);
+    if (!team || team.status !== 'paused') return false;
+
+    let resumed = false;
+    for (const subtask of team.subtasks) {
+      const child = activeChildren.get(subtask.id);
+      if (child && child.pid) {
+        try {
+          process.kill(child.pid, 'SIGCONT');
+          resumed = true;
+        } catch {
+          // process already exited
+        }
+      }
+    }
+
+    if (resumed) {
+      team.status = 'active';
+      // Restore agent status for in-progress subtasks
+      for (const agent of team.agents) {
+        if (agent.currentSubtask) {
+          const st = team.subtasks.find((s) => s.id === agent.currentSubtask);
+          if (st && st.status === 'in_progress') {
+            agent.status = 'working';
+          }
+        }
+      }
+      console.log(`[team-coordinator] Resumed team ${teamId.slice(0, 12)}...`);
+    }
+    return resumed;
+  },
 };
 
 // ─── Background Team Agent Spawner ─────────────────────────────────────────

@@ -20,9 +20,35 @@ from kanban_tools import (
     KANBAN_TOOL_DEFINITIONS, KANBAN_TOOL_NAMES,
     kanban_read_current_card, kanban_update_status, kanban_append_report,
     kanban_show, kanban_complete, kanban_block, kanban_heartbeat, kanban_comment,
-    kanban_list, kanban_create,
+    kanban_list, kanban_create, kanban_link, kanban_unblock,
 )
 from team_tools import TEAM_TOOL_DEFINITIONS, TEAM_TOOL_NAMES, team_delegate_to_agent, team_report_progress, team_query_context, team_publish_finding, team_request_help, team_signal_completion
+
+# ── hermes-agent toolset bridge ──────────────────────────────────────────────
+# Attempt to import hermes-agent's toolsets module to resolve ecosystem tool
+# names. When available, cloud-chat-hub inherits hermes-agent's tool discovery
+# so new tools appear automatically without updating cloud-chat-hub's code.
+# Kanban and team tool definitions remain cloud-chat-hub-specific (they target
+# cloud-chat-hub's Express API, not hermes-agent's kanban_db).
+
+_hermes_toolset_names: set[str] = set()
+_hermes_toolset_warning: str | None = None
+
+try:
+    # Try to find hermes-agent on sys.path
+    import importlib.util
+    _ts_spec = importlib.util.find_spec("toolsets")
+    if _ts_spec and _ts_spec.origin:
+        import toolsets as _hermes_toolsets
+        _resolved = _hermes_toolsets.resolve_toolset("hermes-cli")
+        _hermes_toolset_names = set(_resolved)
+        print(f"[hermes-bridge] Bridged to hermes-agent toolsets: {len(_hermes_toolset_names)} ecosystem tools available", flush=True)
+    else:
+        _hermes_toolset_warning = "hermes-agent toolsets not found — using baked-in tool definitions"
+        print(f"[hermes-bridge] {_hermes_toolset_warning}", flush=True)
+except Exception as _e:
+    _hermes_toolset_warning = f"hermes-agent bridge failed: {_e} — using baked-in tool definitions"
+    print(f"[hermes-bridge] {_hermes_toolset_warning}", flush=True)
 
 
 class _SafeWriter:
@@ -916,6 +942,15 @@ def _execute_tool(name: str, arguments: dict) -> str:
                 arguments.get("body"),
                 arguments.get("parents"),
                 arguments.get("skills"),
+            ))
+        elif name == "kanban_link":
+            return _cap_tool_response(kanban_link(
+                arguments.get("parent_id", ""),
+                arguments.get("child_id", ""),
+            ))
+        elif name == "kanban_unblock":
+            return _cap_tool_response(kanban_unblock(
+                arguments.get("task_id", ""),
             ))
         elif name == "team_delegate_to_agent":
             return _cap_tool_response(team_delegate_to_agent(

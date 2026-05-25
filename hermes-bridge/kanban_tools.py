@@ -213,6 +213,44 @@ KANBAN_TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "kanban_link",
+            "description": "Add a parent_id → child_id dependency edge between two cards. Child is demoted from ready to backlog if parent isn't done.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "parent_id": {
+                        "type": "string",
+                        "description": "ID of the parent task",
+                    },
+                    "child_id": {
+                        "type": "string",
+                        "description": "ID of the child task that depends on the parent",
+                    },
+                },
+                "required": ["parent_id", "child_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "kanban_unblock",
+            "description": "Move a blocked task back to ready so the dispatcher re-picks it.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_id": {
+                        "type": "string",
+                        "description": "ID of the blocked task to unblock",
+                    },
+                },
+                "required": ["task_id"],
+            },
+        },
+    },
 ]
 
 KANBAN_TOOL_NAMES = {t["function"]["name"] for t in KANBAN_TOOL_DEFINITIONS}
@@ -445,3 +483,28 @@ def kanban_create(
     card = result.get("card", {})
     card_id = card.get("id", "unknown")
     return f"Kanban card created: '{title}' assigned to @{assignee} (ID: {card_id})"
+
+
+def kanban_link(parent_id: str, child_id: str) -> str:
+    """Create a parent→child dependency link between two kanban cards."""
+    if not parent_id or not child_id:
+        return "Error: parent_id and child_id are required for kanban_link."
+
+    result = _fetch("/api/hermes/kanban/link", method="POST", body={
+        "parent_id": parent_id,
+        "child_id": child_id,
+    })
+    if not result:
+        return "Error: Failed to create link (API unreachable)."
+    return f"Linked: {parent_id} → {child_id}"
+
+
+def kanban_unblock(task_id: str) -> str:
+    """Unblock a kanban card, moving it back to ready for the dispatcher to re-pick."""
+    if not task_id:
+        return "Error: task_id is required for kanban_unblock."
+
+    result = _fetch(f"/api/hermes/kanban/{task_id}/unblock", method="POST")
+    if not result:
+        return "Error: Failed to unblock card (API unreachable)."
+    return f"Card {task_id} unblocked — moved to ready."
