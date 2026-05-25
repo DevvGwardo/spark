@@ -140,11 +140,13 @@ function buildKanbanTaskPrompt(card: CardRecord): string {
   lines.push(
     '',
     'Available kanban tools:',
-    '- kanban_read_current_card — read the full card details and status',
-    '- kanban_update_status — update card status (review/blocked/done)',
-    '- kanban_append_report — add progress notes',
+    '- kanban_show — read the full card details and status',
+    '- kanban_complete — mark the task as done with a summary of what was accomplished',
+    '- kanban_block — mark the task as blocked with a reason explaining what\'s needed',
+    '- kanban_heartbeat — signal you\'re still working during long operations',
+    '- kanban_comment — append progress notes without changing status',
     '',
-    'When you complete the task, call kanban_update_status with status="done" and a report_summary of what was accomplished.',
+    'When you complete the task, call kanban_complete with a summary of what was accomplished.',
   );
 
   return lines.join('\n');

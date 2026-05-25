@@ -149,7 +149,7 @@ def main():
         if TEAM_SUBTASK_DESC:
             system_prompt_lines.append(f"- Subtask description: {TEAM_SUBTASK_DESC}")
         system_prompt_lines.append(
-            "- Use team_signal_completion() when you finish your subtask, NOT kanban_update_status"
+            "- Use team_signal_completion() when you finish your subtask, NOT kanban_complete"
         )
 
     if spec and spec.strip():
@@ -161,9 +161,11 @@ def main():
     system_prompt_lines.extend([
         "",
         "Available tools:",
-        "- kanban_read_current_card — read the full card details and status",
-        "- kanban_update_status — update card status (review/blocked/done)",
-        "- kanban_append_report — add progress notes",
+        "- kanban_show — read the full card details, spec, acceptance criteria, and status",
+        "- kanban_complete — mark the task as done with a summary of what was accomplished",
+        "- kanban_block — mark the task as blocked with a reason explaining what's needed",
+        "- kanban_heartbeat — signal you're still working during long operations",
+        "- kanban_comment — append progress notes without changing status",
     ])
     if is_team_task:
         system_prompt_lines.extend([
@@ -174,11 +176,11 @@ def main():
             "- team_delegate_to_agent — delegate work to another team member",
             "- team_report_progress — report progress and blockers",
             "- team_request_help — ask for help from another agent",
-            "- team_signal_completion — signal your subtask is done (use this instead of kanban_update_status)",
+            "- team_signal_completion — signal your subtask is done (use this instead of kanban_complete)",
         ])
     system_prompt_lines.extend([
         "",
-        "When you complete the task, call kanban_update_status with status=\"done\" and a report_summary of what was accomplished."
+        "When you complete the task, call kanban_complete with a summary of what was accomplished."
         if not is_team_task else
         "When you complete your subtask, call team_signal_completion with a summary of what was accomplished.",
     ])

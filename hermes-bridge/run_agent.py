@@ -16,7 +16,12 @@ import re
 from typing import Optional, Callable
 from urllib.parse import quote, quote_plus
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from kanban_tools import KANBAN_TOOL_DEFINITIONS, KANBAN_TOOL_NAMES, kanban_read_current_card, kanban_update_status, kanban_append_report
+from kanban_tools import (
+    KANBAN_TOOL_DEFINITIONS, KANBAN_TOOL_NAMES,
+    kanban_read_current_card, kanban_update_status, kanban_append_report,
+    kanban_show, kanban_complete, kanban_block, kanban_heartbeat, kanban_comment,
+    kanban_list, kanban_create,
+)
 from team_tools import TEAM_TOOL_DEFINITIONS, TEAM_TOOL_NAMES, team_delegate_to_agent, team_report_progress, team_query_context, team_publish_finding, team_request_help, team_signal_completion
 
 
@@ -499,6 +504,14 @@ _HALLUCINATED_TOOL_MAP: dict[str, str] = {
     "append_report": "kanban_append_report",
     "append_notes": "kanban_append_report",
 
+    # hermes-agent kanban tool aliases (non-ambiguous — not already canonical names)
+    "show_task": "kanban_show",
+    "complete_task": "kanban_complete",
+    "block_task": "kanban_block",
+    "list_tasks": "kanban_list",
+    "create_task": "kanban_create",
+    "comment_on_task": "kanban_comment",
+
     # Team tool aliases
     "delegate_to_agent": "team_delegate_to_agent",
     "delegate": "team_delegate_to_agent",
@@ -869,6 +882,41 @@ def _execute_tool(name: str, arguments: dict) -> str:
             ))
         elif name == "kanban_append_report":
             return _cap_tool_response(kanban_append_report(arguments.get("notes", "")))
+        elif name == "kanban_show":
+            return _cap_tool_response(kanban_show())
+        elif name == "kanban_complete":
+            return _cap_tool_response(kanban_complete(
+                arguments.get("summary", ""),
+                arguments.get("metadata"),
+                arguments.get("artifacts"),
+            ))
+        elif name == "kanban_block":
+            return _cap_tool_response(kanban_block(
+                arguments.get("reason", ""),
+            ))
+        elif name == "kanban_heartbeat":
+            return _cap_tool_response(kanban_heartbeat(
+                arguments.get("note"),
+            ))
+        elif name == "kanban_comment":
+            return _cap_tool_response(kanban_comment(
+                arguments.get("task_id"),
+                arguments.get("body", ""),
+            ))
+        elif name == "kanban_list":
+            return _cap_tool_response(kanban_list(
+                arguments.get("assignee"),
+                arguments.get("status"),
+                arguments.get("limit", 50),
+            ))
+        elif name == "kanban_create":
+            return _cap_tool_response(kanban_create(
+                arguments.get("title", ""),
+                arguments.get("assignee", ""),
+                arguments.get("body"),
+                arguments.get("parents"),
+                arguments.get("skills"),
+            ))
         elif name == "team_delegate_to_agent":
             return _cap_tool_response(team_delegate_to_agent(
                 arguments.get("agent_name", ""),
