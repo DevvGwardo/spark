@@ -1,3 +1,4 @@
+import { logger } from './lib/logger';
 import { spawn } from 'child_process'
 import { existsSync } from 'fs'
 import { access, mkdir, rm } from 'fs/promises'
@@ -165,7 +166,7 @@ export async function forkRepository({ owner, repo, pat, branch }: ForkRepositor
 
   if (!forkResponse.ok && forkResponse.status !== 202) {
     const error = await forkResponse.text()
-    console.error(`[repo-clone-manager] Fork failed (${forkResponse.status}):`, error)
+    logger.error(`[repo-clone-manager] Fork failed (${forkResponse.status}): ${error}`)
     throw new Error(`Failed to fork repository (HTTP ${forkResponse.status})`)
   }
 

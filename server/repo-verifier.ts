@@ -1,3 +1,4 @@
+import { logger } from './lib/logger';
 import { spawn } from 'child_process';
 import { existsSync, rmSync } from 'fs';
 import { mkdir, mkdtemp, readFile, readdir, rm, unlink, writeFile } from 'fs/promises';
@@ -519,7 +520,7 @@ async function runProviderReview(input: VerifyRepoChangesInput): Promise<Verific
       findings: parsed.findings,
     };
   } catch (error) {
-    console.error('[repo-verifier] Provider review failed:', error);
+    logger.error(`[repo-verifier] Provider review failed: ${error instanceof Error ? error.message : String(error)}`);
     return {
       status: 'skipped',
       summary: 'Provider-backed review was skipped due to an internal error.',
@@ -731,7 +732,7 @@ export async function generatePrMetadata(input: GeneratePrMetadataInput): Promis
       }
       return { title: parsed.title, body: parsed.body };
     } catch (parseError) {
-      console.error('[repo-verifier] Failed to parse AI response:', parseError);
+      logger.error(`[repo-verifier] Failed to parse AI response: ${parseError instanceof Error ? parseError.message : String(parseError)}`);
       throw new Error('Failed to generate PR metadata: the AI response could not be parsed.');
     }
   }

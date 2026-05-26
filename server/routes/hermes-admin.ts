@@ -1,3 +1,4 @@
+import { logger } from '../lib/logger';
 import type { Express, Request, Response } from 'express';
 import { sendJson } from '../lib/helpers';
 import { getProfileFromRequest } from '../lib/hermes-profiles';
@@ -46,7 +47,7 @@ async function proxyTo(
   } catch (err) {
     const message =
       err instanceof Error ? err.message : 'Failed to reach hermes-bridge';
-    console.error(`[hermes-admin] Proxy error for ${path}:`, message);
+    logger.error(`[hermes-admin] Proxy error for ${path}: ${message}`);
     return sendJson(res, 502, { error: message });
   }
 }

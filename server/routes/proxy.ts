@@ -1,3 +1,4 @@
+import { logger } from '../lib/logger';
 import type { Express } from 'express';
 import { OPENAI_COMPATIBLE } from '../provider-config';
 import { bindClientDisconnect } from '../http-disconnect';
@@ -94,7 +95,7 @@ app.post('/functions/v1/chat-proxy', async (req, res) => {
 
     if (!upstreamResponse.body) {
       const text = await upstreamResponse.text();
-      console.warn('[chat-proxy] No response body from provider:', text);
+      logger.warn(`[chat-proxy] No response body from provider: ${text}`);
       return sendJson(res, 502, {
         error: 'No response body from provider',
         details: text,
@@ -123,7 +124,7 @@ app.post('/functions/v1/chat-proxy', async (req, res) => {
           const { done, value } = await reader.read();
           if (done) {
             if (!receivedAnyContent && rawAccumulator.trim()) {
-              console.warn('[chat-proxy] No SSE content received. Raw response:', rawAccumulator);
+              logger.warn(`[chat-proxy] No SSE content received. Raw response: ${rawAccumulator}`);
               try {
                 const errorJson = JSON.parse(rawAccumulator);
                 const errorMsg =
@@ -170,7 +171,7 @@ app.post('/functions/v1/chat-proxy', async (req, res) => {
 
               if (json.base_resp?.status_code && json.base_resp.status_code !== 0) {
                 const errorMsg = json.base_resp.status_msg || 'API error';
-                console.warn('[chat-proxy] MiniMax inline error:', errorMsg);
+                logger.warn(`[chat-proxy] MiniMax inline error: ${errorMsg}`);
                 res.write(`data: ${JSON.stringify({ error: errorMsg })}\n\n`);
                 receivedAnyContent = true;
                 continue;
@@ -188,7 +189,7 @@ app.post('/functions/v1/chat-proxy', async (req, res) => {
           }
         }
       } catch (err) {
-        console.error('SSE stream error:', err);
+        logger.error(`SSE stream error: ${err instanceof Error ? err.message : String(err)}`);
         res.end();
       }
     };

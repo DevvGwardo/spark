@@ -365,14 +365,14 @@ app.post('/functions/v1/chat', async (req, res) => {
         clearTimeout(validationTimer);
         if (repoCheckResp.status === 404) {
           repoAccessError = `Repository ${activeRepo.owner}/${activeRepo.name} was not found. It may have been renamed, deleted, or your token may lack access. Please re-select the repository.`;
-          console.warn(`[chat] Repo validation failed: ${activeRepo.owner}/${activeRepo.name} returned 404`);
+          logger.warn(`[chat] Repo validation failed: ${activeRepo.owner}/${activeRepo.name} returned 404`);
         } else if (repoCheckResp.status === 401 || repoCheckResp.status === 403) {
           repoAccessError = `Your GitHub token does not have access to ${activeRepo.owner}/${activeRepo.name}. Check that the token has the 'repo' scope for private repositories.`;
-          console.warn(`[chat] Repo validation failed: ${activeRepo.owner}/${activeRepo.name} returned ${repoCheckResp.status}`);
+          logger.warn(`[chat] Repo validation failed: ${activeRepo.owner}/${activeRepo.name} returned ${repoCheckResp.status}`);
         }
       } catch (err) {
         // Don't block on validation timeout — let the AI handle it downstream
-        console.warn(`[chat] Repo validation check failed (non-blocking): ${err instanceof Error ? err.message : err}`);
+        logger.warn(`[chat] Repo validation check failed (non-blocking): ${err instanceof Error ? err.message : err}`);
       }
     }
 
@@ -590,7 +590,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
       try {
         ensureProfileExists(activeHermesProfile);
       } catch (err) {
-        console.warn(`[chat] Failed to auto-provision Hermes profile ${activeHermesProfile}: ${err instanceof Error ? err.message : err}`);
+        logger.warn(`[chat] Failed to auto-provision Hermes profile ${activeHermesProfile}: ${err instanceof Error ? err.message : err}`);
       }
     }
     const runtimeProvider = resolveRuntimeProvider(provider, { activeRepo });
@@ -661,16 +661,16 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
         })()
       : repoTools;
 
-    console.log(
+    logger.info(
       `[chat] provider=${provider} runtime=${runtimeProvider} model=${model} activeRepo=${activeRepo?.owner}/${activeRepo?.name || '-'} serverRepoTools=${hasServerRepoContext} hermesExecutionMode=${hermesExecutionMode ?? '-'} msgs=${messages?.length}`,
     );
     if (activeRepo && !githubPAT && !resolvedLocalRepoPath) {
-        console.warn(`[chat] WARNING: activeRepo set (${activeRepo.owner}/${activeRepo.name}) but no valid github_pat in request body — repo tools unavailable`);
+        logger.warn(`[chat] WARNING: activeRepo set (${activeRepo.owner}/${activeRepo.name}) but no valid github_pat in request body — repo tools unavailable`);
     }
 
     // Swarm mode: Architect → Implementor → Reviewer pipeline
     if (provider === 'hermes' && runtimeProvider === 'hermes' && hermes_swarm_mode) {
-      console.log(`[chat] Proxying Hermes swarm pipeline. model=${model}`);
+      logger.info(`[chat] Proxying Hermes swarm pipeline. model=${model}`);
       await proxyHermesSwarmToDataStream({
         req,
         res,
@@ -692,7 +692,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
     }
 
     if (provider === 'hermes' && runtimeProvider === 'hermes' && hermesExecutionMode === 'agent-loop') {
-      console.log(`[chat] Proxying Hermes agent-loop directly to AI SDK data stream. model=${model}`);
+      logger.info(`[chat] Proxying Hermes agent-loop directly to AI SDK data stream. model=${model}`);
       await proxyHermesAgentLoopToDataStream({
         req,
         res,
@@ -716,7 +716,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
     }
 
     if (shouldDirectProxyCompatibleProvider(provider, hasServerRepoContext) && !hasLocalTools && !planMode) {
-      console.log(`[chat] Proxying ${provider} directly to AI SDK data stream. model=${model}`);
+      logger.info(`[chat] Proxying ${provider} directly to AI SDK data stream. model=${model}`);
       await proxyCompatibleProviderToDataStream({
         req,
         res,
@@ -759,7 +759,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
           : undefined,
       });
     } catch (error) {
-      console.error(`[chat] Failed to create provider model: ${error instanceof Error ? error.message : error}`);
+      logger.error(`[chat] Failed to create provider model: ${error instanceof Error ? error.message : error}`);
       return sendJson(
         res,
         400,
@@ -776,7 +776,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
     // This prevents indefinite hangs when a model step generates extremely slowly.
     requestTimeout = setTimeout(() => {
       if (!disconnect.isDisconnected()) {
-        console.warn('[chat] Request timeout — aborting after 5 minutes');
+        logger.warn('[chat] Request timeout — aborting after 5 minutes');
         abortController.abort();
       }
     }, 5 * 60 * 1000);
@@ -797,7 +797,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
     };
     const useServerAgentLoop = hasServerRepoContext || hasLocalTools;
     const hasTools = Object.keys(allTools).length > 0;
-    console.log(`[chat] Starting streamText. maxTokens=${max_tokens ?? defaultMaxTokens} maxSteps=${useServerAgentLoop ? MAX_AGENT_STEPS : 1} tools=${hasTools ? Object.keys(allTools).join(',') : '(none)'} toolSafe=${isToolSafeProvider} localTools=${hasLocalTools}`);
+    logger.info(`[chat] Starting streamText. maxTokens=${max_tokens ?? defaultMaxTokens} maxSteps=${useServerAgentLoop ? MAX_AGENT_STEPS : 1} tools=${hasTools ? Object.keys(allTools).join(',') : '(none)'} toolSafe=${isToolSafeProvider} localTools=${hasLocalTools}`);
     const result = streamText({
       model: aiModel,
       messages: normalizedChatInput.messages as CoreMessage[],
@@ -815,7 +815,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
           clearTimeout(requestTimeout);
         }
         if (finishResult.usage) {
-          console.log(JSON.stringify({
+          logger.info(JSON.stringify({
             type: 'usage',
             promptTokens: finishResult.usage.promptTokens,
             completionTokens: finishResult.usage.completionTokens,
@@ -842,7 +842,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
       data: streamData,
       getErrorMessage: (error: unknown) => {
         const msg = error instanceof Error ? error.message : String(error);
-        console.error(`[chat] Stream error: ${msg}`);
+        logger.error(`[chat] Stream error: ${msg}`);
         return msg;
       },
     });
@@ -855,7 +855,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
       return;
     }
 
-    console.error('chat error:', err);
+    logger.error(`chat error: ${err instanceof Error ? err.message : String(err)}`);
 
     let status = 500;
     let errorMessage = 'Unknown error';
@@ -894,7 +894,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
       }
     }
 
-    console.error(`[chat] Request failed: status=${status} error=${errorMessage} provider=${req.body?.provider} model=${req.body?.model}`);
+    logger.error(`[chat] Request failed: status=${status} error=${errorMessage} provider=${req.body?.provider} model=${req.body?.model}`);
 
     const normalizedProviderError = normalizeLocalProviderError(req.body?.provider, errorMessage);
     if (normalizedProviderError) {

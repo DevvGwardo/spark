@@ -1,3 +1,4 @@
+import { logger } from '../lib/logger';
 import { Router } from 'express';
 import { sendJson } from '../lib/helpers';
 
@@ -90,7 +91,7 @@ router.post('/', async (req, res) => {
     const data = (await upstreamRes.json()) as { text?: string };
     return sendJson(res, 200, { text: data.text ?? '' });
   } catch (err: any) {
-    console.error('[transcribe] Error:', err.message ?? err);
+    logger.error(`[transcribe] Error: ${err.message ?? err}`);
     return sendJson(res, 500, { error: err.message ?? 'Transcription failed.' });
   }
 });

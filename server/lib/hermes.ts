@@ -1,3 +1,4 @@
+import { logger } from './logger';
 import type express from 'express';
 import {
   OPENAI_COMPATIBLE,
@@ -175,7 +176,7 @@ export function normalizeHermesAgentLoopPayload(payload: string): NormalizedProx
   try {
     parsed = JSON.parse(payload);
   } catch {
-    console.error('[hermes] Failed to parse agent-loop SSE payload as JSON');
+    logger.error('[hermes] Failed to parse agent-loop SSE payload as JSON');
     return null;
   }
 
@@ -229,7 +230,7 @@ export function normalizeCompatibleProviderPayload(provider: string, payload: st
   try {
     parsed = JSON.parse(sanitizedPayload);
   } catch {
-    console.error(`[hermes] Failed to parse ${provider} SSE payload as JSON`);
+    logger.error(`[hermes] Failed to parse ${provider} SSE payload as JSON`);
     return null;
   }
 
@@ -336,10 +337,10 @@ async function fetchHermesWithReadinessRetry(
     if (abortSignal.aborted) throw error;
     if (!isLikelyBridgeConnectionError(error)) throw error;
 
-    console.log('[chat] Hermes bridge fetch failed (connection error); polling /health up to %dms for readiness…', HERMES_READY_POLL_TIMEOUT_MS);
+    logger.info('[chat] Hermes bridge fetch failed (connection error); polling /health up to %dms for readiness…', HERMES_READY_POLL_TIMEOUT_MS);
     const ready = await waitForHermesBridgeReady(abortSignal);
     if (!ready) throw error;
-    console.log('[chat] Hermes bridge became reachable; retrying fetch.');
+    logger.info('[chat] Hermes bridge became reachable; retrying fetch.');
     return await fetch(url, init);
   }
 }
@@ -381,7 +382,7 @@ export async function proxyHermesAgentLoopToDataStream(input: {
 
   let bridgeResponse: Response;
   try {
-    console.log(
+    logger.info(
       `[chat] Hermes agent-loop bridge fetch start. model=${input.model} repo=${repoLabel} toolsets=${input.hermesToolsets || '-'} t=${startedAt}`,
     );
     bridgeResponse = await fetchHermesWithReadinessRetry(bridgeUrl, {
@@ -420,7 +421,7 @@ export async function proxyHermesAgentLoopToDataStream(input: {
       }),
       signal: combinedSignal,
     }, combinedSignal);
-    console.log(
+    logger.info(
       `[chat] Hermes agent-loop bridge headers received in ${Date.now() - startedAt}ms. status=${bridgeResponse.status} model=${input.model} repo=${repoLabel}`,
     );
   } catch (error) {
@@ -453,7 +454,7 @@ export async function proxyHermesAgentLoopToDataStream(input: {
         return;
       }
       firstEventLogged = true;
-      console.log(
+      logger.info(
         `[chat] Hermes agent-loop first ${kind} event emitted in ${Date.now() - startedAt}ms. model=${input.model} repo=${repoLabel}`,
       );
     },
@@ -493,7 +494,7 @@ export async function proxyHermesSwarmToDataStream(input: {
 
   let bridgeResponse: Response;
   try {
-    console.log(
+    logger.info(
       `[chat] Hermes swarm bridge fetch start. model=${input.model} repo=${repoLabel} toolsets=${input.hermesToolsets || '-'} t=${startedAt}`,
     );
     bridgeResponse = await fetchHermesWithReadinessRetry(bridgeUrl, {
@@ -530,7 +531,7 @@ export async function proxyHermesSwarmToDataStream(input: {
       }),
       signal: abortController.signal,
     }, abortController.signal);
-    console.log(
+    logger.info(
       `[chat] Hermes swarm bridge headers received in ${Date.now() - startedAt}ms. status=${bridgeResponse.status}`,
     );
   } catch (error) {
@@ -563,7 +564,7 @@ export async function proxyHermesSwarmToDataStream(input: {
         return;
       }
       firstEventLogged = true;
-      console.log(
+      logger.info(
         `[chat] Hermes swarm first ${kind} event emitted in ${Date.now() - startedAt}ms. model=${input.model}`,
       );
     },

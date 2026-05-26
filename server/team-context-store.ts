@@ -1,3 +1,4 @@
+import { logger } from './lib/logger';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
@@ -162,7 +163,7 @@ export function createTeamContextStore(dbPath = resolveDbPath()) {
       return fn();
     } catch (error) {
       if (isStatementFinalized(error)) {
-        console.warn('[team-context-store] Prepared statement finalized — reconnecting to database');
+        logger.warn('[team-context-store] Prepared statement finalized — reconnecting to database');
         openDb();
         return fn();
       }
@@ -267,7 +268,7 @@ export function createTeamContextStore(dbPath = resolveDbPath()) {
       try {
         db.close();
       } catch (error) {
-        console.warn('[team-context-store] Error closing database:', error instanceof Error ? error.message : String(error));
+        logger.warn(`[team-context-store] Error closing database: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   };

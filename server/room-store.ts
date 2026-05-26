@@ -1,3 +1,4 @@
+import { logger } from './lib/logger';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
@@ -252,7 +253,7 @@ export function createRoomStore(dbPath = resolveDbPath()) {
       return fn();
     } catch (error) {
       if (isStatementFinalized(error)) {
-        console.warn('[room-store] Prepared statement finalized — reconnecting to database');
+        logger.warn('[room-store] Prepared statement finalized — reconnecting to database');
         openDb();
         return fn();
       }
@@ -361,7 +362,7 @@ export function createRoomStore(dbPath = resolveDbPath()) {
       try {
         db.close();
       } catch (error) {
-        console.warn('[room-store] Error closing database:', error instanceof Error ? error.message : String(error));
+        logger.warn(`[room-store] Error closing database: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   };

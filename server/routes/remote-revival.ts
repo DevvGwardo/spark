@@ -1,3 +1,4 @@
+import { logger } from '../lib/logger';
 import type { Express } from 'express';
 import { createSocket } from 'dgram';
 import { sendJson } from '../lib/helpers';
@@ -43,7 +44,7 @@ function sendWolPacket(mac: string, broadcast: string): void {
   socket.on('error', () => socket.close());
   socket.send(packet, 9, broadcast, (err) => {
     socket.close();
-    if (err) console.error('[remote-revival] WoL send error:', err.message);
+    if (err) logger.error(`[remote-revival] WoL send error: ${err.message}`);
   });
 }
 

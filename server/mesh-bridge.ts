@@ -1,3 +1,4 @@
+import { logger } from './lib/logger';
 /**
  * mesh-bridge.ts — Agentic-Mesh integration for team context sharing
  *
@@ -121,7 +122,7 @@ export async function publishToMesh(
 ): Promise<void> {
   try {
     if (!(await isMeshAvailable())) {
-      console.warn('[mesh-bridge] mesh CLI not available — skipping publish');
+      logger.warn('[mesh-bridge] mesh CLI not available — skipping publish');
       return;
     }
 
@@ -133,10 +134,10 @@ export async function publishToMesh(
       meshEnv(`hermes-team-${teamId.slice(0, 8)}`, `Team-${teamId.slice(0, 8)}`),
     );
 
-    console.log(`[mesh-bridge] Published ${event.type} for team ${teamId.slice(0, 12)}...`);
+    logger.info(`[mesh-bridge] Published ${event.type} for team ${teamId.slice(0, 12)}...`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[mesh-bridge] Failed to publish to mesh: ${msg}`);
+    logger.warn(`[mesh-bridge] Failed to publish to mesh: ${msg}`);
   }
 }
 
@@ -150,7 +151,7 @@ export async function queryMeshForTeam(
 ): Promise<MeshQueryResult> {
   try {
     if (!(await isMeshAvailable())) {
-      console.warn('[mesh-bridge] mesh CLI not available — returning empty query');
+      logger.warn('[mesh-bridge] mesh CLI not available — returning empty query');
       return { findings: [], delegations: [] };
     }
 
@@ -174,7 +175,7 @@ export async function queryMeshForTeam(
         contexts = JSON.parse(stdout);
       }
     } catch {
-      console.warn('[mesh-bridge] Failed to parse mesh query JSON output');
+      logger.warn('[mesh-bridge] Failed to parse mesh query JSON output');
     }
 
     // Filter to team-relevant contexts
@@ -208,7 +209,7 @@ export async function queryMeshForTeam(
     return { findings, delegations };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[mesh-bridge] Query failed: ${msg}`);
+    logger.warn(`[mesh-bridge] Query failed: ${msg}`);
     return { findings: [], delegations: [] };
   }
 }
@@ -241,7 +242,7 @@ export async function pollMeshDelegations(): Promise<MeshDelegation[]> {
         contexts = JSON.parse(stdout);
       }
     } catch {
-      console.warn('[mesh-bridge] Failed to parse delegation query JSON');
+      logger.warn('[mesh-bridge] Failed to parse delegation query JSON');
     }
 
     // Filter for tasks targeting hermes agents
@@ -268,7 +269,7 @@ export async function pollMeshDelegations(): Promise<MeshDelegation[]> {
       });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[mesh-bridge] Poll delegations failed: ${msg}`);
+    logger.warn(`[mesh-bridge] Poll delegations failed: ${msg}`);
     return [];
   }
 }
@@ -297,9 +298,9 @@ export async function registerMeshPeer(agent: AgentInfo): Promise<void> {
       meshEnv(agentId, agent.displayName),
     );
 
-    console.log(`[mesh-bridge] Registered mesh peer: ${agent.displayName} (${agentId})`);
+    logger.info(`[mesh-bridge] Registered mesh peer: ${agent.displayName} (${agentId})`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[mesh-bridge] Failed to register peer: ${msg}`);
+    logger.warn(`[mesh-bridge] Failed to register peer: ${msg}`);
   }
 }

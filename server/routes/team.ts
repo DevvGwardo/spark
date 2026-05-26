@@ -1,3 +1,4 @@
+import { logger } from '../lib/logger';
 import type { Express, Request, Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import { teamCoordinator, isComplexTask } from '../team-coordinator';
@@ -491,7 +492,7 @@ export function registerTeamRoutes(app: Express) {
       try {
         await teamCoordinator.synthesizeResults(id);
       } catch (err) {
-        console.error(`[team-routes] Synthesis error:`, err);
+        logger.error(`[team-routes] Synthesis error: ${err instanceof Error ? err.message : String(err)}`);
         // Ensure team doesn't stay stuck in 'synthesizing'
         const t = teamCoordinator.getTeam(id);
         if (t && t.status === 'synthesizing') {

@@ -1,3 +1,4 @@
+import { logger } from './lib/logger';
 import { createRoomStore, type RoomMessage } from './room-store';
 import { buildAgentSystemPrompt } from './lib/room-prompt-builder';
 import { OPENAI_COMPATIBLE } from './provider-config';
@@ -332,11 +333,11 @@ async function triggerAgent(
             for (let i = 0; i < newlyMentioned.length; i++) {
               if (i > 0) await new Promise((r) => setTimeout(r, 5000));
               triggerAgent(roomId, newlyMentioned[i], allMembers, updatedMessages, store, delegatedMsg, depth + 1, maxDepth, teamId).catch((err) => {
-                console.error(`[room-coordinator] Chain agent ${newlyMentioned[i].displayName} error:`, err);
+                logger.error(`[room-coordinator] Chain agent ${newlyMentioned[i].displayName} error:`, err);
               });
             }
           })().catch((err) => {
-            console.error(`[room-coordinator] Chain trigger error:`, err);
+            logger.error(`[room-coordinator] Chain trigger error:`, err);
           });
         }
       }
@@ -443,11 +444,11 @@ export async function postToRoom(
           await new Promise((r) => setTimeout(r, 5000));
         }
         triggerAgent(roomId, member, allMembers, recentMessages, store, content, 0, maxDepth, teamId).catch((err) => {
-          console.error(`[room-coordinator] Agent ${member.displayName} trigger error:`, err);
+          logger.error(`[room-coordinator] Agent ${member.displayName} trigger error:`, err);
         });
       }
     })().catch((err) => {
-      console.error(`[room-coordinator] Sequential trigger error:`, err);
+      logger.error(`[room-coordinator] Sequential trigger error:`, err);
     });
 
     return { message, triggeredAgents };
