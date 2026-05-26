@@ -368,7 +368,10 @@ const headerSecondaryLabel = selectedCronJobId
       )}
 
       <div className="h-screen flex flex-col bg-[hsl(var(--frame-bg))] p-0 gap-0">
-        <div className="flex-1 flex min-h-0 gap-0 overflow-hidden">
+        <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:px-3 focus:py-1.5 focus:bg-primary focus:text-primary-foreground focus:rounded-md focus:text-sm">
+          Skip to main content
+        </a>
+        <div className="flex-1 flex min-h-0 gap-0 overflow-hidden" id="main-content">
           {/* Sidebar + resize handle wrapper */}
           <div className="flex-shrink-0 relative" style={sidebarOpen ? { width: sidebarWidth } : { width: 0 }}>
             <div
@@ -378,13 +381,23 @@ const headerSecondaryLabel = selectedCronJobId
               )}
               style={sidebarOpen ? { width: sidebarWidth, transition: isResizing.current ? 'none' : 'width 200ms' } : { transition: 'width 200ms' }}
             >
-              <div className="h-full" style={{ width: sidebarWidth }}>
+              <nav className="h-full" style={{ width: sidebarWidth }} aria-label="Main navigation">
                 <ChatSidebar />
-              </div>
+              </nav>
             </div>
             {/* Resize handle — positioned to straddle the sidebar edge */}
             {sidebarOpen && (
               <div
+                role="separator"
+                aria-valuenow={sidebarWidth}
+                aria-valuemin={200}
+                aria-valuemax={600}
+                aria-label="Resize sidebar"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'ArrowLeft') setSidebarWidth(Math.max(200, sidebarWidth - 20));
+                  if (e.key === 'ArrowRight') setSidebarWidth(Math.min(600, sidebarWidth + 20));
+                }}
                 onMouseDown={handleResizeStart}
                 className="absolute top-0 -right-1.5 w-3 h-full cursor-col-resize z-10 group"
               >

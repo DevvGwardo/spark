@@ -420,6 +420,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
               <button
                 className="p-1.5 rounded-lg text-muted-foreground"
                 title="Transcribing…"
+                aria-label="Transcribing"
                 disabled
               >
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -434,6 +435,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
                   disabled && 'opacity-50 pointer-events-none'
                 )}
                 title="Stop recording"
+                aria-label="Stop recording"
               >
                 <MicOff className="h-4 w-4" />
               </button>
@@ -449,6 +451,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
                   disabled && 'opacity-50 pointer-events-none'
                 )}
                 title={voiceInput.error || 'Voice input'}
+                aria-label={voiceInput.error || 'Voice input'}
               >
                 <Mic className="h-4 w-4" />
               </button>
