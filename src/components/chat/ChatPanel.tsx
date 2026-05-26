@@ -191,7 +191,7 @@ function RoomChatRuntime({ roomId }: { roomId: string }) {
   );
 }
 
-export const ChatPanel: React.FC<ChatPanelProps> = ({
+export const ChatPanel: React.FC<ChatPanelProps> = React.memo(({
   panelId,
   conversationId,
   isFocused,
@@ -488,4 +488,4 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       </div>
     </PanelProvider>
   );
-};
+});

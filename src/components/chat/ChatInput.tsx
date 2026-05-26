@@ -51,7 +51,7 @@ const REASONING_EFFORT_LABELS = {
   high: 'High',
 } as const;
 
-export const ChatInput: React.FC<ChatInputProps> = ({
+export const ChatInput: React.FC<ChatInputProps> = React.memo(({
   value,
   onChange,
   onSend,
@@ -71,7 +71,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [showCommandSuggestions, setShowCommandSuggestions] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const { activeProvider: selectedProvider, providers, availableModels, updateProviderConfig } = useSettingsStore();
+  const selectedProvider = useSettingsStore((s) => s.activeProvider);
+  const providers = useSettingsStore((s) => s.providers);
+  const availableModels = useSettingsStore((s) => s.availableModels);
+  const updateProviderConfig = useSettingsStore((s) => s.updateProviderConfig);
   const config = providers[selectedProvider];
   const providerInfo = PROVIDERS[selectedProvider];
   const baseModels = availableModels[selectedProvider]?.length
@@ -497,4 +500,4 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       </div>
     </div>
   );
-};
+});

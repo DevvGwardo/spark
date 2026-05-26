@@ -235,7 +235,9 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
   onPullRequestCreated,
   onSuccess,
 }) => {
-  const { githubPAT, activeProvider, providers } = useSettingsStore();
+  const githubPAT = useSettingsStore((s) => s.githubPAT);
+  const activeProvider = useSettingsStore((s) => s.activeProvider);
+  const providers = useSettingsStore((s) => s.providers);
   const createFormId = useId();
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
