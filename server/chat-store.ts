@@ -1,3 +1,4 @@
+import { logger } from './lib/logger';
 import type express from 'express';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
@@ -364,35 +365,35 @@ function createChatStore(dbPath = resolveDbPath()) {
       try {
         db.exec('ALTER TABLE conversations ADD COLUMN lines_added INTEGER NOT NULL DEFAULT 0');
       } catch (error) {
-        console.warn('[chat-store] Failed to add lines_added column:', error instanceof Error ? error.message : String(error));
+        logger.warn('[chat-store] Failed to add lines_added column: ' + String(error instanceof Error ? error.message : String(error)));
       }
     }
     if (!colNames.has('lines_removed')) {
       try {
         db.exec('ALTER TABLE conversations ADD COLUMN lines_removed INTEGER NOT NULL DEFAULT 0');
       } catch (error) {
-        console.warn('[chat-store] Failed to add lines_removed column:', error instanceof Error ? error.message : String(error));
+        logger.warn('[chat-store] Failed to add lines_removed column: ' + String(error instanceof Error ? error.message : String(error)));
       }
     }
     if (!colNames.has('original_created_at')) {
       try {
         db.exec('ALTER TABLE conversations ADD COLUMN original_created_at TEXT');
       } catch (error) {
-        console.warn('[chat-store] Failed to add original_created_at column:', error instanceof Error ? error.message : String(error));
+        logger.warn('[chat-store] Failed to add original_created_at column: ' + String(error instanceof Error ? error.message : String(error)));
       }
     }
     if (!colNames.has('archived_at')) {
       try {
         db.exec('ALTER TABLE conversations ADD COLUMN archived_at TEXT');
       } catch (error) {
-        console.warn('[chat-store] Failed to add archived_at column:', error instanceof Error ? error.message : String(error));
+        logger.warn('[chat-store] Failed to add archived_at column: ' + String(error instanceof Error ? error.message : String(error)));
       }
     }
     if (!colNames.has('tags')) {
       try {
         db.exec('ALTER TABLE conversations ADD COLUMN tags TEXT');
       } catch (error) {
-        console.warn('[chat-store] Failed to add tags column:', error instanceof Error ? error.message : String(error));
+        logger.warn('[chat-store] Failed to add tags column: ' + String(error instanceof Error ? error.message : String(error)));
       }
     }
   }
@@ -416,7 +417,7 @@ function createChatStore(dbPath = resolveDbPath()) {
       return fn();
     } catch (error) {
       if (isStatementFinalized(error)) {
-        console.warn('[chat-store] Prepared statement finalized — reconnecting to database');
+        logger.warn('[chat-store] Prepared statement finalized — reconnecting to database');
         openDb();
         return fn();
       }
@@ -667,7 +668,7 @@ function createChatStore(dbPath = resolveDbPath()) {
       try {
         db.close();
       } catch (error) {
-        console.warn('[chat-store] Error closing database:', error instanceof Error ? error.message : String(error));
+        logger.warn(`[chat-store] Error closing database: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   };
@@ -686,7 +687,7 @@ export function registerChatStoreRoutes(app: express.Express) {
   const shutdown = () => {
     if (isShuttingDown) return;
     isShuttingDown = true;
-    console.log('[chat-store] Closing database connection');
+    logger.info('[chat-store] Closing database connection');
     chatStore.close();
   };
   process.on('SIGINT', shutdown);

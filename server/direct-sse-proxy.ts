@@ -1,3 +1,4 @@
+import { logger } from './lib/logger';
 import express from 'express';
 import { formatDataStreamPart, type JSONValue } from 'ai';
 import { bindClientDisconnect } from './http-disconnect';
@@ -138,7 +139,7 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
     try {
       normalized = input.normalizePayload(payload);
     } catch (err) {
-      console.error(`[sse-proxy] Failed to normalize payload: ${err instanceof Error ? err.message : err}`);
+      logger.error(`[sse-proxy] Failed to normalize payload: ${err instanceof Error ? err.message : err}`);
       return;
     }
     if (!normalized) {
@@ -199,7 +200,7 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
 
       // Guard against unbounded buffer growth.
       if (buffer.length > MAX_BUFFER_SIZE) {
-        console.warn(
+        logger.warn(
           `[sse-proxy] Buffer exceeded ${MAX_BUFFER_SIZE} bytes (${buffer.length}). Flushing and resetting.`,
         );
         buffer = '';

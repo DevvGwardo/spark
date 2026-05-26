@@ -1,3 +1,4 @@
+import { logger } from '../lib/logger';
 import type { Express } from 'express';
 import { sendJson } from '../lib/helpers';
 import {
@@ -336,7 +337,7 @@ async function fetchAnalyzerRepoFiles(
               });
             }
           } catch (error) {
-            console.warn(`Failed to fetch file ${item.path}:`, error);
+            logger.warn(`Failed to fetch file ${item.path}: ${error instanceof Error ? error.message : String(error)}`);
           }
         } else if (
           item.type === 'dir' &&
@@ -449,7 +450,7 @@ Be specific about file names and line numbers when possible. Provide actionable 
       throw new Error('Invalid JSON response from AI');
     }
   } catch (error: unknown) {
-    console.error('AI analysis error:', error);
+    logger.error(`AI analysis error: ${getUnknownErrorMessage(error)}`);
     throw new Error(`AI analysis failed: ${getUnknownErrorMessage(error)}`);
   }
 }
@@ -1285,7 +1286,7 @@ app.post('/functions/v1/github-integration', async (req, res) => {
         return sendJson(res, 400, { error: 'Unknown action' });
     }
   } catch (error: unknown) {
-    console.error('GitHub integration error:', error);
+    logger.error(`GitHub integration error: ${getUnknownErrorMessage(error)}`);
     return sendJson(res, 500, { error: getUnknownErrorMessage(error) });
   }
 });
@@ -1316,7 +1317,7 @@ app.post('/functions/v1/github-analyzer', async (req, res) => {
       repository: `${owner}/${repo}`,
     });
   } catch (error: unknown) {
-    console.error('GitHub analyzer error:', error);
+    logger.error(`GitHub analyzer error: ${getUnknownErrorMessage(error)}`);
     return sendJson(res, 500, { error: getUnknownErrorMessage(error) });
   }
 });

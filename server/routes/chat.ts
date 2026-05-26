@@ -18,6 +18,7 @@ import { bindClientDisconnect } from '../http-disconnect';
 import { normalizeChatMessages } from '../message-normalization';
 import { isAbortLikeError } from '../direct-sse-proxy';
 import { buildCorsHeaders, chatRateLimiter, getClientIp, sendJson } from '../lib/helpers';
+import { logger } from '../lib/logger';
 import {
   createSingleMessageDataStream,
   isValidGitHubPAT,
@@ -335,7 +336,7 @@ app.post('/functions/v1/chat', async (req, res) => {
     // Fail fast with a clear error if a PAT was provided but failed format validation
     if (activeRepo && rawGithubPAT && !githubPAT) {
       // SECURITY: Do not log PAT content — only log that validation failed
-      console.warn(`[chat] WARNING: github_pat provided but failed format validation — returning 422`);
+      logger.warn(`[chat] WARNING: github_pat provided but failed format validation — returning 422`);
       return sendJson(res, 422, {
         error: `Your GitHub token format is invalid. CloudChat needs a valid GitHub Personal Access Token with access to ${activeRepo.owner}/${activeRepo.name} to read and edit repository files. Please re-enter your token in Settings → GitHub.`,
       });

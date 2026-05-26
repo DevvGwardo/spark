@@ -1,3 +1,4 @@
+import { logger } from './lib/logger';
 import { execFile, execFileSync } from 'child_process'
 import { existsSync } from 'fs'
 import os from 'os'
@@ -158,7 +159,7 @@ export async function setOpenClawModel(model: string): Promise<void> {
     maxBuffer: 10 * 1024 * 1024,
   })
   if (setStderr) {
-    console.warn(`[openclaw] models set stderr: ${setStderr.slice(0, 500)}`)
+    logger.warn(`[openclaw] models set stderr: ${setStderr.slice(0, 500)}`)
   }
 }
 
@@ -192,7 +193,7 @@ export async function runOpenClawTurn(params: {
     ...(params.cwd ? { cwd: params.cwd } : {}),
   })
   if (stderr) {
-    console.warn(`[openclaw] agent run stderr: ${stderr.slice(0, 500)}`)
+    logger.warn(`[openclaw] agent run stderr: ${stderr.slice(0, 500)}`)
   }
 
   let parsed: {

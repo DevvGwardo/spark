@@ -1,3 +1,4 @@
+import { logger } from './lib/logger';
 import { randomUUID } from 'node:crypto';
 import { analyzeTask, type AgentInfo as FormationAgentInfo } from './team-formation.js';
 import { publishToMesh, registerMeshPeer } from './mesh-bridge.js';
@@ -105,7 +106,7 @@ async function discoverAvailableAgents(): Promise<HermesProfile[]> {
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) {
-      console.warn(`[team-coordinator] Profile discovery returned ${res.status}`);
+      logger.warn(`[team-coordinator] Profile discovery returned ${res.status}`);
       return [];
     }
     const data = await res.json() as { profiles?: Array<{ name: string; displayName?: string; tags?: string[] }> };
@@ -116,7 +117,7 @@ async function discoverAvailableAgents(): Promise<HermesProfile[]> {
     }));
     return profiles;
   } catch (err) {
-    console.warn(`[team-coordinator] Profile discovery failed:`, err instanceof Error ? err.message : String(err));
+    logger.warn(`[team-coordinator] Profile discovery failed: ${err instanceof Error ? err.message : String(err)}`);
     return [];
   }
 }
@@ -158,7 +159,7 @@ async function callLlm(prompt: string, systemPrompt: string): Promise<string | n
         signal: AbortSignal.timeout(30000),
       });
       if (!res.ok) {
-        console.warn(`[team-coordinator] LLM call returned ${res.status}: ${res.statusText}`);
+        logger.warn(`[team-coordinator] LLM call returned ${res.status}: ${res.statusText}`);
         if (attempt < maxAttempts && res.status >= 500) {
           await new Promise((r) => setTimeout(r, 2000 * attempt));
           continue;
@@ -176,7 +177,7 @@ async function callLlm(prompt: string, systemPrompt: string): Promise<string | n
         continue;
       }
     } catch (err) {
-      console.warn(`[team-coordinator] LLM call failed (attempt ${attempt}/${maxAttempts}):`, err instanceof Error ? err.message : String(err));
+      logger.warn(`[team-coordinator] LLM call failed (attempt ${attempt}/${maxAttempts}): ${err instanceof Error ? err.message : String(err)}`);
       if (attempt < maxAttempts) {
         await new Promise((r) => setTimeout(r, 2000 * attempt));
         continue;
@@ -270,11 +271,11 @@ export const teamCoordinator = {
     const agents = await pickAgents(profiles, cardOrRequest.title, taskKeywords, formation.agentCount);
 
     // Log the formation decision
-    console.log(`[team-coordinator] Formation for "${cardOrRequest.title}": ${formation.strategy} (${formation.reason})`);
+    logger.info(`[team-coordinator] Formation for "${cardOrRequest.title}": ${formation.strategy} (${formation.reason})`);
 
     // If fewer than 2 agents can be assembled, this task is not suitable for team mode
     if (agents.length < MIN_AGENTS_FOR_TEAM) {
-      console.warn(`[team-coordinator] Only ${agents.length} agent(s) available — team dispatch not suitable`);
+      logger.warn(`[team-coordinator] Only ${agents.length} agent(s) available — team dispatch not suitable`);
     }
 
     const team: Team = {
@@ -289,7 +290,7 @@ export const teamCoordinator = {
     };
 
     teams.set(id, team);
-    console.log(`[team-coordinator] Created team ${id.slice(0, 12)}... for card "${cardOrRequest.title}" with ${agents.length} agents (${formation.strategy})`);
+    logger.info(`[team-coordinator] Created team ${id.slice(0, 12)}... for card "${cardOrRequest.title}" with ${agents.length} agents (${formation.strategy})`);
 
     // Fire-and-forget mesh sync — non-blocking, no crash on failure
     (async () => {
@@ -413,7 +414,7 @@ export const teamCoordinator = {
 
     await Promise.all(spawnTasks);
 
-    console.log(`[team-coordinator] Dispatched team ${team.id.slice(0, 12)}... with ${team.agents.filter(a => a.status === 'working').length} active agents`);
+    logger.info(`[team-coordinator] Dispatched team ${team.id.slice(0, 12)}... with ${team.agents.filter(a => a.status === 'working').length} active agents`);
       return true;
     } finally {
       dispatchingTeams.delete(teamId);
@@ -516,7 +517,7 @@ Provide a concise summary of what was accomplished.`;
       // Non-kanban task, ignore
     }
 
-    console.log(`[team-coordinator] Team ${team.id.slice(0, 12)}... synthesis complete`);
+    logger.info(`[team-coordinator] Team ${team.id.slice(0, 12)}... synthesis complete`);
 
     // Fire-and-forget mesh sync for team completion
     publishToMesh(teamId, {
@@ -541,7 +542,7 @@ Provide a concise summary of what was accomplished.`;
     }
 
     const sanitizedReason = String(reason).replace(/[^\x20-\x7E\s]/g, '').replace(/\n/g, ' ').slice(0, 200);
-    console.log(`[team-coordinator] Subtask ${subtaskId.slice(0, 12)}... blocked: ${sanitizedReason}`);
+    logger.info(`[team-coordinator] Subtask ${subtaskId.slice(0, 12)}... blocked: ${sanitizedReason}`);
   },
 
   getTeam(teamId: string): Team | undefined {
@@ -589,7 +590,7 @@ Provide a concise summary of what was accomplished.`;
       for (const agent of team.agents) {
         if (agent.status === 'working') agent.status = 'idle';
       }
-      console.log(`[team-coordinator] Paused team ${teamId.slice(0, 12)}...`);
+      logger.info(`[team-coordinator] Paused team ${teamId.slice(0, 12)}...`);
     }
     return paused;
   },
@@ -623,7 +624,7 @@ Provide a concise summary of what was accomplished.`;
           }
         }
       }
-      console.log(`[team-coordinator] Resumed team ${teamId.slice(0, 12)}...`);
+      logger.info(`[team-coordinator] Resumed team ${teamId.slice(0, 12)}...`);
     }
     return resumed;
   },
@@ -666,7 +667,7 @@ async function spawnTeamAgent(
   const scriptPath = path.join(SCRIPTS_DIR, 'run-kanban-agent.py');
 
   if (!fs.existsSync(scriptPath)) {
-    console.error(`[team-coordinator] Agent runner script not found: ${scriptPath}`);
+    logger.error(`[team-coordinator] Agent runner script not found: ${scriptPath}`);
     return;
   }
 
@@ -697,7 +698,7 @@ async function spawnTeamAgent(
     activeChildren.delete(subtaskId);
     if (code !== 0) {
       const msg = `Agent process exited with code ${code}: ${stderr.slice(0, 200)}`;
-      console.error(`[team-coordinator] Team agent for ${agent.displayName} exited with code ${code}`);
+      logger.error(`[team-coordinator] Team agent for ${agent.displayName} exited with code ${code}`);
       // Update team state machine: mark subtask as blocked on crash
       teamCoordinator.handleBlocked(teamId, subtaskId, msg).catch(() => {});
     }
@@ -705,7 +706,7 @@ async function spawnTeamAgent(
 
   child.on('error', (err: Error) => {
     activeChildren.delete(subtaskId);
-    console.error(`[team-coordinator] Failed to spawn team agent: ${err.message}`);
+    logger.error(`[team-coordinator] Failed to spawn team agent: ${err.message}`);
   });
 
   // Set a team-level timeout to prevent deadlock on agent crash/network loss

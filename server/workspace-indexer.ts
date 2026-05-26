@@ -1,3 +1,4 @@
+import { logger } from './lib/logger';
 import { readdir, stat } from 'fs/promises';
 import { join } from 'path';
 import { execFile, spawn } from 'child_process';
@@ -152,7 +153,7 @@ export class WorkspaceIndex {
       }
     } catch (err: any) {
       if (err.code !== 1) {
-        console.warn('[workspace-indexer] git check-ignore failed:', err.message);
+        logger.warn('[workspace-indexer] git check-ignore failed:', err.message);
       }
     }
   }

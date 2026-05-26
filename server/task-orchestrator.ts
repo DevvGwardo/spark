@@ -1,3 +1,4 @@
+import { logger } from './lib/logger';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -178,7 +179,7 @@ async function detectCompletions(): Promise<void> {
         state.stats.failed++;
       }
 
-      console.log(
+      logger.info(
         `[orchestrator] Card "${cardId.slice(0, 12)}..." completed → ${finalStatus} (freed slot)`,
       );
     }
@@ -216,7 +217,7 @@ async function tick(): Promise<void> {
           ['kanban-task'],
         );
         if (!conversationId) {
-          console.warn(`[orchestrator] Failed to create conversation for card ${card.id}`);
+          logger.warn(`[orchestrator] Failed to create conversation for card ${card.id}`);
           continue;
         }
 
@@ -231,7 +232,7 @@ async function tick(): Promise<void> {
         // (another tick picking up the same card while dispatch is in flight)
         await updateCardStatus(card.id, 'running');
 
-        console.log(
+        logger.info(
           `[orchestrator] Dispatched card "${card.title}" (${card.id}) → conversation ${conversationId}`,
         );
 
@@ -239,22 +240,22 @@ async function tick(): Promise<void> {
         const taskText = `${card.title} ${card.spec ?? ''}`;
         const formation = analyzeTask(taskText, []);
         if (card.teamMode || formation.strategy !== 'single_agent') {
-          console.log(`[orchestrator] Card "${card.title}" qualifies for team dispatch (strategy=${formation.strategy}, reason="${formation.reason}")`);
+          logger.info(`[orchestrator] Card "${card.title}" qualifies for team dispatch (strategy=${formation.strategy}, reason="${formation.reason}")`);
           void dispatchAsTeam(card).catch((err) => {
-            console.error(`[orchestrator] Team dispatch failed for card ${card.id}, reverting:`, err);
+            logger.error(`[orchestrator] Team dispatch failed for card ${card.id}, reverting:`, err);
             state.activeTasks.delete(card.id);
             updateCardStatus(card.id, 'ready').catch(() => {});
           });
         } else {
           // Spawn background agent process
           if (!card.id) {
-            console.warn(`[orchestrator] Cannot spawn agent: missing card ID`);
+            logger.warn(`[orchestrator] Cannot spawn agent: missing card ID`);
           } else {
             void spawnKanbanAgent(card.id);
           }
         }
       } catch (err) {
-        console.error(`[orchestrator] Failed to dispatch card ${card.id}:`, err);
+        logger.error(`[orchestrator] Failed to dispatch card ${card.id}: ${err instanceof Error ? err.message : 'Unknown error'}`);
         // Roll back: remove from active tasks, set card back to ready
         state.activeTasks.delete(card.id);
         await updateCardStatus(card.id, 'ready').catch(() => {});
@@ -302,7 +303,7 @@ async function spawnKanbanAgent(cardId: string): Promise<void> {
   const scriptPath = path.join(SCRIPTS_DIR, 'run-kanban-agent.py');
 
   if (!fs.existsSync(scriptPath)) {
-    console.error(`[orchestrator] Kanban agent runner script not found: ${scriptPath}`);
+    logger.error(`[orchestrator] Kanban agent runner script not found: ${scriptPath}`);
     return;
   }
 
@@ -330,20 +331,20 @@ async function spawnKanbanAgent(cardId: string): Promise<void> {
   child.on('close', (code: number | null) => {
     const exitCode = code ?? -1;
     if (exitCode !== 0) {
-      console.error(`[orchestrator] Kanban agent for card ${cardId.slice(0, 12)}... exited with code ${exitCode}`);
-      if (stderr) console.error(`[orchestrator] stderr: ${stderr.slice(0, 500)}`);
+      logger.error(`[orchestrator] Kanban agent for card ${cardId.slice(0, 12)}... exited with code ${exitCode}`);
+      if (stderr) logger.error(`[orchestrator] stderr: ${stderr.slice(0, 500)}`);
     } else {
-      console.log(`[orchestrator] Kanban agent for card ${cardId.slice(0, 12)}... completed successfully`);
+      logger.info(`[orchestrator] Kanban agent for card ${cardId.slice(0, 12)}... completed successfully`);
     }
     // Log brief stdout summary
     const stdoutLines = stdout.trim().split('\n').filter(l => l.includes('[kanban-runner]'));
     for (const line of stdoutLines) {
-      console.log(line);
+      logger.info(line);
     }
   });
 
   child.on('error', (err: Error) => {
-    console.error(`[orchestrator] Failed to spawn kanban agent: ${err.message}`);
+    logger.error(`[orchestrator] Failed to spawn kanban agent: ${err.message}`);
   });
 }
 
@@ -368,11 +369,11 @@ async function dispatchAsTeam(card: CardRecord): Promise<void> {
     // Dispatch the team
     await teamCoordinator.dispatchTeam(team.id);
 
-    console.log(
+    logger.info(
       `[orchestrator] Team dispatched for card "${card.title}" — ${team.agents.length} agents, ${assigned.length} subtasks`,
     );
   } catch (err) {
-    console.error(`[orchestrator] Team dispatch failed for card ${card.id}, falling back to single agent:`, err);
+    logger.error(`[orchestrator] Team dispatch failed for card ${card.id}, falling back to single agent: ${err instanceof Error ? err.message : 'Unknown error'}`);
     // Graceful degradation: fall back to single-agent
     if (card.id) {
       void spawnKanbanAgent(card.id).catch(() => {});
@@ -390,7 +391,7 @@ export const taskOrchestrator = {
     state.intervalId = setInterval(() => void tick(), state.pollInterval);
     // Fire first tick immediately
     void tick();
-    console.log(`[orchestrator] Started (maxConcurrent=${state.maxConcurrent}, poll=${state.pollInterval}ms)`);
+    logger.info(`[orchestrator] Started (maxConcurrent=${state.maxConcurrent}, poll=${state.pollInterval}ms)`);
   },
 
   stop(): void {
@@ -399,7 +400,7 @@ export const taskOrchestrator = {
       clearInterval(state.intervalId);
       state.intervalId = null;
     }
-    console.log('[orchestrator] Stopped');
+    logger.info('[orchestrator] Stopped');
   },
 
   getStatus(): OrchestratorStatus {
@@ -473,17 +474,17 @@ export const taskOrchestrator = {
       const taskText = `${card.title} ${card.spec ?? ''}`;
       const formation = analyzeTask(taskText, []);
       if (card.teamMode || formation.strategy !== 'single_agent') {
-        console.log(
+        logger.info(
           `[orchestrator] Dispatching card "${card.title}" (${cardId.slice(0, 12)}...) → team dispatch (${formation.strategy})`,
         );
         void dispatchAsTeam(card).catch((err) => {
-          console.error(`[orchestrator] Team dispatch failed for card ${cardId}, reverting:`, err);
+          logger.error(`[orchestrator] Team dispatch failed for card ${cardId}, reverting:`, err);
           state.activeTasks.delete(cardId);
           updateCardStatus(cardId, 'ready').catch(() => {});
         });
       } else {
         // Spawn the background agent process
-        console.log(
+        logger.info(
           `[orchestrator] Dispatching card "${card.title}" (${cardId.slice(0, 12)}...) → background agent`,
         );
         void spawnKanbanAgent(cardId);
@@ -492,7 +493,7 @@ export const taskOrchestrator = {
       return { ok: true };
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error';
-      console.error(`[orchestrator] Failed to dispatch card ${cardId}:`, err);
+      logger.error(`[orchestrator] Failed to dispatch card ${cardId}: ${err instanceof Error ? err.message : 'Unknown error'}`);
       // Roll back
       state.activeTasks.delete(cardId);
       await updateCardStatus(cardId, 'ready');
