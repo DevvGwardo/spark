@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { ChatSidebar } from '@/components/sidebar/ChatSidebar';
 import { ChatPanelContainer } from '@/components/chat/ChatPanelContainer';
 import { CronHistoryChat } from '@/components/chat/CronHistoryChat';
@@ -336,11 +337,11 @@ const headerSecondaryLabel = selectedCronJobId
           }}
         />
       )}
-      {!isSetupComplete && <SetupWizard />}
-      <SettingsModal />
+      {!isSetupComplete && <ErrorBoundary><SetupWizard /></ErrorBoundary>}
+      <ErrorBoundary><SettingsModal /></ErrorBoundary>
       <CommandPalette open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen} />
       <RemoteAccessModal open={remoteAccessOpen} onOpenChange={setRemoteAccessOpen} />
-      <RepoIssueBrowser isOpen={repoBrowserOpen} onClose={() => setRepoBrowserOpen(false)} />
+      <ErrorBoundary><RepoIssueBrowser isOpen={repoBrowserOpen} onClose={() => setRepoBrowserOpen(false)} /></ErrorBoundary>
       {prActiveRepo && (
         <CreatePRModal
           isOpen={prModalOpen}
@@ -650,11 +651,11 @@ const headerSecondaryLabel = selectedCronJobId
                     aria-hidden={activeTab !== 'chat'}
                   >
                     {selectedCronJobId ? (
-                      <CronHistoryChat />
+                      <ErrorBoundary><CronHistoryChat /></ErrorBoundary>
                     ) : selectedSessionId ? (
-                      <SessionHistoryChat />
+                      <ErrorBoundary><SessionHistoryChat /></ErrorBoundary>
                     ) : (
-                      <ChatPanelContainer onOpenPR={handleOpenPRForPanel} />
+                      <ErrorBoundary><ChatPanelContainer onOpenPR={handleOpenPRForPanel} /></ErrorBoundary>
                     )}
                   </div>
                 </div>

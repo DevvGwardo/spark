@@ -1,7 +1,12 @@
 import { AppLayout } from '@/components/layout/AppLayout';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 
 const Index = () => {
-  return <AppLayout />;
+  return (
+    <ErrorBoundary>
+      <AppLayout />
+    </ErrorBoundary>
+  );
 };
 
 export default Index;
