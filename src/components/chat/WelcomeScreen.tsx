@@ -145,7 +145,7 @@ export const WelcomeScreen = React.forwardRef<HTMLDivElement, WelcomeScreenProps
         <h1 className="text-[22px] font-semibold tracking-[-0.02em] text-foreground">
           What do you want to build?
         </h1>
-        <p className="mt-1.5 text-[14px] text-[#6A6A6A]">
+        <p className="mt-1.5 text-[14px] text-muted-foreground">
           Start a conversation or pick a suggestion to get going.
         </p>
 
@@ -258,7 +258,7 @@ export const WelcomeScreen = React.forwardRef<HTMLDivElement, WelcomeScreenProps
                 )}
                 style={{ animationDelay: `${i * 75}ms` }}
               >
-                <span className="shrink-0 text-[#6A6A6A]">{chip.icon}</span>
+                <span className="shrink-0 text-muted-foreground">{chip.icon}</span>
                 <span className="font-normal">{chip.label}</span>
               </button>
             ))}

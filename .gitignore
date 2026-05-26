@@ -40,6 +40,9 @@ dist-electron/
 
 # Claude / agent workflow artifacts (internal to dev workflow)
 .claude/audit-reports/
+
+# Dev artifacts
+my-passwd-symlink
 .claude/scheduled_tasks.lock
 .codex_task*
 .codex_session*

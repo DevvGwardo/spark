@@ -104,8 +104,8 @@
     --text-secondary: 0 0% 75%;
     --text-tertiary: 0 0% 60%;
     --text-muted: 0 0% 40%;
-    --text-dim: 0 0% 33%;
-    --text-faint: 0 0% 27%;
+    --text-dim: 0 0% 40%;
+    --text-faint: 0 0% 45%;
     --frame-bg: 0 0% 6.7%;
 
     /* V4 Repo Issue Browser tokens */
