@@ -20,6 +20,7 @@ import { registerTeamRoutes } from './routes/team';
 import { registerTranscribeRoute } from './routes/transcribe';
 import { registerRoomRoutes } from './routes/rooms';
 import { sendJson, csrfProtection } from './lib/helpers';
+import { logger, requestIdMiddleware } from './lib/logger';
 import { MAX_BODY_SIZE } from './config';
 import { workspaceIndex } from './workspace-indexer';
 
@@ -93,6 +94,7 @@ export function createApp(opts?: { serveFrontend?: boolean }) {
   app.set('trust proxy', 1);
   app.use(helmet({ contentSecurityPolicy: false }));
   app.use(cors());
+  app.use(requestIdMiddleware);
   app.use(csrfProtection);
   app.use(express.json({ limit: MAX_BODY_SIZE }));
 
@@ -100,10 +102,10 @@ export function createApp(opts?: { serveFrontend?: boolean }) {
   const distPath = join(PROJECT_ROOT, 'dist');
   if (opts?.serveFrontend) {
     if (existsSync(distPath)) {
-      console.log(`[server] Serving frontend from ${distPath}`);
+      logger.info(`[server] Serving frontend from ${distPath}`);
       app.use(express.static(distPath));
     } else {
-      console.warn(`[server] dist/ not found at ${distPath} — frontend not available`);
+      logger.warn(`[server] dist/ not found at ${distPath} — frontend not available`);
     }
   }
 
@@ -318,7 +320,7 @@ export function createApp(opts?: { serveFrontend?: boolean }) {
 
   // ─── 404 catch-all (debug unmatched routes) ─────────────────────────────────
   app.use((req, res) => {
-    console.warn(`[server] 404 Not Found: ${req.method} ${req.originalUrl}`);
+    logger.warn(`[server] 404 Not Found: ${req.method} ${req.originalUrl}`);
     sendJson(res, 404, { error: `Route not found: ${req.method} ${req.originalUrl}` });
   });
 
@@ -331,7 +333,7 @@ export function startServer(port?: number) {
   const resolvedPort = Number(port || process.env.PORT || 3001);
 
   if (!Number.isInteger(resolvedPort) || resolvedPort < 1 || resolvedPort > 65535) {
-    console.error(`[server] Invalid port: ${resolvedPort}. Must be an integer between 1 and 65535.`);
+    logger.error(`[server] Invalid port: ${resolvedPort}. Must be an integer between 1 and 65535.`);
     process.exit(1);
   }
 
@@ -339,13 +341,13 @@ export function startServer(port?: number) {
   const app = createApp({ serveFrontend });
   return new Promise<{ app: typeof app; port: number }>((resolve, reject) => {
     const server = app.listen(resolvedPort, async () => {
-      console.log(`Local API server running on http://localhost:${resolvedPort}`);
-      console.log('Routes:');
-      console.log('  POST /functions/v1/chat');
-      console.log('  POST /functions/v1/github-integration');
-      console.log('  POST /functions/v1/github-analyzer');
-      console.log('  POST /functions/v1/validate-key');
-      console.log('  POST /functions/v1/chat-proxy');
+      logger.info(`Local API server running on http://localhost:${resolvedPort}`);
+      logger.info('Routes:');
+      logger.info('  POST /functions/v1/chat');
+      logger.info('  POST /functions/v1/github-integration');
+      logger.info('  POST /functions/v1/github-analyzer');
+      logger.info('  POST /functions/v1/validate-key');
+      logger.info('  POST /functions/v1/chat-proxy');
 
       // ─── Terminal QR code for mobile access ─────────────────────────────
       if (serveFrontend) {
@@ -353,37 +355,37 @@ export function startServer(port?: number) {
         const { lanUrl, localUrl } = formatConnectionInfo(ip, resolvedPort);
         const _url = ip ? lanUrl : localUrl;
 
-        console.log('');
-        console.log('━━━ 📱 Mobile Access ━━━');
-        console.log('');
-        console.log(`  Local:  ${localUrl}`);
+        logger.info('');
+        logger.info('━━━ 📱 Mobile Access ━━━');
+        logger.info('');
+        logger.info(`  Local:  ${localUrl}`);
         if (ip) {
-          console.log(`  LAN:    ${lanUrl}`);
-          console.log(`  QR:     ${lanUrl}/remote`);
-          console.log('');
+          logger.info(`  LAN:    ${lanUrl}`);
+          logger.info(`  QR:     ${lanUrl}/remote`);
+          logger.info('');
           try {
             const qr = await generateTerminalQr(lanUrl);
-            console.log(qr);
+            logger.info(qr);
           } catch {
-            console.log('  [QR generation skipped]');
+            logger.info('  [QR generation skipped]');
           }
-          console.log('');
-          console.log('  Open /remote on this server from any browser to see the QR page.');
-          console.log('  Or scan the code above with your phone camera.');
+          logger.info('');
+          logger.info('  Open /remote on this server from any browser to see the QR page.');
+          logger.info('  Or scan the code above with your phone camera.');
         } else {
-          console.log('  (No LAN IP detected — connect to Wi-Fi for mobile access)');
+          logger.info('  (No LAN IP detected — connect to Wi-Fi for mobile access)');
         }
-        console.log('━━━━━━━━━━━━━━━━━━━━━');
-        console.log('');
+        logger.info('━━━━━━━━━━━━━━━━━━━━━');
+        logger.info('');
       }
       resolve({ app, port: resolvedPort });
     });
 
     server.on('error', (err: NodeJS.ErrnoException) => {
       if (err.code === 'EADDRINUSE') {
-        console.error(`[server] Port ${resolvedPort} is already in use.`);
+        logger.error(`[server] Port ${resolvedPort} is already in use.`);
       } else {
-        console.error(`[server] Failed to start: ${err.message}`);
+        logger.error(`[server] Failed to start: ${err.message}`);
       }
       reject(err);
     });

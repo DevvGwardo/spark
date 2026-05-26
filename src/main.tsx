@@ -4,6 +4,7 @@ import '@fontsource/geist-sans/400.css';
 import '@fontsource/geist-sans/500.css';
 import '@fontsource/geist-sans/600.css';
 import '@fontsource/geist-sans/700.css';
+// @ts-expect-error - no type declarations for variable font CSS import
 import '@fontsource-variable/geist-mono';
 import '@shoelace-style/shoelace/dist/themes/dark.css';
 import App from './App.tsx';
