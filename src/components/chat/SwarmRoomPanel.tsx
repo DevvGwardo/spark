@@ -219,7 +219,6 @@ export const SwarmRoomPanel: React.FC<SwarmRoomPanelProps> = ({ roomId, onBack, 
   const isUser = (msg: RoomMessage) => msg.role === 'user' || msg.senderProfile === 'user';
 
   // ── Check if there are any members to trigger ──
-  const willTriggerAnyone = members.length === 0 || mentionedNames.length === 0 || mentionedMembers.length > 0;
 
   return (
     <div className="flex h-full flex-col bg-transparent">

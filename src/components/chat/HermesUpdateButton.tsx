@@ -80,7 +80,7 @@ export const HermesUpdateButton: React.FC = () => {
     <div className="flex items-center gap-1.5">
       <button
         onClick={handleUpdate}
-        disabled={updating || !status.updateAvailable || isBlocked}
+        disabled={updating || !status.updateAvailable || !!isBlocked}
         className={cn(
           'inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors',
           isBlocked
@@ -93,7 +93,7 @@ export const HermesUpdateButton: React.FC = () => {
         )}
         title={
           isBlocked
-            ? status.blockedReason
+            ? (status.blockedReason ?? undefined)
             : updating
               ? 'Updating Hermes...'
               : hasUpdate

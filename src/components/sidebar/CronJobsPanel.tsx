@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import {
   Plus, X, Pause, Play, PlayCircle, Trash2, Clock, AlertCircle, CheckCircle2,
   XCircle, Loader2, Zap, GitPullRequest, Shield, Activity, FileSearch,
@@ -531,7 +531,7 @@ export function CronJobsPanel({ conversationId = null, conversationTitle = null 
   const [prompt, setPrompt] = useState('');
   const [creating, setCreating] = useState(false);
   const [launchingTemplateId, setLaunchingTemplateId] = useState<string | null>(null);
-  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [_selectedJobId, _setSelectedJobId] = useState<string | null>(null);
   const [showAllJobs, setShowAllJobs] = useState(false);
 
   const scheduleHuman = useMemo(() => schedule ? cronToHuman(schedule) : null, [schedule]);
@@ -794,7 +794,7 @@ export function CronJobsPanel({ conversationId = null, conversationTitle = null 
                 <CronJobRow
                   key={job.id}
                   job={job}
-                  expanded={selectedJobId === job.id}
+                  expanded={_selectedJobId === job.id}
                   highlightConversation={!!conversationId && job.conversation_id === conversationId}
                   onToggle={() => useUIStore.getState().setSelectedCronJobId(job.id)}
                 />

@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Users, Loader2, Play, Pause, ArrowRight, CheckCircle2,
-  Circle, AlertCircle, Clock, GitBranch, ChevronRight,
+  Circle, AlertCircle, GitBranch, ChevronRight,
   ChevronDown, RefreshCw,
 } from 'lucide-react';
 import { useTeamStore, type Team, type TeamAgent, type Subtask } from '@/stores/team-store';

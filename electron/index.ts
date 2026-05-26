@@ -266,7 +266,7 @@ async function createWindow() {
       return
     }
     // Also skip for any non-main-window webContents (safety net)
-    if (details.webContentsId !== mainWindow.webContents.id) {
+    if (!mainWindow || details.webContentsId !== mainWindow.webContents.id) {
       callback({ responseHeaders: details.responseHeaders })
       return
     }
@@ -361,7 +361,7 @@ function applyAppIcon() {
     }
 
     if (process.platform === 'darwin') {
-      app.dock.setIcon(icon)
+      app.dock?.setIcon(icon)
     }
   } catch (error) {
     console.warn('Failed to apply app icon:', error)
@@ -373,7 +373,7 @@ function clearAttentionRequest() {
     return
   }
 
-  app.dock.cancelBounce(dockBounceId)
+  app.dock?.cancelBounce(dockBounceId)
   dockBounceId = null
 }
 
@@ -408,7 +408,7 @@ function notifyAttentionRequest(payload: AttentionRequestPayload = {}) {
   const body = payload.body?.trim() || 'A conversation is waiting for your confirmation.'
 
   if (process.platform === 'darwin' && dockBounceId === null) {
-    dockBounceId = app.dock.bounce('informational')
+    dockBounceId = app.dock?.bounce('informational') ?? null
   }
 
   if (!Notification.isSupported()) {
@@ -685,7 +685,7 @@ function setupDockMenu() {
     const dockMenu = Menu.buildFromTemplate([
       { label: 'New Chat', click: () => mainWindow?.webContents.send('new-chat') }
     ])
-    app.dock.setMenu(dockMenu)
+    app.dock?.setMenu(dockMenu)
   }
 }
 

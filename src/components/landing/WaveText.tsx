@@ -11,33 +11,6 @@ interface WaveTextProps {
   charDuration?: number;
 }
 
-const container: Variants = {
-  hidden: {},
-  visible: {
-    transition: {
-      staggerChildren: 0.025,
-      delayChildren: 0.4,
-    },
-  },
-};
-
-const glyph: Variants = {
-  hidden: {
-    opacity: 0,
-    y: 40,
-    rotateX: -40,
-  },
-  visible: {
-    opacity: 1,
-    y: 0,
-    rotateX: 0,
-    transition: {
-      duration: 0.5,
-      ease: [0.25, 0.1, 0.25, 1],
-    },
-  },
-};
-
 export function WaveText({
   text,
   className,

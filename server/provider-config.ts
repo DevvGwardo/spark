@@ -61,7 +61,7 @@ const streamingFetch: typeof globalThis.fetch = (input, init) =>
   fetch(input, {
     ...init,
     dispatcher: streamingDispatcher,
-  });
+  } as any);
 
 function shouldSanitizeCompatibleStream(provider: string): boolean {
   return provider === 'minimax' || provider === 'minimax-payg';
@@ -318,7 +318,7 @@ export function resolveHermesExecutionMode(_options?: {
 
 export function resolveRuntimeProvider(
   provider: string,
-  options?: { activeRepo?: unknown }
+  _options?: { activeRepo?: unknown }
 ): string {
   return provider;
 }

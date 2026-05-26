@@ -215,7 +215,7 @@ export async function startPreview(
     }
 
     // Install dependencies
-    const hasPackageLock = existsSync(join(dir, 'package-lock.json'));
+    const _hasPackageLock = existsSync(join(dir, 'package-lock.json'));
     const hasYarnLock = existsSync(join(dir, 'yarn.lock'));
     const hasPnpmLock = existsSync(join(dir, 'pnpm-lock.yaml'));
     const hasBunLock = existsSync(join(dir, 'bun.lockb')) || existsSync(join(dir, 'bun.lock'));

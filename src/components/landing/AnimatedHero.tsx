@@ -11,13 +11,6 @@ const gridLines: Variants = {
   },
 };
 
-const stagger: Variants = {
-  hidden: {},
-  visible: {
-    transition: { staggerChildren: 0.15, delayChildren: 0.2 },
-  },
-};
-
 const fadeUp: Variants = {
   hidden: { opacity: 0, y: 40 },
   visible: {
@@ -32,7 +25,7 @@ interface AnimatedHeroProps {
   isExiting: boolean;
 }
 
-export function AnimatedHero({ onStart, isExiting }: AnimatedHeroProps) {
+export function AnimatedHero({ onStart, isExiting: _isExiting }: AnimatedHeroProps) {
   const [scrollHintVisible, setScrollHintVisible] = useState(true);
 
   useEffect(() => {

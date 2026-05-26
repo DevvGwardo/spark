@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useMemo, useRef } from 'react';
-import { Loader2, Play, Plus, Trash2, Columns3, Square, Clock, ExternalLink } from 'lucide-react';
+import { useEffect, useState, useMemo, useRef } from 'react';
+import { Loader2, Play, Plus, Trash2, Columns3, Square, ExternalLink } from 'lucide-react';
 import { useKanbanStore, type KanbanLane } from '@/stores/kanban-store';
 import { useTaskOrchestratorStore } from '@/stores/task-orchestrator-store';
 import { getApiBaseUrl } from '@/lib/api';
@@ -26,7 +26,7 @@ function elapsed(ms: number): string {
 }
 
 function ElapsedTimer({ startedAt }: { startedAt: number }) {
-  const [now, setNow] = useState(Date.now());
+  const [_now, setNow] = useState(Date.now());
   const idRef = useRef<ReturnType<typeof setInterval>>();
   useEffect(() => {
     idRef.current = setInterval(() => setNow(Date.now()), 1000);

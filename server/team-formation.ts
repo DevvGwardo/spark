@@ -56,7 +56,7 @@ const PIPELINE_PHASE_SETS = [
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 function tokenize(task: string): string[] {
-  return task.toLowerCase().split(/[\s,;:.!?()\[\]{}"'`|\\/]+/).filter(Boolean);
+  return task.toLowerCase().split(/[\s,;:.!?(){}"'`|\\/]+/).filter(Boolean);
 }
 
 /**
@@ -84,7 +84,7 @@ function matchAnyKeyword(tokens: string[], keywords: string[]): boolean {
   return keywords.some((k) => tokens.some((t) => tokenMatch(t, k)));
 }
 
-function countDomainKeywords(tokens: string[], domains: string[][]): number {
+function _countDomainKeywords(tokens: string[], domains: string[][]): number {
   return domains.reduce((count, domain) => {
     return matchAnyKeyword(tokens, domain) ? count + 1 : count;
   }, 0);
@@ -95,7 +95,7 @@ function countDomainKeywords(tokens: string[], domains: string[][]): number {
  * Tokenizes each tag and uses exact tokenMatch for consistency with
  * task-side domain detection.
  */
-function inferAgentDomains(agent: AgentInfo): Set<string> {
+function _inferAgentDomains(agent: AgentInfo): Set<string> {
   const domains = new Set<string>();
   for (const tag of agent.expertise.map((e) => e.toLowerCase())) {
     const tokens = tokenize(tag);

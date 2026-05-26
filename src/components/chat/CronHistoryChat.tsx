@@ -1,9 +1,8 @@
-import React, { useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { ArrowLeft, Clock, CheckCircle2, XCircle, Loader2, AlertCircle, RefreshCw, Play } from 'lucide-react';
 import { useCronStore, type CronJob, type CronRun } from '@/stores/cron-store';
 import { useUIStore } from '@/stores/ui-store';
 import { cn } from '@/lib/utils';
-import { relativeTime } from '@/lib/relative-time';
 import { parseToolCalls, type Segment } from '@/lib/tool-call-parser';
 import { ToolCallAccordion } from './ToolCallAccordion';
 

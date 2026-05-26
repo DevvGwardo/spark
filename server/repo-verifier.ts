@@ -6,7 +6,6 @@ import { dirname, join } from 'path';
 import { generateObject, generateText } from 'ai';
 import { z } from 'zod';
 import { createProviderModel, resolveReviewCapableProvider, VALIDATION_MODELS } from './provider-config';
-import type { ReviewProviderResolution } from './provider-config';
 
 export interface VerificationFileChange {
   path: string;

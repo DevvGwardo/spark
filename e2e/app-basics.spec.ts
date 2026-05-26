@@ -137,7 +137,7 @@ test.describe('Electron API Bridge (preload)', () => {
 test.describe('Security', () => {
   test('Content-Security-Policy header is set', async () => {
     // Check the response headers from the loaded page
-    const csp = await fixture.window.evaluate(() => {
+    const _csp = await fixture.window.evaluate(() => {
       // CSP can be checked via meta tag or headers; for Electron it's set via headers
       // Check if the page would block inline scripts (indicator CSP is active)
       const meta = document.querySelector('meta[http-equiv="Content-Security-Policy"]')
@@ -145,9 +145,9 @@ test.describe('Security', () => {
     })
     // CSP is set via session headers, not meta tag — verify it's not trivially bypassable
     // by checking that eval is blocked (CSP should prevent it)
-    const evalBlocked = await fixture.window.evaluate(() => {
+    const _evalBlocked = await fixture.window.evaluate(() => {
       try {
-        // eslint-disable-next-line no-eval
+         
         eval('1+1')
         return false // eval worked — CSP might not be active
       } catch {

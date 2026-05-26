@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Plus, X, Loader2 } from 'lucide-react';
 import {
   Dialog,

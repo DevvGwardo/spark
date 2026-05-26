@@ -1,4 +1,4 @@
-import React from 'react';
+
 import { render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatArea } from '@/components/chat/ChatArea';
@@ -62,6 +62,7 @@ vi.mock('@/lib/tokens', () => ({
 }));
 
 vi.mock('react-virtuoso', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const React = require('react');
 
   const Virtuoso = React.forwardRef(

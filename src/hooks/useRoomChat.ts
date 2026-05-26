@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useRoomStore, type RoomMessage, type RoomMember } from '@/stores/room-store';
+import { useRoomStore, type RoomMessage } from '@/stores/room-store';
 
 interface ChatMessageLike {
   id: string;
@@ -12,7 +12,7 @@ interface ChatMessageLike {
  * Convert a room message to the ChatMessageLike format that ChatArea expects.
  */
 function toChatMessage(msg: RoomMessage): ChatMessageLike {
-  let role = msg.role === 'user' ? 'user' : 'assistant';
+  const role = msg.role === 'user' ? 'user' : 'assistant';
   let content = msg.content;
   if (role === 'assistant' && msg.senderProfile !== 'user') {
     content = `**${msg.senderDisplayName}**: ${content}`;

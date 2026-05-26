@@ -7,7 +7,7 @@ import {
   type ChatBackgroundImageFit,
   type ChatBackgroundType,
 } from '@/lib/chat-backgrounds';
-import { isColorThemeId, type ColorThemeId } from '@/lib/themes';
+import { isColorThemeId } from '@/lib/themes';
 import type { ApprovalPolicy } from '@/lib/approval-policy';
 
 export type Provider =
@@ -354,8 +354,9 @@ export const useSettingsStore = create<SettingsState>()(
           const existing = state?.providers || {};
           state.providers = { ...defaultProviders, ...existing } as Record<Provider, ProviderConfig>;
           for (const key of Object.keys(defaultProviders)) {
-            if (!state.providers[key]) {
-              state.providers[key] = defaultProviders[key as Provider];
+            const p = state.providers as Record<string, ProviderConfig | undefined>;
+            if (!p[key]) {
+              p[key] = defaultProviders[key as Provider];
             }
           }
         }
@@ -371,15 +372,16 @@ export const useSettingsStore = create<SettingsState>()(
         if (version < 6) {
           // Add kimi-coding provider for existing users
           if (!state?.providers?.['kimi-coding']) {
-            state.providers = { ...state.providers, 'kimi-coding': makeDefault('kimi-for-coding') };
+            state.providers = { ...state.providers, 'kimi-coding': makeDefault('kimi-for-coding') } as Record<Provider, ProviderConfig>;
           }
         }
         if (version < 7 && state?.providers) {
           const replaceIfLegacy = (provider: Provider, legacyModels: string[], nextModel: string) => {
-            const currentModel = state.providers?.[provider]?.model;
+            const p = state.providers as Record<string, ProviderConfig | undefined>;
+            const currentModel = p[provider]?.model;
             if (!currentModel || legacyModels.includes(currentModel)) {
-              state.providers[provider] = {
-                ...state.providers[provider],
+              (state.providers as Record<string, ProviderConfig>)[provider] = {
+                ...(state.providers as Record<string, ProviderConfig>)[provider],
                 model: nextModel,
               };
             }
@@ -423,23 +425,23 @@ export const useSettingsStore = create<SettingsState>()(
           }
         }
         if (version < 11) {
-          if (!state?.providers?.hermes) {
-            state.providers = { ...state.providers, hermes: makeDefault(HERMES_DEFAULT_MODEL) };
+          if (!(state.providers as Record<string, ProviderConfig | undefined>)?.hermes) {
+            state.providers = { ...state.providers, hermes: makeDefault(HERMES_DEFAULT_MODEL) } as Record<Provider, ProviderConfig>;
           }
         }
         if (version < 12) {
           state.availableModels = state.availableModels || {};
         }
         if (version < 14) {
-          const currentHermesModel = state?.providers?.hermes?.model;
+          const currentHermesModel = (state.providers as Record<string, ProviderConfig | undefined>)?.hermes?.model;
           if (!currentHermesModel || LEGACY_HERMES_MODELS.has(currentHermesModel)) {
             state.providers = {
               ...state.providers,
               hermes: {
-                ...(state.providers?.hermes ?? makeDefault(HERMES_DEFAULT_MODEL)),
+                ...((state.providers as Record<string, ProviderConfig | undefined>)?.hermes ?? makeDefault(HERMES_DEFAULT_MODEL)),
                 model: HERMES_DEFAULT_MODEL,
               },
-            };
+            } as Record<Provider, ProviderConfig>;
           }
         }
         if (version < 15 && state.availableModels) {

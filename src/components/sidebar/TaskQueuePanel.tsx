@@ -57,7 +57,7 @@ const STATUS_CONFIG: Record<string, { icon: React.ReactNode; dot: string; label:
 };
 
 function ElapsedTimer({ startedAt }: { startedAt: number }) {
-  const [now, setNow] = useState(Date.now());
+  const [_now, setNow] = useState(Date.now());
   const idRef = useRef<ReturnType<typeof setInterval>>();
   useEffect(() => {
     idRef.current = setInterval(() => setNow(Date.now()), 1000);
@@ -158,10 +158,9 @@ function TaskItem({ task }: { task: QueuedTask }) {
 
 // ─── Section Component ─────────────────────────────────────────────────────
 
-function TaskSection({ title, tasks, emptyMsg, color }: {
+function TaskSection({ title, tasks, color }: {
   title: string;
   tasks: QueuedTask[];
-  emptyMsg: string;
   color: string;
 }) {
   if (tasks.length === 0) return null;
@@ -195,10 +194,9 @@ export function TaskQueuePanel() {
     startOrchestrator,
     stopOrchestrator,
     dispatchNow,
-    cancelTask,
   } = useTaskOrchestratorStore();
 
-  const [cancelling, setCancelling] = useState<string | null>(null);
+  const [_cancelling, _setCancelling] = useState<string | null>(null);
   const [queueState, setQueueState] = useState<QueueState | null>(null);
   const [queueLoading, setQueueLoading] = useState(false);
 
@@ -225,12 +223,6 @@ export function TaskQueuePanel() {
     return () => clearInterval(id);
   }, [refresh]);
 
-  const handleCancel = useCallback(async (cardId: string) => {
-    setCancelling(cardId);
-    await cancelTask(cardId);
-    setCancelling(null);
-  }, [cancelTask]);
-
   // Determine what to render from queue API or fall back to basic orchestrator state
   const queuedItems = queueState?.queued ?? [];
   const runningItems = queueState?.running ?? (activeTasks.map(t => ({
@@ -243,7 +235,6 @@ export function TaskQueuePanel() {
     startedAt: t.startedAt,
   })));
   const completedItems = queueState?.completed ?? [];
-  const hasQueueData = queueState !== null;
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -307,7 +298,6 @@ export function TaskQueuePanel() {
         <TaskSection
           title="Queued"
           tasks={queuedItems}
-          emptyMsg="No cards waiting"
           color="text-blue-400/70"
         />
 
@@ -315,7 +305,6 @@ export function TaskQueuePanel() {
         <TaskSection
           title="Running"
           tasks={runningItems}
-          emptyMsg="No active tasks"
           color="text-amber-400/70"
         />
 
@@ -323,7 +312,6 @@ export function TaskQueuePanel() {
         <TaskSection
           title="Completed"
           tasks={completedItems}
-          emptyMsg="No completed tasks"
           color="text-emerald-400/70"
         />
 

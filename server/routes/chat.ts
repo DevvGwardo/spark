@@ -1,13 +1,12 @@
 import type { Express } from 'express';
 import { existsSync } from 'fs';
 import { join, isAbsolute } from 'path';
-import { StreamData, streamText, tool, type CoreMessage, type DataStreamWriter, type JSONValue } from 'ai';
+import { StreamData, streamText, tool, type CoreMessage, type JSONValue } from 'ai';
 import { z } from 'zod';
 import { buildServerRepoTools, type ServerToolEvent } from '../agent-loop';
 import {
   createProviderModel,
   getReasoningProviderOptions,
-  OPENAI_COMPATIBLE,
   resolveHermesExecutionMode,
   resolveRuntimeProvider,
   usesFirstPartyProviderSdk,
@@ -613,7 +612,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
 
     // STEP 3: Filter mutating tools when plan mode is active
     if (planMode && Object.keys(localTools).length > 0) {
-      const { write_file, execute_python, run_command, ...readOnlyTools } = localTools;
+      const { ...readOnlyTools } = localTools;
       localTools = readOnlyTools as typeof localTools;
     }
 

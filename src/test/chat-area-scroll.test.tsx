@@ -1,4 +1,4 @@
-import React from 'react';
+
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatArea } from '@/components/chat/ChatArea';
@@ -76,6 +76,7 @@ let capturedAtBottomChange: ((atBottom: boolean) => void) | null = null;
 let capturedScrollToIndex: ((...args: unknown[]) => void) | null = null;
 
 vi.mock('react-virtuoso', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const React = require('react');
 
   const Virtuoso = React.forwardRef(
@@ -83,7 +84,7 @@ vi.mock('react-virtuoso', () => {
       {
         data,
         itemContent,
-        followOutput,
+        followOutput: _followOutput,
         atBottomStateChange,
         className,
         components,

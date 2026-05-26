@@ -1,10 +1,9 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { ArrowLeft, Loader2, AlertCircle, RefreshCw, MessageSquare } from 'lucide-react';
 import { useUIStore } from '@/stores/ui-store';
 import { useSessionsStore } from '@/stores/sessions-store';
 import { getSession, type HermesSessionDetail, type HermesSessionMessage } from '@/lib/hermes-api';
 import { cn } from '@/lib/utils';
-import { relativeTime } from '@/lib/relative-time';
 import { parseToolCalls } from '@/lib/tool-call-parser';
 import { ToolCallAccordion } from './ToolCallAccordion';
 import { ToolMessageAccordion } from './ToolMessageAccordion';

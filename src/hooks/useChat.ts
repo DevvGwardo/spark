@@ -45,14 +45,12 @@ import {
   CONVERSATION_TITLE_MAX_LENGTH,
   REPO_EDIT_TOOL_NAMES,
   REPO_MODE_DISABLED_HERMES_TOOLSETS,
-  REPO_PATH_SAMPLE_LIMIT,
   allowPseudoRepoWritesForAssistantMessage,
   collectRepoWorkflowToolNames,
   describedEditButDidNotExecute,
   formatMissingRepoFileError,
   formatRepoTreeUnavailableError,
   getPendingProposalKey,
-  getRepoPathSuggestions,
   getRepoToolExistingPaths,
   getServerToolEventKey,
   hasRecoverablePseudoRepoWrites,
@@ -66,7 +64,6 @@ import {
   sanitizePartialToolCalls,
   synthesizeToolInvocationsForPersistence,
   stalledOnRepoRead,
-  summarizeContentForLog,
   toStoredAIMessages,
   upsertStoredMessage,
   type AgentStatusEvent,
@@ -441,7 +438,7 @@ export function useChat(
   const preview = usePreviewStore(useShallow((s) => s.getPreview(scopeId)));
   const pendingPanelPrompt = useUIStore((s) => s.pendingPanelPrompts[panelId] ?? null);
   const clearPanelPrompt = useUIStore((s) => s.clearPanelPrompt);
-  const { activeRepo, isRepoMode, repoFileTree } = changeset;
+  const { activeRepo, isRepoMode } = changeset;
   const hermesToolsetConfig = useHermesStore((s) => s.toolsets);
   const hermesMcpServers = useHermesStore((s) => s.mcpServers);
   const hermesSwarmEnabled = useHermesStore((s) => s.swarm.enabled);
@@ -749,7 +746,7 @@ When the user asks you to make changes:
     await loadConversations();
   }, [loadConversations]);
 
-  const chatStreamFetch = useCallback(async (url: string, init?: RequestInit) => {
+  const chatStreamFetch = useCallback(async (url: URL | RequestInfo, init?: RequestInit) => {
     // Cancel any previous streaming request
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -1318,7 +1315,7 @@ When the user asks you to make changes:
 
       const finishReason = options?.finishReason;
       const repoWorkflowNames = collectRepoWorkflowToolNames(
-        finishedMessage as {
+        finishedMessage! as {
           content?: string;
           parts?: Array<{ type?: string; text?: string; toolInvocation?: { toolName?: string } }>;
           toolInvocations?: Array<{ toolName?: string }>;
@@ -1330,7 +1327,7 @@ When the user asks you to make changes:
         messagesRef.current.findLast((entry) => entry.role === 'user')?.content ?? '',
       );
       const approvedPlanMentioned = /\b(?:approved|accepted)\s+plan\b/i.test(
-        typeof finishedMessage.content === 'string' ? finishedMessage.content : '',
+        typeof finishedMessage!.content === 'string' ? finishedMessage!.content : '',
       );
       const inferredApprovedContinuation =
         pendingProposalRef.current !== null &&
@@ -1349,9 +1346,9 @@ When the user asks you to make changes:
       }
       // Detect partial/incomplete tool calls left by a dropped stream (common
       // with Minimax and other providers that may terminate mid-tool-call).
-      const hasPartialToolCalls = (finishedMessage.parts as Array<{ type?: string; toolInvocation?: { state?: string } }> | undefined)?.some(
+      const hasPartialToolCalls = (finishedMessage!.parts as Array<{ type?: string; toolInvocation?: { state?: string } }> | undefined)?.some(
         (p) => p.type === 'tool-invocation' && (p.toolInvocation?.state === 'partial-call' || p.toolInvocation?.state === 'call'),
-      ) || (finishedMessage.toolInvocations as Array<{ state?: string }> | undefined)?.some(
+      ) || (finishedMessage!.toolInvocations as Array<{ state?: string }> | undefined)?.some(
         (inv) => inv.state === 'partial-call' || inv.state === 'call',
       );
 
@@ -2464,7 +2461,6 @@ When the user asks you to make changes:
     userStoppedRef.current = false;
 
     let convId = conversationId ?? pendingConversationIdRef.current;
-    let createdConversationId: string | null = null;
 
     // Create conversation if needed
     if (!convId) {
@@ -2475,7 +2471,7 @@ When the user asks you to make changes:
       setSessionLock(`draft-${draftEpochRef.current}:${panelId}`);
       try {
         convId = await createConversation(effectiveProvider, effectiveModel, defaultSystemPrompt);
-        createdConversationId = convId;
+        pendingConversationIdRef.current = convId;
         pendingConversationIdRef.current = convId;
         convIdRef.current = convId;
         requestConversationIdRef.current = convId;

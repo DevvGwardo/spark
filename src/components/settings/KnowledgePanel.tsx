@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Plus, Trash2, FileText, StickyNote, Upload, X } from 'lucide-react';
+import { Trash2, FileText, StickyNote, Upload, X } from 'lucide-react';
 import { useKnowledgeStore, type KnowledgeEntry } from '@/stores/knowledge-store';
 import { cn } from '@/lib/utils';
 

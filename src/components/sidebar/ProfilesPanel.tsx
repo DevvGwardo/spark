@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Trash2, Loader2, Braces, ArrowLeft, Eye, EyeOff, FileEdit, FileCode, ExternalLink, CheckCircle, XCircle } from 'lucide-react';
+import { Plus, Trash2, Loader2, Braces, ArrowLeft, Eye, EyeOff, FileEdit, FileCode, CheckCircle, XCircle } from 'lucide-react';
 import { useProfilesStore, type Profile, type ProfileDetail } from '@/stores/profiles-store';
 import { cn } from '@/lib/utils';
 
@@ -26,9 +26,9 @@ export function ProfilesPanel() {
   const [error, setError] = useState<string | null>(null);
   const [viewingDetail, setViewingDetail] = useState<string | null>(null);
   const [showEnvKeys, setShowEnvKeys] = useState(false);
-  const [editConfigOpen, setEditConfigOpen] = useState(false);
-  const [configText, setConfigText] = useState('');
-  const [viewEnvOpen, setViewEnvOpen] = useState(false);
+  const [_editConfigOpen, _setEditConfigOpen] = useState(false);
+  const [_configText, _setConfigText] = useState('');
+  const [_viewEnvOpen, _setViewEnvOpen] = useState(false);
 
   useEffect(() => {
     fetchProfiles();

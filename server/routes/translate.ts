@@ -128,13 +128,14 @@ app.post('/functions/v1/translate', async (req, res) => {
     // ── Anthropic uses its own messages format ────────────────────────────
     if (provider === 'anthropic') {
       const baseUrl = ANTHROPIC_COMPATIBLE.anthropic;
+      const anthropicHeaders: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'anthropic-version': '2023-06-01',
+      };
+      if (api_key) anthropicHeaders['x-api-key'] = api_key;
       const response = await fetch(`${baseUrl}/messages`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': api_key,
-          'anthropic-version': '2023-06-01',
-        },
+        headers: anthropicHeaders,
         body: JSON.stringify({
           model,
           max_tokens: 4096,

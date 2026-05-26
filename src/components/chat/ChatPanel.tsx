@@ -1,5 +1,5 @@
 import React, { useCallback, useRef, useState, useEffect } from 'react';
-import { X, MoreHorizontal, Pin, Pencil, Archive, Copy, PanelRight, GitPullRequest, Users, AlertCircle } from 'lucide-react';
+import { X, MoreHorizontal, Pin, Pencil, Archive, Copy, PanelRight, GitPullRequest, Users } from 'lucide-react';
 import { useShallow } from 'zustand/shallow';
 import { ChatArea } from './ChatArea';
 import { useChat } from '@/hooks/useChat';
@@ -222,7 +222,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const changeCount = getChangeCount(scopeId);
   const stagedCount = getStagedCount(scopeId);
   const { activeRepo, pullRequest } = getChangeset(scopeId);
-  const currentConv = conversations.find((c) => c.id === conversationId);
   const lineTotals = getLineTotals(scopeId);
 
   // Close menu on outside click

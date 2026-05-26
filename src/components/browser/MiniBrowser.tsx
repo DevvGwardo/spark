@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
-import { Globe, ArrowLeft, ArrowRight, X, ExternalLink, PanelRight, Terminal, ChevronRight, Minus, Plus } from 'lucide-react';
+import { Globe, ArrowLeft, ArrowRight, X, ExternalLink, PanelRight, ChevronRight } from 'lucide-react';
 import { useUIStore } from '@/stores/ui-store';
 import { cn } from '@/lib/utils';
 import { Terminal as XTerm } from '@xterm/xterm';
@@ -42,9 +42,7 @@ export const HermesPTYPanel = forwardRef<HermesPTYPanelHandle, { maximized?: boo
     const termRef = useRef<XTerm | null>(null);
     const ptyIdRef = useRef<string | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
-    // Store api in a ref so ResizeObserver and zoom handlers (which run outside the
-    // spawn callback) can call api.resize() to notify the PTY of new dimensions.
-    const apiRef = useRef<typeof window.electronAPI.terminal | null>(null);
+    const apiRef = useRef<any>(null);
     const [fontSize, setFontSize] = useState(DEFAULT_FONT_SIZE);
 
     // Helper: fit xterm and notify PTY of new cols/rows
@@ -174,7 +172,7 @@ export const HermesPTYPanel = forwardRef<HermesPTYPanelHandle, { maximized?: boo
           resizeObserver.disconnect();
           try { term.dispose(); } catch { /* ignore */ }
           if (ptyIdRef.current) {
-            api.kill(ptyIdRef.current);
+            api?.kill(ptyIdRef.current);
             ptyIdRef.current = null;
           }
         };
@@ -186,7 +184,7 @@ export const HermesPTYPanel = forwardRef<HermesPTYPanelHandle, { maximized?: boo
         try { term.dispose(); } catch { /* ignore */ }
         const id = ptyIdRef.current;
         if (id) {
-          window.electronAPI?.terminal.kill(id);
+          window.electronAPI?.terminal?.kill(id);
           ptyIdRef.current = null;
         }
       };
@@ -261,7 +259,6 @@ interface ToolbarProps {
   onUrlInputMouseDown?: (e: React.MouseEvent) => void;
   onUrlInputFocus?: () => void;
   onUrlInputBlur?: () => void;
-  isDocked: boolean;
   miniBrowserDocked: boolean;
 }
 
@@ -269,7 +266,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
   urlInput, onUrlChange, onNavigate, onKeyDown,
   onBack, onForward, onToggleDock, onClose,
   onUrlInputMouseDown, onUrlInputFocus, onUrlInputBlur,
-  isDocked, miniBrowserDocked,
+  miniBrowserDocked,
 }) => (
   <div className="flex items-center gap-1.5 h-9 px-2 bg-[#111] border-b border-border/30 flex-shrink-0">
     <button
@@ -536,7 +533,6 @@ export const DockedMiniBrowser: React.FC = () => {
           onForward={handleForward}
           onToggleDock={handleToggleDock}
           onClose={handleClose}
-          isDocked={true}
           miniBrowserDocked={miniBrowserDocked}
         />
       </div>
@@ -847,7 +843,6 @@ export const MiniBrowser: React.FC = () => {
         onUrlInputMouseDown={(e) => { e.stopPropagation(); hideBrowserView(); }}
         onUrlInputFocus={hideBrowserView}
         onUrlInputBlur={showBrowserView}
-        isDocked={false}
         miniBrowserDocked={miniBrowserDocked}
       />
 

@@ -90,7 +90,7 @@ const RevivalPanel: React.FC = () => {
   }, []);
 
   const pollHermesStatus = useCallback(
-    (tileId: TileId, onSuccess: () => void, onTimeout: () => void) => {
+    (_tileId: TileId, onSuccess: () => void, onTimeout: () => void) => {
       stopPolling();
       const start = Date.now();
 

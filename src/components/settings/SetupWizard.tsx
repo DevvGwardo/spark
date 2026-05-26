@@ -49,7 +49,7 @@ export const SetupWizard: React.FC = () => {
   const [validationError, setValidationError] = useState('');
   const [hermesBridgeStatus, setHermesBridgeStatus] = useState<HermesBridgeStatus | null>(null);
   const [localBridgeSetupStatus, setLocalBridgeSetupStatus] = useState<LocalBridgeSetupStatus | null>(null);
-  const [bridgeDetectionAttempts, setBridgeDetectionAttempts] = useState(0);
+  const [_bridgeDetectionAttempts, setBridgeDetectionAttempts] = useState(0);
   const [showOtherProviders, setShowOtherProviders] = useState(false);
   const [showManualKeyEntry, setShowManualKeyEntry] = useState(false);
   const [installingHermesAgent, setInstallingHermesAgent] = useState(false);
@@ -378,7 +378,7 @@ export const SetupWizard: React.FC = () => {
             return;
           }
           goToStep(2);
-        } catch (error) {
+        } catch (_error) {
           setValidationError('Failed to detect Hermes bridge status.');
         } finally {
           providerContinueLockRef.current = false;

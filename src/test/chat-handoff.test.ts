@@ -10,6 +10,7 @@ import { usePreviewStore } from '@/stores/preview-store';
 import { useHermesStore } from '@/stores/hermes-store';
 import { usePanelStore } from '@/stores/panel-store';
 import { useUIStore } from '@/stores/ui-store';
+import type { ElectronAPI } from '@/electron.d';
 
 const { dbMock, aiChatState } = vi.hoisted(() => ({
   dbMock: {
@@ -69,22 +70,23 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function makeStreamResponse(events: Array<{ type: string; data: unknown }>) {
-  const encoder = new TextEncoder();
-  const payload = events
-    .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`)
-    .join('');
-
-  return new Response(
-    new ReadableStream({
-      start(controller) {
-        controller.enqueue(encoder.encode(payload));
-        controller.close();
-      },
-    }),
-    { status: 200 }
-  );
-}
+// TODO: Re-enable when stream response testing is needed
+// function _makeStreamResponse(events: Array<{ type: string; data: unknown }>) {
+//   const encoder = new TextEncoder();
+//   const payload = events
+//     .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`)
+//     .join('');
+//
+//   return new Response(
+//     new ReadableStream({
+//       start(controller) {
+//         controller.enqueue(encoder.encode(payload));
+//         controller.close();
+//       },
+//     }),
+//     { status: 200 }
+//   );
+// }
 
 describe('new thread handoff', () => {
   beforeEach(() => {
@@ -1725,7 +1727,7 @@ body { color: white; }
 
   it('leaves original local image references intact when snapshot IPC fails', async () => {
     window.electronAPI = {
-      ...window.electronAPI,
+      ...window.electronAPI as ElectronAPI,
       snapshotLocalImage: vi.fn().mockRejectedValue(new Error('missing file')),
     };
 

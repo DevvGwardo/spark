@@ -64,6 +64,7 @@ function execWithTimeout(
 ): Promise<ExecResult> {
   return new Promise<ExecResult>((resolve) => {
     const execOptions = {
+      encoding: 'utf8' as const,
       timeout: options.timeoutMs,
       maxBuffer: 1024 * 1024 * 5,
       ...(options.shell ? { shell: options.shell } : {}),
@@ -93,10 +94,10 @@ function execWithTimeout(
 
     if (args !== null) {
       // Use execFile (no shell) — safer for passing untrusted arguments
-      execFile(command, args, execOptions, callback);
+      (execFile as any)(command, args, execOptions, callback);
     } else {
       // Use exec (with shell) — needed for pipes, redirects, chained commands
-      exec(command, { ...execOptions, shell: options.shell || '/bin/sh' }, callback);
+      (exec as any)(command, { ...execOptions, shell: options.shell || '/bin/sh' }, callback);
     }
   });
 }

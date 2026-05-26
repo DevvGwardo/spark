@@ -30,7 +30,7 @@ describe('Hermes runtimes route', () => {
   })
 
   it('reports host available with version and git sha when the local Hermes install exists', async () => {
-    const execFileAsync = vi.fn(async (file: string, args: string[]) => {
+    const execFileAsync = vi.fn(async (file: string, args: readonly string[]) => {
       if (file.endsWith('/venv/bin/hermes') && args[0] === '--version') {
         return { stdout: 'Hermes Agent v1.2.3\n', stderr: '' }
       }

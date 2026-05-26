@@ -61,7 +61,7 @@ const typeConfig: Record<string, { color: BadgeVariant; icon: typeof Bug; label:
 
 export const GitHubAnalyzer: React.FC = () => {
   const [repoUrl, setRepoUrl] = useState('');
-  const [repoInfo, setRepoInfo] = useState<RepoInfo | null>(null);
+  const [_repoInfo, setRepoInfo] = useState<RepoInfo | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResults, setAnalysisResults] = useState<AnalysisResult[]>([]);
   const [error, setError] = useState('');

@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { AnimatedHero } from '@/components/landing/AnimatedHero';
-import { WaveText } from '@/components/landing/WaveText';
+
 import { FeatureGrid } from '@/components/landing/FeatureGrid';
 import { ScreenshotReveal } from '@/components/landing/ScreenshotReveal';
 import { StartCta } from '@/components/landing/StartCta';

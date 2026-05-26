@@ -10,15 +10,6 @@ vi.mock('@/lib/api', () => ({
   getApiBaseUrl: () => 'http://localhost:3001',
 }));
 
-interface FetchCall {
-  url: string;
-  options?: {
-    method?: string;
-    body?: string;
-    headers?: Record<string, string>;
-  };
-}
-
 function makeActiveTeam(id: string, status: string, taskId?: string) {
   return { id, taskId: taskId || '', agentCount: 2, status, createdAt: Date.now(), };
 }

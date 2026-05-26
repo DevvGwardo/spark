@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Activity, Database, Loader2, Orbit, RefreshCw, Rocket, Sparkles } from 'lucide-react';
 import { fetchHermesWorkspaceOverview, type HermesWorkspaceOverview } from '@/lib/hermes-api';
 import { relativeTime } from '@/lib/relative-time';

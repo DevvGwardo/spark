@@ -88,7 +88,7 @@ const TEAM_TIMEOUT_MS = Number(process.env.TEAM_TIMEOUT_MS) || 1_800_000;
 const teamTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 
 // Cap concurrent agent launches per team to avoid LLM rate limits
-const MAX_CONCURRENT_TEAM_AGENTS = Number(process.env.TEAM_MAX_CONCURRENT_AGENTS) || 2;
+const _MAX_CONCURRENT_TEAM_AGENTS = Number(process.env.TEAM_MAX_CONCURRENT_AGENTS) || 2;
 const MIN_AGENTS_FOR_TEAM = 2;
 
 // ─── Hermes Profile Discovery ──────────────────────────────────────────────
@@ -730,8 +730,8 @@ async function spawnTeamAgent(
 }
 
 /** Clean up all tracked child processes (call on server shutdown). */
-function killActiveChildren(): void {
-  for (const [id, child] of activeChildren) {
+function _killActiveChildren(): void {
+  for (const [_id, child] of activeChildren) {
     try {
       child.kill();
     } catch {
@@ -740,7 +740,7 @@ function killActiveChildren(): void {
   }
   activeChildren.clear();
   // Clear team timeouts
-  for (const [id, timeout] of teamTimeouts) {
+  for (const [_id, timeout] of teamTimeouts) {
     clearTimeout(timeout);
   }
   teamTimeouts.clear();

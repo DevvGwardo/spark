@@ -8,7 +8,6 @@ import Database from 'better-sqlite3';
 import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
-import fs from 'node:fs';
 
 // ─── Paths ──────────────────────────────────────────────────────────────────
 
@@ -42,7 +41,7 @@ function assert(condition: boolean, label: string) {
   }
 }
 
-function normalizeStatus(value: string) {
+function _normalizeStatus(value: string) {
   if (value === 'todo') return 'ready';
   if (value === 'in_progress' || value === 'doing') return 'running';
   return KANBAN_LANES.includes(value) ? value : 'backlog';

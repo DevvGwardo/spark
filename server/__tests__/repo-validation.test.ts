@@ -318,7 +318,8 @@ describe('Server-side repo validation', () => {
       // Should not return 422 — no repo to validate
       expect(response.status).not.toBe(422)
       // Verify no GitHub API call was made
-      const githubCalls = fetchSpy.mock.calls.filter(([input]: [RequestInfo | URL]) => {
+      const githubCalls = fetchSpy.mock.calls.filter((call: unknown[]) => {
+        const input = call[0] as RequestInfo | URL;
         const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as { url: string }).url
         return url.includes('api.github.com/repos/')
       })
@@ -377,7 +378,8 @@ describe('Server-side repo validation', () => {
       const body = await response.json() as { error: string }
       expect(body.error).toContain('GitHub token format is invalid')
       // Verify no GitHub API call was made
-      const githubCalls = fetchSpy.mock.calls.filter(([input]: [RequestInfo | URL]) => {
+      const githubCalls = fetchSpy.mock.calls.filter((call: unknown[]) => {
+        const input = call[0] as RequestInfo | URL;
         const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as { url: string }).url
         return url.includes('api.github.com/repos/')
       })

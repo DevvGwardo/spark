@@ -162,7 +162,7 @@ async function detectCompletions(): Promise<void> {
   const runningIds = new Set(runningCards.map((c) => c.id));
 
   // Find tracked cards that are no longer running (moved by the agent)
-  for (const [cardId, task] of state.activeTasks) {
+  for (const [cardId, _task] of state.activeTasks) {
     if (!runningIds.has(cardId)) {
       // Card was moved out of running by the agent's kanban_update_status call
       state.activeTasks.delete(cardId);

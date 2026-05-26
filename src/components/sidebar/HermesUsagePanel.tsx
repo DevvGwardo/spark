@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { BarChart3, Coins, Loader2, RefreshCw } from 'lucide-react';
 import {
   AreaChart,

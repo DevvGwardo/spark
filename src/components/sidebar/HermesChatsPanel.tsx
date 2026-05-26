@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Trash2, Zap, AlertCircle, Loader2, ChevronRight } from 'lucide-react';
 import { useSessionsStore, type HermesSession } from '@/stores/sessions-store';
 import { useUIStore } from '@/stores/ui-store';

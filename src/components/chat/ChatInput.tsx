@@ -7,11 +7,6 @@ import { useUIStore } from '@/stores/ui-store';
 const SUBTAB_NAV_COMMANDS = new Set([
   'overview', 'cron', 'memories', 'skills', 'usage', 'chats', 'threads', 'queue',
 ]);
-
-// Commands that switch to a main app tab
-const MAINTAB_NAV_COMMANDS = new Set([
-  'github', 'analyzer', 'knowledge',
-]);
 import { useSettingsStore, type Provider } from '@/stores/settings-store';
 import { useShallow } from 'zustand/shallow';
 import { useVoiceInput } from '@/hooks/useVoiceInput';
@@ -67,7 +62,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   disabled,
   disabledPlaceholder,
   messages = [],
-  activeModel,
+  activeModel: _activeModel,
   agentStatusLabel,
   queuedMessages = [],
   onRemoveQueuedMessage,

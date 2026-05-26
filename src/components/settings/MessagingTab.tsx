@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   MessageCircle, Send, Hash, Phone, Mail, Radio, Globe,
-  Check, X, Eye, EyeOff, ExternalLink, AlertCircle, Loader2,
+  Check, Eye, EyeOff, ExternalLink, AlertCircle, Loader2,
   ChevronRight, ChevronDown, Unplug, TestTube2, RefreshCw,
   ShieldCheck, Zap,
 } from 'lucide-react';
@@ -23,7 +23,7 @@ import {
 
 // ─── Platform Icons ─────────────────────────────────────────────────────
 
-const PLATFORM_ICONS: Record<string, React.FC<{ className?: string }>> = {
+const PLATFORM_ICONS: Record<string, React.FC<{ className?: string; style?: React.CSSProperties }>> = {
   telegram: Send,
   discord: Hash,
   slack: MessageCircle,

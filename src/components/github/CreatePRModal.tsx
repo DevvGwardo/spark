@@ -13,7 +13,6 @@ import {
   Italic,
   Link as LinkIcon,
   Loader2,
-  Plus,
   RefreshCw,
   ShieldAlert,
   ShieldCheck,
@@ -261,8 +260,6 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
   const [generateMetadataError, setGenerateMetadataError] = useState<string | null>(null);
 
   const activeProviderConfig = providers[activeProvider];
-  const pullRequestBaseOwner = baseOwner || owner;
-  const pullRequestBaseRepo = baseRepo || repo;
   const filesFingerprint = useMemo(
     () => JSON.stringify(files.map((file) => [file.path, file.action || 'edit', file.content, file.originalContent || ''])),
     [files],

@@ -170,7 +170,7 @@ export const ChatSidebar: React.FC = () => {
   const focusedConvId = focusedPanel?.conversationId;
 
   // Room store
-  const { rooms, fetchRooms, createRoom, addMember, settingsRoomId, closeRoomSettings } = useRoomStore();
+  const { rooms, fetchRooms, settingsRoomId, closeRoomSettings } = useRoomStore();
   const profiles = useProfilesStore((s) => s.profiles);
   const profilesLoading = useProfilesStore((s) => s.loading);
   const fetchProfiles = useProfilesStore((s) => s.fetchProfiles);

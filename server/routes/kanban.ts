@@ -163,7 +163,7 @@ function normalizeStatus(value: unknown): KanbanLane {
     : 'backlog';
 }
 
-function normalizeCriteria(value: unknown): string[] {
+function _normalizeCriteria(value: unknown): string[] {
   if (Array.isArray(value)) {
     return value
       .filter((item): item is string => typeof item === 'string')

@@ -1,12 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { X, Eye, EyeOff, Search, Check, Zap, ChevronDown, ChevronRight, ArrowLeft, ExternalLink, Github, Code2, Network, Info, TerminalSquare, RefreshCw, LayoutGrid, BookOpen, Settings, Plus, Trash2, MessageSquare, ImagePlus, ShieldCheck } from 'lucide-react';
+import { X, Eye, EyeOff, Search, Check, Zap, ChevronDown, ChevronRight, ArrowLeft, ExternalLink, Github, Code2, Network, TerminalSquare, RefreshCw, LayoutGrid, BookOpen, Settings, Plus, Trash2, MessageSquare, ImagePlus, ShieldCheck } from 'lucide-react';
 import { useSettingsStore, type Provider, type Language } from '@/stores/settings-store';
 import { COLOR_THEMES, ACCENT_COLORS } from '@/lib/themes';
 import { ChatSurfaceBackground } from '@/components/chat/ChatSurfaceBackground';
-import { useHermesStore, type HermesToolsets, type MCPServer, type MCPTool } from '@/stores/hermes-store';
-import { useKnowledgeStore } from '@/stores/knowledge-store';
+import { useHermesStore, type MCPTool } from '@/stores/hermes-store';
 import { useUIStore } from '@/stores/ui-store';
-import { PROVIDERS, PROVIDER_ORDER, CATEGORY_LABELS, getVisibleModelOptions, type ProviderCategory } from '@/lib/providers';
+import { PROVIDERS, PROVIDER_ORDER, getVisibleModelOptions } from '@/lib/providers';
 import { validateApiKey, listGitHubRepos, type GitHubRepoSummary } from '@/lib/api';
 import { PROVIDER_KEY_URLS } from '@/components/chat/ApiKeyModal';
 import { cn } from '@/lib/utils';
@@ -997,16 +996,6 @@ export const SettingsModal: React.FC = () => {
       return info.label.toLowerCase().includes(q) || info.description.toLowerCase().includes(q);
     });
   }, [search]);
-
-  const grouped = useMemo(() => {
-    const groups: Partial<Record<ProviderCategory, Provider[]>> = {};
-    for (const p of filteredProviders) {
-      const cat = PROVIDERS[p].category;
-      if (!groups[cat]) groups[cat] = [];
-      groups[cat]!.push(p);
-    }
-    return groups;
-  }, [filteredProviders]);
 
   if (!mounted) return null;
 

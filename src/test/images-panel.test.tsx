@@ -1,4 +1,4 @@
-import React from 'react';
+
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { extractImageUrls } from '@/components/sidebar/ImagesPanel';

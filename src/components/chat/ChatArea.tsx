@@ -46,7 +46,6 @@ import { useChatScopeId, usePanelId } from '@/contexts/PanelContext';
 import {
   getProposalApprovalKey,
   matchApprovalPolicy,
-  type ApprovalPolicy,
 } from '@/lib/approval-policy';
 
 interface ChatPartLike {

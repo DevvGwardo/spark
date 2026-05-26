@@ -146,7 +146,7 @@ export async function publishToMesh(
  */
 export async function queryMeshForTeam(
   teamId: string,
-  query: string,
+  _query: string,
 ): Promise<MeshQueryResult> {
   try {
     if (!(await isMeshAvailable())) {

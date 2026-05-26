@@ -1,12 +1,8 @@
-'use client';
-
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { useUIStore } from '@/stores/ui-store';
 import { useChatStore } from '@/stores/chat-store';
 import { usePanelStore } from '@/stores/panel-store';
 import { parseCommand, findCommand, filterCommands, type CommandContext } from '@/lib/hermes-commands';
-import { cn } from '@/lib/utils';
-import { useShallow } from 'zustand/shallow';
 
 interface OutputEntry {
   id: string;
@@ -15,8 +11,6 @@ interface OutputEntry {
   timestamp: Date;
 }
 
-const TERMINAL_BG = '#0a0a0a';
-const TERMINAL_FG = '#e4e4e7';
 const PROMPT = '> ';
 const MAX_HISTORY = 100;
 
@@ -24,7 +18,7 @@ export const HermesTerminal: React.FC = () => {
   const [input, setInput] = useState('');
   const [history, setHistory] = useState<OutputEntry[]>([]);
   const [commandHistory, setCommandHistory] = useState<string[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [_historyIndex, setHistoryIndex] = useState(-1);
   const [suggestions, setSuggestions] = useState<ReturnType<typeof filterCommands>>([]);
 
   const outputRef = useRef<HTMLDivElement>(null);
@@ -37,7 +31,6 @@ export const HermesTerminal: React.FC = () => {
 
   const createConversation = useChatStore((s) => s.createConversation);
   const renameConversation = useChatStore((s) => s.renameConversation);
-  const conversations = useChatStore((s) => s.conversations);
 
   const setConversationForPanel = usePanelStore((s) => s.setConversationForPanel);
   const openPanel = usePanelStore((s) => s.openPanel);

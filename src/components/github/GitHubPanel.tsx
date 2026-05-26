@@ -47,7 +47,6 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
   const focusedPanelId = usePanelStore((s) => s.focusedPanelId);
   const focusedPanel = panels.find((panel) => panel.id === focusedPanelId);
   const scopeId = getChatScopeId(focusedPanelId, focusedPanel?.conversationId ?? null);
-  const setPreviewOpen = usePreviewStore((s) => s.setOpen);
   const setPreviewView = usePreviewStore((s) => s.setView);
   const {
     getChangeset,
@@ -94,7 +93,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
       } else {
         setRepos(data.repos || []);
       }
-    } catch (err) {
+    } catch (_err) {
       setError('Failed to fetch repositories');
     } finally {
       setLoading(false);

@@ -478,7 +478,7 @@ app.post('/functions/v1/github-integration', async (req, res) => {
         let allRepos: Record<string, unknown>[] = [];
         let url: string | null = 'https://api.github.com/user/repos?sort=updated&per_page=100&affiliation=owner,collaborator,organization_member';
         while (url) {
-          const response = await fetch(url, { headers });
+          const response: Response = await fetch(url, { headers });
           if (!response.ok) {
             const error = await response.text();
             return sendJson(res, response.status, { error: `GitHub API error: ${error}` });
@@ -488,8 +488,8 @@ app.post('/functions/v1/github-integration', async (req, res) => {
             allRepos = allRepos.concat(page);
           }
           // Parse Link header for next page
-          const linkHeader = response.headers.get('Link') || '';
-          const nextMatch = linkHeader.match(/<([^>]+)>;\s*rel="next"/);
+          const linkHeader: string = response.headers.get('Link') || '';
+          const nextMatch: RegExpMatchArray | null = linkHeader.match(/<([^>]+)>;\s*rel="next"/);
           url = nextMatch ? nextMatch[1] : null;
         }
         const normalized = await Promise.all(allRepos.map((repo) => withLocalClone(repo as Parameters<typeof withLocalClone>[0])));

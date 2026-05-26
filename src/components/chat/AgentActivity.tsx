@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Search, Globe, Terminal, Eye, FileText, Code, ChevronDown, ChevronRight, Loader2, Check, AlertCircle, Zap } from 'lucide-react';
+import { Search, Globe, Terminal, Eye, FileText, Code, ChevronDown, ChevronRight, Check, Zap } from 'lucide-react';
 
 export interface ToolActivityEvent {
   tool: string;
@@ -34,7 +34,7 @@ function getToolIcon(toolName: string) {
 }
 
 /** Extract a short label from tool input JSON */
-function extractLabel(tool: string, input: string): string {
+function extractLabel(_tool: string, input: string): string {
   try {
     const parsed = JSON.parse(input.trim());
     if (parsed.path) return parsed.path.split('/').slice(-2).join('/');

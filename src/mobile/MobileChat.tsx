@@ -4,7 +4,6 @@ import { ArrowLeft, Plus, Sparkles } from 'lucide-react';
 import { useChat } from '@/hooks/useChat';
 import { ChatArea } from '@/components/chat/ChatArea';
 import { useChatStore } from '@/stores/chat-store';
-import { cn } from '@/lib/utils';
 
 const MOBILE_PANEL_ID = 'mobile-chat';
 

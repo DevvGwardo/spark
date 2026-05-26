@@ -95,7 +95,7 @@ function main() {
     db
       .prepare('SELECT id FROM tasks')
       .all()
-      .map((row: Record<string, unknown>) => String(row.id)),
+      .map((row: unknown) => String((row as Record<string, unknown>).id)),
   );
 
   // Count existing cards with matching IDs

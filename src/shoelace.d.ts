@@ -1,5 +1,5 @@
 // Type declarations for Shoelace web components used in JSX
-import type { SlDetails, SlCopyButton, SlTooltip } from '@shoelace-style/shoelace';
+import type { SlDetails as _SlDetails, SlCopyButton as _SlCopyButton, SlTooltip as _SlTooltip } from '@shoelace-style/shoelace';
 
 declare global {
   namespace JSX {

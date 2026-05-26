@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { X, Check, Loader2 } from 'lucide-react';
 import { useRoomStore, type Room } from '@/stores/room-store';
-import { useProfilesStore, type Profile } from '@/stores/profiles-store';
+import type { Profile } from '@/stores/profiles-store';
 import { cn } from '@/lib/utils';
 
 const PRESET_COLORS = ['#3b82f6', '#22c55e', '#f97316', '#ef4444', '#a855f7', '#ec4899', '#14b8a6'];

@@ -347,7 +347,7 @@ export function startServer(port?: number) {
       if (serveFrontend) {
         const ip = getLanIp();
         const { lanUrl, localUrl } = formatConnectionInfo(ip, resolvedPort);
-        const url = ip ? lanUrl : localUrl;
+        const _url = ip ? lanUrl : localUrl;
 
         console.log('');
         console.log('━━━ 📱 Mobile Access ━━━');

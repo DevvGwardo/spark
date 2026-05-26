@@ -1,10 +1,8 @@
 import React, { useCallback, useRef } from 'react';
 import { X, PanelRight } from 'lucide-react';
-import { useShallow } from 'zustand/shallow';
 import { usePanelStore } from '@/stores/panel-store';
 import { useChatStore } from '@/stores/chat-store';
 import { ChatPanel } from './ChatPanel';
-import { cn } from '@/lib/utils';
 
 export const DockedChatSidebar: React.FC = () => {
   const dockedPanel = usePanelStore((s) => s.dockedPanel);

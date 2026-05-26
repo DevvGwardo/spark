@@ -91,8 +91,7 @@ export const AppLayout: React.FC = () => {
   const focusedPullRequest = focusedChangeset.pullRequest;
   const changeCount = getChangeCount(focusedScopeId);
   const stagedCount = getStagedCount(focusedScopeId);
-  const focusedConvId = focusedPanel?.conversationId ?? null;
-  const focusedConv = useChatStore((s) => s.conversations.find((c) => c.id === focusedConvId));
+  // focusedConvId removed - unused
   const lineTotals = getLineTotals(focusedScopeId);
 
   // For the PR modal, use the panel that triggered it (or focused panel in single-panel mode)

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { Copy, Check, RotateCcw, Pencil, ChevronDown, Loader2, Wrench, FileCode, FileCode2, FilePlus, FileX, FileSearch, GitPullRequestDraft, CheckCircle2, ArrowRight, GitBranch } from 'lucide-react';
 import { GhostIcon } from './GhostIcon';
 import { MarkdownRenderer } from './MarkdownRenderer';
@@ -65,7 +65,7 @@ function SlDetails({
 interface ToolInvocation {
   toolCallId: string;
   toolName: string;
-  args: Record<string, unknown>;
+  args: Record<string, any>;
   state: 'partial-call' | 'call' | 'result';
   result?: unknown;
   /** Content-stream offset where this tool was emitted (persisted for interleaving). */
@@ -530,12 +530,6 @@ const REPO_WRITE_TOOL_NAMES = new Set([
   'batch_edit_repo_files',
 ]);
 
-const ACTION_BADGE: Record<string, { label: string; className: string; icon: React.ElementType }> = {
-  create: { label: 'Created', className: 'bg-green-500/15 text-green-400 border-green-500/30', icon: FilePlus },
-  edit:   { label: 'Modified', className: 'bg-orange-500/15 text-orange-400 border-orange-500/30', icon: FileCode },
-  delete: { label: 'Deleted', className: 'bg-red-500/15 text-red-400 border-red-500/30', icon: FileX },
-};
-
 function getFileAction(toolName: string, fallback?: string): 'create' | 'edit' | 'delete' | null {
   if (fallback === 'create' || fallback === 'edit' || fallback === 'delete') {
     return fallback;
@@ -671,35 +665,7 @@ function FileChangeMetaBadge({
   );
 }
 
-function StagedFileSummary({ paths }: { paths: string[] }) {
-  const scopeId = useChatScopeId();
-  const changes = useChangesetStore((s) => s.getChangeset(scopeId).changes);
-  const relevantChanges = paths
-    .map((p) => changes[p])
-    .filter(Boolean);
-
-  if (relevantChanges.length === 0) return null;
-
-  return (
-    <div className="mt-2 space-y-1">
-      {relevantChanges.map((change) => {
-        const badge = ACTION_BADGE[change.action] || ACTION_BADGE.edit;
-        const BadgeIcon = badge.icon;
-        return (
-          <div key={change.path} className="flex items-center gap-2 text-xs">
-            <BadgeIcon className="h-3 w-3 shrink-0 text-muted-foreground" />
-            <span className="font-mono text-foreground/70 truncate">{change.path}</span>
-            <span className={cn('ml-auto shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium border', badge.className)}>
-              {badge.label}
-            </span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-/** Collapsible code preview of edited lines for a file change. */
+  /** Collapsible code preview of edited lines for a file change. */
 function FileEditPreview({ filePath }: { filePath: string }) {
   const scopeId = useChatScopeId();
   const change = useChangesetStore((s) => s.getChangeset(scopeId).changes[filePath]);
@@ -870,7 +836,6 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
   const isInProgress = invocation.state === 'call' || invocation.state === 'partial-call';
   const errorMessage = getToolErrorMessage(invocation.result);
   const hasError = !!errorMessage;
-  const isExecTool = invocation.toolName === 'run_command' || invocation.toolName === 'terminal' || invocation.toolName === 'execute_python';
   const outputMessage = getToolOutputMessage(invocation.result);
   const hasOutput = isComplete && !hasError && !!outputMessage && outputMessage !== '(no output)';
   const renderOutputAsMarkdown = !!outputMessage && shouldRenderToolOutputAsMarkdown(outputMessage);
@@ -1104,7 +1069,7 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
                   ? invocation.args.content.length > 3000
                     ? invocation.args.content.slice(0, 3000) + '\n\n[... truncated]'
                     : invocation.args.content
-                  : JSON.stringify(invocation.args.content, null, 2)}
+                  : JSON.stringify(invocation.args.content, null, 2) ?? ''}
               </pre>
             </div>
           )}

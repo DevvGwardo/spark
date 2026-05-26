@@ -1,4 +1,4 @@
-import React from 'react';
+
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatArea } from '@/components/chat/ChatArea';
