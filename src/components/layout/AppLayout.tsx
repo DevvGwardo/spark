@@ -1,13 +1,9 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, Suspense } from 'react';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { ChatSidebar } from '@/components/sidebar/ChatSidebar';
 import { ChatPanelContainer } from '@/components/chat/ChatPanelContainer';
 import { CronHistoryChat } from '@/components/chat/CronHistoryChat';
 import { SessionHistoryChat } from '@/components/chat/SessionHistoryChat';
-import { SettingsModal } from '@/components/settings/SettingsModal';
-import { SetupWizard } from '@/components/settings/SetupWizard';
-import { CreatePRModal } from '@/components/github/CreatePRModal';
-import { RepoIssueBrowser } from '@/components/github/RepoIssueBrowser';
 import { useUIStore } from '@/stores/ui-store';
 import { useShallow } from 'zustand/shallow';
 import { useSettingsStore } from '@/stores/settings-store';
@@ -25,7 +21,6 @@ import { PROVIDERS } from '@/lib/providers';
 import { detectHermesBridge } from '@/lib/detect-hermes';
 import { getChatScopeId } from '@/lib/chat-scope';
 import { PanelLeft, GitPullRequest, MoreHorizontal, Circle, Pin, Pencil, Archive, Copy, PanelRight, Plus, FileCode2, MessageSquare, TerminalSquare, Globe, Sparkles, Smartphone } from 'lucide-react';
-import { TerminalPanel } from '@/components/terminal/TerminalPanel';
 import { MiniBrowser, MiniBrowserToggle, DockedMiniBrowser, HermesPTYPanel, type HermesPTYPanelHandle } from '@/components/browser/MiniBrowser';
 import { DockedChatSidebar } from '@/components/chat/DockedChatSidebar';
 import { SlotNumber } from '@/components/ui/SlotNumber';
@@ -35,6 +30,18 @@ import { BridgeSetupModal } from '@/components/setup/BridgeSetupModal';
 import { CommandPalette } from '@/components/overlay/CommandPalette';
 import { RemoteAccessModal } from '@/components/remote/RemoteAccessModal';
 import { cn } from '@/lib/utils';
+
+const SettingsModal = React.lazy(() => import('@/components/settings/SettingsModal').then(m => ({ default: m.SettingsModal })));
+const SetupWizard = React.lazy(() => import('@/components/settings/SetupWizard').then(m => ({ default: m.SetupWizard })));
+const CreatePRModal = React.lazy(() => import('@/components/github/CreatePRModal').then(m => ({ default: m.CreatePRModal })));
+const RepoIssueBrowser = React.lazy(() => import('@/components/github/RepoIssueBrowser').then(m => ({ default: m.RepoIssueBrowser })));
+const TerminalPanel = React.lazy(() => import('@/components/terminal/TerminalPanel').then(m => ({ default: m.TerminalPanel })));
+
+const LazyFallback = () => (
+  <div className="flex items-center justify-center p-8">
+    <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+  </div>
+);
 
 export const AppLayout: React.FC = () => {
   useTheme();
@@ -337,12 +344,13 @@ const headerSecondaryLabel = selectedCronJobId
           }}
         />
       )}
-      {!isSetupComplete && <ErrorBoundary><SetupWizard /></ErrorBoundary>}
-      <ErrorBoundary><SettingsModal /></ErrorBoundary>
+      {!isSetupComplete && <Suspense fallback={<LazyFallback />}><ErrorBoundary><SetupWizard /></ErrorBoundary></Suspense>}
+      <Suspense fallback={<LazyFallback />}><ErrorBoundary><SettingsModal /></ErrorBoundary></Suspense>
       <CommandPalette open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen} />
       <RemoteAccessModal open={remoteAccessOpen} onOpenChange={setRemoteAccessOpen} />
-      <ErrorBoundary><RepoIssueBrowser isOpen={repoBrowserOpen} onClose={() => setRepoBrowserOpen(false)} /></ErrorBoundary>
+      <Suspense fallback={<LazyFallback />}><ErrorBoundary><RepoIssueBrowser isOpen={repoBrowserOpen} onClose={() => setRepoBrowserOpen(false)} /></ErrorBoundary></Suspense>
       {prActiveRepo && (
+        <Suspense fallback={<LazyFallback />}>
         <CreatePRModal
           isOpen={prModalOpen}
           onClose={() => { setPrModalOpen(false); setPrPanelId(null); setPrModalMode('create'); }}
@@ -356,6 +364,7 @@ const headerSecondaryLabel = selectedCronJobId
           onPullRequestCreated={handlePullRequestCreated}
           onSuccess={handlePrSuccess}
         />
+        </Suspense>
       )}
 
       <div className="h-screen flex flex-col bg-[hsl(var(--frame-bg))] p-0 gap-0">
