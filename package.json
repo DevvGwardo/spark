@@ -8,7 +8,9 @@
   "scripts": {
     "preinstall": "bash ~/.hermes/scripts/supply-chain-guard.sh",
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && tsup server/index.ts --out-dir dist/server --format esm --target node22 --clean --sourcemap",
+    "build:app": "vite build",
+    "build:server": "tsup server/index.ts --out-dir dist/server --format esm --target node22 --clean --sourcemap",
     "analyze": "vite build --mode analyze",
     "build:dev": "vite build --mode development",
     "icons": "bash scripts/generate-icons.sh",
@@ -120,6 +122,7 @@
     "sonner": "^1.7.4",
     "tailwind-merge": "^2.6.0",
     "tailwindcss-animate": "^1.0.7",
+    "tsup": "^8.5.1",
     "typescript": "^6.0.3",
     "undici": "^7.22.0",
     "vaul": "^0.9.9",

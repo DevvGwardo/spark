@@ -3,6 +3,6 @@ builder = "NIXPACKS"
 buildCommand = "npm ci && VITE_API_URL= npm run build"
 
 [deploy]
-startCommand = "SERVE_FRONTEND=true npx tsx server/index.ts"
+startCommand = "SERVE_FRONTEND=true node dist/server/index.js"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10

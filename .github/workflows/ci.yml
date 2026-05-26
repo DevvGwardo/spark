@@ -31,3 +31,19 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Check Bundle Size
+        run: |
+          npx vite-bundle-visualizer --output bundle-stats.html || true
+          MAX_SIZE=500000
+          for chunk in dist/assets/*.js; do
+            size=$(gzip -c "$chunk" | wc -c)
+            echo "$chunk: $size bytes (gzip)"
+            if [ "$size" -gt "$MAX_SIZE" ]; then
+              echo "ERROR: $chunk exceeds 500KB gzip limit ($size bytes)"
+              exit 1
+            fi
+          done
+
+      - name: Build Server
+        run: npx tsup server/index.ts --out-dir dist/server --format esm --target node22 --clean
