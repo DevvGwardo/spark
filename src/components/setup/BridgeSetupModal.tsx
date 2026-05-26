@@ -38,6 +38,7 @@ const POLL_INTERVAL_MS = 1500;
 const SUCCESS_AUTOCLOSE_MS = 1200;
 
 export const BridgeSetupModal: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
+  const modalRef = useRef<HTMLDivElement>(null);
   const electronAPI = window.electronAPI;
   const bridge = electronAPI?.bridge;
 
@@ -110,6 +111,26 @@ export const BridgeSetupModal: React.FC<{ onComplete: () => void }> = ({ onCompl
       logRef.current.scrollTop = logRef.current.scrollHeight;
     }
   }, [installLog]);
+
+  // Focus trap within modal
+  useEffect(() => {
+    const container = modalRef.current;
+    if (!container) return;
+    const focusable = container.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    );
+    if (focusable.length > 0) focusable[0].focus();
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return;
+      const els = [...focusable];
+      const first = els[0];
+      const last = els[els.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, []);
 
   const requirements: Requirement[] = status
     ? [
@@ -244,7 +265,7 @@ export const BridgeSetupModal: React.FC<{ onComplete: () => void }> = ({ onCompl
   const allSatisfied = requirements.every((r) => r.satisfied);
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-background/85 backdrop-blur-sm">
+    <div ref={modalRef} role="dialog" aria-modal="true" aria-label="Hermes Bridge Setup" className="fixed inset-0 z-[100] flex items-center justify-center bg-background/85 backdrop-blur-sm">
       <div className="w-[480px] max-w-[92vw] rounded-xl border border-border/60 bg-card shadow-2xl overflow-hidden">
         <div className="flex items-center gap-3 px-5 py-4 border-b border-border/60">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">

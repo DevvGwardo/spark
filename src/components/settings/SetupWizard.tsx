@@ -33,6 +33,7 @@ const PROVIDER_HELP_URLS: Partial<Record<Provider, string>> = {
 };
 
 export const SetupWizard: React.FC = () => {
+  const modalRef = React.useRef<HTMLDivElement>(null);
   const { isSetupComplete, completeSetup, setActiveProvider, updateProviderConfig } = useSettingsStore();
   const setAvailableModels = useSettingsStore((state) => state.setAvailableModels);
   const [step, setStep] = useState(0);
@@ -208,6 +209,27 @@ export const SetupWizard: React.FC = () => {
       setHermesInstallLog((prev) => [...prev, ...nextLines].slice(-6));
     });
   }, []);
+
+  // Focus trap: auto-focus first input and trap Tab within modal
+  useEffect(() => {
+    if (isSetupComplete || isBootstrapping) return;
+    const container = modalRef.current;
+    if (!container) return;
+    const focusable = container.querySelectorAll<HTMLElement>(
+      'input:not([disabled]), button:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    );
+    if (focusable.length > 0) focusable[0].focus();
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return;
+      const els = [...focusable];
+      const first = els[0];
+      const last = els[els.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [isSetupComplete, isBootstrapping]);
 
   if (isSetupComplete || isBootstrapping) return null;
 
@@ -998,7 +1020,7 @@ export const SetupWizard: React.FC = () => {
     : '';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background">
+    <div ref={modalRef} role="dialog" aria-modal="true" aria-label="CloudChat Setup Wizard" className="fixed inset-0 z-50 flex items-center justify-center bg-background">
       <div className="w-[380px] mx-4">
         <div className="text-center mb-6">
           <h1 className="text-lg font-bold tracking-tight text-foreground">CloudChat</h1>
