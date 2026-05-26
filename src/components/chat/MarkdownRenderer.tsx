@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
+import rehypeSanitize from 'rehype-sanitize';
 import { Check, ChevronDown, Copy, ExternalLink, Terminal } from 'lucide-react';
 import { codeToHtml } from 'shiki';
 import {
@@ -277,7 +278,7 @@ const MarkdownRendererInner = React.forwardRef<HTMLDivElement, MarkdownRendererP
   ({ content }, ref) => {
     const plugins = useMemo(() => ({
       remark: [remarkGfm, remarkMath],
-      rehype: [rehypeKatex],
+      rehype: [rehypeKatex, rehypeSanitize],
     }), []);
     const processedContent = useMemo(() => rewriteLocalImageTokens(content), [content]);
 

@@ -93,6 +93,7 @@
     "embla-carousel-react": "^8.6.0",
     "express": "^4.21.0",
     "framer-motion": "^12.37.0",
+    "helmet": "^8.2.0",
     "input-otp": "^1.4.2",
     "lucide-react": "^0.462.0",
     "mermaid": "^11.14.0",

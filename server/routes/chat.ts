@@ -334,7 +334,8 @@ app.post('/functions/v1/chat', async (req, res) => {
 
     // Fail fast with a clear error if a PAT was provided but failed format validation
     if (activeRepo && rawGithubPAT && !githubPAT) {
-      console.warn(`[chat] WARNING: github_pat provided but failed validation (prefix=${typeof rawGithubPAT === 'string' ? rawGithubPAT.slice(0, 8) : typeof rawGithubPAT}...) — returning 422`);
+      // SECURITY: Do not log PAT content — only log that validation failed
+      console.warn(`[chat] WARNING: github_pat provided but failed format validation — returning 422`);
       return sendJson(res, 422, {
         error: `Your GitHub token format is invalid. CloudChat needs a valid GitHub Personal Access Token with access to ${activeRepo.owner}/${activeRepo.name} to read and edit repository files. Please re-enter your token in Settings → GitHub.`,
       });
@@ -747,6 +748,9 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
                     'X-Hermes-Repo-Edit-Intent': repo_edit_intent ? '1' : '0',
                   }
                 : {}),
+              // SECURITY: X-Hermes-Github-PAT is forwarded to the Hermes bridge.
+              // The bridge must treat this header as sensitive — never log it,
+              // and clear it from memory immediately after use.
               ...(hermesExecutionMode === 'agent-loop' && activeRepo && githubPAT ? {
                 'X-Hermes-Github-PAT': githubPAT,
               } : {}),

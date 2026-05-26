@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import { existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -18,7 +19,7 @@ import { registerOrchestratorRoutes } from './routes/orchestrator';
 import { registerTeamRoutes } from './routes/team';
 import { registerTranscribeRoute } from './routes/transcribe';
 import { registerRoomRoutes } from './routes/rooms';
-import { sendJson } from './lib/helpers';
+import { sendJson, csrfProtection } from './lib/helpers';
 import { MAX_BODY_SIZE } from './config';
 import { workspaceIndex } from './workspace-indexer';
 
@@ -89,7 +90,10 @@ export const HEALTH_ROUTES = [
 
 export function createApp(opts?: { serveFrontend?: boolean }) {
   const app = express();
+  app.set('trust proxy', 1);
+  app.use(helmet({ contentSecurityPolicy: false }));
   app.use(cors());
+  app.use(csrfProtection);
   app.use(express.json({ limit: MAX_BODY_SIZE }));
 
   // ─── Production: serve the built frontend ─────────────────────────────────

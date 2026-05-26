@@ -2,17 +2,12 @@ import type express from 'express';
 
 // ─── Shared helpers ──────────────────────────────────────────────────────────
 
-export const ALLOWED_ORIGINS = new Set([
-  'http://localhost:5173',
-  'http://localhost:5174',
-  'http://localhost:3000',
-  'http://localhost:8080',
-  'http://127.0.0.1:5173',
-  'http://127.0.0.1:5174',
-  'http://127.0.0.1:3000',
-  'http://127.0.0.1:8080',
-  'app://.',  // Electron custom protocol
-]);
+export const ALLOWED_ORIGINS = new Set(
+  (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:5174,http://localhost:3000,http://localhost:8080,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:3000,http://127.0.0.1:8080,app://.')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean)
+);
 
 export function getCorsOrigin(requestOrigin: string | undefined): string {
   if (requestOrigin && ALLOWED_ORIGINS.has(requestOrigin)) {
@@ -32,6 +27,39 @@ export function buildCorsHeaders(requestOrigin: string | undefined) {
 
 export function sendJson(res: express.Response, status: number, body: unknown) {
   res.status(status).json(body);
+}
+
+// ─── CSRF Protection ─────────────────────────────────────────────────────────
+
+/**
+ * Middleware that checks the Origin/Referer header for mutating requests.
+ * In server mode, cross-origin form submissions without a matching origin
+ * are rejected to prevent CSRF attacks.
+ */
+export function csrfProtection(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const mutatingMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+  if (!mutatingMethods.has(req.method)) {
+    return next();
+  }
+  const origin = req.headers.origin || req.headers.referer;
+  if (!origin) {
+    // Same-origin requests (no Origin/Referer) are allowed
+    return next();
+  }
+  // Allow requests whose origin matches an allowed origin
+  const originUrl = new URL(origin);
+  const originHost = originUrl.host;
+  const allowed = [...ALLOWED_ORIGINS].some(allowedOrigin => {
+    try {
+      return new URL(allowedOrigin).host === originHost;
+    } catch {
+      return false;
+    }
+  });
+  if (!allowed) {
+    return sendJson(res, 403, { error: 'Cross-origin requests are not allowed' });
+  }
+  next();
 }
 
 // ─── Rate Limiter ────────────────────────────────────────────────────────────
