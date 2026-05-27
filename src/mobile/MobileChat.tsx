@@ -33,7 +33,11 @@ const MobileChat = () => {
     // a fresh state by cycling through null.
     setConversationId(null);
     setChatTitle('Chat');
-    setIsCreatingChat(false);
+    // Note: we intentionally do NOT setIsCreatingChat(false) here.
+    // React 18 batches all setState calls within the same synchronous callback,
+    // so the true/false updates would collapse and the loading state would
+    // never render. handleConversationCreated already resets this to false
+    // when the conversation actually resolves.
   }, []);
 
   // Start with a fresh chat on mount
