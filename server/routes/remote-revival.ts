@@ -65,6 +65,10 @@ export function registerRemoteRevivalRoutes(app: Express) {
         lastSeen: lastSeenCache?.timestamp ?? null,
         host: result.host,
         profile: result.profile ?? lastSeenCache?.profile ?? undefined,
+        configured: {
+          wake: Boolean(process.env.REMOTE_WAKE_MAC),
+          smartPlug: Boolean(process.env.REMOTE_SMART_PLUG_URL),
+        },
       });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Unknown error';

@@ -1,7 +1,9 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Wifi, Power, Plug, Loader2, CheckCircle2, XCircle } from 'lucide-react';
-import { getApiBaseUrl } from '@/lib/api';
 import { cn } from '@/lib/utils';
+
+// Relative paths only: the mobile view is served same-origin over the remote
+// tunnel, where a phone cannot reach getApiBaseUrl()'s localhost:PORT form.
 
 type TileState = 'idle' | 'running' | 'success' | 'failure';
 type TileId = 'wake' | 'ping-bridge' | 'smart-plug';
@@ -80,7 +82,23 @@ const RevivalPanel: React.FC = () => {
     'ping-bridge': { state: 'idle', lastResult: null, lastTimestamp: null },
     'smart-plug': { state: 'idle', lastResult: null, lastTimestamp: null },
   });
+  const [configured, setConfigured] = useState<{ wake: boolean; smartPlug: boolean } | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Env-gated actions are disabled upfront. Read which are configured from the
+  // status endpoint once on mount (env can't change at runtime).
+  useEffect(() => {
+    let active = true;
+    fetch('/api/remote/hermes-status')
+      .then((r) => r.json())
+      .then((d) => {
+        if (active && d?.configured) setConfigured(d.configured);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const stopPolling = useCallback(() => {
     if (intervalRef.current) {
@@ -96,7 +114,7 @@ const RevivalPanel: React.FC = () => {
 
       intervalRef.current = setInterval(async () => {
         try {
-          const res = await fetch(`${getApiBaseUrl()}/api/remote/hermes-status`);
+          const res = await fetch('/api/remote/hermes-status');
           const data = await res.json();
           if (data.online) {
             stopPolling();
@@ -125,7 +143,7 @@ const RevivalPanel: React.FC = () => {
       setTile(tileId, { state: 'running', lastResult: null, lastTimestamp: null });
 
       try {
-        const res = await fetch(`${getApiBaseUrl()}${endpoint}`, { method: 'POST' });
+        const res = await fetch(endpoint, { method: 'POST' });
 
         if (res.status === 503) {
           setTile(tileId, { state: 'idle', lastResult: 'Not configured', lastTimestamp: Date.now() });
@@ -165,8 +183,8 @@ const RevivalPanel: React.FC = () => {
         tile={tiles.wake}
         icon={<Wifi className="w-5 h-5 text-violet-400 shrink-0" />}
         label="Wake Computer"
-        subtitle={tiles.wake.lastResult === 'Not configured' ? 'Not configured' : 'Send Wake-on-LAN magic packet'}
-        disabled={false}
+        subtitle={configured?.wake === false ? 'Not configured' : 'Send Wake-on-LAN magic packet'}
+        disabled={configured?.wake === false}
         onClick={() => runAction('wake', '/api/remote/wake', 'Packet sent — checking status…', true)}
       />
 
@@ -183,8 +201,8 @@ const RevivalPanel: React.FC = () => {
         tile={tiles['smart-plug']}
         icon={<Plug className="w-5 h-5 text-orange-400 shrink-0" />}
         label="Smart Plug Power Cycle"
-        subtitle={tiles['smart-plug'].lastResult === 'Not configured' ? 'Not configured' : 'Power-cycle the machine via smart plug'}
-        disabled={false}
+        subtitle={configured?.smartPlug === false ? 'Not configured' : 'Power-cycle the machine via smart plug'}
+        disabled={configured?.smartPlug === false}
         onClick={() => runAction('smart-plug', '/api/remote/smart-plug', 'Power cycle triggered', true)}
       />
     </div>

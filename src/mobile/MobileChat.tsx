@@ -1,6 +1,6 @@
 import { useCallback, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus, Sparkles } from 'lucide-react';
+import { ArrowLeft, Plus } from 'lucide-react';
 import { useChat } from '@/hooks/useChat';
 import { ChatArea } from '@/components/chat/ChatArea';
 import { useChatStore } from '@/stores/chat-store';
@@ -22,32 +22,18 @@ function truncateTitle(title: string, maxLen = 40): string {
 const MobileChat = () => {
   const navigate = useNavigate();
   const [conversationId, setConversationId] = useState<string | null>(null);
-  const [isCreatingChat, setIsCreatingChat] = useState(false);
   const [chatTitle, setChatTitle] = useState('Chat');
 
-  // Create a new conversation on mount if none selected
+  // Reset to a fresh, empty chat. The conversation is created lazily by
+  // useChat on first send, so there's nothing to wait on — render the
+  // composer immediately so the user can type.
   const startNewChat = useCallback(() => {
-    setIsCreatingChat(true);
-    // The ChatArea + useChat will create a new conversation when
-    // conversationId is null and the user sends a message. Force
-    // a fresh state by cycling through null.
     setConversationId(null);
     setChatTitle('Chat');
-    // Note: we intentionally do NOT setIsCreatingChat(false) here.
-    // React 18 batches all setState calls within the same synchronous callback,
-    // so the true/false updates would collapse and the loading state would
-    // never render. handleConversationCreated already resets this to false
-    // when the conversation actually resolves.
   }, []);
-
-  // Start with a fresh chat on mount
-  useEffect(() => {
-    startNewChat();
-  }, [startNewChat]);
 
   const handleConversationCreated = useCallback((id: string) => {
     setConversationId(id);
-    setIsCreatingChat(false);
 
     // Try to get the title from the store
     try {
@@ -112,8 +98,7 @@ const MobileChat = () => {
         <button
           type="button"
           onClick={startNewChat}
-          disabled={isCreatingChat}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground transition-colors"
           aria-label="New chat"
           style={{ minHeight: 44, minWidth: 44 }}
         >
@@ -123,39 +108,30 @@ const MobileChat = () => {
 
       {/* Chat area */}
       <div className="flex-1 min-h-0">
-        {isCreatingChat ? (
-          <div className="flex flex-col items-center justify-center py-20 px-4">
-            <Sparkles className="h-8 w-8 text-muted-foreground/30 mb-3" />
-            <p className="font-sans text-[13px] text-muted-foreground/60">
-              Starting a new chat…
-            </p>
-          </div>
-        ) : (
-          <ChatArea
-            conversationId={conversationId}
-            messages={chat.messages}
-            input={chat.input}
-            setInput={chat.setInput}
-            handleSend={chat.handleSend}
-            handleQuickSend={chat.handleQuickSend}
-            queuedMessages={chat.queuedMessages}
-            handleRemoveQueuedMessage={chat.handleRemoveQueuedMessage}
-            handleSteerQueuedMessage={chat.handleSteerQueuedMessage}
-            handleStop={chat.handleStop}
-            handleRegenerate={chat.handleRegenerate}
-            isStreaming={chat.isStreaming}
-            isAnotherPanelStreamingSameProfile={chat.isAnotherPanelStreamingSameProfile}
-            error={chat.error}
-            apiKeyModalOpen={chat.apiKeyModalOpen}
-            setApiKeyModalOpen={chat.setApiKeyModalOpen}
-            activeProvider={chat.activeProvider}
-            activeModel={chat.activeModel}
-            toolActivityMap={'toolActivityMap' in chat ? chat.toolActivityMap : undefined}
-            agentStatus={'agentStatus' in chat ? chat.agentStatus : undefined}
-            conversationAutoApproveEnabled={'conversationAutoApproveEnabled' in chat ? (chat.conversationAutoApproveEnabled as boolean) : false}
-            setConversationAutoApprove={'setConversationAutoApprove' in chat ? (chat.setConversationAutoApprove as (value: boolean) => void) : undefined}
-          />
-        )}
+        <ChatArea
+          conversationId={conversationId}
+          messages={chat.messages}
+          input={chat.input}
+          setInput={chat.setInput}
+          handleSend={chat.handleSend}
+          handleQuickSend={chat.handleQuickSend}
+          queuedMessages={chat.queuedMessages}
+          handleRemoveQueuedMessage={chat.handleRemoveQueuedMessage}
+          handleSteerQueuedMessage={chat.handleSteerQueuedMessage}
+          handleStop={chat.handleStop}
+          handleRegenerate={chat.handleRegenerate}
+          isStreaming={chat.isStreaming}
+          isAnotherPanelStreamingSameProfile={chat.isAnotherPanelStreamingSameProfile}
+          error={chat.error}
+          apiKeyModalOpen={chat.apiKeyModalOpen}
+          setApiKeyModalOpen={chat.setApiKeyModalOpen}
+          activeProvider={chat.activeProvider}
+          activeModel={chat.activeModel}
+          toolActivityMap={'toolActivityMap' in chat ? chat.toolActivityMap : undefined}
+          agentStatus={'agentStatus' in chat ? chat.agentStatus : undefined}
+          conversationAutoApproveEnabled={'conversationAutoApproveEnabled' in chat ? (chat.conversationAutoApproveEnabled as boolean) : false}
+          setConversationAutoApprove={'setConversationAutoApprove' in chat ? (chat.setConversationAutoApprove as (value: boolean) => void) : undefined}
+        />
       </div>
     </div>
   );

@@ -135,7 +135,13 @@ There is **no built-in auth** — the server is designed for local use. When dep
 
 ## Mobile Control App
 
-When you visit CloudChat from a mobile device (or scan the QR code shown in the Remote Access modal), you land on the `/m` mobile-optimized interface. This is a status-first view designed for quick Hermes checks and revival actions when you're away from home.
+When you visit CloudChat from a mobile device (or scan the QR code shown in the Remote Access modal), open the `/m` mobile-optimized interface. This is a status-first view designed for quick Hermes checks and revival actions when you're away from home.
+
+### What the view shows
+
+- **Live Hermes status** — online / recently-lost / offline, with a "last seen" timestamp, sourced from the bridge `/health` endpoint. The status polls every 5s (with backoff on failure) and updates without a manual refresh.
+- **Chat** — a primary CTA opens `/m/chat`, a mobile-optimized chat that reuses the standard streaming chat infrastructure (SSE over the tunnel).
+- **Revival actions** — `Wake Computer` (Wake-on-LAN magic packet), `Ping Bridge` (retry probes against the bridge), and `Smart Plug Power Cycle` (webhook). Env-gated actions whose variable is unset are disabled with a "Not configured" hint. After a wake, the view polls status and reflects the flip to online within ~60s.
 
 ### Environment Variables
 
