@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="140" viewBox="0 0 560 140" fill="none">
+  <defs>
+    <linearGradient id="flameOuter" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFC24B"/>
+      <stop offset="42%" stop-color="#FF7A1A"/>
+      <stop offset="100%" stop-color="#FF2D1A"/>
+    </linearGradient>
+    <linearGradient id="flameInner" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFE8A3"/>
+      <stop offset="100%" stop-color="#FF8A2B"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Flame mark with a forward-chevron right edge (speed) -->
+  <g transform="translate(20,18)">
+    <path d="M52 2
+             C61 22, 84 30, 82 58
+             C81 78, 66 100, 46 100
+             C26 100, 12 84, 16 62
+             C19 49, 33 47, 35 33
+             C37 22, 44 11, 52 2 Z"
+          fill="url(#flameOuter)"/>
+    <!-- forward chevron carved into the right flank -->
+    <path d="M58 36 L84 60 L58 84 L58 66 L72 60 L58 54 Z" fill="#0d1117" opacity="0.18"/>
+    <path d="M50 40
+             C56 53, 64 60, 60 72
+             C57 82, 49 86, 43 83
+             C35 79, 34 68, 39 60
+             C43 54, 48 50, 50 40 Z"
+          fill="url(#flameInner)"/>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="148" y="86"
+        font-family="'Geist','SF Pro Display','Inter',system-ui,sans-serif"
+        font-size="58" font-weight="700" letter-spacing="-1.5" fill="#E8EAED">Cloud<tspan fill="#FF7A1A">Chat</tspan></text>
+</svg>

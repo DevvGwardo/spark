@@ -1,117 +1,70 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="420" viewBox="0 0 1280 420" fill="none">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#0a0a0f"/>
-      <stop offset="100%" stop-color="#0d1117"/>
+      <stop offset="0%" stop-color="#0b0b0f"/>
+      <stop offset="100%" stop-color="#0e1117"/>
     </linearGradient>
     <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="#00f0ff"/>
-      <stop offset="100%" stop-color="#0891b2"/>
+      <stop offset="0%" stop-color="#FF7A1A"/>
+      <stop offset="100%" stop-color="#FF2D1A"/>
     </linearGradient>
-    <pattern id="hex" width="60" height="103.923" patternUnits="userSpaceOnUse" patternTransform="scale(0.6)">
-      <path d="M30 0 L60 17.32 L60 51.96 L30 69.28 L0 51.96 L0 17.32 Z" fill="none" stroke="#1e293b" stroke-width="0.5" opacity="0.3"/>
-      <path d="M30 103.923 L60 86.603 L60 51.96 L30 69.28 L0 51.96 L0 86.603 Z" fill="none" stroke="#1e293b" stroke-width="0.5" opacity="0.3"/>
+    <linearGradient id="flameOuter" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFC24B"/>
+      <stop offset="42%" stop-color="#FF7A1A"/>
+      <stop offset="100%" stop-color="#FF2D1A"/>
+    </linearGradient>
+    <linearGradient id="flameInner" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFE8A3"/>
+      <stop offset="100%" stop-color="#FF8A2B"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#FF7A1A" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#FF7A1A" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0 L0 0 0 32" fill="none" stroke="#1b212b" stroke-width="0.5" opacity="0.5"/>
     </pattern>
-    <filter id="glow">
-      <feGaussianBlur stdDeviation="6" result="blur"/>
-      <feMerge>
-        <feMergeNode in="blur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
   </defs>
-  <rect width="1280" height="640" fill="url(#bg)"/>
-  <rect width="1280" height="640" fill="url(#hex)"/>
 
-  <!-- Terminal accent line top -->
-  <rect x="0" y="0" width="1280" height="2" fill="url(#accent)" opacity="0.5"/>
+  <rect width="1280" height="420" fill="url(#bg)"/>
+  <rect width="1280" height="420" fill="url(#grid)"/>
+  <ellipse cx="180" cy="180" rx="360" ry="260" fill="url(#glow)"/>
+  <rect x="0" y="0" width="1280" height="3" fill="url(#accent)"/>
 
-  <!-- Terminal accent line left -->
-  <rect x="0" y="0" width="2" height="640" fill="url(#accent)" opacity="0.3"/>
-
-  <!-- Grid dots subtle -->
-  <g fill="#1e293b" opacity="0.2">
-    <circle cx="80" cy="80" r="1"/>
-    <circle cx="240" cy="80" r="1"/>
-    <circle cx="400" cy="80" r="1"/>
-    <circle cx="560" cy="80" r="1"/>
-    <circle cx="720" cy="80" r="1"/>
-    <circle cx="80" cy="240" r="1"/>
-    <circle cx="240" cy="240" r="1"/>
-    <circle cx="400" cy="240" r="1"/>
-    <circle cx="560" cy="240" r="1"/>
-    <circle cx="80" cy="400" r="1"/>
-    <circle cx="240" cy="400" r="1"/>
-    <circle cx="400" cy="400" r="1"/>
-    <circle cx="560" cy="400" r="1"/>
+  <!-- Flame mark -->
+  <g transform="translate(96,118) scale(1.55)">
+    <path d="M52 2 C61 22, 84 30, 82 58 C81 78, 66 100, 46 100 C26 100, 12 84, 16 62 C19 49, 33 47, 35 33 C37 22, 44 11, 52 2 Z" fill="url(#flameOuter)"/>
+    <path d="M58 36 L84 60 L58 84 L58 66 L72 60 L58 54 Z" fill="#0b0b0f" opacity="0.20"/>
+    <path d="M50 40 C56 53, 64 60, 60 72 C57 82, 49 86, 43 83 C35 79, 34 68, 39 60 C43 54, 48 50, 50 40 Z" fill="url(#flameInner)"/>
   </g>
 
-  <!-- Hero section -->
-  <text x="80" y="240" font-family="'Geist Mono', 'SF Mono', 'JetBrains Mono', monospace" font-size="72" font-weight="bold" fill="#e2e8f0" letter-spacing="4">
-    <tspan>CLOUDCHAT</tspan>
-  </text>
-
-  <!-- Terminal cursor blink -->
-  <rect x="495" y="190" width="32" height="48" fill="#00f0ff" opacity="0.8" rx="2">
-    <animate attributeName="opacity" values="0.8;0.1;0.8" dur="1.2s" repeatCount="indefinite"/>
-  </rect>
-
-  <!-- Subtitle -->
-  <text x="80" y="300" font-family="'Inter', 'SF Pro', sans-serif" font-size="18" fill="#94a3b8" letter-spacing="1">
-    AI chat client with an autonomous agent brain
-  </text>
+  <!-- Wordmark + tagline -->
+  <text x="320" y="190" font-family="'Geist','SF Pro Display','Inter',system-ui,sans-serif" font-size="82" font-weight="700" letter-spacing="-2.5" fill="#E8EAED">Cloud<tspan fill="#FF7A1A">Chat</tspan></text>
+  <text x="324" y="236" font-family="'Inter',system-ui,sans-serif" font-size="22" fill="#9aa4b2" letter-spacing="0.2">AI chat client with an autonomous agent brain.</text>
 
   <!-- Feature badges -->
-  <g transform="translate(80, 360)">
-    <rect x="0" y="0" width="120" height="28" rx="14" fill="#1e293b" stroke="#334155" stroke-width="0.5"/>
-    <circle cx="14" cy="14" r="3" fill="#22c55e"/>
-    <text x="24" y="18" font-family="'Inter', sans-serif" font-size="11" fill="#cbd5e1">Hermes Agent</text>
+  <g font-family="'Inter',system-ui,sans-serif" font-size="13" fill="#cbd5e1">
+    <g transform="translate(324,272)">
+      <rect width="142" height="30" rx="15" fill="#161b22" stroke="#2a313c" stroke-width="1"/>
+      <circle cx="17" cy="15" r="3.5" fill="#FF7A1A"/>
+      <text x="30" y="19">Hermes agent</text>
+    </g>
+    <g transform="translate(478,272)">
+      <rect width="118" height="30" rx="15" fill="#161b22" stroke="#2a313c" stroke-width="1"/>
+      <circle cx="17" cy="15" r="3.5" fill="#22c55e"/>
+      <text x="30" y="19">15 providers</text>
+    </g>
+    <g transform="translate(608,272)">
+      <rect width="150" height="30" rx="15" fill="#161b22" stroke="#2a313c" stroke-width="1"/>
+      <circle cx="17" cy="15" r="3.5" fill="#38bdf8"/>
+      <text x="30" y="19">GitHub workflow</text>
+    </g>
+    <g transform="translate(770,272)">
+      <rect width="132" height="30" rx="15" fill="#161b22" stroke="#2a313c" stroke-width="1"/>
+      <circle cx="17" cy="15" r="3.5" fill="#a855f7"/>
+      <text x="30" y="19">Orchestrator</text>
+    </g>
   </g>
 
-  <g transform="translate(220, 360)">
-    <rect x="0" y="0" width="100" height="28" rx="14" fill="#1e293b" stroke="#334155" stroke-width="0.5"/>
-    <circle cx="14" cy="14" r="3" fill="#00f0ff"/>
-    <text x="24" y="18" font-family="'Inter', sans-serif" font-size="11" fill="#cbd5e1">15 Providers</text>
-  </g>
-
-  <g transform="translate(340, 360)">
-    <rect x="0" y="0" width="120" height="28" rx="14" fill="#1e293b" stroke="#334155" stroke-width="0.5"/>
-    <circle cx="14" cy="14" r="3" fill="#a855f7"/>
-    <text x="24" y="18" font-family="'Inter', sans-serif" font-size="11" fill="#cbd5e1">AI Orchestrator</text>
-  </g>
-
-  <!-- Right side decoration - abstract waveform/node visualization -->
-  <g transform="translate(800, 160)" opacity="0.6">
-    <!-- Nodes and connections -->
-    <circle cx="0" cy="160" r="6" fill="#00f0ff" opacity="0.8"/>
-    <circle cx="100" cy="80" r="6" fill="#00f0ff" opacity="0.8"/>
-    <circle cx="200" cy="100" r="6" fill="#0891b2" opacity="0.8"/>
-    <circle cx="150" cy="200" r="6" fill="#0891b2" opacity="0.8"/>
-    <circle cx="250" cy="180" r="6" fill="#00f0ff" opacity="0.8"/>
-    <circle cx="300" cy="120" r="6" fill="#22d3ee" opacity="0.8"/>
-
-    <!-- Connection lines -->
-    <line x1="0" y1="160" x2="100" y2="80" stroke="#00f0ff" stroke-width="0.8" opacity="0.4"/>
-    <line x1="100" y1="80" x2="200" y2="100" stroke="#00f0ff" stroke-width="0.8" opacity="0.4"/>
-    <line x1="100" y1="80" x2="150" y2="200" stroke="#0891b2" stroke-width="0.8" opacity="0.3"/>
-    <line x1="200" y1="100" x2="250" y2="180" stroke="#00f0ff" stroke-width="0.8" opacity="0.3"/>
-    <line x1="200" y1="100" x2="300" y2="120" stroke="#22d3ee" stroke-width="0.8" opacity="0.4"/>
-    <line x1="150" y1="200" x2="250" y2="180" stroke="#0891b2" stroke-width="0.8" opacity="0.3"/>
-
-    <!-- Pulse animation on center node -->
-    <circle cx="100" cy="80" r="12" fill="none" stroke="#00f0ff" stroke-width="1" opacity="0.5">
-      <animate attributeName="r" values="12;20;12" dur="3s" repeatCount="indefinite"/>
-      <animate attributeName="opacity" values="0.5;0;0.5" dur="3s" repeatCount="indefinite"/>
-    </circle>
-  </g>
-
-  <!-- Version footer -->
-  <text x="80" y="580" font-family="'Geist Mono', 'SF Mono', monospace" font-size="12" fill="#475569">
-    v1.0.0-beta.3  ·  macOS + Windows  ·  PolyForm Shield
-  </text>
-
-  <!-- Version watermark bottom-right -->
-  <text x="1160" y="580" font-family="'Geist Mono', monospace" font-size="12" fill="#475569" text-anchor="end">
-    ──  ●  ──
-  </text>
+  <text x="324" y="356" font-family="'Geist Mono','SF Mono',monospace" font-size="13" fill="#56606e">macOS · Windows · Linux  ·  v1.0.0-beta.4  ·  PolyForm Shield 1.0.0</text>
 </svg>

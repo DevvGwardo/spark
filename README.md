@@ -14,7 +14,7 @@
   <img src="docs/repo-banner.png" alt="CloudChat banner" width="100%">
 </p>
 
-[Quick Start](#-quick-start) · [Features](#-features) · [Architecture](#-architecture) · [Contributing](CONTRIBUTING.md)
+[Screenshots](#screenshots) · [Quick Start](#-quick-start) · [Features](#-features) · [Architecture](#-architecture) · [Contributing](CONTRIBUTING.md)
 
 </div>
 
@@ -27,6 +27,33 @@ CloudChat is an AI chat client that ships with **[Hermes](https://hermes-agent.n
 It also supports **15 other LLM providers** as regular chat clients, an **orchestrator** for parallel sub-tasks, and ships as a **desktop Electron app for macOS, Windows, and Linux** with auto-updates.
 
 **Hermes is optional.** CloudChat works perfectly as a chat client with any provider without it. Hermes just makes it way more useful.
+
+---
+
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/01-agent-chat.png" alt="Hermes agent mode — tool calls and an inline code fix" width="88%">
+  <br>
+  <em>Agent mode — Hermes reads the code, runs the tests, and ships the fix with every tool call visible.</em>
+</p>
+
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <img src="docs/screenshots/03-settings.png" alt="Provider settings">
+      <br><sub><b>15 providers, one place</b> — drop in a key or sign in, switch models instantly.</sub>
+    </td>
+    <td width="33%" valign="top">
+      <img src="docs/screenshots/07-conversation-tree.png" alt="Conversation tree overlay">
+      <br><sub><b>Conversation tree</b> — branch a session and revisit any turn.</sub>
+    </td>
+    <td width="33%" valign="top">
+      <img src="docs/screenshots/06-setup-wizard.png" alt="First-run setup wizard">
+      <br><sub><b>Get started in seconds</b> — pick a provider and go.</sub>
+    </td>
+  </tr>
+</table>
 
 ---
 
