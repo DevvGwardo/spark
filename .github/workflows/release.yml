@@ -136,6 +136,22 @@ jobs:
           security find-identity -v -p codesigning
           rm "$CERT_PATH"
 
+      # Expose Windows Authenticode signing to electron-builder only when a cert
+      # secret is present, and only on Windows. Writing CSC_LINK as an empty
+      # string elsewhere makes electron-builder treat it as a cert *path* and
+      # fail ("not a file"), so we must leave it unset rather than blank.
+      - name: Configure Windows code signing
+        if: runner.os == 'Windows' && secrets.WIN_CSC_LINK != ''
+        shell: bash
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: |
+          {
+            echo "CSC_LINK=$WIN_CSC_LINK"
+            echo "CSC_KEY_PASSWORD=$WIN_CSC_KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+
       - name: Build & publish
         env:
           # GITHUB_TOKEN: provided automatically by Actions, used by electron-builder
@@ -146,12 +162,6 @@ jobs:
           # See docs/BETA-TESTING.md for setup. If unset, auto-update is disabled
           # in shipped builds — they still install fine, just won't self-update.
           CLOUDCHAT_UPDATE_TOKEN: ${{ secrets.CLOUDCHAT_UPDATE_TOKEN }}
-          # Windows Authenticode signing. electron-builder picks up CSC_LINK
-          # (base64 .pfx) + CSC_KEY_PASSWORD automatically on Windows. Empty on
-          # other OSes (and when the secrets are unset), so the NSIS installer
-          # simply ships unsigned — same as before — until a cert is added.
-          CSC_LINK: ${{ runner.os == 'Windows' && secrets.WIN_CSC_LINK || '' }}
-          CSC_KEY_PASSWORD: ${{ runner.os == 'Windows' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
           # Mark prereleases automatically when tag contains a hyphen (e.g. -beta.1)
           EP_PRE_RELEASE: ${{ contains(github.ref_name, '-') }}
           # macOS App Store Connect notarization. APPLE_API_KEY (path) is injected
