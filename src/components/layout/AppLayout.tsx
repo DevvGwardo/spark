@@ -692,7 +692,7 @@ const headerSecondaryLabel = selectedCronJobId
                   <HermesPTYPanel ref={hermesTerminalRef} />
                 </div>
               )}
-              <TerminalPanel cwd={activeRepo?.name ? undefined : undefined} />
+              <Suspense fallback={<LazyFallback />}><TerminalPanel cwd={activeRepo?.name ? undefined : undefined} /></Suspense>
             </main>
           </div>
         </div>

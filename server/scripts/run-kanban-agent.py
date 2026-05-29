@@ -128,7 +128,46 @@ def main():
         print("[kanban-runner] ERROR: No LLM API key found. Set CROFAI_API_KEY environment variable or configure model.api_key in ~/.hermes/config.yaml", flush=True)
         sys.exit(1)
 
-    # 5. Build the system prompt from card
+    # 5. Pre-clone repo for GitHub-sourced tasks
+    card_source = card.get("source", "")
+    card_external_ref = card.get("externalRef", "")
+    source_url = card.get("sourceUrl", "")
+    work_dir = None
+    gh_repo = None
+    gh_issue_num = None
+
+    if card_source == "github" and card_external_ref:
+        # externalRef format: "owner/repo#number"
+        import re as _re
+        _repo_match = _re.match(r"^([\w.-]+/[\w.-]+)#(\d+)", card_external_ref)
+        if _repo_match:
+            gh_repo = _repo_match.group(1)
+            gh_issue_num = int(_repo_match.group(2))
+            work_dir = os.path.join("/tmp", f"kanban-{KANBAN_CARD_ID[:8]}")
+            print(f"[kanban-runner] GitHub task: {gh_repo}#{gh_issue_num}", flush=True)
+            print(f"[kanban-runner] Pre-cloning to {work_dir}...", flush=True)
+            
+            import subprocess as _sp
+            try:
+                # Remove if exists from a previous run
+                if os.path.exists(work_dir):
+                    _sp.run(["rm", "-rf", work_dir], check=False)
+                
+                clone_result = _sp.run(
+                    ["gh", "repo", "clone", gh_repo, work_dir],
+                    capture_output=True, text=True, timeout=120,
+                )
+                if clone_result.returncode == 0:
+                    print(f"[kanban-runner] Clone successful: {work_dir}", flush=True)
+                    os.chdir(work_dir)
+                else:
+                    print(f"[kanban-runner] Clone failed: {clone_result.stderr[:200]}", flush=True)
+                    work_dir = None  # Fall back to no pre-clone
+            except Exception as clone_err:
+                print(f"[kanban-runner] Clone error: {clone_err}", flush=True)
+                work_dir = None
+
+    # 6. Build the system prompt from card
     system_prompt_lines = [
         "You are working on a Kanban task card. Use the kanban tools to read card details and report progress.",
         "",
@@ -167,6 +206,22 @@ def main():
         "- kanban_heartbeat — signal you're still working during long operations",
         "- kanban_comment — append progress notes without changing status",
     ])
+
+    # GitHub-specific instructions — only for tasks linked to GitHub issues
+    if card_source == "github" and gh_repo and gh_issue_num:
+        system_prompt_lines.extend([
+            "",
+            "For tasks sourced from GitHub (source: github):",
+            "- The repository is already cloned and ready at your current working directory",
+            "- You have full terminal access with `gh` CLI authenticated",
+            f"- Post progress updates to the issue: `gh issue comment {gh_issue_num} --repo {gh_repo} --body \"update\"`",
+            "- Comment at milestones: (1) started analysis, (2) root cause found, (3) fix in progress, (4) PR opened",
+            "- Analyze the codebase, write the fix, and create a PR",
+            "- Use `gh pr create` to open the pull request against the main branch",
+            "- Post the PR URL via kanban_comment AND as a final summary comment on the issue",
+            "- Final summary: what changed, which files, why this fix, and the PR link",
+            "- Mark the task as done ONLY after the PR is created and CI is passing",
+        ])
     if is_team_task:
         system_prompt_lines.extend([
             "",

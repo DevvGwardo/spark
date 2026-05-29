@@ -614,7 +614,15 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
 
     // STEP 3: Filter mutating tools when plan mode is active
     if (planMode && Object.keys(localTools).length > 0) {
-      const { ...readOnlyTools } = localTools;
+      const {
+        run_command,
+        execute_python,
+        write_file,
+        ...readOnlyTools
+      } = localTools;
+      void run_command;
+      void execute_python;
+      void write_file;
       localTools = readOnlyTools as typeof localTools;
     }
 

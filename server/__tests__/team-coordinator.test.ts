@@ -1,4 +1,5 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+// @vitest-environment node
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 
 // Mock mesh-bridge to avoid shell-out in lifecycle hooks
 vi.mock('../mesh-bridge', () => ({
@@ -30,6 +31,11 @@ import { teamCoordinator, isComplexTask } from '../team-coordinator'
 
 describe('teamCoordinator', () => {
   beforeEach(() => {
+    // Keep profile discovery and LLM decomposition off the network so the
+    // coordinator degrades gracefully without the 2s retry backoff. A <500
+    // response makes callLlm return null on the first attempt (no retry).
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({}), { status: 404 })))
+
     // Reset internal state via removeTeam for any teams left from previous tests
     const active = teamCoordinator.getActiveTeams()
     for (const t of active) {
@@ -39,6 +45,10 @@ describe('teamCoordinator', () => {
     for (const t of all) {
       teamCoordinator.removeTeam(t.id)
     }
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
   })
 
   describe('createTeam and getTeams', () => {
