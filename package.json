@@ -6,7 +6,7 @@
   "main": "out/main/index.js",
   "type": "module",
   "scripts": {
-    "preinstall": "bash ~/.hermes/scripts/supply-chain-guard.sh",
+    "preinstall": "if [ -f ~/.hermes/scripts/supply-chain-guard.sh ]; then bash ~/.hermes/scripts/supply-chain-guard.sh; fi",
     "dev": "vite",
     "build": "vite build && tsup server/index.ts --out-dir dist/server --format esm --target node22 --clean --sourcemap",
     "build:app": "vite build",

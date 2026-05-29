@@ -23,4 +23,23 @@ export default defineConfig(({ mode }) => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return;
+          // Shiki ships per-language grammars that Rollup splits into
+          // individual lazy chunks; leave them alone so they aren't merged
+          // into one oversized bundle.
+          if (id.includes("@shikijs/langs") || id.includes("shiki/dist/langs"))
+            return;
+          const parts = id.split("node_modules/").pop()!.split("/");
+          const pkg = parts[0].startsWith("@")
+            ? `${parts[0]}/${parts[1]}`
+            : parts[0];
+          return `vendor-${pkg.replace("@", "").replace("/", "-")}`;
+        },
+      },
+    },
+  },
 }));
