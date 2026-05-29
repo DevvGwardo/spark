@@ -1,7 +1,7 @@
 {
   "name": "cloudchat",
   "private": true,
-  "version": "1.0.0-beta.3",
+  "version": "1.0.0-beta.4",
   "license": "PolyForm-Shield-1.0.0",
   "main": "out/main/index.js",
   "type": "module",
@@ -28,6 +28,7 @@
     "electron:build:all": "electron-vite build && electron-builder --mac --win",
     "electron:publish": "electron-vite build && electron-builder --mac --publish always",
     "electron:publish:win": "electron-vite build && electron-builder --win --publish always",
+    "electron:publish:linux": "electron-vite build && electron-builder --linux --publish always",
     "electron:publish:all": "electron-vite build && electron-builder --mac --win --publish always",
     "test:e2e": "npx playwright test --config playwright-electron.config.ts",
     "test:e2e:headed": "npx playwright test --config playwright-electron.config.ts --headed",

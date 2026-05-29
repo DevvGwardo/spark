@@ -5,8 +5,8 @@
 **AI chat client with an autonomous agent brain.**
 
 [![License](https://img.shields.io/badge/license-PolyForm--Shield--1.0.0-blue?style=flat-square)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.0.0--beta.3-orange?style=flat-square)](package.json)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%2B%20Windows-lightgrey?style=flat-square)](electron-builder.yml)
+[![Version](https://img.shields.io/badge/version-1.0.0--beta.4-orange?style=flat-square)](package.json)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%2B%20Windows%20%2B%20Linux-lightgrey?style=flat-square)](electron-builder.yml)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-green?style=flat-square)](package.json)
 [![Python](https://img.shields.io/badge/python-%3E%3D3.10-green?style=flat-square)](hermes-bridge/requirements.txt)
 
@@ -24,7 +24,7 @@
 
 CloudChat is an AI chat client that ships with **[Hermes](https://hermes-agent.nousresearch.com)** — Nous Research's autonomous agent that can read your code, browse the web, run terminals, manage GitHub repos, and actually get things done instead of just talking about them.
 
-It also supports **15 other LLM providers** as regular chat clients, an **orchestrator** for parallel sub-tasks, and ships as a **desktop Electron app for macOS and Windows** with auto-updates.
+It also supports **15 other LLM providers** as regular chat clients, an **orchestrator** for parallel sub-tasks, and ships as a **desktop Electron app for macOS, Windows, and Linux** with auto-updates.
 
 **Hermes is optional.** CloudChat works perfectly as a chat client with any provider without it. Hermes just makes it way more useful.
 
@@ -38,9 +38,10 @@ It also supports **15 other LLM providers** as regular chat clients, an **orches
 - **Releases:** <https://github.com/DevvGwardo/cloud-chat-hub/releases>
 
 Current desktop support:
-- **macOS Apple Silicon:** supported via DMG
-- **macOS Intel:** works with a system Python install
+- **macOS Apple Silicon (arm64):** supported via DMG
+- **macOS Intel (x64):** supported via DMG
 - **Windows 10/11 x64:** supported via NSIS installer
+- **Linux x64:** supported via AppImage and `.deb`
 
 If this repo is private, users must have access to the repository to download releases. See the maintainer notes in [docs/BETA-TESTING.md](docs/BETA-TESTING.md).
 

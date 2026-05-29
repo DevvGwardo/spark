@@ -21,10 +21,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # macos-latest is arm64; macos-13 is the Intel (x64) runner. Each
+          # bundles a Python runtime matching its own architecture.
           - os: macos-latest
             build_cmd: npm run electron:publish
+            py_target: aarch64-apple-darwin
+          - os: macos-13
+            build_cmd: npm run electron:publish
+            py_target: x86_64-apple-darwin
           - os: windows-latest
             build_cmd: npm run electron:publish:win
+            py_target: x86_64-pc-windows-msvc
+          - os: ubuntu-latest
+            build_cmd: npm run electron:publish:linux
+            py_target: x86_64-unknown-linux-gnu
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -42,16 +52,19 @@ jobs:
       # Download python-build-standalone for the current runner so the
       # bundled app ships a self-contained Python interpreter. Pinned to a
       # known release of indygreg/python-build-standalone.
-      - name: Download bundled Python (macOS)
-        if: runner.os == 'macOS'
+      # Bundled Python target triple, selected per matrix entry. Quoted into an
+      # env var so the workflow expression never lands inside a shell command.
+      - name: Download bundled Python (macOS / Linux)
+        if: runner.os == 'macOS' || runner.os == 'Linux'
         shell: bash
+        env:
+          PY_TARGET: ${{ matrix.py_target }}
         run: |
           set -euo pipefail
           PY_VERSION="3.12.7"
           BUILD_DATE="20241016"
-          # Universal2 isn't published; ship arch-specific runtime keyed on host.
-          # macos-latest is arm64.
-          TARBALL="cpython-${PY_VERSION}+${BUILD_DATE}-aarch64-apple-darwin-install_only.tar.gz"
+          # Universal2 isn't published; ship an arch-specific runtime per job.
+          TARBALL="cpython-${PY_VERSION}+${BUILD_DATE}-${PY_TARGET}-install_only.tar.gz"
           URL="https://github.com/indygreg/python-build-standalone/releases/download/${BUILD_DATE}/${TARBALL}"
           mkdir -p resources/python-runtime
           curl -fsSL "$URL" -o /tmp/python.tar.gz
@@ -63,10 +76,12 @@ jobs:
       - name: Download bundled Python (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          PY_TARGET: ${{ matrix.py_target }}
         run: |
           $PyVersion = "3.12.7"
           $BuildDate = "20241016"
-          $Tarball = "cpython-${PyVersion}+${BuildDate}-x86_64-pc-windows-msvc-install_only.tar.gz"
+          $Tarball = "cpython-${PyVersion}+${BuildDate}-${env:PY_TARGET}-install_only.tar.gz"
           $Url = "https://github.com/indygreg/python-build-standalone/releases/download/${BuildDate}/${Tarball}"
           New-Item -ItemType Directory -Force -Path resources\python-runtime | Out-Null
           Invoke-WebRequest -Uri $Url -OutFile $env:TEMP\python.tar.gz
@@ -131,6 +146,12 @@ jobs:
           # See docs/BETA-TESTING.md for setup. If unset, auto-update is disabled
           # in shipped builds — they still install fine, just won't self-update.
           CLOUDCHAT_UPDATE_TOKEN: ${{ secrets.CLOUDCHAT_UPDATE_TOKEN }}
+          # Windows Authenticode signing. electron-builder picks up CSC_LINK
+          # (base64 .pfx) + CSC_KEY_PASSWORD automatically on Windows. Empty on
+          # other OSes (and when the secrets are unset), so the NSIS installer
+          # simply ships unsigned — same as before — until a cert is added.
+          CSC_LINK: ${{ runner.os == 'Windows' && secrets.WIN_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ runner.os == 'Windows' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
           # Mark prereleases automatically when tag contains a hyphen (e.g. -beta.1)
           EP_PRE_RELEASE: ${{ contains(github.ref_name, '-') }}
           # macOS App Store Connect notarization. APPLE_API_KEY (path) is injected

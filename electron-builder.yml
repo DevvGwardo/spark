@@ -41,14 +41,13 @@ extraResources:
     to: "python-runtime"
 mac:
   icon: build/icon.icns
-  # Beta ships arm64-only because the bundled Python runtime is arm64.
-  # Intel-Mac testers can still install Python themselves and the bridge
-  # will fall back to system Python. Add x64 here later if demand exists.
+  # Built per-architecture: the arm64 runner produces arm64 artifacts and the
+  # x64 (macos-13) runner produces x64, each bundling a matching standalone
+  # Python runtime (see release.yml). Omitting `arch` makes electron-builder
+  # build for the host runner's architecture.
   target:
     - target: dmg
-      arch: [arm64]
     - target: zip
-      arch: [arm64]
   category: public.app-category.developer-tools
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
@@ -69,7 +68,18 @@ nsis:
   createStartMenuShortcut: true
   shortcutName: CloudChat
 dmg:
-  artifactName: "CloudChat-${version}-mac.${ext}"
+  # ${arch} keeps the arm64 and x64 DMGs from overwriting each other when both
+  # macOS jobs publish to the same release.
+  artifactName: "CloudChat-${version}-${arch}-mac.${ext}"
+linux:
+  icon: build/icon.png
+  category: Development
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+  artifactName: "CloudChat-${version}-linux-${arch}.${ext}"
 publish:
   provider: github
   owner: DevvGwardo

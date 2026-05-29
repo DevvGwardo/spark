@@ -10,12 +10,12 @@ CloudChat is a desktop AI chat client built around the **Hermes Agent** — an a
 
 ### User prerequisites
 
-- **macOS Apple Silicon or Windows 10/11**.
+- **macOS (Apple Silicon or Intel), Windows 10/11 x64, or Linux x64**.
 - **Git** only if CloudChat needs to download Hermes Agent on first launch. macOS has it via Xcode CLT (`xcode-select --install`); on Windows, install [Git for Windows](https://git-scm.com/download/win).
 
 ### macOS (Apple Silicon — M1/M2/M3/M4)
 
-1. Go to [Releases](https://github.com/DevvGwardo/cloud-chat-hub/releases) and download the latest `CloudChat-x.y.z-mac.dmg`.
+1. Go to [Releases](https://github.com/DevvGwardo/cloud-chat-hub/releases) and download the latest `CloudChat-x.y.z-arm64-mac.dmg`.
 2. Open the DMG and drag CloudChat to Applications.
 3. **First launch**: macOS may block the app if the build is unsigned or not notarized yet. Two options:
    - Right-click CloudChat in Applications → **Open** → click "Open" in the dialog.
@@ -27,16 +27,23 @@ CloudChat is a desktop AI chat client built around the **Hermes Agent** — an a
 
 ### macOS (Intel)
 
-Current releases ship with an Apple-Silicon-native Python runtime, so on Intel Macs the bundled bridge won't run out of the box. You have two options:
+1. Download the latest `CloudChat-x.y.z-x64-mac.dmg` from [Releases](https://github.com/DevvGwardo/cloud-chat-hub/releases).
+2. Open the DMG and drag CloudChat to Applications.
+3. First launch follows the same Gatekeeper steps as Apple Silicon above.
 
-- **Easiest**: install Python 3.10+ from [python.org](https://www.python.org/downloads/) before launching CloudChat. The first-run wizard will detect it and use it.
-- **Skip**: file an issue and we can add an Intel build if there is enough demand.
+Intel builds now ship a native x64 Python runtime, so the bundled bridge runs without a separate Python install.
 
 ### Windows
 
 1. Download the latest `CloudChat-x.y.z-win.exe` from [Releases](https://github.com/DevvGwardo/cloud-chat-hub/releases).
-2. Run the installer. SmartScreen will warn "Unknown publisher" — click **More info** → **Run anyway**. (We haven't paid for a code-signing cert yet.)
+2. Run the installer. If the build is unsigned, SmartScreen warns "Unknown publisher" — click **More info** → **Run anyway**. Signed builds install without the warning.
 3. Follow the installer prompts.
+
+### Linux (x64)
+
+1. Download the latest `CloudChat-x.y.z-linux-*.AppImage` or `CloudChat-x.y.z-linux-*.deb` from [Releases](https://github.com/DevvGwardo/cloud-chat-hub/releases).
+2. **AppImage:** `chmod +x CloudChat-*.AppImage` then run it. **`.deb`:** `sudo apt install ./CloudChat-*.deb`.
+3. The build bundles an x64 Python runtime; basic chat works out of the box. For agent mode on an unusual distro, having system Python 3.10+ available is a safe fallback.
 
 ### First-run setup
 
@@ -130,25 +137,39 @@ git tag v1.0.0-beta.1
 git push origin v1.0.0-beta.1
 ```
 
-The tag push triggers `.github/workflows/release.yml`, which builds macOS and Windows in parallel and publishes to <https://github.com/DevvGwardo/cloud-chat-hub/releases>.
+The tag push triggers `.github/workflows/release.yml`, which builds macOS (arm64 + Intel), Windows, and Linux in parallel and publishes to <https://github.com/DevvGwardo/cloud-chat-hub/releases>.
 
 Before sharing a release, confirm it contains:
-- `CloudChat-x.y.z-mac.dmg`
-- `CloudChat-x.y.z-universal-mac.zip` or the matching macOS zip used by auto-update
+- `CloudChat-x.y.z-arm64-mac.dmg` and `CloudChat-x.y.z-x64-mac.dmg`
+- the matching macOS `.zip` files used by auto-update (one per arch)
 - `CloudChat-x.y.z-win.exe`
+- `CloudChat-x.y.z-linux-*.AppImage` and `CloudChat-x.y.z-linux-*.deb`
 
-The release may be marked as **Draft** by electron-builder until both jobs complete. Publish it only after both platform builds are green and the expected artifacts are present.
+The release may be marked as **Draft** by electron-builder until all jobs complete. Publish it only after every platform build is green and the expected artifacts are present.
+
+> **Auto-update caveat:** the arm64 and x64 macOS jobs each publish their own `latest-mac.yml` to the same release, so they overwrite each other. Whichever finishes last wins, and the other arch's app may not self-update cleanly — Intel users should reinstall from Releases if an update fails. Apple Silicon, Windows, and Linux each have their own non-conflicting update manifest.
 
 ### 4. Current support matrix
 
-- **macOS Apple Silicon:** first-class desktop target
-- **macOS Intel:** usable with a system Python install
-- **Windows 10/11 x64:** supported, but newer and less battle-tested than macOS
+- **macOS Apple Silicon (arm64):** first-class desktop target
+- **macOS Intel (x64):** native build with a bundled x64 Python runtime
+- **Windows 10/11 x64:** supported; unsigned unless `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD` secrets are configured
+- **Linux x64:** AppImage + `.deb`, the newest target and least battle-tested
 
-### 5. Recommended pre-share checklist
+### 5. Windows code signing (optional)
 
-- Install the macOS DMG on a clean Apple Silicon Mac
+To remove the SmartScreen "Unknown publisher" warning, add a code-signing certificate as repo secrets:
+
+- `WIN_CSC_LINK` — the base64-encoded `.pfx` certificate
+- `WIN_CSC_KEY_PASSWORD` — its export password
+
+`release.yml` passes these to electron-builder only on the Windows job. With them unset, Windows builds ship unsigned (current behavior).
+
+### 6. Recommended pre-share checklist
+
+- Install the arm64 DMG on a clean Apple Silicon Mac and the x64 DMG on a clean Intel Mac
 - Install the Windows `.exe` on a clean Windows 10/11 x64 machine
-- Verify first-run bridge setup succeeds on both platforms
+- Install the AppImage and `.deb` on a clean Linux x64 machine
+- Verify first-run bridge setup succeeds on each platform
 - Verify a user can complete provider setup with a fresh API key
 - Verify the release notes explain any signing or SmartScreen/Gatekeeper warnings
