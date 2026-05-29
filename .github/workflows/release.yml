@@ -141,16 +141,23 @@ jobs:
       # string elsewhere makes electron-builder treat it as a cert *path* and
       # fail ("not a file"), so we must leave it unset rather than blank.
       - name: Configure Windows code signing
-        if: runner.os == 'Windows' && secrets.WIN_CSC_LINK != ''
+        if: runner.os == 'Windows'
         shell: bash
         env:
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
         run: |
-          {
-            echo "CSC_LINK=$WIN_CSC_LINK"
-            echo "CSC_KEY_PASSWORD=$WIN_CSC_KEY_PASSWORD"
-          } >> "$GITHUB_ENV"
+          # Only export CSC_LINK when a cert is actually configured. Writing an
+          # empty value would make electron-builder treat '' as a cert path and
+          # fail, so an unset cert just builds unsigned.
+          if [ -n "$WIN_CSC_LINK" ]; then
+            {
+              echo "CSC_LINK=$WIN_CSC_LINK"
+              echo "CSC_KEY_PASSWORD=$WIN_CSC_KEY_PASSWORD"
+            } >> "$GITHUB_ENV"
+          else
+            echo "No Windows signing cert configured; building unsigned."
+          fi
 
       - name: Build & publish
         env:
