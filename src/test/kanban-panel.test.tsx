@@ -32,7 +32,14 @@ describe('KanbanPanel', () => {
     }));
   });
 
-  it('launches a card into a new chat panel and queues an autosend prompt', async () => {
+  it('dispatches a card to a background agent', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+
     const fetchCards = vi.fn().mockResolvedValue(undefined);
     const createCard = vi.fn().mockResolvedValue(undefined);
     const deleteCard = vi.fn().mockResolvedValue(undefined);
@@ -66,28 +73,18 @@ describe('KanbanPanel', () => {
 
     render(<KanbanPanel />);
 
-    fireEvent.click(screen.getByTitle('Run in chat'));
+    fireEvent.click(screen.getByTitle('Dispatch as background agent'));
 
     await waitFor(() => {
-      expect(updateCard).toHaveBeenCalledWith('card-1', { status: 'running' });
+      expect(toast.success).toHaveBeenCalledWith('Dispatched "Ship Hermes rollout" to background agent');
     });
 
-    const panelState = usePanelStore.getState();
-    expect(panelState.panels).toHaveLength(2);
-    const launchedPanel = panelState.panels.find((panel) => panel.id !== 'default');
-    expect(launchedPanel).toBeDefined();
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringContaining('/api/hermes/orchestrator/dispatch-card/card-1'),
+      expect.objectContaining({ method: 'POST' }),
+    );
 
-    const prompt = launchedPanel
-      ? useUIStore.getState().pendingPanelPrompts[launchedPanel.id]
-      : null;
-
-    expect(useUIStore.getState().activeTab).toBe('chat');
-    expect(useUIStore.getState().sidebarOpen).toBe(true);
-    expect(prompt).toMatchObject({ autoSend: true });
-    expect(prompt?.content).toContain('Work this Kanban card as the next task.');
-    expect(prompt?.content).toContain('Title: Ship Hermes rollout');
-    expect(prompt?.content).toContain('- Hermes route pass is green');
-    expect(toast.success).toHaveBeenCalledWith('Launched "Ship Hermes rollout" in a new chat panel');
+    vi.unstubAllGlobals();
   });
 
   it('renders the inline store error when kanban requests fail', () => {
