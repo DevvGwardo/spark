@@ -21,13 +21,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macos-latest is arm64; macos-13 is the Intel (x64) runner. Each
-          # bundles a Python runtime matching its own architecture.
+          # Both macOS artifacts build on the arm64 macos-latest runner: arm64
+          # natively and x64 via electron-builder cross-compile (--x64). GitHub
+          # retired the Intel macos-13 runner, so a separate x64 host is no
+          # longer available. Each job bundles a standalone Python runtime
+          # matching its target architecture (see py_target).
           - os: macos-latest
-            build_cmd: npm run electron:publish
+            build_cmd: npm run electron:publish -- --arm64
             py_target: aarch64-apple-darwin
-          - os: macos-13
-            build_cmd: npm run electron:publish
+          - os: macos-latest
+            build_cmd: npm run electron:publish -- --x64
             py_target: x86_64-apple-darwin
           - os: windows-latest
             build_cmd: npm run electron:publish:win

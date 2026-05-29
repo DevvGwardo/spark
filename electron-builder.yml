@@ -41,10 +41,10 @@ extraResources:
     to: "python-runtime"
 mac:
   icon: build/icon.icns
-  # Built per-architecture: the arm64 runner produces arm64 artifacts and the
-  # x64 (macos-13) runner produces x64, each bundling a matching standalone
-  # Python runtime (see release.yml). Omitting `arch` makes electron-builder
-  # build for the host runner's architecture.
+  # Architecture is chosen per release job via the electron-builder CLI flag
+  # (--arm64 / --x64 in release.yml); both build on the arm64 runner, with x64
+  # cross-compiled. Each job bundles a standalone Python runtime matching its
+  # target arch. Omitting `arch` here lets the CLI flag decide.
   target:
     - target: dmg
     - target: zip
