@@ -3,10 +3,14 @@
   "private": true,
   "version": "1.0.0-beta.4",
   "license": "PolyForm-Shield-1.0.0",
+  "author": {
+    "name": "CloudChat",
+    "email": "noreply@cloudchat.app"
+  },
   "main": "out/main/index.js",
   "type": "module",
   "scripts": {
-    "preinstall": "if [ -f ~/.hermes/scripts/supply-chain-guard.sh ]; then bash ~/.hermes/scripts/supply-chain-guard.sh; fi",
+    "preinstall": "node scripts/preinstall-guard.cjs",
     "dev": "vite",
     "build": "vite build && tsup server/index.ts --out-dir dist/server --format esm --target node22 --clean --sourcemap",
     "build:app": "vite build",
