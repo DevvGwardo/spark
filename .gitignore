@@ -34,6 +34,11 @@ out/
 release/
 dist-electron/
 
+# Playwright test artifacts
+e2e-results/
+test-results/
+playwright-report/
+
 # Worktrees
 .worktrees/
 .claude/worktrees/
