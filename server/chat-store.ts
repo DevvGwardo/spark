@@ -687,7 +687,10 @@ export function registerChatStoreRoutes(app: express.Express) {
   const shutdown = () => {
     if (isShuttingDown) return;
     isShuttingDown = true;
-    logger.info('[chat-store] Closing database connection');
+    // During app quit the pino transport worker may already be torn down, so a
+    // log here can throw "the worker is ending". Never let that abort the DB
+    // close (or surface as an uncaught exception).
+    try { logger.info('[chat-store] Closing database connection'); } catch { /* logger already closed */ }
     chatStore.close();
   };
   process.on('SIGINT', shutdown);
