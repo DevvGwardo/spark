@@ -95,18 +95,18 @@ export async function startOpenRouterOAuth(): Promise<string> {
     const server = createServer((request, response) => {
       const { code, error } = getAuthorizationCode(request)
       if (error) {
-        sendHtml(response, 400, '<!doctype html><title>OpenRouter Sign-In Failed</title><body style="margin:0;background:#090909;color:#f4f4f5;font:13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;display:grid;place-items:center;min-height:100vh;">Authentication failed. Return to CloudChat.</body>')
+        sendHtml(response, 400, '<!doctype html><title>OpenRouter Sign-In Failed</title><body style="margin:0;background:#090909;color:#f4f4f5;font:13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;display:grid;place-items:center;min-height:100vh;">Authentication failed. Return to Spark.</body>')
         finish(() => reject(new Error(error)))
         return
       }
 
       if (!code) {
-        sendHtml(response, 400, '<!doctype html><title>OpenRouter Sign-In Failed</title><body style="margin:0;background:#090909;color:#f4f4f5;font:13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;display:grid;place-items:center;min-height:100vh;">Authentication failed. Return to CloudChat.</body>')
+        sendHtml(response, 400, '<!doctype html><title>OpenRouter Sign-In Failed</title><body style="margin:0;background:#090909;color:#f4f4f5;font:13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;display:grid;place-items:center;min-height:100vh;">Authentication failed. Return to Spark.</body>')
         finish(() => reject(new Error('Missing authorization code in redirect.')))
         return
       }
 
-      sendHtml(response, 200, '<!doctype html><title>OpenRouter Connected</title><body style="margin:0;background:#090909;color:#f4f4f5;font:13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;display:grid;place-items:center;min-height:100vh;">Authentication complete. Return to CloudChat.</body>')
+      sendHtml(response, 200, '<!doctype html><title>OpenRouter Connected</title><body style="margin:0;background:#090909;color:#f4f4f5;font:13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;display:grid;place-items:center;min-height:100vh;">Authentication complete. Return to Spark.</body>')
       void (async () => {
         try {
           const apiKey = await exchangeAuthorizationCode(code, codeVerifier)

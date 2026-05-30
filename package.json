@@ -1,11 +1,11 @@
 {
-  "name": "cloudchat",
+  "name": "spark",
   "private": true,
   "version": "1.0.0-beta.4",
   "license": "PolyForm-Shield-1.0.0",
   "author": {
-    "name": "CloudChat",
-    "email": "noreply@cloudchat.app"
+    "name": "Spark",
+    "email": "noreply@spark.app"
   },
   "main": "out/main/index.js",
   "type": "module",
@@ -17,7 +17,7 @@
     "build:server": "tsup server/index.ts --out-dir dist/server --format esm --target node22 --clean --sourcemap",
     "analyze": "vite build --mode analyze",
     "build:dev": "vite build --mode development",
-    "icons": "bash scripts/generate-icons.sh",
+    "icons": "bash scripts/generate-spark-assets.sh",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",

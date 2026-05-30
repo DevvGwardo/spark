@@ -1,8 +1,12 @@
 <div align="center">
 
-# CloudChat
+<p align="center">
+  <img src="docs/spark-logo.png" alt="Spark logo" width="360">
+</p>
 
-**AI chat client with an autonomous agent brain.**
+# Spark
+
+**The AI desktop with an autonomous agent brain.**
 
 [![License](https://img.shields.io/badge/license-PolyForm--Shield--1.0.0-blue?style=flat-square)](LICENSE)
 [![Version](https://img.shields.io/badge/version-1.0.0--beta.4-orange?style=flat-square)](package.json)
@@ -11,7 +15,7 @@
 [![Python](https://img.shields.io/badge/python-%3E%3D3.10-green?style=flat-square)](hermes-bridge/requirements.txt)
 
 <p align="center">
-  <img src="docs/repo-banner.png" alt="CloudChat banner" width="100%">
+  <img src="docs/spark-repo-banner.png" alt="Spark banner" width="100%">
 </p>
 
 [Screenshots](#screenshots) · [Quick Start](#-quick-start) · [Features](#-features) · [Architecture](#-architecture) · [Contributing](CONTRIBUTING.md)
@@ -22,11 +26,11 @@
 
 ## What is this?
 
-CloudChat is an AI chat client that ships with **[Hermes](https://hermes-agent.nousresearch.com)** — Nous Research's autonomous agent that can read your code, browse the web, run terminals, manage GitHub repos, and actually get things done instead of just talking about them.
+Spark is an AI desktop client that ships with **[Hermes](https://hermes-agent.nousresearch.com)** — Nous Research's autonomous agent that can read your code, browse the web, run terminals, manage GitHub repos, and actually get things done instead of just talking about them.
 
 It also supports **15 other LLM providers** as regular chat clients, an **orchestrator** for parallel sub-tasks, and ships as a **desktop Electron app for macOS, Windows, and Linux** with auto-updates.
 
-**Hermes is optional.** CloudChat works perfectly as a chat client with any provider without it. Hermes just makes it way more useful.
+**Hermes is optional.** Spark works perfectly as a chat client with any provider without it. Hermes just makes it way more useful.
 
 ---
 
@@ -212,7 +216,7 @@ Native desktop app for macOS and Windows with global hotkey, tray menu, and auto
 ## Architecture
 
 <p align="center">
-  <img src="docs/repo-architecture.png" alt="CloudChat system architecture" width="95%">
+  <img src="docs/repo-architecture.png" alt="Spark system architecture" width="95%">
 </p>
 
 Three execution modes:
@@ -229,7 +233,7 @@ Three execution modes:
 - **Node.js** >= 20
 - **Python** >= 3.10 (for Hermes bridge)
 - **npm** or **bun**
-- **Git** if you want CloudChat to install Hermes Agent on first run
+- **Git** if you want Spark to install Hermes Agent on first run
 
 ### 1. Install
 
@@ -267,7 +271,7 @@ Optional for real Hermes tool-calling:
 
 ### 2. Configure Credentials
 
-CloudChat reads credentials in this order: env var → `~/.hermes/auth.json` → OpenClaw gateway token.
+Spark reads credentials in this order: env var → `~/.hermes/auth.json` → OpenClaw gateway token.
 
 ```bash
 # Option A: Environment variables
@@ -383,7 +387,7 @@ electron/               # Desktop app shell
 
 **PolyForm Shield 1.0.0** — see [LICENSE](LICENSE).
 
-You can use, modify, and distribute CloudChat freely. The only restriction: you can't offer a competing service using it.
+You can use, modify, and distribute Spark freely. The only restriction: you can't offer a competing service using it.
 
 ---
 

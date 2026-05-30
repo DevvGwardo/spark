@@ -219,7 +219,7 @@ export function createApp(opts?: { serveFrontend?: boolean }) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CloudChat — Remote Access</title>
+  <title>Spark — Remote Access</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -287,16 +287,16 @@ export function createApp(opts?: { serveFrontend?: boolean }) {
 </head>
 <body>
   <div class="card">
-    <h1>📱 CloudChat Remote</h1>
-    <p>Scan the QR code with your phone camera<br>to open CloudChat on your mobile device</p>
+    <h1>📱 Spark Remote</h1>
+    <p>Scan the QR code with your phone camera<br>to open Spark on your mobile device</p>
     <div class="qr-wrap"><img src="${qrSvg}" alt="QR Code"></div>
     <div class="url">${url}</div>
     <div class="url-label">Same Wi-Fi network required</div>
-    <a class="btn" href="/">Open CloudChat →</a>
+    <a class="btn" href="/">Open Spark →</a>
     <ol class="steps">
       <li>1. Connect your phone to the same Wi-Fi as this computer</li>
       <li>2. Open your camera app and point at the QR code</li>
-      <li>3. Tap the notification to open CloudChat</li>
+      <li>3. Tap the notification to open Spark</li>
     </ol>
   </div>
 </body>

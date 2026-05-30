@@ -1,5 +1,5 @@
-appId: com.cloudchat.app
-productName: CloudChat
+appId: app.spark.desktop
+productName: Spark
 directories:
   buildResources: build
   output: release
@@ -40,7 +40,7 @@ extraResources:
   - from: "resources/python-runtime"
     to: "python-runtime"
 mac:
-  icon: build/icon.icns
+  icon: build/spark-icon.icns
   # Architecture is chosen per release job via the electron-builder CLI flag
   # (--arm64 / --x64 in release.yml); both build on the arm64 runner, with x64
   # cross-compiled. Each job bundles a standalone Python runtime matching its
@@ -55,31 +55,31 @@ mac:
   gatekeeperAssess: false
 win:
   # TODO: replace with build/icon.ico for a proper Windows icon
-  icon: build/icon.png
+  icon: build/spark-icon.png
   target:
     - target: nsis
       arch: [x64]
-  artifactName: "CloudChat-${version}-win.${ext}"
+  artifactName: "Spark-${version}-win.${ext}"
 nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: CloudChat
+  shortcutName: Spark
 dmg:
   # ${arch} keeps the arm64 and x64 DMGs from overwriting each other when both
   # macOS jobs publish to the same release.
-  artifactName: "CloudChat-${version}-${arch}-mac.${ext}"
+  artifactName: "Spark-${version}-${arch}-mac.${ext}"
 linux:
-  icon: build/icon.png
+  icon: build/spark-icon.png
   category: Development
   target:
     - target: AppImage
       arch: [x64]
     - target: deb
       arch: [x64]
-  artifactName: "CloudChat-${version}-linux-${arch}.${ext}"
+  artifactName: "Spark-${version}-linux-${arch}.${ext}"
 publish:
   provider: github
   owner: DevvGwardo

@@ -243,12 +243,12 @@ export const RemoteAccessModal: React.FC<{ open: boolean; onOpenChange: (v: bool
 
                 <p className="text-[11px] text-muted-foreground leading-relaxed break-words">
                   {tunnel?.running
-                    ? 'Your CloudChat is publicly accessible at the URL above. Anyone with the link can access it — keep it private.'
+                    ? 'Your Spark desktop is publicly accessible at the URL above. Anyone with the link can access it — keep it private.'
                     : tunnel?.cloudflaredAvailable
-                    ? 'Start a public tunnel to access CloudChat from anywhere, even outside your home network.'
+                    ? 'Start a public tunnel to access Spark from anywhere, even outside your home network.'
                     : tunnel?.brewAvailable
                     ? 'Install Cloudflare Tunnel to get a secure public URL for remote access.'
-                    : 'Install Cloudflare Tunnel (cloudflared) to access CloudChat from anywhere.'}
+                    : 'Install Cloudflare Tunnel (cloudflared) to access Spark from anywhere.'}
                 </p>
 
                 {tunnelError && (
@@ -329,7 +329,7 @@ export const RemoteAccessModal: React.FC<{ open: boolean; onOpenChange: (v: bool
                 </p>
                 <p className="flex items-start gap-2">
                   <span className="text-foreground/60 font-mono">3.</span>
-                  CloudChat opens in your mobile browser
+                  Spark opens in your mobile browser
                 </p>
               </div>
             ) : (
@@ -340,7 +340,7 @@ export const RemoteAccessModal: React.FC<{ open: boolean; onOpenChange: (v: bool
                 </p>
                 <p className="flex items-start gap-2">
                   <span className="text-foreground/60 font-mono">2.</span>
-                  CloudChat opens — works from anywhere, no Wi-Fi needed
+                  Spark opens — works from anywhere, no Wi-Fi needed
                 </p>
               </div>
             )}

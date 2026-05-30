@@ -1,67 +1,67 @@
-# CloudChat Desktop Install Guide
+# Spark Desktop Install Guide
 
-This guide covers how users install CloudChat on macOS and Windows, plus the maintainer steps required to ship cross-platform desktop releases.
+This guide covers how users install Spark on macOS and Windows, plus the maintainer steps required to ship cross-platform desktop releases.
 
 ## What this app is
 
-CloudChat is a desktop AI chat client built around the **Hermes Agent** — an autonomous AI that can read code, edit files, browse the web, and manage GitHub PRs.
+Spark is a desktop AI client built around the **Hermes Agent** — an autonomous AI that can read code, edit files, browse the web, and manage GitHub PRs.
 
 ## Install
 
 ### User prerequisites
 
 - **macOS (Apple Silicon or Intel), Windows 10/11 x64, or Linux x64**.
-- **Git** only if CloudChat needs to download Hermes Agent on first launch. macOS has it via Xcode CLT (`xcode-select --install`); on Windows, install [Git for Windows](https://git-scm.com/download/win).
+- **Git** only if Spark needs to download Hermes Agent on first launch. macOS has it via Xcode CLT (`xcode-select --install`); on Windows, install [Git for Windows](https://git-scm.com/download/win).
 
 ### macOS (Apple Silicon — M1/M2/M3/M4)
 
-1. Go to [Releases](https://github.com/DevvGwardo/cloud-chat-hub/releases) and download the latest `CloudChat-x.y.z-arm64-mac.dmg`.
-2. Open the DMG and drag CloudChat to Applications.
+1. Go to [Releases](https://github.com/DevvGwardo/cloud-chat-hub/releases) and download the latest `Spark-x.y.z-arm64-mac.dmg`.
+2. Open the DMG and drag Spark to Applications.
 3. **First launch**: macOS may block the app if the build is unsigned or not notarized yet. Two options:
-   - Right-click CloudChat in Applications → **Open** → click "Open" in the dialog.
+   - Right-click Spark in Applications → **Open** → click "Open" in the dialog.
    - Or, if Gatekeeper still complains: open Terminal and run:
      ```sh
-     xattr -cr /Applications/CloudChat.app
+     xattr -cr /Applications/Spark.app
      ```
      Then launch normally.
 
 ### macOS (Intel)
 
-1. Download the latest `CloudChat-x.y.z-x64-mac.dmg` from [Releases](https://github.com/DevvGwardo/cloud-chat-hub/releases).
-2. Open the DMG and drag CloudChat to Applications.
+1. Download the latest `Spark-x.y.z-x64-mac.dmg` from [Releases](https://github.com/DevvGwardo/cloud-chat-hub/releases).
+2. Open the DMG and drag Spark to Applications.
 3. First launch follows the same Gatekeeper steps as Apple Silicon above.
 
 Intel builds now ship a native x64 Python runtime, so the bundled bridge runs without a separate Python install.
 
 ### Windows
 
-1. Download the latest `CloudChat-x.y.z-win.exe` from [Releases](https://github.com/DevvGwardo/cloud-chat-hub/releases).
+1. Download the latest `Spark-x.y.z-win.exe` from [Releases](https://github.com/DevvGwardo/cloud-chat-hub/releases).
 2. Run the installer. If the build is unsigned, SmartScreen warns "Unknown publisher" — click **More info** → **Run anyway**. Signed builds install without the warning.
 3. Follow the installer prompts.
 
 ### Linux (x64)
 
-1. Download the latest `CloudChat-x.y.z-linux-*.AppImage` or `CloudChat-x.y.z-linux-*.deb` from [Releases](https://github.com/DevvGwardo/cloud-chat-hub/releases).
-2. **AppImage:** `chmod +x CloudChat-*.AppImage` then run it. **`.deb`:** `sudo apt install ./CloudChat-*.deb`.
+1. Download the latest `Spark-x.y.z-linux-*.AppImage` or `Spark-x.y.z-linux-*.deb` from [Releases](https://github.com/DevvGwardo/cloud-chat-hub/releases).
+2. **AppImage:** `chmod +x Spark-*.AppImage` then run it. **`.deb`:** `sudo apt install ./Spark-*.deb`.
 3. The build bundles an x64 Python runtime; basic chat works out of the box. For agent mode on an unusual distro, having system Python 3.10+ available is a safe fallback.
 
 ### First-run setup
 
-CloudChat ships with a portable Python interpreter and the Hermes bridge built in. On first launch:
+Spark ships with a portable Python interpreter and the Hermes bridge built in. On first launch:
 
-1. **If `~/.hermes/hermes-agent` is already installed** (you've used the Hermes CLI before), CloudChat detects it and skips the install step entirely.
+1. **If `~/.hermes/hermes-agent` is already installed** (you've used the Hermes CLI before), Spark detects it and skips the install step entirely.
 2. **Otherwise**, a setup checklist appears with four rows, each showing a specific status:
    - ✓ **Python interpreter** — bundled, the existing hermes-agent venv, or your system Python
    - ✓ **Git** — only needed if Hermes Agent must be downloaded
    - ⬇ **Bridge dependencies** — one click installs FastAPI/uvicorn/httpx/pydantic to `~/.hermes/cloudchat-pkgs/`
    - ⬇ **Hermes Agent** — one click clones [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent) and installs its deps (~1–3 min)
    A status chip in the modal footer additionally shows the bridge process health: **Running**, **Starting…**, **Stopped**, or **Crashed**.
-3. If everything is already installed but the bridge is simply offline, CloudChat now offers a direct **Start bridge** recovery path instead of telling the user to reinstall Hermes.
+3. If everything is already installed but the bridge is simply offline, Spark now offers a direct **Start bridge** recovery path instead of telling the user to reinstall Hermes.
 4. Once the bridge is healthy, the regular setup wizard appears and walks you through entering an API key for at least one provider.
 
 You'll need an API key for one of: OpenRouter, Anthropic, OpenAI, MiniMax, or any of the supported providers. **OpenRouter is the easiest — one key gets you most models.**
 
-Nothing CloudChat installs ever leaves `~/.hermes/`. To uninstall everything, delete that directory (along with the app).
+Nothing Spark installs ever leaves `~/.hermes/`. To uninstall everything, delete that directory (along with the app).
 
 ## Reporting issues
 
@@ -76,7 +76,7 @@ Three templates:
 
 ## Auto-updates
 
-CloudChat checks for updates on launch. When a new release is available, you'll see a "Restart to update" prompt.
+Spark checks for updates on launch. When a new release is available, you'll see a "Restart to update" prompt.
 
 ## What we especially want feedback on
 
@@ -94,7 +94,7 @@ CloudChat checks for updates on launch. When a new release is available, you'll 
 
 ## Privacy
 
-Your API keys live on your machine in `~/.hermes/auth.json` and never leave it. Chat content is sent to whatever provider you've selected — see their respective privacy policies. CloudChat itself collects no telemetry in beta.
+Your API keys live on your machine in `~/.hermes/auth.json` and never leave it. Chat content is sent to whatever provider you've selected — see their respective privacy policies. Spark itself collects no telemetry in beta.
 
 ## Thanks
 
@@ -140,10 +140,10 @@ git push origin v1.0.0-beta.1
 The tag push triggers `.github/workflows/release.yml`, which builds macOS (arm64 + Intel), Windows, and Linux in parallel and publishes to <https://github.com/DevvGwardo/cloud-chat-hub/releases>.
 
 Before sharing a release, confirm it contains:
-- `CloudChat-x.y.z-arm64-mac.dmg` and `CloudChat-x.y.z-x64-mac.dmg`
+- `Spark-x.y.z-arm64-mac.dmg` and `Spark-x.y.z-x64-mac.dmg`
 - the matching macOS `.zip` files used by auto-update (one per arch)
-- `CloudChat-x.y.z-win.exe`
-- `CloudChat-x.y.z-linux-*.AppImage` and `CloudChat-x.y.z-linux-*.deb`
+- `Spark-x.y.z-win.exe`
+- `Spark-x.y.z-linux-*.AppImage` and `Spark-x.y.z-linux-*.deb`
 
 The release may be marked as **Draft** by electron-builder until all jobs complete. Publish it only after every platform build is green and the expected artifacts are present.
 

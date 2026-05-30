@@ -20,7 +20,7 @@ let tray: Tray | null = null
 let apiPort: number = 3001
 let dockBounceId: number | null = null
 let miniBrowserView: BrowserView | null = null
-const dockIconPath = join(__dirname, '../../build/icon.png')
+const dockIconPath = join(__dirname, '../../build/spark-icon.png')
 const CLOUDCHAT_ASSET_PROTOCOL = 'cloudchat-asset'
 const CLOUDCHAT_ASSET_ROOTS = {
   hermes: join(homedir(), '.hermes/images'),
@@ -236,7 +236,7 @@ async function createWindow() {
     minWidth: 800,
     minHeight: 600,
     ...(existsSync(dockIconPath) ? { icon: dockIconPath } : {}),
-    title: 'CloudChat',
+    title: 'Spark',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 15, y: 15 },
     webPreferences: {
@@ -404,7 +404,7 @@ function notifyAttentionRequest(payload: AttentionRequestPayload = {}) {
     return
   }
 
-  const title = payload.title?.trim() || 'CloudChat needs your attention'
+  const title = payload.title?.trim() || 'Spark needs your attention'
   const body = payload.body?.trim() || 'A conversation is waiting for your confirmation.'
 
   if (process.platform === 'darwin' && dockBounceId === null) {
@@ -655,8 +655,8 @@ ipcMain.on('terminal:kill', (_event, id: string) => {
 
 function createTray() {
   // Use a 16x16 template image for macOS menu bar (or empty placeholder until icon exists)
-  const trayTemplatePath = join(__dirname, '../../build/tray-iconTemplate.png')
-  const trayFallbackPath = join(__dirname, '../../build/tray-icon.png')
+  const trayTemplatePath = join(__dirname, '../../build/spark-tray-iconTemplate.png')
+  const trayFallbackPath = join(__dirname, '../../build/spark-icon.png')
   const trayIconPath = existsSync(trayTemplatePath) ? trayTemplatePath : trayFallbackPath
   let icon: Electron.NativeImage
   try {
@@ -669,10 +669,10 @@ function createTray() {
     icon = nativeImage.createEmpty()
   }
   tray = new Tray(icon)
-  tray.setToolTip('CloudChat')
+  tray.setToolTip('Spark')
 
   const contextMenu = Menu.buildFromTemplate([
-    { label: 'Show CloudChat', click: () => focusMainWindow() },
+    { label: 'Show Spark', click: () => focusMainWindow() },
     { label: 'New Chat', click: () => mainWindow?.webContents.send('new-chat') },
     { type: 'separator' },
     { label: 'Quit', click: () => app.quit() }
@@ -704,9 +704,9 @@ function registerGlobalShortcut() {
 
 // macOS: About panel
 app.setAboutPanelOptions({
-  applicationName: 'CloudChat',
+  applicationName: 'Spark',
   applicationVersion: app.getVersion(),
-  copyright: 'CloudChat',
+  copyright: 'Spark',
   version: process.versions.electron
 })
 

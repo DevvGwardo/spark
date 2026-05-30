@@ -10,7 +10,7 @@ const MobileShell = () => {
       {/* Top bar */}
       <div className="mb-5 flex items-center justify-between">
         <h1 className="font-sans text-sm font-medium text-foreground">
-          CloudChat
+          Spark
         </h1>
         <span className="inline-flex items-center rounded-full border border-border px-2.5 py-0.5 font-sans text-[11px] font-medium text-muted-foreground">
           Hermes Host

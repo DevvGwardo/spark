@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="620" height="160" viewBox="0 0 620 160" fill="none">
+  <defs>
+    <linearGradient id="logoPlate" x1="18" y1="18" x2="142" y2="142" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1A1D24"/>
+      <stop offset="55%" stop-color="#11141B"/>
+      <stop offset="100%" stop-color="#0B0D12"/>
+    </linearGradient>
+    <linearGradient id="logoRing" x1="38" y1="30" x2="114" y2="124" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFCF70"/>
+      <stop offset="50%" stop-color="#FF8B2B"/>
+      <stop offset="100%" stop-color="#FF5A36"/>
+    </linearGradient>
+    <radialGradient id="logoGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(80 76) rotate(90) scale(40)">
+      <stop offset="0%" stop-color="#FFD98B" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#FFD98B" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="logoSpark" x1="80" y1="48" x2="80" y2="102" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFF4C7"/>
+      <stop offset="55%" stop-color="#FFD36B"/>
+      <stop offset="100%" stop-color="#FFAA3B"/>
+    </linearGradient>
+  </defs>
+
+  <g transform="translate(0,0)">
+    <rect x="14" y="14" width="132" height="132" rx="34" fill="url(#logoPlate)"/>
+    <rect x="15.5" y="15.5" width="129" height="129" rx="32.5" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="3"/>
+    <circle cx="80" cy="80" r="40" fill="url(#logoGlow)"/>
+    <circle cx="80" cy="80" r="32" stroke="url(#logoRing)" stroke-width="8"/>
+    <circle cx="80" cy="80" r="22" fill="#0F1218" fill-opacity="0.72"/>
+    <g fill="url(#logoSpark)">
+      <path d="M80 50 L88 72 L110 80 L88 88 L80 110 L72 88 L50 80 L72 72 Z"/>
+      <path d="M108 48 L112 58 L122 62 L112 66 L108 76 L104 66 L94 62 L104 58 Z"/>
+      <path d="M52 94 L55 102 L63 105 L55 108 L52 116 L49 108 L41 105 L49 102 Z"/>
+    </g>
+  </g>
+
+  <text x="184" y="98"
+        font-family="Helvetica, Arial, sans-serif"
+        font-size="74" font-weight="700" letter-spacing="-2.4" fill="#E8EAED">Spark</text>
+</svg>

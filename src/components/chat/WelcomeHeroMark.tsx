@@ -1,6 +1,6 @@
 import React from 'react';
 import { cn } from '@/lib/utils';
-import cloudchatMark from '@/assets/android-chrome-512x512.png';
+import sparkMark from '@/assets/spark-mark.png';
 
 interface WelcomeHeroMarkProps {
   className?: string;
@@ -9,8 +9,8 @@ interface WelcomeHeroMarkProps {
 export const WelcomeHeroMark: React.FC<WelcomeHeroMarkProps> = ({ className }) => {
   return (
     <img
-      src={cloudchatMark}
-      alt="CloudChat"
+      src={sparkMark}
+      alt="Spark"
       className={cn('h-28 w-28', className)}
       data-testid="welcome-hero-mark"
     />
