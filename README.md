@@ -38,10 +38,10 @@ It also supports **15 other LLM providers** as regular chat clients, an **orches
 
 <p align="center">
   <a href="docs/spark-hermes-demo.mp4">
-    <img src="docs/spark-hermes-poster.png" alt="Spark × Hermes — 45-second demo" width="300">
+    <img src="docs/spark-hermes-demo.gif" alt="Spark × Hermes — 45-second demo" width="300">
   </a>
   <br>
-  <em>▶ <a href="docs/spark-hermes-demo.mp4">Watch the 45-second tour</a> — keep track of Hermes sessions, usage, and chats at a glance.</em>
+  <em>▶ <a href="docs/spark-hermes-demo.mp4">Watch the full 45-second tour with audio</a> — keep track of Hermes sessions, usage, and chats at a glance.</em>
 </p>
 
 ---
