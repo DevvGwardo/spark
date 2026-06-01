@@ -99,7 +99,10 @@ export function createApp(opts?: { serveFrontend?: boolean }) {
   app.use(express.json({ limit: MAX_BODY_SIZE }));
 
   // ─── Production: serve the built frontend ─────────────────────────────────
-  const distPath = join(PROJECT_ROOT, 'dist');
+  // FRONTEND_DIST_DIR lets the Electron app point at its packaged renderer
+  // (out/renderer) so remote devices can load the full UI over HTTP. The web
+  // `npm run serve` flow leaves it unset and falls back to dist/.
+  const distPath = process.env.FRONTEND_DIST_DIR || join(PROJECT_ROOT, 'dist');
   if (opts?.serveFrontend) {
     if (existsSync(distPath)) {
       logger.info(`[server] Serving frontend from ${distPath}`);
@@ -336,6 +339,10 @@ export function startServer(port?: number) {
     logger.error(`[server] Invalid port: ${resolvedPort}. Must be an integer between 1 and 65535.`);
     process.exit(1);
   }
+
+  // Advertise the port we actually bound to (Electron picks a free one
+  // dynamically) so the remote-access QR / tunnel point at the real server.
+  process.env.PORT = String(resolvedPort);
 
   const serveFrontend = process.env.SERVE_FRONTEND === 'true';
   const app = createApp({ serveFrontend });

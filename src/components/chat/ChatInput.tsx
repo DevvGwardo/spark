@@ -271,7 +271,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
     : (hasContent ? 'Ask for follow-up changes' : 'What do you want to build?');
 
   return (
-    <div className="w-full max-w-[720px] mx-auto px-20 pb-3 pt-2">
+    <div className="w-full max-w-[720px] mx-auto px-3 md:px-20 pb-3 pt-2">
       <div className="flex flex-col">
         <QueuedMessageTray
           messages={queuedMessages}

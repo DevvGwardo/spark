@@ -1266,5 +1266,90 @@ class CronBridgeMappingTests(unittest.TestCase):
         self.assertEqual(runs[1]["error"], "boom")
 
 
+class WorkspaceUsageCostTests(unittest.TestCase):
+    """Cost is recomputed per-provider from tokens, ignoring corrupt stored estimates."""
+
+    def _make_state_db(self, tmpdir, rows):
+        import sqlite3
+        import time
+
+        db_path = Path(tmpdir) / "state.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            """
+            create table sessions (
+                id text primary key,
+                model text,
+                billing_provider text,
+                started_at real,
+                message_count integer default 0,
+                tool_call_count integer default 0,
+                input_tokens integer default 0,
+                output_tokens integer default 0,
+                cache_read_tokens integer default 0,
+                cache_write_tokens integer default 0,
+                reasoning_tokens integer default 0,
+                estimated_cost_usd real,
+                actual_cost_usd real
+            )
+            """
+        )
+        now = time.time()
+        for i, r in enumerate(rows):
+            conn.execute(
+                "insert into sessions (id, model, billing_provider, started_at, message_count, "
+                "tool_call_count, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, "
+                "reasoning_tokens, estimated_cost_usd, actual_cost_usd) "
+                "values (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    f"s{i}", r["model"], r.get("billing_provider", ""), now, 1, 0,
+                    r.get("input", 0), r.get("output", 0), r.get("cache_read", 0),
+                    r.get("cache_write", 0), r.get("reasoning", 0),
+                    r.get("estimated_cost_usd"), r.get("actual_cost_usd"),
+                ),
+            )
+        conn.commit()
+        conn.close()
+        return Path(tmpdir)
+
+    def test_cost_recomputed_and_garbage_rejected(self):
+        M = 1_000_000
+        rows = [
+            # priced by family — flash = 0.14 in + 0.28 out = $0.42; garbage estimate ignored
+            {"model": "deepseek-v4-flash", "billing_provider": "custom", "input": M, "output": M, "estimated_cost_usd": 999999.0},
+            # claude sonnet = 3 in + 15 out = $18.00
+            {"model": "claude-sonnet-4-5", "input": M, "output": M},
+            # opaque alias, corrupt estimate (implies 2500/Mtok) -> rejected -> $0, flagged unpriced
+            {"model": "zz-opaque-codename", "billing_provider": "custom", "input": M, "output": M, "estimated_cost_usd": 5000.0},
+            # opaque alias, plausible estimate (0.5/Mtok) -> kept as last resort -> $0.50
+            {"model": "zz-opaque-codename-2", "billing_provider": "custom", "input": M, "output": 0, "estimated_cost_usd": 0.50},
+            # free tier -> $0 regardless of stored estimate
+            {"model": "stepfun/step-3.5-flash:free", "input": M, "output": M, "estimated_cost_usd": 999.0},
+        ]
+        with TemporaryDirectory() as tmpdir:
+            home = self._make_state_db(tmpdir, rows)
+            payload = main._workspace_usage_payload(hermes_home=home)
+
+        self.assertAlmostEqual(payload["cost_usd"], 0.42 + 18.0 + 0.0 + 0.50 + 0.0, places=4)
+        self.assertEqual(payload["session_count"], 5)
+        self.assertIn("pricing_version", payload)
+
+        by_model = {m["model"]: m for m in payload["top_models"]}
+        self.assertAlmostEqual(by_model["claude-sonnet-4-5"]["cost_usd"], 18.0, places=4)
+        self.assertAlmostEqual(by_model["deepseek-v4-flash"]["cost_usd"], 0.42, places=4)
+        self.assertAlmostEqual(by_model["zz-opaque-codename"]["cost_usd"], 0.0, places=4)
+
+    def test_actual_cost_is_preferred_when_present(self):
+        M = 1_000_000
+        rows = [
+            # provider-reported actual cost wins over both the table and the estimate
+            {"model": "claude-sonnet-4-5", "input": M, "output": M, "actual_cost_usd": 7.77, "estimated_cost_usd": 1.0},
+        ]
+        with TemporaryDirectory() as tmpdir:
+            home = self._make_state_db(tmpdir, rows)
+            payload = main._workspace_usage_payload(hermes_home=home)
+        self.assertAlmostEqual(payload["cost_usd"], 7.77, places=4)
+
+
 if __name__ == "__main__":
     unittest.main()

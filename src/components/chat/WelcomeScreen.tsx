@@ -134,18 +134,18 @@ export const WelcomeScreen = React.forwardRef<HTMLDivElement, WelcomeScreenProps
   );
 
   return (
-    <div ref={ref} className="flex flex-col items-center justify-center h-full px-6">
-      <div className="text-center max-w-[520px]">
+    <div ref={ref} className="flex flex-col items-center justify-center h-full px-4 md:px-6">
+      <div className="w-full text-center max-w-[520px]">
         {/* Hero mark — refined sizing */}
-        <div className="flex justify-center mb-6">
-          <WelcomeHeroMark className="h-20 w-20 rounded-[24px]" />
+        <div className="flex justify-center mb-5 md:mb-6">
+          <WelcomeHeroMark className="h-16 w-16 md:h-20 md:w-20 rounded-[20px] md:rounded-[24px]" />
         </div>
 
         {/* Title block */}
-        <h1 className="text-[22px] font-semibold tracking-[-0.02em] text-foreground">
+        <h1 className="text-[20px] md:text-[22px] font-semibold tracking-[-0.02em] text-foreground">
           What do you want to build?
         </h1>
-        <p className="mt-1.5 text-[14px] text-muted-foreground">
+        <p className="mt-1.5 text-[13px] md:text-[14px] text-muted-foreground">
           Start a conversation or pick a suggestion to get going.
         </p>
 
@@ -243,7 +243,7 @@ export const WelcomeScreen = React.forwardRef<HTMLDivElement, WelcomeScreenProps
 
         {/* Suggestion chips */}
         <div className="mt-6">
-          <div className="grid grid-cols-2 gap-2.5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             {(isRepoMode && activeRepo ? repoSuggestions : generalSuggestions).map((chip, i) => (
               <button
                 key={chip.label}

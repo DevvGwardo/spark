@@ -162,7 +162,14 @@ export function getApiBaseUrl(): string {
     return `http://localhost:${storedPort}`;
   }
 
-  return import.meta.env.VITE_API_URL || '';
+  // In Vite dev the API runs on a separate port, so honor VITE_API_URL.
+  // In any built/served context (Electron remote access, `npm run serve`)
+  // use a same-origin relative base — otherwise a phone loading the app over
+  // LAN/tunnel would call the baked-in localhost and get ERR_CONNECTION_REFUSED.
+  if (import.meta.env.DEV) {
+    return import.meta.env.VITE_API_URL || '';
+  }
+  return '';
 }
 
 /**

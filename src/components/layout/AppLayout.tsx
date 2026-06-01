@@ -17,6 +17,7 @@ import { useRoomStore } from '@/stores/room-store';
 import { useContextUsageStore } from '@/stores/context-usage-store';
 import { useTheme } from '@/hooks/useTheme';
 import { useGlobalStyles } from '@/hooks/useGlobalStyles';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { PROVIDERS } from '@/lib/providers';
 import { detectHermesBridge } from '@/lib/detect-hermes';
 import { getChatScopeId } from '@/lib/chat-scope';
@@ -46,6 +47,7 @@ const LazyFallback = () => (
 export const AppLayout: React.FC = () => {
   useTheme();
   useGlobalStyles();
+  const isMobile = useIsMobile();
   const {
     sidebarOpen,
     setSidebarOpen,
@@ -372,55 +374,70 @@ const headerSecondaryLabel = selectedCronJobId
           Skip to main content
         </a>
         <div className="flex-1 flex min-h-0 gap-0 overflow-hidden" id="main-content">
-          {/* Sidebar + resize handle wrapper */}
-          <div className="flex-shrink-0 relative" style={sidebarOpen ? { width: sidebarWidth } : { width: 0 }}>
+          {/* Sidebar — slide-over drawer on mobile, in-flow resizable panel on desktop */}
+          {isMobile ? (
             <div
               className={cn(
-                'h-full overflow-hidden bg-[hsl(var(--sidebar-bg))] border-r border-[hsl(var(--sidebar-border))]',
-                !sidebarOpen && 'w-0 border-r-0'
+                'fixed inset-y-0 left-0 z-50 flex flex-col bg-[hsl(var(--sidebar-bg))] border-r border-[hsl(var(--sidebar-border))] shadow-2xl transition-transform duration-200 ease-out',
+                sidebarOpen ? 'translate-x-0' : '-translate-x-full pointer-events-none'
               )}
-              style={sidebarOpen ? { width: sidebarWidth, transition: isResizing.current ? 'none' : 'width 200ms' } : { transition: 'width 200ms' }}
+              style={{ width: 'min(86vw, 360px)' }}
             >
-              <nav className="h-full" style={{ width: sidebarWidth }} aria-label="Main navigation">
+              <nav className="h-full w-full" aria-label="Main navigation" aria-hidden={!sidebarOpen}>
                 <ChatSidebar />
               </nav>
             </div>
-            {/* Resize handle — positioned to straddle the sidebar edge */}
-            {sidebarOpen && (
+          ) : (
+            <div className="flex-shrink-0 relative" style={sidebarOpen ? { width: sidebarWidth } : { width: 0 }}>
               <div
-                role="separator"
-                aria-valuenow={sidebarWidth}
-                aria-valuemin={200}
-                aria-valuemax={600}
-                aria-label="Resize sidebar"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === 'ArrowLeft') setSidebarWidth(Math.max(200, sidebarWidth - 20));
-                  if (e.key === 'ArrowRight') setSidebarWidth(Math.min(600, sidebarWidth + 20));
-                }}
-                onMouseDown={handleResizeStart}
-                className="absolute top-0 -right-1.5 w-3 h-full cursor-col-resize z-10 group"
+                className={cn(
+                  'h-full overflow-hidden bg-[hsl(var(--sidebar-bg))] border-r border-[hsl(var(--sidebar-border))]',
+                  !sidebarOpen && 'w-0 border-r-0'
+                )}
+                style={sidebarOpen ? { width: sidebarWidth, transition: isResizing.current ? 'none' : 'width 200ms' } : { transition: 'width 200ms' }}
               >
-                <div className="absolute inset-y-6 bottom-6 left-1/2 -translate-x-1/2 w-px rounded-full bg-border/20 group-hover:bg-primary/30 group-active:bg-primary/50 transition-colors" />
+                <nav className="h-full" style={{ width: sidebarWidth }} aria-label="Main navigation">
+                  <ChatSidebar />
+                </nav>
               </div>
-            )}
-          </div>
+              {/* Resize handle — positioned to straddle the sidebar edge */}
+              {sidebarOpen && (
+                <div
+                  role="separator"
+                  aria-valuenow={sidebarWidth}
+                  aria-valuemin={200}
+                  aria-valuemax={600}
+                  aria-label="Resize sidebar"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'ArrowLeft') setSidebarWidth(Math.max(200, sidebarWidth - 20));
+                    if (e.key === 'ArrowRight') setSidebarWidth(Math.min(600, sidebarWidth + 20));
+                  }}
+                  onMouseDown={handleResizeStart}
+                  className="absolute top-0 -right-1.5 w-3 h-full cursor-col-resize z-10 group"
+                >
+                  <div className="absolute inset-y-6 bottom-6 left-1/2 -translate-x-1/2 w-px rounded-full bg-border/20 group-hover:bg-primary/30 group-active:bg-primary/50 transition-colors" />
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Mobile overlay */}
           {sidebarOpen && (
             <div
-              className="md:hidden fixed inset-0 z-40 bg-foreground/10"
+              className="md:hidden fixed inset-0 z-40 bg-foreground/40 backdrop-blur-[1px]"
               onClick={() => setSidebarOpen(false)}
+              aria-hidden="true"
             />
           )}
 
           {/* Main */}
           <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-background">
             {/* Header */}
-            <header className="flex items-center h-[48px] px-5 flex-shrink-0 border-b border-border/60 bg-background" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+            <header className="flex items-center h-[48px] px-3 md:px-5 flex-shrink-0 border-b border-border/60 bg-background" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
               {/* Collapsed sidebar controls — sits in the traffic light area */}
               {!sidebarOpen && (
-                <div className="flex items-center gap-2 mr-3 pl-[60px]" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+                <div className="flex items-center gap-2 mr-2 md:mr-3 md:pl-[60px]" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
                   <button
                     onClick={toggleSidebar}
                     className={chromeIconButtonClass}
@@ -431,11 +448,11 @@ const headerSecondaryLabel = selectedCronJobId
                   {activeTab === 'chat' && !selectedCronJobId && (
                     <button
                       onClick={() => setConversationForPanel(focusedPanelId, null)}
-                      className={chromeActionButtonClass}
+                      className={cn(chromeActionButtonClass, 'whitespace-nowrap')}
                       title="New thread"
                     >
                       <Plus className="h-3.5 w-3.5" />
-                      <span>New thread</span>
+                      <span className="hidden md:inline">New thread</span>
                     </button>
                   )}
                 </div>
@@ -455,8 +472,8 @@ const headerSecondaryLabel = selectedCronJobId
 
               {/* Thread/page title — only show in single-panel or non-chat tabs */}
               {(!isMultiPanel || activeTab !== 'chat') && (
-                <div className="flex items-center gap-2.5 ml-3 min-w-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-                  <div className="flex h-5 w-5 items-center justify-center rounded-[4px] bg-[#2a2a2a]"><MessageSquare className="h-2.5 w-2.5 text-[hsl(var(--text-muted))]" /></div>
+                <div className="flex items-center gap-2.5 ml-2 md:ml-3 min-w-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+                  <div className="hidden md:flex h-5 w-5 items-center justify-center rounded-[4px] bg-[#2a2a2a]"><MessageSquare className="h-2.5 w-2.5 text-[hsl(var(--text-muted))]" /></div>
                   <div className="min-w-0">
                     <h1 className="truncate text-[13px] font-normal tracking-[-0.015em] text-[hsl(var(--text-secondary))]">
                       {headerTitle}
@@ -585,8 +602,8 @@ const headerSecondaryLabel = selectedCronJobId
                 </button>
               </div>
 
-              {/* Terminal toggle */}
-              <div className="flex items-center mr-2 gap-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+              {/* Terminal toggle — desktop-only chrome, hidden at phone width */}
+              <div className="hidden md:flex items-center mr-2 gap-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
                 <button
                   onClick={toggleHermesTerminal}
                   className={cn(

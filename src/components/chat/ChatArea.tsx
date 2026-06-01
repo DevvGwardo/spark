@@ -792,7 +792,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       <ChatSurfaceBackground testId="chat-surface-background" />
       <div className="relative z-10 flex h-full min-h-0 flex-col">
         {planMode && (
-          <div className="mx-20 mt-2 flex items-center gap-2 rounded-md bg-purple-500/10 px-3 py-1.5 text-xs text-purple-400 ring-1 ring-purple-500/20">
+          <div className="mx-4 md:mx-20 mt-2 flex items-center gap-2 rounded-md bg-purple-500/10 px-3 py-1.5 text-xs text-purple-400 ring-1 ring-purple-500/20">
             <ClipboardList className="h-3.5 w-3.5" />
             <span>Plan Mode — read-only exploration, no file edits</span>
           </div>
@@ -836,7 +836,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             || (isLastAssistantStreaming ? toolActivityMap?.['current'] : undefined);
 
           return (
-            <div className="max-w-[720px] mx-auto px-20 py-6">
+            <div className="max-w-[720px] mx-auto px-4 md:px-20 py-6">
               <MessageBubble
                 key={msg.id}
                 message={{
@@ -872,7 +872,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             Footer: React.memo(() => (
               <>
                 {showInlineApprovalBanner && (
-                  <div className="mx-auto max-w-[720px] px-20">
+                  <div className="mx-auto max-w-[720px] px-4 md:px-20">
                     <ChangeApprovalModal
                       open={approvalModalOpen}
                       onOpenChange={setApprovalModalOpen}
@@ -885,7 +885,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   </div>
                 )}
                 {showIssueNextStepCallout && issueContext && (
-                  <div className="mx-auto max-w-[720px] px-20 pb-6">
+                  <div className="mx-auto max-w-[720px] px-4 md:px-20 pb-6">
                     <IssueNextStepCallout
                       issueNumber={issueContext.number}
                       issueTitle={issueContext.title}
@@ -896,7 +896,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   </div>
                 )}
                 {buddyResponse && (
-                  <div className="mx-auto max-w-[720px] px-20 pb-4">
+                  <div className="mx-auto max-w-[720px] px-4 md:px-20 pb-4">
                     <BuddyComparisonPanel
                       buddyResponse={buddyResponse}
                       primaryResponse={lastAssistantMessage ? {
