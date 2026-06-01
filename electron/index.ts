@@ -221,6 +221,16 @@ async function createWindow() {
   process.env.CLOUDCHAT_USER_DATA_DIR = app.getPath('userData')
   process.env.CLOUDCHAT_IMAGE_SNAPSHOT_DIR = getSnapshotDir()
 
+  // Serve the bundled frontend over HTTP so remote devices (phone via the
+  // Remote Access QR / tunnel) can load the full Spark UI, not just the API.
+  // This also enables the /api/remote/* QR + tunnel endpoints. In dev the
+  // renderer is served by Vite, so this only activates in packaged builds.
+  const rendererDir = join(__dirname, '../renderer')
+  if (existsSync(join(rendererDir, 'index.html'))) {
+    process.env.SERVE_FRONTEND = 'true'
+    process.env.FRONTEND_DIST_DIR = rendererDir
+  }
+
   // Start embedded Express server
   apiPort = await startEmbeddedServer()
   console.log(`Embedded server started on port ${apiPort}`)
@@ -275,7 +285,9 @@ async function createWindow() {
         ...details.responseHeaders,
         'Content-Security-Policy': [
           "default-src 'self';" +
-          " script-src 'self' https://cdn.jsdelivr.net;" +
+          // Hash of the inline FOUC-prevention theme script in index.html.
+          // If that script changes, regenerate this hash from the CSP console error.
+          " script-src 'self' https://cdn.jsdelivr.net 'sha256-0vw5FNYeotOv1pKtYDJoVY1QPOJ7d3jJvy4jR5P0U2Q=';" +
           " style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net;" +
           " font-src 'self' https://fonts.gstatic.com data:;" +
           " img-src 'self' data: https: http: file: cloudchat-asset:;" +

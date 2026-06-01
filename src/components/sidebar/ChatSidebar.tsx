@@ -10,6 +10,7 @@ import { useChangesetStore } from '@/stores/changeset-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { getChatScopeId } from '@/lib/chat-scope';
 import { getRepoAccessLabel } from '@/lib/repo-access';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { cn } from '@/lib/utils';
 import { SlotNumber } from '@/components/ui/SlotNumber';
 import { CronJobsPanel } from '@/components/sidebar/CronJobsPanel';
@@ -115,8 +116,12 @@ export const ChatSidebar: React.FC = () => {
   } = useChatStore();
 
   const { panels, focusedPanelId, setConversationForPanel, openPanel, openRoomPanel } = usePanelStore();
-  const { activeTab, setActiveTab, setSettingsOpen, setRepoBrowserOpen, sidebarWidth, activeSubTab, setActiveSubTab } = useUIStore();
+  const { activeTab, setActiveTab, setSettingsOpen, setRepoBrowserOpen, sidebarWidth, activeSubTab, setActiveSubTab, setSidebarOpen } = useUIStore();
   const { activeProvider } = useSettingsStore();
+  const isMobile = useIsMobile();
+  // On mobile the sidebar is a slide-over drawer — dismiss it after navigating
+  // to content so the user lands on the chat instead of staying behind the panel.
+  const closeOnMobile = () => { if (isMobile) setSidebarOpen(false); };
   const activities = useActivityStore((s) => s.activities);
   const getLineTotals = useChangesetStore((s) => s.getLineTotals);
   const panelQueues = useChatQueueStore((s) => s.panelQueues);
@@ -185,6 +190,7 @@ export const ChatSidebar: React.FC = () => {
   const handleNew = () => {
     setActiveTab('chat');
     setConversationForPanel(focusedPanelId, null);
+    closeOnMobile();
   };
 
   // Close tree overlay on Esc
@@ -293,6 +299,7 @@ export const ChatSidebar: React.FC = () => {
   const handleSelectConversation = (convId: string) => {
     setActiveTab('chat');
     setConversationForPanel(focusedPanelId, convId);
+    closeOnMobile();
   };
 
   const handleCleanupSelect = (days: number) => {
@@ -375,8 +382,20 @@ export const ChatSidebar: React.FC = () => {
 
   return (
     <div className="flex h-full flex-col bg-transparent text-foreground">
-      {/* macOS traffic light spacer — clears hiddenInset titlebar buttons */}
-      <div className="h-[38px] shrink-0" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
+      {/* macOS traffic light spacer (desktop) / close affordance (mobile drawer) */}
+      {isMobile ? (
+        <div className="flex h-11 shrink-0 items-center justify-end px-3">
+          <button
+            onClick={() => setSidebarOpen(false)}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-[hsl(var(--muted))] hover:text-foreground"
+            aria-label="Close sidebar"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      ) : (
+        <div className="h-[38px] shrink-0" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
+      )}
       {/* Top action bar */}
       <div
         className={cn(
@@ -1054,6 +1073,7 @@ export const ChatSidebar: React.FC = () => {
                     onClick={() => {
                       openRoomPanel(room.id);
                       setActiveTab('chat');
+                      closeOnMobile();
                     }}
                     className="flex w-full items-center gap-3 rounded-[10px] px-4 py-3 text-left transition-colors hover:bg-[hsl(var(--sidebar-active))]/40 focus:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--ring))]"
                   >
@@ -1084,6 +1104,7 @@ export const ChatSidebar: React.FC = () => {
               setShowCreateDialog(false);
               openRoomPanel(room.id);
               setActiveTab('chat');
+              closeOnMobile();
             }}
           />
         </div>

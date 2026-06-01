@@ -46,9 +46,27 @@ export function csrfProtection(req: express.Request, res: express.Response, next
     // Same-origin requests (no Origin/Referer) are allowed
     return next();
   }
-  // Allow requests whose origin matches an allowed origin
-  const originUrl = new URL(origin);
-  const originHost = originUrl.host;
+  let originHost: string;
+  try {
+    originHost = new URL(origin).host;
+  } catch {
+    return sendJson(res, 403, { error: 'Cross-origin requests are not allowed' });
+  }
+
+  // Same-origin: the Origin matches the host this request was actually sent to.
+  // This covers remote access over LAN/tunnel where the host is the LAN IP or a
+  // *.trycloudflare.com domain rather than localhost. X-Forwarded-Host handles
+  // reverse proxies (e.g. cloudflared) that may rewrite the Host header.
+  // A genuine cross-site CSRF attempt still fails here because the attacker's
+  // Origin won't equal the server's own host, and falls through to the allowlist.
+  const forwardedHost = (req.headers['x-forwarded-host'] as string | undefined)?.split(',')[0]?.trim();
+  const selfHosts = new Set([req.headers.host, forwardedHost].filter(Boolean));
+  if (selfHosts.has(originHost)) {
+    return next();
+  }
+
+  // Otherwise require an explicitly allowed origin (e.g. the Vite dev server on
+  // a different port than the API during local development).
   const allowed = [...ALLOWED_ORIGINS].some(allowedOrigin => {
     try {
       return new URL(allowedOrigin).host === originHost;

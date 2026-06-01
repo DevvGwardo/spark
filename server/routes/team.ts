@@ -1,5 +1,5 @@
 import { logger } from '../lib/logger';
-import type { Express, Request, Response } from 'express';
+import type { Express, Request, Response, NextFunction } from 'express';
 import { randomUUID } from 'node:crypto';
 import { teamCoordinator, isComplexTask } from '../team-coordinator';
 import { createTeamContextStore } from '../team-context-store';
@@ -117,7 +117,10 @@ export function registerTeamRoutes(app: Express) {
   });
 
   // GET /api/hermes/team/:id — Get team status
-  app.get('/api/hermes/team/:id', (req: Request, res: Response) => {
+  app.get('/api/hermes/team/:id', (req: Request, res: Response, next: NextFunction) => {
+    // "active" and "completed" have dedicated list routes registered below;
+    // let them fall through instead of being matched as a team id (which 404s).
+    if (req.params.id === 'active' || req.params.id === 'completed') return next();
     try {
       const { id } = req.params;
       const team = teamCoordinator.getTeam(id);

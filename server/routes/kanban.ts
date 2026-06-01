@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from 'express';
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
@@ -68,15 +68,15 @@ type UpdateKanbanCardInput = Partial<Omit<CreateKanbanCardInput, 'createdBy'>>;
 
 // ─── SQLite connection (singleton) ──────────────────────────────────────────
 
-let _db: Database.Database | null = null;
+let _db: DatabaseSync | null = null;
 
-function getDb(): Database.Database {
+function getDb(): DatabaseSync {
   if (!_db) {
     // Ensure parent dir exists
     fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
-    _db = new Database(DB_PATH);
-    _db.pragma('journal_mode = WAL');
-    _db.pragma('foreign_keys = ON');
+    _db = new DatabaseSync(DB_PATH);
+    _db.prepare('PRAGMA journal_mode = WAL').run();
+    _db.prepare('PRAGMA foreign_keys = ON').run();
   }
   return _db;
 }
@@ -202,7 +202,7 @@ function rowToCard(row: Record<string, unknown>): KanbanCard {
 function listKanbanCards(filters: ListFilters = {}): KanbanCard[] {
   const db = getDb();
   const conditions: string[] = [];
-  const params: unknown[] = [];
+  const params: Array<string | number | null> = [];
 
   if (filters.status) {
     conditions.push('status = ?');
@@ -269,7 +269,7 @@ function updateKanbanCard(
 
   const now = Date.now();
   const setClauses: string[] = ['updated_at = ?'];
-  const setParams: unknown[] = [now];
+  const setParams: Array<string | number | null> = [now];
 
   if (updates.title !== undefined) {
     setClauses.push('title = ?');

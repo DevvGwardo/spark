@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 import httpx
+import pricing
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -613,28 +614,81 @@ def _workspace_usage_payload(*, hermes_home: Path) -> dict:
             coalesce(sum(tool_call_count), 0) as tool_call_count,
             coalesce(sum(input_tokens), 0) as input_tokens,
             coalesce(sum(output_tokens), 0) as output_tokens,
-            coalesce(sum(coalesce(actual_cost_usd, estimated_cost_usd, 0)), 0) as cost_usd,
             min(started_at) as first_started_at,
             max(started_at) as last_started_at
         from sessions
         """,
         hermes_home=hermes_home,
     )
-    top_models = _query_state_db(
+
+    # Cost is recomputed from token counts via a curated per-provider price table
+    # (see pricing.py) rather than trusting the session store's unreliable
+    # estimated_cost_usd. We group by (model, billing_provider) so each alias is
+    # priced at its family rate; provider-reported actual_cost_usd is preferred
+    # per-row, and any stored estimate is only a clamped last resort for models we
+    # can't price (rejecting corrupt rows that imply absurd per-token rates).
+    cost_groups = _query_state_db(
         """
         select
             coalesce(nullif(model, ''), 'unknown') as model,
+            coalesce(nullif(billing_provider, ''), '') as billing_provider,
             count(*) as session_count,
             coalesce(sum(input_tokens), 0) as input_tokens,
             coalesce(sum(output_tokens), 0) as output_tokens,
-            coalesce(sum(coalesce(actual_cost_usd, estimated_cost_usd, 0)), 0) as cost_usd
+            coalesce(sum(case when actual_cost_usd is null then input_tokens else 0 end), 0) as est_input_tokens,
+            coalesce(sum(case when actual_cost_usd is null then output_tokens else 0 end), 0) as est_output_tokens,
+            coalesce(sum(case when actual_cost_usd is null then cache_read_tokens else 0 end), 0) as est_cache_read_tokens,
+            coalesce(sum(case when actual_cost_usd is null then cache_write_tokens else 0 end), 0) as est_cache_write_tokens,
+            coalesce(sum(case when actual_cost_usd is null then reasoning_tokens else 0 end), 0) as est_reasoning_tokens,
+            coalesce(sum(case when actual_cost_usd is not null then actual_cost_usd else 0 end), 0) as actual_cost_sum,
+            coalesce(sum(case
+                when actual_cost_usd is null
+                 and estimated_cost_usd is not null
+                 and estimated_cost_usd >= 0
+                 and estimated_cost_usd <= (((coalesce(input_tokens, 0) + coalesce(output_tokens, 0)) / 1000000.0) * ?)
+                then estimated_cost_usd else 0 end), 0) as clamped_estimate_sum
         from sessions
-        group by 1
-        order by (coalesce(sum(input_tokens), 0) + coalesce(sum(output_tokens), 0)) desc, session_count desc
-        limit 8
+        group by 1, 2
         """,
+        (pricing.MAX_PLAUSIBLE_RATE_PER_MTOK,),
         hermes_home=hermes_home,
     )
+
+    per_model: dict[str, dict] = {}
+    total_cost = 0.0
+    unpriced_models: set[str] = set()
+    for group in cost_groups:
+        model = group["model"]
+        price = pricing.price_for(model, group["billing_provider"])
+        if price is not None:
+            estimate = pricing.cost_for_tokens(
+                price,
+                input_tokens=int(group["est_input_tokens"]),
+                output_tokens=int(group["est_output_tokens"]),
+                cache_read_tokens=int(group["est_cache_read_tokens"]),
+                cache_write_tokens=int(group["est_cache_write_tokens"]),
+                reasoning_tokens=int(group["est_reasoning_tokens"]),
+            )
+        else:
+            estimate = float(group["clamped_estimate_sum"])
+            if int(group["est_input_tokens"]) + int(group["est_output_tokens"]) > 0:
+                unpriced_models.add(model)
+        group_cost = float(group["actual_cost_sum"]) + estimate
+        total_cost += group_cost
+        entry = per_model.setdefault(
+            model,
+            {"model": model, "session_count": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0},
+        )
+        entry["session_count"] += int(group["session_count"])
+        entry["input_tokens"] += int(group["input_tokens"])
+        entry["output_tokens"] += int(group["output_tokens"])
+        entry["cost_usd"] += group_cost
+
+    top_models = sorted(
+        per_model.values(),
+        key=lambda m: (m["input_tokens"] + m["output_tokens"], m["session_count"]),
+        reverse=True,
+    )[:8]
 
     recent_rows = _query_state_db(
         """
@@ -688,19 +742,20 @@ def _workspace_usage_payload(*, hermes_home: Path) -> dict:
         "input_tokens": int(totals["input_tokens"]) if totals else 0,
         "output_tokens": int(totals["output_tokens"]) if totals else 0,
         "total_tokens": (int(totals["input_tokens"]) + int(totals["output_tokens"])) if totals else 0,
-        "cost_usd": float(totals["cost_usd"]) if totals else 0.0,
+        "cost_usd": round(total_cost, 6),
+        "pricing_version": pricing.PRICING_VERSION,
         "first_session_started_at": _iso_from_unix(float(totals["first_started_at"])) if totals and totals["first_started_at"] is not None else None,
         "last_session_started_at": _iso_from_unix(float(totals["last_started_at"])) if totals and totals["last_started_at"] is not None else None,
         "top_models": [
             {
-                "model": row["model"],
-                "session_count": int(row["session_count"]),
-                "input_tokens": int(row["input_tokens"]),
-                "output_tokens": int(row["output_tokens"]),
-                "total_tokens": int(row["input_tokens"]) + int(row["output_tokens"]),
-                "cost_usd": float(row["cost_usd"]),
+                "model": entry["model"],
+                "session_count": int(entry["session_count"]),
+                "input_tokens": int(entry["input_tokens"]),
+                "output_tokens": int(entry["output_tokens"]),
+                "total_tokens": int(entry["input_tokens"]) + int(entry["output_tokens"]),
+                "cost_usd": round(float(entry["cost_usd"]), 6),
             }
-            for row in top_models
+            for entry in top_models
         ],
         "recent_days": recent_days,
     }
@@ -1718,9 +1773,9 @@ DEFAULT_TOOLSETS = os.environ.get("HERMES_TOOLSETS", "web,browser,terminal")
 def _load_cli_model_config() -> dict:
     """Read the `model:` block from ~/.hermes/config.yaml (Hermes CLI config).
 
-    Returns a dict with keys: default, provider, base_url (each may be None).
+    Returns a dict with keys: default, provider, base_url, api_key (each may be None).
     """
-    result = {"default": None, "provider": None, "base_url": None}
+    result = {"default": None, "provider": None, "base_url": None, "api_key": None}
     try:
         config_path = Path.home() / ".hermes" / "config.yaml"
         if not config_path.is_file():
@@ -1731,7 +1786,7 @@ def _load_cli_model_config() -> dict:
                 cfg = yaml.safe_load(f)
             model_cfg = (cfg or {}).get("model", {}) if isinstance(cfg, dict) else {}
             if isinstance(model_cfg, dict):
-                for k in ("default", "provider", "base_url"):
+                for k in ("default", "provider", "base_url", "api_key"):
                     v = model_cfg.get(k)
                     if isinstance(v, str) and v.strip():
                         result[k] = v.strip()
@@ -1747,7 +1802,7 @@ def _load_cli_model_config() -> dict:
                 if in_model:
                     if not line.startswith(" ") and not line.startswith("\t"):
                         break
-                    for k in ("default", "provider", "base_url"):
+                    for k in ("default", "provider", "base_url", "api_key"):
                         prefix = f"{k}:"
                         if stripped.startswith(prefix):
                             v = stripped.split(prefix, 1)[1].strip().strip('"').strip("'")
@@ -2876,6 +2931,7 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
     cli_cfg = _load_cli_model_config()
     cli_base_url = (cli_cfg.get("base_url") or "").strip()
     cli_provider = (cli_cfg.get("provider") or "").strip().lower()
+    cli_api_key = (cli_cfg.get("api_key") or "").strip()
 
     # Detect custom (non-whitelisted) base_urls
     cli_is_custom = bool(cli_base_url) and not any(h in cli_base_url for h in _KNOWN_HOSTS)
@@ -2908,7 +2964,18 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
 
     # Custom non-hardcoded base_url overrides the resolved provider
     if cli_is_custom and cli_provider not in _PROVIDER_CONFIG:
-        cli_key = _get_credential_pool_key(cli_provider) or _get_local_gateway_key()
+        # Credential priority for a custom base_url: the api_key configured
+        # alongside the model in ~/.hermes/config.yaml wins (the user set it
+        # there explicitly), then the auth.json credential pool, then a key
+        # forwarded by the client, then the local gateway token. Without the
+        # config.yaml fallback the bridge ignored a perfectly good key and
+        # returned 401 — e.g. deepseek-v4-pro via opencode-go.
+        cli_key = (
+            cli_api_key
+            or _get_credential_pool_key(cli_provider)
+            or api_key
+            or _get_local_gateway_key()
+        )
         if not cli_key:
             return _no_api_key_error(cli_provider or "cli-config")
         agent_base_url = cli_base_url

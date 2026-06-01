@@ -91,3 +91,6 @@ asarUnpack:
   - "server/**"
   - "node_modules/express/**"
   - "node_modules/cors/**"
+  # Renderer is served over HTTP for remote access (QR / tunnel); express.static
+  # needs it on a real filesystem path, not inside the asar archive.
+  - "out/renderer/**"
