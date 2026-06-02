@@ -18,6 +18,8 @@ import { fileURLToPath } from 'url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const OUT_DIR = path.resolve(__dirname, '../docs/screenshots')
 const MAIN = path.resolve(__dirname, '../out/main/index.js')
+// Render at 2x so captured PNGs are retina-crisp for the web showcase.
+const SCALE = Number(process.env.SHOT_SCALE ?? 2)
 
 let app: ElectronApplication
 let win: Page
@@ -169,7 +171,9 @@ async function settleSetup() {
 test.beforeAll(async () => {
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cloudchat-shots-'))
   app = await electron.launch({
-    args: [`--user-data-dir=${userDataDir}`, MAIN],
+    // --force-device-scale-factor renders the window at 2x so captured PNGs are
+    // retina-crisp (2800x1800 for the 1400x900 window) for the web showcase.
+    args: [`--force-device-scale-factor=${SCALE}`, `--user-data-dir=${userDataDir}`, MAIN],
     env: { ...process.env, NODE_ENV: 'test', ELECTRON_IS_DEV: '0', ELECTRON_DISABLE_GPU: '1' },
     timeout: 30_000,
   })
