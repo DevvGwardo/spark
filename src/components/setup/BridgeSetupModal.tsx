@@ -15,6 +15,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Check, Loader2, X, AlertCircle, Sparkles, Download, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { WebBridgeSetup } from './WebBridgeSetup';
 
 type BridgeStatus = NonNullable<NonNullable<typeof window.electronAPI>['bridge']> extends infer B
   ? B extends { status: () => Promise<infer S> }
@@ -258,8 +259,9 @@ export const BridgeSetupModal: React.FC<{ onComplete: () => void }> = ({ onCompl
   }, [bridge, refreshStatus]);
 
   if (phase === 'no-electron') {
-    // Browser/dev mode without Electron — bridge management isn't applicable.
-    return null;
+    // Browser/headless mode without Electron IPC — drive the server-side bridge
+    // manager over /api/bridge/* instead.
+    return <WebBridgeSetup onComplete={onComplete} />;
   }
 
   const allSatisfied = requirements.every((r) => r.satisfied);

@@ -26,6 +26,8 @@ import { workspaceIndex } from './workspace-indexer';
 
 import { registerHermesStreamResumeRoute } from './lib/hermes';
 import { registerRemoteRevivalRoutes } from './routes/remote-revival';
+import { registerBridgeRoutes } from './routes/bridge';
+import { startManagedBridge, stopManagedBridge } from './lib/bridge-manager';
 import { taskOrchestrator } from './task-orchestrator';
 import { getLanIp, generateTerminalQr, generateQrSvgDataUri, formatConnectionInfo } from './lib/qr-display';
 import { startTunnel, killTunnel, getTunnelState, cloudflaredAvailable, brewAvailable, installCloudflared } from './lib/tunnel';
@@ -130,6 +132,7 @@ export function createApp(opts?: { serveFrontend?: boolean }) {
   registerHermesStreamResumeRoute(app);
   registerRoomRoutes(app);
   registerRemoteRevivalRoutes(app);
+  registerBridgeRoutes(app);
 
   // ─── Workspace search ───────────────────────────────────────────────────────
   app.get('/functions/v1/workspace/search', async (req, res) => {
@@ -407,5 +410,19 @@ if (isEntry) {
   // Start orchestrator on standalone server boot (configurable via env)
   if (process.env.KANBAN_AUTO_START !== 'false') {
     taskOrchestrator.start();
+  }
+
+  // Auto-start & supervise the Hermes bridge for headless/serve deployments
+  // (MANAGE_BRIDGE=true). The Electron app manages its own bridge instead.
+  if (process.env.MANAGE_BRIDGE === 'true') {
+    startManagedBridge().catch((err) => {
+      logger.warn(`[server] managed bridge start failed: ${err instanceof Error ? err.message : err}`);
+    });
+    const shutdown = () => {
+      stopManagedBridge();
+      process.exit(0);
+    };
+    process.on('SIGTERM', shutdown);
+    process.on('SIGINT', shutdown);
   }
 }

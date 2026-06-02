@@ -125,7 +125,7 @@ describe('ChatErrorBanner', () => {
     renderChatArea(new Error('Hermes bridge is not reachable at http://localhost:3002/v1. Start hermes-bridge/main.py and try again.'));
 
     expect(screen.getByText(/start the hermes bridge/i)).toBeInTheDocument();
-    expect(screen.getByText(/cd hermes-bridge && \.venv\/bin\/python main.py/i)).toBeInTheDocument();
+    expect(screen.getByText(/\.\/scripts\/start-bridge\.sh/i)).toBeInTheDocument();
     expect(screen.getByText('http://localhost:3002/v1')).toBeInTheDocument();
   });
 
