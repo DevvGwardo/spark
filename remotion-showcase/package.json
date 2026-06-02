@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "remotion studio",
     "render": "remotion render SparkHermes out/spark-hermes.mp4 --concurrency=4",
+    "render:agent": "remotion render HermesAgent out/hermes-agent.raw.mp4 --concurrency=4 && npm run normalize:agent",
+    "normalize:agent": "ffmpeg -y -i out/hermes-agent.raw.mp4 -c:v copy -af loudnorm=I=-16:TP=-1.5:LRA=11 -c:a aac -b:a 256k out/hermes-agent.mp4 && rm -f out/hermes-agent.raw.mp4",
+    "vo:agent": "bash generate-vo-agent.sh",
     "still": "remotion still SparkHermes out/frame.png"
   },
   "dependencies": {
