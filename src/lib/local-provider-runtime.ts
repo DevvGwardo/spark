@@ -22,10 +22,10 @@ export function getLocalProviderRuntimeDetails(
       provider: 'hermes',
       title: 'Hermes Bridge',
       badge: 'Local Agent',
-      summary: 'Hermes needs its local bridge running before chats can reach the agent.',
-      detail: 'Start the FastAPI bridge, then retry your request. Hermes also uses your configured OpenRouter key for model calls.',
+      summary: 'Hermes needs its local bridge running on the computer hosting CloudChat before chats can reach the agent.',
+      detail: 'Start the FastAPI bridge on that host machine (not this device), then retry your request. Hermes also uses your configured OpenRouter key for model calls.',
       command: 'cd hermes-bridge && .venv/bin/python main.py',
-      locationLabel: 'Bridge URL',
+      locationLabel: 'Bridge URL (on host)',
       locationValue: HERMES_BRIDGE_URL,
     };
   }
