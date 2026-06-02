@@ -108,7 +108,7 @@ describe('SettingsModal', () => {
     fireEvent.click(screen.getByText('Hermes Agent').closest('button')!);
 
     expect(await screen.findByText(/hermes needs its local bridge running/i)).toBeInTheDocument();
-    expect(screen.getByText(/cd hermes-bridge && \.venv\/bin\/python main.py/i)).toBeInTheDocument();
+    expect(screen.getByText(/\.\/scripts\/start-bridge\.sh/i)).toBeInTheDocument();
     expect(screen.getByText(/start hermes-bridge\/main\.py and try again\./i)).toBeInTheDocument();
   });
 });
