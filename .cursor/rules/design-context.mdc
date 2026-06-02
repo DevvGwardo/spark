@@ -1,4 +1,10 @@
-<!-- hatch:begin v1 -->
+---
+alwaysApply: true
+metadata:
+  generated: hatch@v1.2.0
+  source: .hatch/_rules/design-context.md
+---
+
 ## Design Context
 
 ### Users
@@ -24,4 +30,3 @@ Professional software engineers using CloudChat as a daily AI coding assistant a
 
 ### Accessibility
 WCAG AA compliance — good contrast ratios, full keyboard navigation, proper ARIA labels, focus indicators. Respect `prefers-reduced-motion`.
-<!-- hatch:end v1 -->

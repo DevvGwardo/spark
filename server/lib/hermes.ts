@@ -355,6 +355,7 @@ export async function proxyHermesAgentLoopToDataStream(input: {
   topP?: number;
   maxTokens?: number;
   hermesToolsets?: string | null;
+  hermesProvider?: string;
   repoEditIntent?: boolean;
   activeRepo?: { owner?: string; name?: string } | null;
   githubPAT?: string;
@@ -391,6 +392,7 @@ export async function proxyHermesAgentLoopToDataStream(input: {
         Authorization: `Bearer ${input.apiKey}`,
         'Content-Type': 'application/json',
         ...(input.hermesToolsets ? { 'X-Hermes-Toolsets': input.hermesToolsets } : {}),
+        ...(input.hermesProvider && input.hermesProvider !== 'auto' ? { 'X-Hermes-Provider': input.hermesProvider } : {}),
         'X-Hermes-Execution-Mode': 'agent-loop',
         ...(input.activeProfile ? { 'X-Hermes-Profile': input.activeProfile } : {}),
         ...(input.activeRepo?.owner && input.activeRepo?.name

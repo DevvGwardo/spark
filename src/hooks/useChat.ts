@@ -1096,6 +1096,9 @@ When the user asks you to make changes:
       ...(currentIsRepoMode && currentActiveRepo ? { repo_edit_intent: repoEditIntentForRequest } : {}),
       ...(effectiveProvider === 'hermes' ? { hermes_toolsets: currentEffectiveHermesToolsets.join(',') } : {}),
       ...(effectiveProvider === 'hermes' && hermesSwarmEnabled ? { hermes_swarm_mode: true } : {}),
+      ...(effectiveProvider === 'hermes' && useHermesStore.getState().underlyingProvider
+        ? { hermes_provider: useHermesStore.getState().underlyingProvider }
+        : {}),
       ...(effectiveProvider === 'hermes' && hermesCustomToolDefs.length > 0 ? { custom_tools: hermesCustomToolDefs } : {}),
       ...(effectiveProvider !== 'hermes' && effectiveProvider !== 'openclaw' && agentToolsets ? { agent_toolsets: agentToolsets } : {}),
       ...(effectiveProvider === 'hermes' && effectiveModel.startsWith('MiniMax-')

@@ -72,6 +72,12 @@ export function registerHermesAdminRoute(app: Express) {
     await proxyTo(req, res, '/health');
   });
 
+  // ─── Providers ────────────────────────────────────────────────────────────
+
+  app.get('/api/hermes/providers', async (req: Request, res: Response) => {
+    await proxyTo(req, res, '/v1/providers');
+  });
+
   // ─── Cron Jobs ──────────────────────────────────────────────────────────
 
   app.get('/api/hermes/cron', async (req: Request, res: Response) => {

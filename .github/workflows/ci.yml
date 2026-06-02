@@ -47,3 +47,23 @@ jobs:
 
       - name: Build Server
         run: npx tsup server/index.ts --out-dir dist/server --format esm --target node22 --clean
+
+  hatch-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Install hatch
+        run: go install github.com/grafana/hatch/cmd/hatch@latest
+
+      - name: Verify agent configs are in sync with .hatch/
+        run: |
+          hatch gen -no-hatch-skill
+          git diff --exit-code || {
+            echo "::error::Generated agent configs are out of sync. Run 'hatch gen -no-hatch-skill' and commit the result."
+            exit 1
+          }

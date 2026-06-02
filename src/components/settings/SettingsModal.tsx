@@ -4,6 +4,7 @@ import { useSettingsStore, type Provider, type Language } from '@/stores/setting
 import { COLOR_THEMES, ACCENT_COLORS } from '@/lib/themes';
 import { ChatSurfaceBackground } from '@/components/chat/ChatSurfaceBackground';
 import { useHermesStore, type MCPTool } from '@/stores/hermes-store';
+import { fetchHermesProviders, type HermesProviderInfo } from '@/lib/hermes-api';
 import { useUIStore } from '@/stores/ui-store';
 import { PROVIDERS, PROVIDER_ORDER, getVisibleModelOptions } from '@/lib/providers';
 import { validateApiKey, listGitHubRepos, type GitHubRepoSummary } from '@/lib/api';
@@ -659,6 +660,8 @@ export const SettingsModal: React.FC = () => {
     setToolset: setHermesToolset,
     swarm: hermesSwarm,
     setSwarmEnabled: setHermesSwarmEnabled,
+    underlyingProvider: hermesUnderlyingProvider,
+    setUnderlyingProvider: setHermesUnderlyingProvider,
     mcpServers,
     addMCPServer,
     removeMCPServer,
@@ -689,6 +692,8 @@ export const SettingsModal: React.FC = () => {
   const [providerView, setProviderView] = useState<'list' | 'detail'>('list');
   const [localRuntimeStatus, setLocalRuntimeStatus] = useState<string | null>(null);
   const [refreshingModels, setRefreshingModels] = useState(false);
+  // Hermes underlying-provider catalog (providers + models the agent can route to)
+  const [hermesProviders, setHermesProviders] = useState<HermesProviderInfo[]>([]);
 
   // MCP server management state
   const [mcpAddOpen, setMcpAddOpen] = useState(false);
@@ -821,11 +826,19 @@ export const SettingsModal: React.FC = () => {
   const providerInfo = PROVIDERS[activeProvider];
   const needsApiKey = providerInfo?.needsApiKey ?? true;
   const modelOptions = useMemo(() => {
+    // For Hermes with an explicit underlying provider, show that provider's
+    // catalog models so the model list matches the chosen provider.
+    if (activeProvider === 'hermes' && hermesUnderlyingProvider) {
+      const selected = hermesProviders.find((p) => p.id === hermesUnderlyingProvider);
+      if (selected?.models?.length) {
+        return getVisibleModelOptions('hermes', selected.models, config.model);
+      }
+    }
     const baseModels = availableModels[activeProvider]?.length
       ? availableModels[activeProvider]!
       : providerInfo.models;
     return getVisibleModelOptions(activeProvider, baseModels, config.model);
-  }, [activeProvider, availableModels, config.model, providerInfo.models]);
+  }, [activeProvider, availableModels, config.model, providerInfo.models, hermesUnderlyingProvider, hermesProviders]);
 
   // Refresh models for any provider with an API key when settings opens
   useEffect(() => {
@@ -944,6 +957,28 @@ export const SettingsModal: React.FC = () => {
     settingsOpen,
     updateProviderConfig,
   ]);
+
+  // Load the Hermes underlying-provider catalog (providers + their models) so
+  // the user can switch which provider/model the agent routes to.
+  useEffect(() => {
+    if (!settingsOpen || activeProvider !== 'hermes') return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { providers: catalog } = await fetchHermesProviders();
+        if (!cancelled && catalog.length > 0) {
+          setHermesProviders(catalog);
+        }
+      } catch {
+        // Bridge unreachable — leave the picker on its default (auto) state
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [settingsOpen, activeProvider]);
 
   const handleRefreshModels = useCallback(async () => {
     const apiKey = config.apiKey;
@@ -1278,6 +1313,53 @@ export const SettingsModal: React.FC = () => {
                       </div>
                     )}
 
+                    {activeProvider === 'hermes' && (
+                      <div className={cn(settingsCardClass, 'space-y-3 px-5 py-5')}>
+                        <div>
+                          <p className={fieldLabelClass}>Agent Provider</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Choose which AI provider the Hermes agent routes to. "Auto" lets the agent
+                            pick based on the model name. A dot indicates whether a credential is configured.
+                          </p>
+                        </div>
+                        <div className="relative">
+                          <select
+                            value={hermesUnderlyingProvider}
+                            onChange={(e) => {
+                              const next = e.target.value;
+                              setHermesUnderlyingProvider(next);
+                              const selected = hermesProviders.find((p) => p.id === next);
+                              const firstModel = selected?.models?.[0];
+                              if (firstModel && !selected?.models?.includes(providers.hermes.model)) {
+                                updateProviderConfig('hermes', { model: firstModel });
+                              }
+                            }}
+                            className={selectInputClass}
+                          >
+                            <option value="">Auto (route by model)</option>
+                            {hermesProviders.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.credentialed ? '● ' : '○ '}{p.name}
+                              </option>
+                            ))}
+                          </select>
+                          <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                        </div>
+                        {(() => {
+                          const selected = hermesProviders.find((p) => p.id === hermesUnderlyingProvider);
+                          if (hermesUnderlyingProvider && selected && !selected.credentialed) {
+                            return (
+                              <p className="text-xs text-amber-500">
+                                No credential detected for {selected.name}. Configure its API key in your
+                                Hermes profile (or the matching provider above) before using it.
+                              </p>
+                            );
+                          }
+                          return null;
+                        })()}
+                      </div>
+                    )}
+
                     <div className={cn(settingsCardClass, 'space-y-3 px-5 py-5')}>
                       <div>
                         <p className={fieldLabelClass}>Model</p>
@@ -1311,8 +1393,9 @@ export const SettingsModal: React.FC = () => {
                       </div>
                       {activeProvider === 'hermes' && (
                         <p className="text-xs text-muted-foreground">
-                          Hermes uses your OpenRouter key here. The selector is intentionally limited to the recommended
-                          tool-capable models: Llama 4 Maverick, GPT-4.1 Mini, and Gemini 2.5 Flash.
+                          {hermesUnderlyingProvider
+                            ? 'Models shown are those offered by the selected agent provider.'
+                            : 'In Auto mode the agent routes by model name (OpenRouter handles anything unrecognized). Pick a provider above to scope the list.'}
                         </p>
                       )}
                     </div>

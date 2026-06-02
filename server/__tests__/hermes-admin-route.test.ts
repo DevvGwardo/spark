@@ -219,4 +219,42 @@ describe('Hermes admin route', () => {
       await server.close()
     }
   })
+
+  it('proxies /api/hermes/providers to the bridge /v1/providers catalog', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (url.includes('/api/hermes/providers')) {
+        return actualFetch(input, init)
+      }
+
+      // The proxy must target the bridge's OpenAI-style /v1/providers endpoint.
+      expect(url).toContain('/v1/providers')
+
+      return new Response(JSON.stringify({
+        object: 'list',
+        default_provider: 'openrouter',
+        data: [
+          { id: 'anthropic', name: 'Anthropic', base_url: 'https://api.anthropic.com', is_aggregator: false, credentialed: false, models: ['claude-opus-4-8'] },
+          { id: 'openrouter', name: 'OpenRouter', base_url: 'https://openrouter.ai/api/v1', is_aggregator: true, credentialed: true, models: ['anthropic/claude-sonnet-4'] },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+
+    const server = await createTestServer()
+
+    try {
+      const response = await actualFetch(`${server.url}/api/hermes/providers`)
+      const data = await response.json()
+
+      expect(response.ok).toBe(true)
+      expect(data.default_provider).toBe('openrouter')
+      expect(data.data).toHaveLength(2)
+      expect(data.data[0]?.id).toBe('anthropic')
+    } finally {
+      await server.close()
+    }
+  })
 })
