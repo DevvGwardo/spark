@@ -59,9 +59,18 @@ interface HermesState {
   mcpServers: MCPServer[];
   swarm: SwarmState;
   sessionApprovalPolicies: ApprovalPolicy[];
+  /**
+   * The underlying provider the Hermes agent should route to (e.g. 'anthropic',
+   * 'deepseek', 'openrouter'). Empty string means 'auto' — let the bridge route
+   * by model-name prefix / config. Sent to the bridge as the hermes_provider field.
+   */
+  underlyingProvider: string;
 
   setToolset: (key: keyof HermesToolsets, enabled: boolean) => void;
   getEnabledToolsets: () => string[];
+
+  /** Set the underlying provider for the Hermes agent ('' = auto). */
+  setUnderlyingProvider: (provider: string) => void;
 
   addMCPServer: (server: MCPServer) => void;
   removeMCPServer: (id: string) => void;
@@ -108,11 +117,15 @@ export const useHermesStore = create<HermesState>()(
       mcpServers: [],
       swarm: { ...defaultSwarm },
       sessionApprovalPolicies: [],
+      underlyingProvider: '',
 
       setToolset: (key, enabled) =>
         set((state) => ({
           toolsets: { ...state.toolsets, [key]: enabled },
         })),
+
+      setUnderlyingProvider: (provider) =>
+        set(() => ({ underlyingProvider: provider })),
 
       getEnabledToolsets: () => {
         const ts = get().toolsets;
@@ -217,6 +230,7 @@ export const useHermesStore = create<HermesState>()(
         toolsets: state.toolsets,
         mcpServers: state.mcpServers,
         swarm: state.swarm,
+        underlyingProvider: state.underlyingProvider,
       }),
     }
   )

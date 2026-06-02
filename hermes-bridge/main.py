@@ -2321,6 +2321,43 @@ def _get_active_provider() -> Optional[str]:
     return None
 
 
+# ── Provider → model catalog ──────────────────────────────────────────────
+# Best-effort import of the canonical Hermes CLI model catalog. Never crash the
+# bridge if the import fails (sys.path may not include the agent in all setups).
+try:
+    import hermes_cli.models as _hermes_cli_models
+    _CLI_PROVIDER_MODELS = dict(getattr(_hermes_cli_models, "_PROVIDER_MODELS", {}) or {})
+except Exception:
+    _CLI_PROVIDER_MODELS = {}
+
+# Bridge provider id → hermes_cli provider id (where they differ)
+_BRIDGE_TO_CLI_PROVIDER = {
+    "anthropic": "anthropic", "deepseek": "deepseek", "google": "gemini",
+    "openai": "openai-api", "xai": "xai", "kimi": "kimi-coding",
+    "zai": "zai", "alibaba": "alibaba", "huggingface": "huggingface",
+    "kilocode": "kilocode", "nous": "nous", "minimax": "minimax",
+}
+
+# Static fallbacks for bridge ids with no clean cli source.
+_STATIC_PROVIDER_MODELS = {
+    "openrouter": [
+        "anthropic/claude-sonnet-4", "anthropic/claude-opus-4.8",
+        "google/gemini-3.1-flash-lite-preview", "deepseek/deepseek-v3.2",
+        "meta-llama/llama-4-maverick", "openai/gpt-4.1-mini",
+        "x-ai/grok-4.3", "qwen/qwen3-coder", "moonshotai/kimi-k2.6",
+    ],
+    "groq": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "openai/gpt-oss-120b", "openai/gpt-oss-20b"],
+    "mistral": ["mistral-large-latest", "mistral-medium-latest", "mistral-small-latest", "open-mistral-nemo"],
+    "cerebras": ["llama-3.3-70b", "qwen-3-32b", "openai/gpt-oss-120b", "llama-3.1-8b"],
+    "together": ["meta-llama/Llama-3.3-70B-Instruct-Turbo", "Qwen/Qwen2.5-72B-Instruct-Turbo", "mistralai/Mixtral-8x22B-Instruct-v0.1", "deepseek-ai/DeepSeek-V3"],
+}
+
+
+def _models_for_provider(pid: str) -> list[str]:
+    """Return the model id list for a bridge provider id (best-effort)."""
+    return _CLI_PROVIDER_MODELS.get(_BRIDGE_TO_CLI_PROVIDER.get(pid, pid)) or _STATIC_PROVIDER_MODELS.get(pid, [])
+
+
 def _read_positive_int_env(name: str, fallback: int) -> int:
     raw_value = os.environ.get(name)
     if not raw_value:
@@ -2442,22 +2479,29 @@ async def diag():
     }
 
 
+def _provider_has_credentials(pid: str) -> bool:
+    """Whether a configured bridge provider has usable credentials.
+
+    Mirrors the exact credential logic the /health endpoint reports.
+    """
+    pcfg = _PROVIDER_CONFIG.get(pid, {})
+    env_var = pcfg.get("env_var", "")
+    auth_provider = pcfg.get("auth_json_provider", pid)
+    return bool(
+        (env_var and os.environ.get(env_var))
+        or _get_credential_pool_key(auth_provider)
+        or (pid == "nous" and _get_nous_agent_key())
+        or (pid == "openrouter" and _get_openrouter_key_from_hermes_creds())
+        or bool(_get_local_gateway_key())
+    )
+
+
 @app.get("/health")
 async def health():
-    local_gateway_key = bool(_get_local_gateway_key())
     # Check credential availability for all configured providers
     provider_credentials: dict[str, bool] = {}
-    for pid, pcfg in _PROVIDER_CONFIG.items():
-        env_var = pcfg.get("env_var", "")
-        auth_provider = pcfg.get("auth_json_provider", pid)
-        has_cred = bool(
-            (env_var and os.environ.get(env_var))
-            or _get_credential_pool_key(auth_provider)
-            or (pid == "nous" and _get_nous_agent_key())
-            or (pid == "openrouter" and _get_openrouter_key_from_hermes_creds())
-            or local_gateway_key
-        )
-        provider_credentials[pid] = has_cred
+    for pid in _PROVIDER_CONFIG:
+        provider_credentials[pid] = _provider_has_credentials(pid)
 
     return {
         "status": "ok",
@@ -2480,6 +2524,30 @@ async def health():
 async def list_models():
     models = await _get_agent_models()
     return {"object": "list", "data": models}
+
+
+@app.get("/v1/providers")
+async def list_providers():
+    """List configured providers with credential status and known models."""
+    cfg_provider = (_load_cli_model_config().get("provider") or "").strip().lower()
+    default_provider = cfg_provider if (cfg_provider and cfg_provider in _PROVIDER_CONFIG) else "openrouter"
+
+    data = []
+    for pid, cfg in _PROVIDER_CONFIG.items():
+        try:
+            models = _models_for_provider(pid)
+        except Exception:
+            models = []
+        data.append({
+            "id": pid,
+            "name": cfg["name"],
+            "base_url": cfg["base_url"],
+            "is_aggregator": pid == "openrouter",
+            "credentialed": _provider_has_credentials(pid),
+            "models": models,
+        })
+
+    return {"object": "list", "default_provider": default_provider, "data": data}
 
 
 class ChatMessage(BaseModel):
@@ -2928,6 +2996,11 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
     #   5. OpenRouter (default)
     active_provider = _get_active_provider()
 
+    # Explicit provider selection via header wins over all other resolution.
+    explicit_provider = (request.headers.get("x-hermes-provider", "") or "").strip().lower()
+    if explicit_provider in ("", "auto", "default"):
+        explicit_provider = ""
+
     cli_cfg = _load_cli_model_config()
     cli_base_url = (cli_cfg.get("base_url") or "").strip()
     cli_provider = (cli_cfg.get("provider") or "").strip().lower()
@@ -2944,9 +3017,13 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
                 return provider_id
         return None
 
-    #   1. Model prefix match (strongest signal — the model identifier names the provider)
+    #   0. Explicit provider header (strongest — caller named the provider)
     model_prefix_provider = _resolve_provider_from_model(body.model)
-    if model_prefix_provider:
+    if explicit_provider and explicit_provider in _PROVIDER_CONFIG:
+        resolved_provider = explicit_provider
+        route_source = "explicit-header"
+    #   1. Model prefix match (strongest signal — the model identifier names the provider)
+    elif model_prefix_provider:
         resolved_provider = model_prefix_provider
         route_source = "model-prefix"
     #   2. CLI config.yaml provider
@@ -2962,8 +3039,10 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
         resolved_provider = "openrouter"
         route_source = "default"
 
-    # Custom non-hardcoded base_url overrides the resolved provider
-    if cli_is_custom and cli_provider not in _PROVIDER_CONFIG:
+    # Custom non-hardcoded base_url overrides the resolved provider — UNLESS the
+    # caller explicitly named a provider (UI picker), which always wins so the
+    # selection isn't silently hijacked by a custom base_url in config.yaml.
+    if cli_is_custom and cli_provider not in _PROVIDER_CONFIG and route_source != "explicit-header":
         # Credential priority for a custom base_url: the api_key configured
         # alongside the model in ~/.hermes/config.yaml wins (the user set it
         # there explicitly), then the auth.json credential pool, then a key

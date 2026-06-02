@@ -188,6 +188,36 @@ async function hermesFetch<T = unknown>(
   return data as T;
 }
 
+// ─── Providers ────────────────────────────────────────────────────────────
+
+export interface HermesProviderInfo {
+  id: string;
+  name: string;
+  base_url: string;
+  is_aggregator: boolean;
+  credentialed: boolean;
+  models: string[];
+}
+
+export interface HermesProvidersResponse {
+  providers: HermesProviderInfo[];
+  defaultProvider: string;
+}
+
+/**
+ * Fetch the catalog of underlying providers (and their models) the Hermes
+ * agent can route to. Used to populate the provider/model picker.
+ */
+export async function fetchHermesProviders(): Promise<HermesProvidersResponse> {
+  const data = await hermesFetch<{ data?: HermesProviderInfo[]; default_provider?: string }>(
+    '/providers',
+  );
+  return {
+    providers: Array.isArray(data.data) ? data.data : [],
+    defaultProvider: data.default_provider || 'openrouter',
+  };
+}
+
 // ─── Cron Jobs ──────────────────────────────────────────────────────────────
 
 export async function fetchCronJobs(conversationId?: string | null): Promise<CronJob[]> {

@@ -177,7 +177,7 @@ Hermes shows its work — you see every tool call, its result, and how it's reas
 
 OpenAI · Anthropic · Google Gemini · xAI · Groq · DeepSeek · Mistral · Together · MiniMax · Kimi · Cerebras · OpenRouter · SambaNova · z.ai · OpenClaw
 
-Hermes agent mode is a separate feature — it uses any of the above providers as the underlying LLM, plus adds the autonomous tool loop.
+Hermes agent mode is a separate feature — it uses any of the above providers as the underlying LLM, plus adds the autonomous tool loop. In **Settings → Hermes Agent** you can switch the agent's **underlying provider and model** on the fly: a live catalog (pulled from the bridge) lists every supported provider — Anthropic, OpenAI, Google, DeepSeek, xAI, Kimi, Z.AI, Alibaba, Groq, Mistral, Cerebras, Together, MiniMax, Nous, OpenRouter, and more — with credential indicators and the full model list for each. Pick "Auto" to route by model name, or name a provider explicitly and it wins over config defaults.
 
 ### Live Code Preview
 
