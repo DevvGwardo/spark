@@ -3,9 +3,15 @@
  *
  * Detects if the Hermes bridge is running locally and has valid API credentials
  * configured, allowing the frontend to skip manual API key entry.
+ *
+ * Detection goes through the same-origin API server (`/api/hermes/health`), which
+ * proxies to the bridge on the server side. This must NOT fetch the bridge URL
+ * directly: a phone loading the app over LAN/tunnel can't resolve the host's
+ * localhost:3002, so a direct fetch always fails and Hermes would look offline.
  */
 
-const HERMES_BRIDGE_URL = import.meta.env.VITE_HERMES_BRIDGE_URL || 'http://localhost:3002/v1';
+import { getApiBaseUrl } from './api';
+import { getActiveProfile } from '@/stores/profiles-store';
 
 export interface HermesBridgeCredentialSources {
   env: boolean;
@@ -39,10 +45,13 @@ export interface HermesBridgeStatus {
  */
 export async function detectHermesBridge(): Promise<HermesBridgeStatus | null> {
   try {
-    const healthUrl = `${HERMES_BRIDGE_URL.replace('/v1', '')}/health`;
+    const healthUrl = `${getApiBaseUrl()}/api/hermes/health`;
     const response = await fetch(healthUrl, {
       method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Hermes-Profile': getActiveProfile(),
+      },
       signal: AbortSignal.timeout(3000),
     });
 

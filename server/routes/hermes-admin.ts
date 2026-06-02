@@ -3,7 +3,10 @@ import type { Express, Request, Response } from 'express';
 import { sendJson } from '../lib/helpers';
 import { getProfileFromRequest } from '../lib/hermes-profiles';
 
-const HERMES_BRIDGE_URL = process.env.HERMES_BRIDGE_URL || 'http://localhost:3002';
+// Admin/health endpoints live at the bridge root, not under /v1 (which only
+// serves OpenAI-compatible chat). Strip a trailing /v1 so these proxies work
+// whether HERMES_BRIDGE_URL is configured with or without it.
+const HERMES_BRIDGE_URL = (process.env.HERMES_BRIDGE_URL || 'http://localhost:3002').replace(/\/v1\/?$/, '');
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -58,6 +61,16 @@ export function registerHermesAdminRoute(app: Express) {
       ? req.originalUrl.slice(req.originalUrl.indexOf('?'))
       : ''
   );
+
+  // ─── Health / Detection ───────────────────────────────────────────────
+  // Same-origin proxy for bridge detection so the frontend never has to reach
+  // the bridge directly. A phone loading the app over LAN/tunnel can't resolve
+  // the host's localhost:3002 — but it can hit this route, which the server
+  // proxies to the bridge on its behalf.
+
+  app.get('/api/hermes/health', async (req: Request, res: Response) => {
+    await proxyTo(req, res, '/health');
+  });
 
   // ─── Cron Jobs ──────────────────────────────────────────────────────────
 

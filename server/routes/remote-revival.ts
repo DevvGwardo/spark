@@ -3,7 +3,10 @@ import type { Express } from 'express';
 import { createSocket } from 'dgram';
 import { sendJson } from '../lib/helpers';
 
-const HERMES_BRIDGE_URL = process.env.HERMES_BRIDGE_URL || 'http://localhost:3002';
+// /health lives at the bridge root, not under /v1 (which only serves chat).
+// Strip a trailing /v1 so the probe works whether the env var carries it or not
+// — otherwise the mobile "Hermes online" indicator always reports offline.
+const HERMES_BRIDGE_URL = (process.env.HERMES_BRIDGE_URL || 'http://localhost:3002').replace(/\/v1\/?$/, '');
 const HEALTH_URL = `${HERMES_BRIDGE_URL}/health`;
 
 // ─── In-memory cache for last successful health probe ─────────────────────
