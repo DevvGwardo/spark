@@ -1,4 +1,3 @@
-<!-- hatch:begin v1 -->
 ## Design Context
 
 ### Users
@@ -24,4 +23,3 @@ Professional software engineers using CloudChat as a daily AI coding assistant a
 
 ### Accessibility
 WCAG AA compliance — good contrast ratios, full keyboard navigation, proper ARIA labels, focus indicators. Respect `prefers-reduced-motion`.
-<!-- hatch:end v1 -->
