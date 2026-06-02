@@ -37,6 +37,14 @@ It also supports **15 other LLM providers** as regular chat clients, an **orches
 ## Demo
 
 <p align="center">
+  <a href="docs/spark-hermes-agent.mp4">
+    <img src="docs/spark-hermes-agent.gif" alt="Spark drives the Hermes agent loop — 30-second showcase" width="360">
+  </a>
+  <br>
+  <em>▶ <a href="docs/spark-hermes-agent.mp4">Watch the 30-second agent-loop showcase with audio</a> — Spark drives the Hermes agent loop: <code>todo → read_file → terminal → patch → terminal</code>, every tool call streamed live.</em>
+</p>
+
+<p align="center">
   <a href="docs/spark-hermes-demo.mp4">
     <img src="docs/spark-hermes-demo.gif" alt="Spark × Hermes — 45-second demo" width="300">
   </a>
