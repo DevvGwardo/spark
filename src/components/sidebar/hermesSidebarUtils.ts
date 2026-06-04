@@ -1,4 +1,4 @@
-import type { CronRun } from '@/lib/hermes-api';
+import type { CronRun, HermesSkillSummary } from '@/lib/hermes-api';
 
 export function formatCompactNumber(value: number): string {
   return new Intl.NumberFormat('en-US', {
@@ -40,4 +40,16 @@ export function summarizeCronRuns(runs: Array<Pick<CronRun, 'status'>>): CronRun
     failed,
     successRate: finished === 0 ? 0 : succeeded / finished,
   };
+}
+
+type FilterableSkill = Pick<HermesSkillSummary, 'name' | 'summary' | 'category' | 'path'>;
+
+// Case-insensitive substring filter over a skill's name/summary/category/path.
+// An empty (or whitespace-only) query returns every skill unchanged.
+export function filterSkills<T extends FilterableSkill>(skills: T[], query: string): T[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return skills;
+  return skills.filter((skill) =>
+    `${skill.name} ${skill.summary} ${skill.category} ${skill.path}`.toLowerCase().includes(needle),
+  );
 }
