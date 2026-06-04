@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="plate" x1="96" y1="72" x2="432" y2="440" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1A1D24"/>
+      <stop offset="55%" stop-color="#11141B"/>
+      <stop offset="100%" stop-color="#0B0D12"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="146" y1="122" x2="366" y2="392" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFCF70"/>
+      <stop offset="50%" stop-color="#FF8B2B"/>
+      <stop offset="100%" stop-color="#FF5A36"/>
+    </linearGradient>
+    <radialGradient id="coreGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(256 244) rotate(90) scale(120)">
+      <stop offset="0%" stop-color="#FFD98B" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#FFD98B" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="sparkFill" x1="256" y1="168" x2="256" y2="328" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFF4C7"/>
+      <stop offset="55%" stop-color="#FFD36B"/>
+      <stop offset="100%" stop-color="#FFAA3B"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="56" y="56" width="400" height="400" rx="104" fill="url(#plate)"/>
+  <rect x="58.5" y="58.5" width="395" height="395" rx="101.5" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="5"/>
+  <circle cx="256" cy="256" r="118" fill="url(#coreGlow)"/>
+  <circle cx="256" cy="256" r="92" stroke="url(#ring)" stroke-width="22"/>
+  <circle cx="256" cy="256" r="66" fill="#0F1218" fill-opacity="0.72"/>
+
+  <g fill="url(#sparkFill)">
+    <path d="M256 174 L278 234 L338 256 L278 278 L256 338 L234 278 L174 256 L234 234 Z"/>
+    <path d="M332 176 L340 198 L362 206 L340 214 L332 236 L324 214 L302 206 L324 198 Z"/>
+    <path d="M180 300 L186 316 L202 322 L186 328 L180 344 L174 328 L158 322 L174 316 Z"/>
+  </g>
+</svg>
