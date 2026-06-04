@@ -22,10 +22,11 @@ helpers — do not reinvent formatters, SSE, export, or approval logic.
       list of succeeded/failed runs, and returns a zeroed summary (rate 0) for an empty list.
       feat/overnight-cron-summary — summarizeCronRuns helper + CronHistoryChat summary strip, proven by cron-run-summary.test.ts.
 
-- [ ] **Skill list filter** — add a search input to `HermesSkillsPanel` filtering installed
+- [x] **Skill list filter** — add a search input to `HermesSkillsPanel` filtering installed
       skills, backed by a pure `filterSkills(skills, query)` helper (match on name/description).
       Verify: `filterSkills` returns case-insensitively matching skills and all skills for an
       empty query.
+      feat/overnight-skill-filter — extracted filterSkills helper, wired HermesSkillsPanel memo, proven by skill-list-filter.test.ts.
 
 - [ ] **Session status counts** — add a pure `countSessionStatuses(sessions)` helper returning
       `{ active, completed, error, total }` and render the counts as small pills in the Sessions
