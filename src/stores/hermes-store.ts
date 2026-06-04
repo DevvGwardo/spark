@@ -293,10 +293,10 @@ export const useHermesStore = create<HermesState>()(
         // Backward compatibility: ensure MCP servers have new required fields
         if (merged.mcpServers) {
           merged.mcpServers = merged.mcpServers.map((s) => ({
-            transportType: 'http' as MCPTransportType,
-            connectionStatus: 'disconnected' as MCPConnectionStatus,
-            errorCount: 0,
             ...s,
+            transportType: s.transportType ?? ('http' as MCPTransportType),
+            connectionStatus: s.connectionStatus ?? ('disconnected' as MCPConnectionStatus),
+            errorCount: s.errorCount ?? 0,
           }));
         }
         return merged;

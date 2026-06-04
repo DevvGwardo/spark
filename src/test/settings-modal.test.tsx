@@ -60,7 +60,10 @@ describe('SettingsModal', () => {
     render(<SettingsModal />);
 
     expect(screen.getByText('Settings')).toBeInTheDocument();
-    // Provider list view shows provider cards
+    // Provider list view shows the featured providers (Hermes first) by default
+    expect(screen.getAllByText('Hermes Agent').length).toBeGreaterThan(0);
+    // Specialized providers are collapsed behind a "Show more providers" disclosure
+    fireEvent.click(screen.getByText('Show more providers'));
     expect(screen.getAllByText('MiniMax (Coding Plan)').length).toBeGreaterThan(0);
 
     // Switch to GitHub tab via sidebar nav

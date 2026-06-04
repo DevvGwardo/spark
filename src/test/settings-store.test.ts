@@ -47,7 +47,7 @@ describe('normalizePersistedSettingsState', () => {
       autoApproveRepoChanges: 'yes',
     } as never);
 
-    expect(normalized.activeProvider).toBe('openai');
+    expect(normalized.activeProvider).toBe('hermes');
     expect(normalized.defaultSystemPrompt).toBe('You are a helpful assistant.');
     expect(normalized.githubPAT).toBe('');
     expect(normalized.theme).toBe('system');

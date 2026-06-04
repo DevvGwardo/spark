@@ -15,6 +15,7 @@ import {
 import {
   useHermesStore,
   type MCPServer,
+  type MCPTool,
   type MCPConnectionStatus,
   type MCPTransportType,
 } from '@/stores/hermes-store';
@@ -63,7 +64,6 @@ const TRANSPORT_LABELS: Record<MCPTransportType, { label: string; icon: React.Co
 };
 
 function StatusDot({ status }: { status: MCPConnectionStatus }) {
-  const config = STATUS_CONFIG[status];
   return (
     <span
       className={cn(
