@@ -28,11 +28,12 @@ helpers — do not reinvent formatters, SSE, export, or approval logic.
       empty query.
       feat/overnight-skill-filter — extracted filterSkills helper, wired HermesSkillsPanel memo, proven by skill-list-filter.test.ts.
 
-- [ ] **Session status counts** — add a pure `countSessionStatuses(sessions)` helper returning
+- [x] **Session status counts** — add a pure `countSessionStatuses(sessions)` helper returning
       `{ active, completed, error, total }` and render the counts as small pills in the Sessions
       panel header.
       Verify: `countSessionStatuses` tallies each status correctly, folds unknown statuses into
       `total` only, and returns all-zero for an empty list.
+      feat/overnight-session-status-counts — countSessionStatuses helper + status pills in HermesChatsPanel header, proven by session-status-counts.test.ts.
 
 - [ ] **Usage budget level** — add a pure `usageBudgetLevel(spent, budget)` helper returning
       `'ok' | 'warn' | 'over'` (warn ≥ 75%, over ≥ 100%, ok below) and use it to color the
