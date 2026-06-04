@@ -35,11 +35,12 @@ helpers — do not reinvent formatters, SSE, export, or approval logic.
       `total` only, and returns all-zero for an empty list.
       feat/overnight-session-status-counts — countSessionStatuses helper + status pills in HermesChatsPanel header, proven by session-status-counts.test.ts.
 
-- [ ] **Usage budget level** — add a pure `usageBudgetLevel(spent, budget)` helper returning
+- [x] **Usage budget level** — add a pure `usageBudgetLevel(spent, budget)` helper returning
       `'ok' | 'warn' | 'over'` (warn ≥ 75%, over ≥ 100%, ok below) and use it to color the
       spend figure in `HermesUsagePanel`.
       Verify: `usageBudgetLevel` returns `ok`/`warn`/`over` at the 0/75/100% thresholds and
       treats a zero or missing budget as `ok`.
+      feat/overnight-usage-budget — usageBudgetLevel helper + colored cost figure in HermesUsagePanel, proven by usage-budget-level.test.ts.
 
 - [ ] **Memories export to markdown** — add a pure `memoriesToMarkdown(memories)` helper that
       renders the memories list as a markdown document (one heading + body per memory), wired to
