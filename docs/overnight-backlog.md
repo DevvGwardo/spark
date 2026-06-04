@@ -42,8 +42,9 @@ helpers — do not reinvent formatters, SSE, export, or approval logic.
       treats a zero or missing budget as `ok`.
       feat/overnight-usage-budget — usageBudgetLevel helper + colored cost figure in HermesUsagePanel, proven by usage-budget-level.test.ts.
 
-- [ ] **Memories export to markdown** — add a pure `memoriesToMarkdown(memories)` helper that
+- [x] **Memories export to markdown** — add a pure `memoriesToMarkdown(memories)` helper that
       renders the memories list as a markdown document (one heading + body per memory), wired to
       an export button in `HermesMemoriesPanel` reusing the existing download flow.
       Verify: `memoriesToMarkdown` emits a markdown heading and body for each memory and returns
       an empty-state string (not a throw) for an empty list.
+      feat/overnight-memories-export — memoriesToMarkdown helper + export button in HermesMemoriesPanel, proven by memories-export-markdown.test.ts.
