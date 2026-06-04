@@ -35,7 +35,7 @@ function formatApiConnectionMessage(message: string) {
   const trimmedDetail = withoutPrefix.replace(/\s*:\s*$/, '').trim();
 
   return {
-    summary: 'CloudChat could not reach the local API server.',
+    summary: 'Spark could not reach the local API server.',
     detail: trimmedDetail && !/^cannot connect to api$/i.test(trimmedDetail)
       ? trimmedDetail
       : 'The renderer lost its connection to the embedded API process, so requests never reached the provider.',

@@ -299,7 +299,7 @@ Here's a proposal to update the UI.`,
 
     expect(notifyAttentionRequest).toHaveBeenCalledTimes(1);
     expect(notifyAttentionRequest).toHaveBeenCalledWith({
-      title: 'CloudChat approval needed',
+      title: 'Spark approval needed',
       body: 'Update the repository UI shell',
     });
 

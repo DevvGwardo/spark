@@ -257,7 +257,7 @@ export const SetupWizard: React.FC = () => {
           satisfied: Boolean(localBridgeSetupStatus.pythonPath),
           description: localBridgeSetupStatus.pythonPath
             ? `Found: ${localBridgeSetupStatus.pythonPath}`
-            : 'Install Python 3.10+ so CloudChat can run the local Hermes bridge.',
+            : 'Install Python 3.10+ so Spark can run the local Hermes bridge.',
         },
         {
           key: 'git',
@@ -267,7 +267,7 @@ export const SetupWizard: React.FC = () => {
             ? 'Not required because Hermes Agent is already installed.'
             : localBridgeSetupStatus.gitPath
               ? `Found: ${localBridgeSetupStatus.gitPath}`
-              : 'Install Git so CloudChat can download Hermes Agent on first launch.',
+              : 'Install Git so Spark can download Hermes Agent on first launch.',
         },
         {
           key: 'deps',
@@ -275,7 +275,7 @@ export const SetupWizard: React.FC = () => {
           satisfied: localBridgeSetupStatus.bridgeDepsInstalled,
           description: localBridgeSetupStatus.bridgeDepsInstalled
             ? 'fastapi, uvicorn, httpx, pydantic are available.'
-            : 'CloudChat still needs the local bridge Python packages.',
+            : 'Spark still needs the local bridge Python packages.',
         },
         {
           key: 'agent',
@@ -283,7 +283,7 @@ export const SetupWizard: React.FC = () => {
           satisfied: localBridgeSetupStatus.hermesAgentPresent,
           description: localBridgeSetupStatus.hermesAgentPresent
             ? 'Already installed in ~/.hermes/hermes-agent.'
-            : 'CloudChat still needs a local Hermes Agent checkout.',
+            : 'Spark still needs a local Hermes Agent checkout.',
         },
         {
           key: 'bridge',
@@ -475,7 +475,7 @@ export const SetupWizard: React.FC = () => {
     try {
       const setupStatus = await refreshLocalBridgeSetupStatus();
       if (!setupStatus) {
-        setHermesInstallError('CloudChat could not inspect your local Hermes setup.');
+        setHermesInstallError('Spark could not inspect your local Hermes setup.');
         return;
       }
 
@@ -485,7 +485,7 @@ export const SetupWizard: React.FC = () => {
       }
 
       if (!setupStatus.hermesAgentPresent && !setupStatus.gitPath) {
-        setHermesInstallError('Install Git first so CloudChat can download Hermes Agent.');
+        setHermesInstallError('Install Git first so Spark can download Hermes Agent.');
         return;
       }
 
@@ -741,7 +741,7 @@ export const SetupWizard: React.FC = () => {
                 <p className="text-[11px] leading-relaxed text-[#666]">
                   {isHermesBridgeReadyToStart
                     ? 'Hermes is installed locally, but the bridge is offline. Start it for this launch and continue.'
-                    : 'Hermes bridge is offline. CloudChat can fix the local setup from here before continuing.'}
+                    : 'Hermes bridge is offline. Spark can fix the local setup from here before continuing.'}
                 </p>
                 <button
                   onClick={retryBridgeDetection}
@@ -773,7 +773,7 @@ export const SetupWizard: React.FC = () => {
 
             {!localBridgeSetupStatus && (
               <div className="rounded-xl border border-[#2A2A2A] bg-[#111111] px-3 py-2.5 text-[11px] leading-relaxed text-[#8A8A8A]">
-                CloudChat could not inspect the local Hermes setup yet. Refresh to retry the local checks.
+                Spark could not inspect the local Hermes setup yet. Refresh to retry the local checks.
               </div>
             )}
 
@@ -788,7 +788,7 @@ export const SetupWizard: React.FC = () => {
                 >
                   Git
                 </a>{' '}
-                first so CloudChat can download Hermes Agent.
+                first so Spark can download Hermes Agent.
               </p>
             )}
 
@@ -973,7 +973,7 @@ export const SetupWizard: React.FC = () => {
         {!shouldShowHermesInstallFlow && (
           <div className="flex items-center justify-center gap-1.5">
             <Lock className="h-2.5 w-2.5 text-[#444]" />
-            <span className="text-[10px] text-[#444]">Stored locally, never sent to CloudChat</span>
+            <span className="text-[10px] text-[#444]">Stored locally, never sent to Spark</span>
           </div>
         )}
       </div>
@@ -1020,10 +1020,10 @@ export const SetupWizard: React.FC = () => {
     : '';
 
   return (
-    <div ref={modalRef} role="dialog" aria-modal="true" aria-label="CloudChat Setup Wizard" className="fixed inset-0 z-50 flex items-center justify-center bg-background">
+    <div ref={modalRef} role="dialog" aria-modal="true" aria-label="Spark Setup Wizard" className="fixed inset-0 z-50 flex items-center justify-center bg-background">
       <div className="w-[380px] mx-4">
         <div className="text-center mb-6">
-          <h1 className="text-lg font-bold tracking-tight text-foreground">CloudChat</h1>
+          <h1 className="text-lg font-bold tracking-tight text-foreground">Spark</h1>
           <div className="mt-2">{renderStepIndicator()}</div>
         </div>
         <div

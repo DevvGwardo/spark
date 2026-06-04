@@ -28,6 +28,7 @@ import { SlotNumber } from '@/components/ui/SlotNumber';
 import { HermesUpdateButton } from '@/components/chat/HermesUpdateButton';
 import { FeedbackButton } from '@/components/feedback/FeedbackButton';
 import { BridgeSetupModal } from '@/components/setup/BridgeSetupModal';
+import { HermesStatusPill } from '@/components/layout/HermesStatusPill';
 import { CommandPalette } from '@/components/overlay/CommandPalette';
 import { RemoteAccessModal } from '@/components/remote/RemoteAccessModal';
 import { cn } from '@/lib/utils';
@@ -587,6 +588,16 @@ const headerSecondaryLabel = selectedCronJobId
               {/* Repo attachment status removed — shown in sidebar footer instead */}
 
               <div className="flex-1" />
+
+              {/* Hermes bridge status — click when offline to open bridge setup */}
+              <div className="flex items-center mr-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+                <HermesStatusPill
+                  onClick={() => {
+                    setBridgeSetupDismissed(false);
+                    setBridgeSetupVisible(true);
+                  }}
+                />
+              </div>
 
               {/* Remote access QR button */}
               <div className="flex items-center mr-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
