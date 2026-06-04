@@ -590,7 +590,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     const body = summary.length > 160 ? `${summary.slice(0, 157)}...` : summary;
 
     void window.electronAPI?.notifyAttentionRequest?.({
-      title: 'CloudChat approval needed',
+      title: 'Spark approval needed',
       body,
     });
   }, [canShowProposalApproval, conversationId, pendingProposal]);

@@ -130,7 +130,7 @@ export const WebBridgeSetup: React.FC<{ onComplete: () => void }> = ({ onComplet
           <div className="flex-1 min-w-0">
             <h2 className="text-[14px] font-semibold tracking-tight">Setting up Hermes</h2>
             <p className="text-[12px] text-muted-foreground">
-              {done ? 'Bridge is ready. Continuing…' : 'Start the Hermes bridge on the computer hosting CloudChat.'}
+              {done ? 'Bridge is ready. Continuing…' : 'Start the Hermes bridge on the computer hosting Spark.'}
             </p>
           </div>
           {done && <Check className="h-5 w-5 text-emerald-400" />}
