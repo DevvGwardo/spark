@@ -350,7 +350,7 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     label: 'Hermes Agent',
     description: 'Autonomous agent over tool-capable OpenRouter models',
     needsApiKey: false,
-    category: 'specialized',
+    category: 'featured',
     badge: 'Agent',
     iconLetter: 'H',
     iconColor: '#8B5CF6',
@@ -361,11 +361,13 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
 
 // Ordered list for UI display
 export const PROVIDER_ORDER: Provider[] = [
-  'openai', 'anthropic', 'google', 'xai',
+  'hermes', 'openai', 'anthropic', 'google', 'xai',
   'groq', 'cerebras', 'openrouter', 'sambanova',
   'deepseek', 'mistral', 'together', 'minimax', 'minimax-payg', 'kimi', 'kimi-coding', 'z-ai',
-  'hermes', 'openclaw',
+  'openclaw',
 ];
+
+export const PRIMARY_PROVIDERS: Provider[] = ['hermes', 'openclaw'];
 
 export function getProviderLabel(provider: Provider): string {
   return PROVIDERS[provider]?.label || provider;
