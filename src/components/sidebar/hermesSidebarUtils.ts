@@ -21,6 +21,18 @@ export function formatUsd(value: number): string {
   }).format(value);
 }
 
+export type UsageBudgetLevel = 'ok' | 'warn' | 'over';
+
+// Classify spend against a budget: 'warn' at ≥75%, 'over' at ≥100%, else 'ok'.
+// A zero, negative, or missing budget is treated as 'ok' (no budget to exceed).
+export function usageBudgetLevel(spent: number, budget: number): UsageBudgetLevel {
+  if (!budget || budget <= 0) return 'ok';
+  const ratio = spent / budget;
+  if (ratio >= 1) return 'over';
+  if (ratio >= 0.75) return 'warn';
+  return 'ok';
+}
+
 export interface CronRunSummary {
   total: number;
   succeeded: number;
