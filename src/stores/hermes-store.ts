@@ -19,6 +19,12 @@ export interface MCPTool {
 }
 
 /** An MCP server configured by the user. */
+/** Transport type for an MCP server connection. */
+export type MCPTransportType = 'http' | 'stdio';
+
+/** Connection health for an MCP server. */
+export type MCPConnectionStatus = 'connected' | 'connecting' | 'disconnected' | 'error';
+
 export interface MCPServer {
   id: string;
   name: string;
@@ -26,6 +32,20 @@ export interface MCPServer {
   apiKey?: string;
   enabled: boolean;
   tools: MCPTool[];
+  /** Transport protocol used to connect. */
+  transportType: MCPTransportType;
+  /** Current connection health. */
+  connectionStatus: MCPConnectionStatus;
+  /** Number of consecutive errors (circuit breaker). */
+  errorCount: number;
+  /** Timestamp of last successful connection (ISO string). */
+  lastConnectedAt?: string;
+  /** Last error message, if any. */
+  lastError?: string;
+  /** Stdio command (for stdio transport). */
+  command?: string;
+  /** Stdio args (for stdio transport). */
+  args?: string[];
 }
 
 /** Wire format sent to hermes-bridge for each custom tool. */
@@ -77,6 +97,9 @@ interface HermesState {
   updateMCPServer: (id: string, patch: Partial<Omit<MCPServer, 'id'>>) => void;
   toggleMCPServer: (id: string) => void;
   setMCPServerTools: (id: string, tools: MCPTool[]) => void;
+  setMCPServerConnectionStatus: (id: string, status: MCPConnectionStatus, error?: string) => void;
+  bumpMCPServerError: (id: string, error: string) => void;
+  resetMCPServerErrors: (id: string) => void;
 
   /** Build the custom tool definitions for all enabled MCP servers. */
   getCustomToolDefinitions: () => CustomToolDefinition[];
@@ -165,6 +188,37 @@ export const useHermesStore = create<HermesState>()(
           ),
         })),
 
+      setMCPServerConnectionStatus: (id, status, error) =>
+        set((state) => ({
+          mcpServers: state.mcpServers.map((s) =>
+            s.id === id ? {
+              ...s,
+              connectionStatus: status,
+              ...(status === 'connected' ? { lastConnectedAt: new Date().toISOString(), errorCount: 0, lastError: undefined } : {}),
+              ...(status === 'error' && error ? { lastError: error } : {}),
+            } : s
+          ),
+        })),
+
+      bumpMCPServerError: (id, error) =>
+        set((state) => ({
+          mcpServers: state.mcpServers.map((s) =>
+            s.id === id ? {
+              ...s,
+              errorCount: s.errorCount + 1,
+              lastError: error,
+              connectionStatus: (s.errorCount + 1) >= 3 ? 'error' as MCPConnectionStatus : s.connectionStatus,
+            } : s
+          ),
+        })),
+
+      resetMCPServerErrors: (id) =>
+        set((state) => ({
+          mcpServers: state.mcpServers.map((s) =>
+            s.id === id ? { ...s, errorCount: 0, lastError: undefined, connectionStatus: 'connected' as MCPConnectionStatus } : s
+          ),
+        })),
+
       getCustomToolDefinitions: () => {
         const servers = get().mcpServers.filter((s) => s.enabled && s.tools.length > 0);
         const defs: CustomToolDefinition[] = [];
@@ -232,6 +286,19 @@ export const useHermesStore = create<HermesState>()(
         swarm: state.swarm,
         underlyingProvider: state.underlyingProvider,
       }),
+      merge: (persisted, current) => {
+        const merged = { ...current, ...(persisted as Partial<HermesState>) };
+        // Backward compatibility: ensure MCP servers have new required fields
+        if (merged.mcpServers) {
+          merged.mcpServers = merged.mcpServers.map((s) => ({
+            transportType: 'http' as MCPTransportType,
+            connectionStatus: 'disconnected' as MCPConnectionStatus,
+            errorCount: 0,
+            ...s,
+          }));
+        }
+        return merged;
+      },
     }
   )
 );

@@ -25,6 +25,7 @@ import { KanbanPanel } from '@/components/sidebar/KanbanPanel';
 import { TaskQueuePanel } from '@/components/sidebar/TaskQueuePanel';
 import { TeamPanel } from '@/components/sidebar/TeamPanel';
 import { HermesQueuePanel } from '@/components/sidebar/HermesQueuePanel';
+import { HermesMCPPanel } from '@/components/sidebar/HermesMCPPanel';
 import { ConversationTreeOverlay } from '@/components/workflow/ConversationTreeOverlay';
 import type { Conversation } from '@/lib/db';
 import { exportConversationJson, exportConversationMarkdown, importConversationJson } from '@/lib/db';
@@ -94,6 +95,7 @@ const HERMES_SUB_TABS: Array<{ key: SubTab; label: string; icon: React.Component
   { key: 'skills', label: 'Skills', icon: Sparkles },
   { key: 'usage', label: 'Usage', icon: BarChart3 },
   { key: 'images', label: 'Images', icon: Image },
+  { key: 'mcp', label: 'MCP', icon: Network },
   { key: 'kanban', label: 'Board', icon: Kanban },
   { key: 'tasks', label: 'Tasks', icon: ListChecks },
   { key: 'rooms', label: 'Rooms', icon: Users },
@@ -1017,6 +1019,8 @@ export const ChatSidebar: React.FC = () => {
         <HermesUsagePanel />
       ) : activeSubTab === 'images' ? (
         <ImagesPanel />
+      ) : activeSubTab === 'mcp' ? (
+        <HermesMCPPanel />
       ) : activeSubTab === 'kanban' ? (
         <KanbanPanel />
       ) : activeSubTab === 'tasks' ? (

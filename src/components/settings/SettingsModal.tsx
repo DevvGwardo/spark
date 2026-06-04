@@ -3,7 +3,8 @@ import { X, Eye, EyeOff, Search, Check, Zap, ChevronDown, ChevronRight, ArrowLef
 import { useSettingsStore, type Provider, type Language } from '@/stores/settings-store';
 import { COLOR_THEMES, ACCENT_COLORS } from '@/lib/themes';
 import { ChatSurfaceBackground } from '@/components/chat/ChatSurfaceBackground';
-import { useHermesStore, type MCPTool } from '@/stores/hermes-store';
+import { useHermesStore } from '@/stores/hermes-store';
+import { discoverMCPTools } from '@/lib/mcp-connect';
 import { fetchHermesProviders, type HermesProviderInfo } from '@/lib/hermes-api';
 import { useUIStore } from '@/stores/ui-store';
 import { PROVIDERS, PROVIDER_ORDER, getVisibleModelOptions } from '@/lib/providers';
@@ -666,7 +667,6 @@ export const SettingsModal: React.FC = () => {
     addMCPServer,
     removeMCPServer,
     toggleMCPServer,
-    setMCPServerTools,
   } = useHermesStore();
 
   const [showKey, setShowKey] = useState(false);
@@ -706,32 +706,13 @@ export const SettingsModal: React.FC = () => {
   const handleConnectMCP = useCallback(async (serverId: string, url: string, apiKey?: string) => {
     setMcpConnecting(serverId);
     setMcpError(null);
-    try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
-      });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
-      const tools: MCPTool[] = (data.result?.tools ?? [])
-        .filter((t: unknown): t is { name: string; description?: string; inputSchema?: Record<string, unknown> } =>
-          typeof t === 'object' && t !== null && typeof (t as { name?: unknown }).name === 'string'
-        )
-        .map((t: { name: string; description?: string; inputSchema?: Record<string, unknown> }) => ({
-          name: t.name,
-          description: t.description ?? '',
-          inputSchema: t.inputSchema ?? { type: 'object', properties: {} },
-        }));
-      setMCPServerTools(serverId, tools);
-    } catch (e) {
-      setMcpError(`Failed to connect: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setMcpConnecting(null);
+    const tools = await discoverMCPTools({ serverId, url, apiKey });
+    if (tools === null) {
+      const server = useHermesStore.getState().mcpServers.find((s) => s.id === serverId);
+      setMcpError(server?.lastError ?? 'Connection failed');
     }
-  }, [setMCPServerTools]);
+    setMcpConnecting(null);
+  }, []);
 
   const handleAddMCPServer = useCallback(() => {
     if (!mcpName.trim() || !mcpUrl.trim()) return;
@@ -745,6 +726,9 @@ export const SettingsModal: React.FC = () => {
       apiKey,
       enabled: true,
       tools: [],
+      transportType: 'http',
+      connectionStatus: 'disconnected',
+      errorCount: 0,
     });
     setMcpName('');
     setMcpUrl('');
@@ -1567,14 +1551,32 @@ export const SettingsModal: React.FC = () => {
                             <div key={server.id} className="rounded-lg border border-[#2a2a2a] bg-[#0d0d0d] px-3 py-2.5">
                               <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2 min-w-0">
-                                  <Network size={13} className="shrink-0 text-muted-foreground" />
+                                  <span
+                                    className={cn(
+                                      'inline-block h-2 w-2 shrink-0 rounded-full',
+                                      server.connectionStatus === 'connected' && 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.45)]',
+                                      server.connectionStatus === 'connecting' && 'bg-amber-500 animate-pulse',
+                                      server.connectionStatus === 'disconnected' && 'bg-muted-foreground/40',
+                                      server.connectionStatus === 'error' && 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.45)]',
+                                    )}
+                                  />
                                   <div className="min-w-0">
-                                    <div className="text-sm text-foreground truncate">{server.name}</div>
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-sm text-foreground truncate">{server.name}</span>
+                                      <span className="text-[9px] uppercase tracking-wider text-muted-foreground/40">
+                                        {server.transportType === 'http' ? 'HTTP' : 'STDIO'}
+                                      </span>
+                                    </div>
                                     <div className="text-[10px] font-mono text-muted-foreground/60 truncate">{server.url}</div>
                                   </div>
                                 </div>
                                 <div className="flex items-center gap-2 shrink-0">
-                                  <span className="text-[10px] text-muted-foreground">
+                                  <span className={cn(
+                                    'text-[10px] font-medium',
+                                    server.connectionStatus === 'connected' ? 'text-emerald-400/70' :
+                                    server.connectionStatus === 'error' ? 'text-red-400/70' :
+                                    'text-muted-foreground'
+                                  )}>
                                     {server.tools.length} tool{server.tools.length !== 1 ? 's' : ''}
                                   </span>
                                   <button
@@ -1608,6 +1610,11 @@ export const SettingsModal: React.FC = () => {
                                   </button>
                                 </div>
                               </div>
+                              {server.lastError && (
+                                <div className="mt-2 rounded-md border border-red-500/20 bg-red-500/8 px-2 py-1.5 text-[10px] text-red-300/80">
+                                  {server.lastError}
+                                </div>
+                              )}
                               {server.tools.length > 0 && (
                                 <div className="mt-2 flex flex-wrap gap-1">
                                   {server.tools.map((tool) => (
