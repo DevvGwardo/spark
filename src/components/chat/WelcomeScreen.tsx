@@ -63,6 +63,7 @@ export const WelcomeScreen = React.forwardRef<HTMLDivElement, WelcomeScreenProps
   const { activeRepo, isRepoMode } = getChangeset(scopeId);
   const clearActiveRepo = () => clearActiveRepoForPanel(scopeId);
   const { githubPAT } = useSettingsStore();
+  const activeProvider = useSettingsStore((s) => s.activeProvider);
   const [repos, setRepos] = useState<GitHubRepo[]>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
@@ -146,7 +147,9 @@ export const WelcomeScreen = React.forwardRef<HTMLDivElement, WelcomeScreenProps
           What do you want to build?
         </h1>
         <p className="mt-1.5 text-[13px] md:text-[14px] text-muted-foreground">
-          Start a conversation or pick a suggestion to get going.
+          {activeProvider === 'hermes'
+            ? 'Chat, or hand off a task to your Hermes agent — it can browse, run code, and manage your repos.'
+            : 'Start a conversation or pick a suggestion to get going.'}
         </p>
 
         {/* Repo selector / active badge */}
