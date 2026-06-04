@@ -12,7 +12,7 @@ import {
 } from 'recharts';
 import { fetchHermesWorkspaceUsage, type HermesUsageOverview } from '@/lib/hermes-api';
 import { relativeTime } from '@/lib/relative-time';
-import { formatCompactNumber, formatUsd } from '@/components/sidebar/hermesSidebarUtils';
+import { formatCompactNumber, formatUsd, usageBudgetLevel } from '@/components/sidebar/hermesSidebarUtils';
 import { SlotNumber } from '@/components/ui/SlotNumber';
 import { cn } from '@/lib/utils';
 
@@ -22,6 +22,15 @@ const SUMMARY_FIELDS = [
   { key: 'input_tokens', label: 'Input' },
   { key: 'output_tokens', label: 'Output' },
 ] as const;
+
+// Soft monthly spend budget used purely to color the cost figure.
+const USAGE_BUDGET_USD = 50;
+
+const BUDGET_LEVEL_COLOR = {
+  ok: 'text-foreground',
+  warn: 'text-yellow-400',
+  over: 'text-red-400',
+} as const;
 
 export function HermesUsagePanel() {
   const [usage, setUsage] = useState<HermesUsageOverview | null>(null);
@@ -109,7 +118,10 @@ export function HermesUsagePanel() {
               </div>
               <SlotNumber
                 formattedValue={formatUsd(usage.cost_usd)}
-                className="mt-2 text-[18px] font-semibold leading-none text-foreground"
+                className={cn(
+                  'mt-2 text-[18px] font-semibold leading-none',
+                  BUDGET_LEVEL_COLOR[usageBudgetLevel(usage.cost_usd, USAGE_BUDGET_USD)],
+                )}
               />
               <p className="mt-1 text-[10px] text-muted-foreground/45">
                 Estimated from the Hermes session store

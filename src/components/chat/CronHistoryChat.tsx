@@ -5,6 +5,7 @@ import { useUIStore } from '@/stores/ui-store';
 import { cn } from '@/lib/utils';
 import { parseToolCalls, type Segment } from '@/lib/tool-call-parser';
 import { ToolCallAccordion } from './ToolCallAccordion';
+import { summarizeCronRuns } from '@/components/sidebar/hermesSidebarUtils';
 
 function formatDuration(ms: number | null): string {
   if (ms === null) return '';
@@ -39,6 +40,7 @@ export function CronHistoryChat() {
 
   const job = jobs.find((j) => j.id === selectedCronJobId);
   const history = selectedCronJobId ? (runHistory[selectedCronJobId] ?? []) : [];
+  const summary = summarizeCronRuns(history);
 
   // Fetch job list if empty, then fetch history
   useEffect(() => {
@@ -120,6 +122,26 @@ export function CronHistoryChat() {
           <RefreshCw className="h-4 w-4 text-muted-foreground" />
         </button>
       </div>
+
+      {/* Run summary */}
+      {summary.total > 0 && (
+        <div className="flex items-center gap-3 px-4 py-2 border-b border-border/30 bg-muted/20 text-[11px]">
+          <span className="text-muted-foreground/60">
+            {summary.total} {summary.total === 1 ? 'run' : 'runs'}
+          </span>
+          <span className="flex items-center gap-1 text-green-400">
+            <CheckCircle2 className="h-3 w-3" />
+            {summary.succeeded}
+          </span>
+          <span className="flex items-center gap-1 text-red-400">
+            <XCircle className="h-3 w-3" />
+            {summary.failed}
+          </span>
+          <span className="ml-auto text-muted-foreground/60">
+            {Math.round(summary.successRate * 100)}% success
+          </span>
+        </div>
+      )}
 
       {/* Run history as chat messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">

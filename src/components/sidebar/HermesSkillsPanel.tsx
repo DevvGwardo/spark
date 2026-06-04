@@ -12,6 +12,7 @@ import {
 } from '@/lib/hermes-api';
 import { relativeTime } from '@/lib/relative-time';
 import { cn } from '@/lib/utils';
+import { filterSkills } from './hermesSidebarUtils';
 
 type SkillsTab = 'installed' | 'hub';
 
@@ -172,14 +173,10 @@ export function HermesSkillsPanel() {
     return () => window.clearTimeout(timeoutId);
   }, [justInstalledSkillName]);
 
-  const filteredSkills = useMemo(() => {
-    const normalized = deferredInstalledQuery.trim().toLowerCase();
-    if (!normalized) return skills;
-    return skills.filter((skill) => {
-      const haystack = `${skill.name} ${skill.summary} ${skill.category} ${skill.path}`.toLowerCase();
-      return haystack.includes(normalized);
-    });
-  }, [deferredInstalledQuery, skills]);
+  const filteredSkills = useMemo(
+    () => filterSkills(skills, deferredInstalledQuery),
+    [deferredInstalledQuery, skills],
+  );
 
   const hubCategories = useMemo(() => {
     const categories = new Set<string>();

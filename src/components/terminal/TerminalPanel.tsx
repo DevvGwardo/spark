@@ -6,6 +6,7 @@ import '@xterm/xterm/css/xterm.css';
 import { useUIStore } from '@/stores/ui-store';
 import { X, Plus, Minus, ChevronDown, ChevronUp, Terminal as TerminalIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { rafThrottle } from '@/lib/raf';
 
 interface TabInfo {
   id: string;
@@ -27,6 +28,8 @@ export const TerminalPanel: React.FC<{ cwd?: string }> = ({ cwd }) => {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const instancesRef = useRef<Map<string, TabInstance>>(new Map());
   const isResizing = useRef(false);
+  const heightFrame = useRef<ReturnType<typeof rafThrottle<[number]>> | null>(null);
+  const fitFrame = useRef<ReturnType<typeof rafThrottle<[]>> | null>(null);
 
   const [tabs, setTabs] = useState<TabInfo[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
@@ -166,7 +169,7 @@ export const TerminalPanel: React.FC<{ cwd?: string }> = ({ cwd }) => {
     const tab = tabs.find((t) => t.id === activeTabId);
     if (!instance || !tab) return;
 
-    const doFit = () => {
+    const doFitNow = () => {
       try {
         instance.fitAddon.fit();
         api?.resize(tab.ptyId, instance.xterm.cols, instance.xterm.rows);
@@ -175,9 +178,14 @@ export const TerminalPanel: React.FC<{ cwd?: string }> = ({ cwd }) => {
       }
     };
 
+    fitFrame.current?.cancel();
+    fitFrame.current = rafThrottle(doFitNow);
+    const doFit = () => fitFrame.current?.();
+
     const timer = setTimeout(doFit, 60);
-    window.addEventListener('resize', doFit);
+    window.addEventListener('resize', doFit, { passive: true });
     return () => {
+      fitFrame.current?.cancel();
       clearTimeout(timer);
       window.removeEventListener('resize', doFit);
     };
@@ -187,6 +195,9 @@ export const TerminalPanel: React.FC<{ cwd?: string }> = ({ cwd }) => {
   useEffect(() => {
     const instances = instancesRef.current;
     return () => {
+      heightFrame.current?.cancel();
+      fitFrame.current?.cancel();
+      document.body.classList.remove('resize-performance-lock');
       instances.forEach((instance, _tabId) => {
         instance.cleanup();
       });
@@ -198,18 +209,26 @@ export const TerminalPanel: React.FC<{ cwd?: string }> = ({ cwd }) => {
     (e: React.MouseEvent) => {
       e.preventDefault();
       isResizing.current = true;
+      document.body.classList.add('resize-performance-lock');
+      heightFrame.current?.cancel();
+      heightFrame.current = rafThrottle((nextHeight: number) => {
+        setTerminalHeight(nextHeight);
+      });
       const startY = e.clientY;
       const startHeight = terminalHeight;
 
       const onMouseMove = (ev: MouseEvent) => {
         if (!isResizing.current) return;
-        setTerminalHeight(startHeight + (startY - ev.clientY));
+        heightFrame.current?.(startHeight + (startY - ev.clientY));
       };
 
       const onMouseUp = () => {
         isResizing.current = false;
+        heightFrame.current?.flush();
+        heightFrame.current = null;
         document.removeEventListener('mousemove', onMouseMove);
         document.removeEventListener('mouseup', onMouseUp);
+        document.body.classList.remove('resize-performance-lock');
         document.body.style.cursor = '';
         document.body.style.userSelect = '';
       };
@@ -281,7 +300,7 @@ export const TerminalPanel: React.FC<{ cwd?: string }> = ({ cwd }) => {
   }
 
   return (
-    <div className="border-t border-border/60 flex flex-col flex-shrink-0" style={{ height: isMaximized ? '70vh' : terminalHeight }}>
+    <div className="app-independent-pane border-t border-border/60 flex flex-col flex-shrink-0" style={{ height: isMaximized ? '70vh' : terminalHeight }}>
       {/* Resize handle */}
       <div onMouseDown={handleResizeStart} className="h-1 cursor-row-resize group flex-shrink-0 bg-[#0a0a0a]">
         <div className="h-px w-full bg-border/30 group-hover:bg-primary/40 group-active:bg-primary/60 transition-colors" />

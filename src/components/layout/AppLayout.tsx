@@ -32,6 +32,7 @@ import { HermesStatusPill } from '@/components/layout/HermesStatusPill';
 import { CommandPalette } from '@/components/overlay/CommandPalette';
 import { RemoteAccessModal } from '@/components/remote/RemoteAccessModal';
 import { cn } from '@/lib/utils';
+import { rafThrottle } from '@/lib/raf';
 
 const SettingsModal = React.lazy(() => import('@/components/settings/SettingsModal').then(m => ({ default: m.SettingsModal })));
 const SetupWizard = React.lazy(() => import('@/components/settings/SetupWizard').then(m => ({ default: m.SetupWizard })));
@@ -308,23 +309,32 @@ const headerSecondaryLabel = selectedCronJobId
 
   // Sidebar resize handling
   const isResizing = useRef(false);
+  const sidebarResizeFrame = useRef<ReturnType<typeof rafThrottle<[number]>> | null>(null);
   const handleResizeStart = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
       isResizing.current = true;
+      document.body.classList.add('resize-performance-lock');
+      sidebarResizeFrame.current?.cancel();
+      sidebarResizeFrame.current = rafThrottle((nextWidth: number) => {
+        setSidebarWidth(nextWidth);
+      });
       const startX = e.clientX;
       const startWidth = sidebarWidth;
 
       const onMouseMove = (ev: MouseEvent) => {
         if (!isResizing.current) return;
         const newWidth = startWidth + (ev.clientX - startX);
-        setSidebarWidth(newWidth);
+        sidebarResizeFrame.current?.(newWidth);
       };
 
       const onMouseUp = () => {
         isResizing.current = false;
+        sidebarResizeFrame.current?.flush();
+        sidebarResizeFrame.current = null;
         document.removeEventListener('mousemove', onMouseMove);
         document.removeEventListener('mouseup', onMouseUp);
+        document.body.classList.remove('resize-performance-lock');
         document.body.style.cursor = '';
         document.body.style.userSelect = '';
       };
@@ -370,7 +380,7 @@ const headerSecondaryLabel = selectedCronJobId
         </Suspense>
       )}
 
-      <div className="h-screen flex flex-col bg-[hsl(var(--frame-bg))] p-0 gap-0">
+      <div className="app-shell h-screen flex flex-col bg-[hsl(var(--frame-bg))] p-0 gap-0">
         <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:px-3 focus:py-1.5 focus:bg-primary focus:text-primary-foreground focus:rounded-md focus:text-sm">
           Skip to main content
         </a>
@@ -389,7 +399,7 @@ const headerSecondaryLabel = selectedCronJobId
               </nav>
             </div>
           ) : (
-            <div className="flex-shrink-0 relative" style={sidebarOpen ? { width: sidebarWidth } : { width: 0 }}>
+            <div className="app-independent-pane flex-shrink-0 relative" style={sidebarOpen ? { width: sidebarWidth } : { width: 0 }}>
               <div
                 className={cn(
                   'h-full overflow-hidden bg-[hsl(var(--sidebar-bg))] border-r border-[hsl(var(--sidebar-border))]',
@@ -433,7 +443,7 @@ const headerSecondaryLabel = selectedCronJobId
           )}
 
           {/* Main */}
-          <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-background">
+          <div className="app-main-pane flex-1 flex flex-col min-w-0 overflow-hidden bg-background">
             {/* Header */}
             <header className="flex items-center h-[48px] px-3 md:px-5 flex-shrink-0 border-b border-border/60 bg-background" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
               {/* Collapsed sidebar controls — sits in the traffic light area */}
@@ -695,7 +705,7 @@ const headerSecondaryLabel = selectedCronJobId
             {/* Content — switches based on active tab */}
             <main className="flex-1 min-h-0 overflow-hidden flex flex-col">
               <div className="flex-1 overflow-hidden flex min-h-0">
-                <div className="flex-1 overflow-hidden">
+                <div className="app-independent-pane flex-1 overflow-hidden">
                   <div
                     className={cn('h-full overflow-hidden', activeTab !== 'chat' && 'hidden')}
                     aria-hidden={activeTab !== 'chat'}
@@ -709,7 +719,7 @@ const headerSecondaryLabel = selectedCronJobId
                     )}
                   </div>
                 </div>
-                <div className={cn(activeTab !== 'chat' && 'hidden')} aria-hidden={activeTab !== 'chat'}>
+                <div className={cn('app-independent-pane', activeTab !== 'chat' && 'hidden')} aria-hidden={activeTab !== 'chat'}>
                   <PreviewSidebar />
                 </div>
                 <DockedMiniBrowser />
