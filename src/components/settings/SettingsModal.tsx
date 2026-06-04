@@ -7,7 +7,7 @@ import { useHermesStore } from '@/stores/hermes-store';
 import { discoverMCPTools } from '@/lib/mcp-connect';
 import { fetchHermesProviders, type HermesProviderInfo } from '@/lib/hermes-api';
 import { useUIStore } from '@/stores/ui-store';
-import { PROVIDERS, PROVIDER_ORDER, getVisibleModelOptions } from '@/lib/providers';
+import { PROVIDERS, PROVIDER_ORDER, CATEGORY_LABELS, getVisibleModelOptions } from '@/lib/providers';
 import { validateApiKey, listGitHubRepos, type GitHubRepoSummary } from '@/lib/api';
 import { PROVIDER_KEY_URLS } from '@/components/chat/ApiKeyModal';
 import { cn } from '@/lib/utils';
@@ -605,7 +605,7 @@ function GeneralTab() {
       {/* DATA & PRIVACY */}
       <div className="space-y-3">
         <p className={sectionLabelClass}>Data & Privacy</p>
-        <ToggleRow label="Analytics" description="Help improve CloudChat by sharing anonymous usage data" enabled={analytics} onChange={setAnalytics} />
+        <ToggleRow label="Analytics" description="Help improve Spark by sharing anonymous usage data" enabled={analytics} onChange={setAnalytics} />
         <div className="flex items-center justify-between py-1">
           <div className="min-w-0 flex-1 pr-4">
             <p className="text-sm text-foreground">Clear history</p>
@@ -690,6 +690,7 @@ export const SettingsModal: React.FC = () => {
   const [tab, setTab] = useState<'providers' | 'messaging' | 'github' | 'knowledge' | 'general'>('providers');
   const [search, setSearch] = useState('');
   const [providerView, setProviderView] = useState<'list' | 'detail'>('list');
+  const [showMoreProviders, setShowMoreProviders] = useState(false);
   const [localRuntimeStatus, setLocalRuntimeStatus] = useState<string | null>(null);
   const [refreshingModels, setRefreshingModels] = useState(false);
   // Hermes underlying-provider catalog (providers + models the agent can route to)
@@ -1016,6 +1017,24 @@ export const SettingsModal: React.FC = () => {
     });
   }, [search]);
 
+  // Hermes-first grouping: 'featured' shows expanded; the remaining categories
+  // collapse behind a single disclosure unless the user is actively searching.
+  const featuredProviders = useMemo(
+    () => filteredProviders.filter((p) => PROVIDERS[p].category === 'featured'),
+    [filteredProviders],
+  );
+  const moreProviderGroups = useMemo(
+    () =>
+      (['open-source', 'specialized'] as const)
+        .map((category) => ({
+          category,
+          providers: filteredProviders.filter((p) => PROVIDERS[p].category === category),
+        }))
+        .filter((group) => group.providers.length > 0),
+    [filteredProviders],
+  );
+  const moreProvidersExpanded = showMoreProviders || search.trim().length > 0;
+
   if (!mounted) return null;
 
   const localRuntimeDetails = getLocalProviderRuntimeDetails(activeProvider);
@@ -1042,6 +1061,42 @@ export const SettingsModal: React.FC = () => {
     const key = config?.apiKey;
     if (key?.trim()) return { label: 'Connected', color: '#00FF88', bg: '#00FF8812' };
     return { label: 'No key', color: '#FF6666', bg: '#FF444412' };
+  };
+
+  const renderProviderCard = (p: Provider) => {
+    const info = PROVIDERS[p];
+    const isActive = activeProvider === p;
+    const status = getProviderStatus(p);
+    return (
+      <button
+        key={p}
+        onClick={() => {
+          handleSelectProvider(p);
+          setProviderView('detail');
+        }}
+        className={cn(
+          'rounded-[10px] border px-4 py-3.5 flex items-center gap-3.5 w-full text-left transition-all duration-100',
+          isActive
+            ? 'bg-[#FF840010] border-[#FF840040]'
+            : 'bg-white/[0.02] border-[#2a2a2a] hover:bg-white/[0.04]'
+        )}
+      >
+        <ProviderIcon provider={p} size="card" />
+        <div className="min-w-0 flex-1">
+          <span className="text-sm font-medium text-foreground">{info.label}</span>
+          <p className="text-xs text-[#666666] truncate">{info.description}</p>
+        </div>
+        {status && (
+          <span
+            className="rounded-full px-2 py-0.5 text-[10px] font-semibold shrink-0"
+            style={{ color: status.color, backgroundColor: status.bg }}
+          >
+            {status.label}
+          </span>
+        )}
+        <ChevronRight className="h-4 w-4 text-[#555555] shrink-0" />
+      </button>
+    );
   };
 
   return (
@@ -1130,44 +1185,31 @@ export const SettingsModal: React.FC = () => {
                   />
                 </div>
 
-                {/* Provider cards */}
+                {/* Provider cards — Hermes-first: Featured expanded, rest behind a disclosure */}
                 <div className="space-y-2">
-                  {filteredProviders.map(p => {
-                    const info = PROVIDERS[p];
-                    const isActive = activeProvider === p;
-                    const status = getProviderStatus(p);
-                    return (
-                      <button
-                        key={p}
-                        onClick={() => {
-                          handleSelectProvider(p);
-                          setProviderView('detail');
-                        }}
-                        className={cn(
-                          'rounded-[10px] border px-4 py-3.5 flex items-center gap-3.5 w-full text-left transition-all duration-100',
-                          isActive
-                            ? 'bg-[#FF840010] border-[#FF840040]'
-                            : 'bg-white/[0.02] border-[#2a2a2a] hover:bg-white/[0.04]'
-                        )}
-                      >
-                        <ProviderIcon provider={p} size="card" />
-                        <div className="min-w-0 flex-1">
-                          <span className="text-sm font-medium text-foreground">{info.label}</span>
-                          <p className="text-xs text-[#666666] truncate">{info.description}</p>
-                        </div>
-                        {status && (
-                          <span
-                            className="rounded-full px-2 py-0.5 text-[10px] font-semibold shrink-0"
-                            style={{ color: status.color, backgroundColor: status.bg }}
-                          >
-                            {status.label}
-                          </span>
-                        )}
-                        <ChevronRight className="h-4 w-4 text-[#555555] shrink-0" />
-                      </button>
-                    );
-                  })}
+                  {featuredProviders.map(renderProviderCard)}
                 </div>
+
+                {moreProviderGroups.length > 0 && (
+                  <div className="space-y-2">
+                    {!moreProvidersExpanded ? (
+                      <button
+                        onClick={() => setShowMoreProviders(true)}
+                        className={cn(bottomActionClass, 'gap-1.5')}
+                      >
+                        <ChevronDown className="h-3.5 w-3.5" />
+                        Show more providers
+                      </button>
+                    ) : (
+                      moreProviderGroups.map((group) => (
+                        <div key={group.category} className="space-y-2">
+                          <p className={cn(sectionLabelClass, 'px-1 pt-1')}>{CATEGORY_LABELS[group.category]}</p>
+                          {group.providers.map(renderProviderCard)}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
 
                 {/* Add provider placeholder */}
                 <button className="rounded-[10px] h-[42px] border border-[#2a2a2a] border-dashed w-full text-[13px] text-[#555555] hover:text-[#888888] hover:border-[#444444] transition-colors duration-100">
@@ -1412,6 +1454,7 @@ export const SettingsModal: React.FC = () => {
                             { key: 'web' as const, label: 'Web Search', desc: 'Search the web for information' },
                             { key: 'browser' as const, label: 'Browser Automation', desc: 'Browse and interact with web pages' },
                             { key: 'vision' as const, label: 'Vision Analysis', desc: 'Analyze images and screenshots' },
+                            { key: 'computer' as const, label: 'Computer Use', desc: 'Let the agent control the screen, mouse, and keyboard', warn: true },
                             { key: 'terminal' as const, label: 'Terminal Access', desc: 'Allows shell command execution on your machine', warn: true },
                             { key: 'files' as const, label: 'File Operations', desc: 'Allows reading and writing files on your machine', warn: true },
                             { key: 'code_execution' as const, label: 'Code Execution', desc: 'Allows running arbitrary code on your machine', warn: true },
@@ -1647,6 +1690,7 @@ export const SettingsModal: React.FC = () => {
                             { key: 'terminal' as const, label: 'Terminal Access', desc: 'Execute shell commands on your machine', warn: true },
                             { key: 'files' as const, label: 'File Operations', desc: 'Read and write files on your machine', warn: true },
                             { key: 'code_execution' as const, label: 'Code Execution', desc: 'Run Python code on your machine', warn: true },
+                            { key: 'computer' as const, label: 'Computer Use', desc: 'Let the agent control the screen, mouse, and keyboard', warn: true },
                           ] as const).map(({ key, label, desc, warn }) => (
                             <div key={key} className="flex items-center justify-between">
                               <div>
@@ -1761,7 +1805,7 @@ export const SettingsModal: React.FC = () => {
                       </p>
                     </div>
                     <a
-                      href="https://github.com/settings/tokens/new?scopes=repo&description=CloudChat%20Integration"
+                      href="https://github.com/settings/tokens/new?scopes=repo&description=Spark%20Integration"
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1 rounded-full border border-[#2a2a2a] px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors duration-100 hover:bg-white/[0.04] hover:text-foreground"

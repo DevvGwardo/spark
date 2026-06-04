@@ -6,6 +6,7 @@ export interface HermesToolsets {
   web: boolean;
   browser: boolean;
   vision: boolean;
+  computer: boolean;
   terminal: boolean;
   files: boolean;
   code_execution: boolean;
@@ -119,6 +120,7 @@ const defaultToolsets: HermesToolsets = {
   web: true,
   browser: true,
   vision: true,
+  computer: true,
   terminal: true,
   files: true,
   code_execution: true,
