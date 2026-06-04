@@ -1,4 +1,4 @@
-import type { CronRun, HermesSkillSummary } from '@/lib/hermes-api';
+import type { CronRun, HermesSession, HermesSkillSummary } from '@/lib/hermes-api';
 
 export function formatCompactNumber(value: number): string {
   return new Intl.NumberFormat('en-US', {
@@ -40,6 +40,28 @@ export function summarizeCronRuns(runs: Array<Pick<CronRun, 'status'>>): CronRun
     failed,
     successRate: finished === 0 ? 0 : succeeded / finished,
   };
+}
+
+export interface SessionStatusCounts {
+  active: number;
+  completed: number;
+  error: number;
+  total: number;
+}
+
+// Tally sessions by status. Unknown statuses count toward `total` only, never
+// toward the named buckets; an empty list yields all zeros.
+export function countSessionStatuses(
+  sessions: Array<Pick<HermesSession, 'status'>>,
+): SessionStatusCounts {
+  const counts: SessionStatusCounts = { active: 0, completed: 0, error: 0, total: 0 };
+  for (const session of sessions) {
+    counts.total += 1;
+    if (session.status === 'active' || session.status === 'completed' || session.status === 'error') {
+      counts[session.status] += 1;
+    }
+  }
+  return counts;
 }
 
 type FilterableSkill = Pick<HermesSkillSummary, 'name' | 'summary' | 'category' | 'path'>;

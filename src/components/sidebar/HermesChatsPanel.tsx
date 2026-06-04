@@ -6,6 +6,7 @@ import { getSession, type HermesSessionDetail, type HermesSessionMessage } from 
 import { deriveTasks } from '@/lib/derive-tasks';
 import { cn } from '@/lib/utils';
 import { relativeTime } from '@/lib/relative-time';
+import { countSessionStatuses } from './hermesSidebarUtils';
 import { TaskList } from './TaskList';
 import { ToolMessageAccordion } from '@/components/chat/ToolMessageAccordion';
 
@@ -259,6 +260,7 @@ export function HermesChatsPanel() {
   const setSelectedSessionId = useUIStore((s) => s.setSelectedSessionId);
   const viewMode = useUIStore((s) => s.hermesSessionViewMode);
   const setViewMode = useUIStore((s) => s.setHermesSessionViewMode);
+  const statusCounts = countSessionStatuses(sessions);
   const activeSessions = sessions.filter((session) => session.status === 'active');
   const activeSessionIds = activeSessions.map((session) => session.id).join(',');
 
@@ -413,6 +415,28 @@ export function HermesChatsPanel() {
           </button>
         </div>
       </div>
+
+      {/* Status counts */}
+      {statusCounts.total > 0 && (
+        <div className="flex items-center gap-1.5 px-3 pb-2 text-[10px]">
+          {statusCounts.active > 0 && (
+            <span className="rounded-full bg-blue-500/10 px-1.5 py-0.5 text-blue-400">
+              {statusCounts.active} active
+            </span>
+          )}
+          {statusCounts.completed > 0 && (
+            <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-emerald-400">
+              {statusCounts.completed} done
+            </span>
+          )}
+          {statusCounts.error > 0 && (
+            <span className="rounded-full bg-red-500/10 px-1.5 py-0.5 text-red-400">
+              {statusCounts.error} error
+            </span>
+          )}
+          <span className="ml-auto text-muted-foreground/40">{statusCounts.total} total</span>
+        </div>
+      )}
 
       {/* All-active view */}
       {viewMode === 'all-active' && (
