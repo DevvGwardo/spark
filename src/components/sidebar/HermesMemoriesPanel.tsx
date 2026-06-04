@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Loader2, RefreshCw, Save } from 'lucide-react';
+import { Download, Loader2, RefreshCw, Save } from 'lucide-react';
 import {
   HermesApiError,
   fetchHermesWorkspaceFile,
@@ -9,7 +9,8 @@ import {
   type HermesWorkspaceFileSummary,
 } from '@/lib/hermes-api';
 import { relativeTime } from '@/lib/relative-time';
-import { formatBytes } from '@/components/sidebar/hermesSidebarUtils';
+import { formatBytes, memoriesToMarkdown } from '@/components/sidebar/hermesSidebarUtils';
+import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 
 const DEFAULT_KEYS = ['soul', 'user', 'memory'] as const;
@@ -21,6 +22,7 @@ export function HermesMemoriesPanel() {
   const [selectedKey, setSelectedKey] = useState<string>('soul');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -106,6 +108,44 @@ export function HermesMemoriesPanel() {
     }
   };
 
+  const handleExport = async () => {
+    setExporting(true);
+    setNotice(null);
+    try {
+      // Pull each file's content (use already-loaded detail where available)
+      // without mutating editor drafts.
+      const loaded = await Promise.all(
+        sortedFiles.map((file) => details[file.key] ?? fetchHermesWorkspaceFile(file.key)),
+      );
+      const markdown = memoriesToMarkdown(loaded);
+      const blob = new Blob([markdown], { type: 'text/markdown' });
+      const filename = 'hermes-memories.md';
+
+      if (window.electronAPI?.saveFile) {
+        const content = await blob.text();
+        const result = await window.electronAPI.saveFile(filename, content);
+        if (result.saved) {
+          toast.success(`Exported to ${result.path}`);
+        } else if (result.error) {
+          toast.error(`Export failed: ${result.error}`);
+        }
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to export memories');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       <div className="flex items-center justify-between px-3 py-2">
@@ -115,16 +155,26 @@ export function HermesMemoriesPanel() {
             {selectedSummary?.path ?? 'Canonical Hermes files'}
           </p>
         </div>
-        <button
-          onClick={() => {
-            void loadList();
-            if (selectedKey) void loadFile(selectedKey, { preserveDraft: true });
-          }}
-          className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground/60 transition-colors hover:bg-[hsl(var(--sidebar-active))] hover:text-foreground"
-          title="Refresh files"
-        >
-          <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => { void handleExport(); }}
+            disabled={exporting || files.length === 0}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground/60 transition-colors hover:bg-[hsl(var(--sidebar-active))] hover:text-foreground disabled:opacity-40"
+            title="Export memories as Markdown"
+          >
+            {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+          </button>
+          <button
+            onClick={() => {
+              void loadList();
+              if (selectedKey) void loadFile(selectedKey, { preserveDraft: true });
+            }}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground/60 transition-colors hover:bg-[hsl(var(--sidebar-active))] hover:text-foreground"
+            title="Refresh files"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+          </button>
+        </div>
       </div>
 
       <div className="px-3 pb-2">

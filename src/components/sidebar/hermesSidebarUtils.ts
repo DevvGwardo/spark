@@ -1,4 +1,4 @@
-import type { CronRun, HermesSession, HermesSkillSummary } from '@/lib/hermes-api';
+import type { CronRun, HermesSession, HermesSkillSummary, HermesWorkspaceFile } from '@/lib/hermes-api';
 
 export function formatCompactNumber(value: number): string {
   return new Intl.NumberFormat('en-US', {
@@ -86,4 +86,17 @@ export function filterSkills<T extends FilterableSkill>(skills: T[], query: stri
   return skills.filter((skill) =>
     `${skill.name} ${skill.summary} ${skill.category} ${skill.path}`.toLowerCase().includes(needle),
   );
+}
+
+type ExportableMemory = Pick<HermesWorkspaceFile, 'label' | 'content'>;
+
+// Render the Hermes memory files as a single markdown document — one `##`
+// heading plus body per memory. An empty list yields a valid empty-state
+// document rather than throwing.
+export function memoriesToMarkdown(memories: ExportableMemory[]): string {
+  if (memories.length === 0) {
+    return '# Hermes Memories\n\n_No memories to export._\n';
+  }
+  const sections = memories.map((memory) => `## ${memory.label}\n\n${memory.content.trim()}\n`);
+  return `# Hermes Memories\n\n${sections.join('\n')}`;
 }
