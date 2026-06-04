@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Trash2, Zap, AlertCircle, Loader2, ChevronRight } from 'lucide-react';
+import { Trash2, Zap, AlertCircle, Loader2, ChevronRight, Search } from 'lucide-react';
 import { useSessionsStore, type HermesSession } from '@/stores/sessions-store';
 import { useUIStore } from '@/stores/ui-store';
 import { getSession, type HermesSessionDetail, type HermesSessionMessage } from '@/lib/hermes-api';
 import { deriveTasks } from '@/lib/derive-tasks';
 import { cn } from '@/lib/utils';
 import { relativeTime } from '@/lib/relative-time';
-import { countSessionStatuses } from './hermesSidebarUtils';
+import { countSessionStatuses, filterSessions } from './hermesSidebarUtils';
 import { TaskList } from './TaskList';
 import { ToolMessageAccordion } from '@/components/chat/ToolMessageAccordion';
 
@@ -254,6 +254,7 @@ export function HermesChatsPanel() {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [detailTab, setDetailTab] = useState<'chat' | 'tasks'>('chat');
+  const [query, setQuery] = useState('');
   const [activeDetailsLoading, setActiveDetailsLoading] = useState(false);
   const [activeDetailsError, setActiveDetailsError] = useState<string | null>(null);
   const selectedSessionId = useUIStore((s) => s.selectedSessionId);
@@ -263,6 +264,7 @@ export function HermesChatsPanel() {
   const statusCounts = countSessionStatuses(sessions);
   const activeSessions = sessions.filter((session) => session.status === 'active');
   const activeSessionIds = activeSessions.map((session) => session.id).join(',');
+  const filteredSessions = filterSessions(sessions, query);
 
   const loadSessionDetail = useCallback(async (sessionId: string, silent = false) => {
     const requestId = ++detailRequestRef.current;
@@ -438,6 +440,22 @@ export function HermesChatsPanel() {
         </div>
       )}
 
+      {/* Search */}
+      {viewMode !== 'all-active' && sessions.length > 0 && (
+        <div className="mx-3 mb-2">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground/40" />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Filter sessions..."
+              className="w-full rounded-md border border-border/40 bg-background/40 py-1 pl-7 pr-2 text-[11px] text-foreground placeholder:text-muted-foreground/40 focus:border-border/70 focus:outline-none"
+            />
+          </div>
+        </div>
+      )}
+
       {/* All-active view */}
       {viewMode === 'all-active' && (
         <div className="mx-3 mb-2 rounded-xl border border-border/40 bg-background/40 p-2">
@@ -500,8 +518,13 @@ export function HermesChatsPanel() {
               Sessions appear when Hermes processes requests
             </p>
           </div>
+        ) : filteredSessions.length === 0 ? (
+          <div className="flex flex-col items-center justify-center px-4 py-8">
+            <Search className="mb-2 h-7 w-7 text-muted-foreground/30" />
+            <p className="text-center text-[11px] text-muted-foreground/50">No sessions match "{query}"</p>
+          </div>
         ) : (
-          sessions.map((session) => (
+          filteredSessions.map((session) => (
             <SessionCard
               key={session.id}
               session={session}
