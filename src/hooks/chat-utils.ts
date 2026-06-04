@@ -350,6 +350,7 @@ export const REPO_MODE_DISABLED_HERMES_TOOLSETS = new Set([
   'terminal',
   'files',
   'code_execution',
+  'computer',
 ]);
 
 export function collectStructuredToolNames(message: {
