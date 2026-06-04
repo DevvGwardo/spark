@@ -20,6 +20,7 @@ let tray: Tray | null = null
 let apiPort: number = 3001
 let dockBounceId: number | null = null
 let miniBrowserView: BrowserView | null = null
+let lastMiniBrowserBounds: Electron.Rectangle | null = null
 const dockIconPath = join(__dirname, '../../build/spark-icon.png')
 const CLOUDCHAT_ASSET_PROTOCOL = 'cloudchat-asset'
 const CLOUDCHAT_ASSET_ROOTS = {
@@ -247,12 +248,14 @@ async function createWindow() {
     minHeight: 600,
     ...(existsSync(dockIconPath) ? { icon: dockIconPath } : {}),
     title: 'Spark',
+    backgroundColor: '#1a1a1a',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 15, y: 15 },
     webPreferences: {
       preload: preloadPath,
       nodeIntegration: false,
       contextIsolation: true,
+      backgroundThrottling: false,
       sandbox: false // Required: preload needs process.env for API port
     }
   })
@@ -287,12 +290,17 @@ async function createWindow() {
           "default-src 'self';" +
           // Hash of the inline FOUC-prevention theme script in index.html.
           // If that script changes, regenerate this hash from the CSP console error.
-          " script-src 'self' https://cdn.jsdelivr.net 'sha256-0vw5FNYeotOv1pKtYDJoVY1QPOJ7d3jJvy4jR5P0U2Q=';" +
+          // Dev (electron-vite) injects an inline React-refresh preamble and uses
+          // eval for HMR, so script-src is relaxed in dev only — production keeps
+          // the strict hash-based policy.
+          (is.dev
+            ? " script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net;"
+            : " script-src 'self' https://cdn.jsdelivr.net 'sha256-0vw5FNYeotOv1pKtYDJoVY1QPOJ7d3jJvy4jR5P0U2Q=';") +
           " style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net;" +
           " font-src 'self' https://fonts.gstatic.com data:;" +
           " img-src 'self' data: https: http: file: cloudchat-asset:;" +
           " media-src 'self' blob:;" +
-          " connect-src 'self' data: http://localhost:* https://api.anthropic.com https://api.openai.com https://api.deepseek.com https://generativelanguage.googleapis.com https://api.minimax.chat https://api.moonshot.cn https://api.x.ai https://openrouter.ai https://api.together.xyz https://api.groq.com https://api.mistral.ai https://api.perplexity.ai https://cdn.jsdelivr.net;" +
+          " connect-src 'self' data: http://localhost:* " + (is.dev ? "ws://localhost:* " : "") + "https://api.anthropic.com https://api.openai.com https://api.deepseek.com https://generativelanguage.googleapis.com https://api.minimax.chat https://api.moonshot.cn https://api.x.ai https://openrouter.ai https://api.together.xyz https://api.groq.com https://api.mistral.ai https://api.perplexity.ai https://cdn.jsdelivr.net;" +
           " worker-src 'self' blob:;"
         ]
       }
@@ -498,11 +506,13 @@ ipcMain.handle('browser:create', (_event, url?: string) => {
     mainWindow.removeBrowserView(miniBrowserView)
     miniBrowserView.webContents.close()
     miniBrowserView = null
+    lastMiniBrowserBounds = null
   }
   miniBrowserView = new BrowserView({
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      backgroundThrottling: false,
       sandbox: false, // Disabled: sandbox blocks media playback (YouTube, etc.)
       plugins: true,  // Allow media plugins if needed
     }
@@ -512,12 +522,13 @@ ipcMain.handle('browser:create', (_event, url?: string) => {
   const bounds = mainWindow.getContentBounds()
   const TOOLBAR_HEIGHT = 36
   // Default: bottom-right corner, 600x400, with some padding from edges
-  miniBrowserView.setBounds({
+  lastMiniBrowserBounds = {
     x: bounds.width - 620,
     y: bounds.height - 460 + TOOLBAR_HEIGHT,
     width: 600,
     height: 400 - TOOLBAR_HEIGHT,
-  })
+  }
+  miniBrowserView.setBounds(lastMiniBrowserBounds)
   miniBrowserView.setAutoResize({ width: false, height: false })
   const initialUrl = url || 'about:blank'
   if (initialUrl !== 'about:blank') {
@@ -566,6 +577,7 @@ ipcMain.handle('browser:close', () => {
     mainWindow.removeBrowserView(miniBrowserView)
     miniBrowserView.webContents.close()
     miniBrowserView = null
+    lastMiniBrowserBounds = null
   }
 })
 
@@ -582,6 +594,16 @@ ipcMain.handle('browser:resize', (_event, bounds: { x: number; y: number; width:
     width: Math.max(200, Math.min(bounds.width, winBounds.width)),
     height: Math.max(150, Math.min(bounds.height, winBounds.height - TOOLBAR_HEIGHT)),
   };
+  if (
+    lastMiniBrowserBounds &&
+    lastMiniBrowserBounds.x === clamped.x &&
+    lastMiniBrowserBounds.y === clamped.y &&
+    lastMiniBrowserBounds.width === clamped.width &&
+    lastMiniBrowserBounds.height === clamped.height
+  ) {
+    return;
+  }
+  lastMiniBrowserBounds = clamped;
   miniBrowserView.setBounds(clamped);
 })
 
@@ -602,6 +624,7 @@ ipcMain.handle('browser:hide', () => {
 // doesn't crash the entire app (only the terminal feature breaks).
 let ptyModule: typeof import('node-pty') | null = null
 const terminals = new Map<string, import('node-pty').IPty>()
+const terminalSizes = new Map<string, { cols: number; rows: number }>()
 let terminalIdCounter = 0
 
 async function getPty() {
@@ -646,6 +669,7 @@ ipcMain.handle('terminal:spawn', async (_event, options?: { cwd?: string; comman
 
   term.onExit(({ exitCode }: { exitCode: number }) => {
     terminals.delete(id)
+    terminalSizes.delete(id)
     mainWindow?.webContents.send('terminal:exit', id, exitCode)
   })
 
@@ -657,12 +681,17 @@ ipcMain.on('terminal:write', (_event, id: string, data: string) => {
 })
 
 ipcMain.on('terminal:resize', (_event, id: string, cols: number, rows: number) => {
+  if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols <= 0 || rows <= 0) return
+  const previous = terminalSizes.get(id)
+  if (previous?.cols === cols && previous.rows === rows) return
+  terminalSizes.set(id, { cols, rows })
   terminals.get(id)?.resize(cols, rows)
 })
 
 ipcMain.on('terminal:kill', (_event, id: string) => {
   terminals.get(id)?.kill()
   terminals.delete(id)
+  terminalSizes.delete(id)
 })
 
 function createTray() {

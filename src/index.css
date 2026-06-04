@@ -169,6 +169,26 @@
     font-family: 'Source Serif 4', 'Georgia', 'Times New Roman', serif;
   }
 
+  .app-shell {
+    contain: layout style paint;
+  }
+
+  .app-main-pane,
+  .app-independent-pane {
+    contain: layout style paint;
+  }
+
+  .resize-performance-lock,
+  .resize-performance-lock * {
+    scroll-behavior: auto !important;
+  }
+
+  .resize-performance-lock * {
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
+    animation-delay: 0ms !important;
+  }
+
   /* Custom scrollbar */
   ::-webkit-scrollbar {
     width: 5px;

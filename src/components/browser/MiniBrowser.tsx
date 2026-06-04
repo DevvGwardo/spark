@@ -2,6 +2,8 @@ import React, { useState, useCallback, useEffect, useRef, useImperativeHandle, f
 import { Globe, ArrowLeft, ArrowRight, X, ExternalLink, PanelRight, ChevronRight } from 'lucide-react';
 import { useUIStore } from '@/stores/ui-store';
 import { cn } from '@/lib/utils';
+import { rafThrottle } from '@/lib/raf';
+import type { ElectronAPI } from '@/electron';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
@@ -30,6 +32,7 @@ const EDGE_ZONE = 14; // px from edge to trigger resize
 const MIN_FONT_SIZE = 8;
 const MAX_FONT_SIZE = 20;
 const DEFAULT_FONT_SIZE = 12;
+type TerminalApi = NonNullable<ElectronAPI['terminal']>;
 
 export interface HermesPTYPanelHandle {
   zoomIn: () => void;
@@ -42,11 +45,12 @@ export const HermesPTYPanel = forwardRef<HermesPTYPanelHandle, { maximized?: boo
     const termRef = useRef<XTerm | null>(null);
     const ptyIdRef = useRef<string | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
-    const apiRef = useRef<any>(null);
+    const apiRef = useRef<TerminalApi | null>(null);
+    const fitFrameRef = useRef<ReturnType<typeof rafThrottle<[]>> | null>(null);
     const [fontSize, setFontSize] = useState(DEFAULT_FONT_SIZE);
 
     // Helper: fit xterm and notify PTY of new cols/rows
-    const fitAndResize = useCallback(() => {
+    const fitAndResizeNow = useCallback(() => {
       const term = termRef.current;
       const fitAddon = fitAddonRef.current;
       const api = apiRef.current;
@@ -59,6 +63,13 @@ export const HermesPTYPanel = forwardRef<HermesPTYPanelHandle, { maximized?: boo
         }
       } catch { /* ignore */ }
     }, []);
+
+    const fitAndResize = useCallback(() => {
+      if (!fitFrameRef.current) {
+        fitFrameRef.current = rafThrottle(fitAndResizeNow);
+      }
+      fitFrameRef.current();
+    }, [fitAndResizeNow]);
 
     // Expose zoom methods to parent via ref
     useImperativeHandle(ref, () => ({
@@ -181,6 +192,7 @@ export const HermesPTYPanel = forwardRef<HermesPTYPanelHandle, { maximized?: boo
       });
 
       return () => {
+        fitFrameRef.current?.cancel();
         try { term.dispose(); } catch { /* ignore */ }
         const id = ptyIdRef.current;
         if (id) {
@@ -348,6 +360,9 @@ export const DockedMiniBrowser: React.FC = () => {
   const browserViewHidden = useRef(false);
   const dockedResizeRef = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const dockedResizeFrame = useRef<ReturnType<typeof rafThrottle<[number]>> | null>(null);
+  const boundsFrame = useRef<ReturnType<typeof rafThrottle<[]>> | null>(null);
+  const lastBoundsRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
   // Ref for measuring the Hermes panel height to shrink BrowserView bounds
 
 
@@ -365,47 +380,52 @@ export const DockedMiniBrowser: React.FC = () => {
     const container = containerRef.current;
     if (!container) return;
 
-    const updateBounds = () => {
+    const updateBoundsNow = () => {
       const rect = container.getBoundingClientRect();
-      // When sidebar is hidden, move BrowserView off-screen so it keeps running
-      // but doesn't intercept clicks
-      if (rightSidebarHidden) {
-        window.electronAPI?.browser?.resize({
-          x: -9999,
-          y: rect.top + TOOLBAR_HEIGHT,
-          width: 1,
-          height: 1,
-        });
-      } else {
-        window.electronAPI?.browser?.resize({
-          x: rect.left,
-          y: rect.top + TOOLBAR_HEIGHT,
-          width: rect.width,
-          height: rect.height - TOOLBAR_HEIGHT - FOOTER_HEIGHT,
-        });
+      const nextBounds = rightSidebarHidden
+        ? {
+            x: -9999,
+            y: Math.round(rect.top + TOOLBAR_HEIGHT),
+            width: 1,
+            height: 1,
+          }
+        : {
+            x: Math.round(rect.left),
+            y: Math.round(rect.top + TOOLBAR_HEIGHT),
+            width: Math.max(1, Math.round(rect.width)),
+            height: Math.max(1, Math.round(rect.height - TOOLBAR_HEIGHT - FOOTER_HEIGHT)),
+          };
+      const lastBounds = lastBoundsRef.current;
+      if (
+        lastBounds &&
+        lastBounds.x === nextBounds.x &&
+        lastBounds.y === nextBounds.y &&
+        lastBounds.width === nextBounds.width &&
+        lastBounds.height === nextBounds.height
+      ) {
+        return;
       }
+      lastBoundsRef.current = nextBounds;
+      window.electronAPI?.browser?.resize(nextBounds);
     };
+
+    boundsFrame.current?.cancel();
+    boundsFrame.current = rafThrottle(updateBoundsNow);
+    const updateBounds = () => boundsFrame.current?.();
 
     updateBounds();
 
-    // ResizeObserver catches container size changes (flex layout shifts)
     const ro = new ResizeObserver(updateBounds);
     ro.observe(container);
 
-    // window resize catches fullscreen enter/exit and window drag-resize.
-    // ResizeObserver alone misses macOS fullscreen transitions because
-    // the container's CSS dimensions may not change synchronously with the
-    // window bounds during the transition.
-    window.addEventListener('resize', updateBounds);
+    window.addEventListener('resize', updateBounds, { passive: true });
     window.addEventListener('enter-html-full-screen', updateBounds);
     window.addEventListener('leave-html-full-screen', updateBounds);
 
-    // IPC from main process — fired when mainWindow enters/leaves fullscreen,
-    // ensuring BrowserView bounds are recalculated even when the renderer
-    // window events are not delivered in time.
     const removeForceResize = window.electronAPI?.browser?.onForceResize?.(updateBounds);
 
     return () => {
+      boundsFrame.current?.cancel();
       ro.disconnect();
       window.removeEventListener('resize', updateBounds);
       window.removeEventListener('enter-html-full-screen', updateBounds);
@@ -461,6 +481,11 @@ export const DockedMiniBrowser: React.FC = () => {
     (e: React.MouseEvent) => {
       e.preventDefault();
       dockedResizeRef.current = true;
+      document.body.classList.add('resize-performance-lock');
+      dockedResizeFrame.current?.cancel();
+      dockedResizeFrame.current = rafThrottle((nextWidth: number) => {
+        setMiniBrowserDockedWidth(nextWidth);
+      });
       const startX = e.clientX;
       const startWidth = miniBrowserDockedWidth;
       // If sidebar is hidden, show it immediately so drag works visually
@@ -471,14 +496,17 @@ export const DockedMiniBrowser: React.FC = () => {
 
       const onMouseMove = (ev: MouseEvent) => {
         if (!dockedResizeRef.current) return;
-        setMiniBrowserDockedWidth(startWidth - (ev.clientX - startX));
+        dockedResizeFrame.current?.(startWidth - (ev.clientX - startX));
       };
 
       const onMouseUp = () => {
         dockedResizeRef.current = false;
+        dockedResizeFrame.current?.flush();
+        dockedResizeFrame.current = null;
         showBrowserView();
         document.removeEventListener('mousemove', onMouseMove);
         document.removeEventListener('mouseup', onMouseUp);
+        document.body.classList.remove('resize-performance-lock');
         document.body.style.cursor = '';
         document.body.style.userSelect = '';
       };
@@ -496,7 +524,7 @@ export const DockedMiniBrowser: React.FC = () => {
   return (
     <div
       ref={containerRef}
-      className="flex flex-col h-full border-l border-border/60 bg-background flex-shrink-0 transition-none"
+      className="app-independent-pane relative flex flex-col h-full border-l border-border/60 bg-background flex-shrink-0 transition-none"
       style={{
         width: rightSidebarHidden ? 0 : miniBrowserDockedWidth,
         overflow: 'hidden',
@@ -559,6 +587,9 @@ export const MiniBrowser: React.FC = () => {
   const isInteracting = useRef(false);
   const browserViewHidden = useRef(false);
   const dragOffset = useRef({ x: 0, y: 0 });
+  const floatingFrame = useRef<ReturnType<typeof rafThrottle<[{ x: number; y: number }, { width: number; height: number }]>> | null>(null);
+  const floatingBoundsFrame = useRef<ReturnType<typeof rafThrottle<[]>> | null>(null);
+  const lastFloatingBoundsRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
 
   // Sync URL input with store
   useEffect(() => {
@@ -579,14 +610,30 @@ export const MiniBrowser: React.FC = () => {
 
   // Update BrowserView bounds when position/size changes (floating mode)
   useEffect(() => {
-    if (miniBrowserOpen && !miniBrowserDocked) {
-      window.electronAPI?.browser?.resize({
-        x: position.x,
-        y: position.y + TOOLBAR_HEIGHT,
-        width: size.width,
-        height: size.height - TOOLBAR_HEIGHT,
-      });
-    }
+    if (!miniBrowserOpen || miniBrowserDocked) return;
+    floatingBoundsFrame.current?.cancel();
+    floatingBoundsFrame.current = rafThrottle(() => {
+      const nextBounds = {
+        x: Math.round(position.x),
+        y: Math.round(position.y + TOOLBAR_HEIGHT),
+        width: Math.max(1, Math.round(size.width)),
+        height: Math.max(1, Math.round(size.height - TOOLBAR_HEIGHT)),
+      };
+      const lastBounds = lastFloatingBoundsRef.current;
+      if (
+        lastBounds &&
+        lastBounds.x === nextBounds.x &&
+        lastBounds.y === nextBounds.y &&
+        lastBounds.width === nextBounds.width &&
+        lastBounds.height === nextBounds.height
+      ) {
+        return;
+      }
+      lastFloatingBoundsRef.current = nextBounds;
+      window.electronAPI?.browser?.resize(nextBounds);
+    });
+    floatingBoundsFrame.current();
+    return () => floatingBoundsFrame.current?.cancel();
   }, [miniBrowserOpen, miniBrowserDocked, position, size]);
 
   const hideBrowserView = useCallback(() => {
@@ -606,6 +653,8 @@ export const MiniBrowser: React.FC = () => {
   // Cleanup: show BrowserView when component unmounts
   useEffect(() => {
     return () => {
+      floatingFrame.current?.cancel();
+      floatingBoundsFrame.current?.cancel();
       if (browserViewHidden.current) {
         window.electronAPI?.browser?.show();
       }
@@ -668,6 +717,12 @@ export const MiniBrowser: React.FC = () => {
       if (dir) {
         e.preventDefault();
         isInteracting.current = true;
+        document.body.classList.add('resize-performance-lock');
+        floatingFrame.current?.cancel();
+        floatingFrame.current = rafThrottle((nextPosition, nextSize) => {
+          setPosition(nextPosition);
+          setSize(nextSize);
+        });
         hideBrowserView();
 
         const startX = e.clientX;
@@ -706,15 +761,17 @@ export const MiniBrowser: React.FC = () => {
           newX = Math.max(0, newX);
           newY = Math.max(0, newY);
 
-          setSize({ width: newW, height: newH });
-          setPosition({ x: newX, y: newY });
+          floatingFrame.current?.({ x: newX, y: newY }, { width: newW, height: newH });
         };
 
         const onMouseUp = () => {
           isInteracting.current = false;
+          floatingFrame.current?.flush();
+          floatingFrame.current = null;
           showBrowserView();
           document.removeEventListener('mousemove', onMouseMove);
           document.removeEventListener('mouseup', onMouseUp);
+          document.body.classList.remove('resize-performance-lock');
           document.body.style.cursor = '';
           document.body.style.userSelect = '';
         };
@@ -728,21 +785,33 @@ export const MiniBrowser: React.FC = () => {
       if (relY < TOOLBAR_HEIGHT) {
         e.preventDefault();
         isInteracting.current = true;
+        document.body.classList.add('resize-performance-lock');
+        floatingFrame.current?.cancel();
+        floatingFrame.current = rafThrottle((nextPosition, nextSize) => {
+          setPosition(nextPosition);
+          setSize(nextSize);
+        });
         hideBrowserView();
         dragOffset.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
 
         const onMouseMove = (ev: MouseEvent) => {
-          setPosition({
-            x: ev.clientX - dragOffset.current.x,
-            y: ev.clientY - dragOffset.current.y,
-          });
+          floatingFrame.current?.(
+            {
+              x: ev.clientX - dragOffset.current.x,
+              y: ev.clientY - dragOffset.current.y,
+            },
+            size,
+          );
         };
 
         const onMouseUp = () => {
           isInteracting.current = false;
+          floatingFrame.current?.flush();
+          floatingFrame.current = null;
           showBrowserView();
           document.removeEventListener('mousemove', onMouseMove);
           document.removeEventListener('mouseup', onMouseUp);
+          document.body.classList.remove('resize-performance-lock');
         };
 
         document.addEventListener('mousemove', onMouseMove);
@@ -823,7 +892,7 @@ export const MiniBrowser: React.FC = () => {
       onMouseDown={handleContainerMouseDown}
       onMouseMove={handleContainerMouseMove}
       onMouseLeave={handleContainerMouseLeave}
-      className="fixed z-50 flex flex-col rounded-lg border border-border/60 bg-background shadow-2xl"
+      className="app-independent-pane fixed z-50 flex flex-col rounded-lg border border-border/60 bg-background shadow-2xl"
       style={{
         left: position.x,
         top: position.y,

@@ -135,6 +135,7 @@ export const ChatSidebar: React.FC = () => {
   const [cleanupDays, setCleanupDays] = useState<number | null>(null);
   const [cleanupCount, setCleanupCount] = useState(0);
   const [showTreeOverlay, setShowTreeOverlay] = useState(false);
+  const [showAllTabs, setShowAllTabs] = useState(false);
   const [exportMenuId, setExportMenuId] = useState<string | null>(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [focusedRowId, setFocusedRowId] = useState<string | null>(null);
@@ -496,13 +497,19 @@ export const ChatSidebar: React.FC = () => {
       </div>
 
       {/* Sub-tab navigation (hermes only) */}
-      {isHermes && (
+      {isHermes && (() => {
+        const PRIMARY_TAB_COUNT = 7;
+        const overflowKeys = HERMES_SUB_TABS.slice(PRIMARY_TAB_COUNT).map((t) => t.key);
+        // Keep the active tab reachable: auto-expand if it lives in the overflow.
+        const expanded = showAllTabs || overflowKeys.includes(activeSubTab);
+        const visibleTabs = expanded ? HERMES_SUB_TABS : HERMES_SUB_TABS.slice(0, PRIMARY_TAB_COUNT);
+        return (
         <div className="px-3 pb-3 pt-1">
           <div className={cn(
             'grid gap-1',
             sidebarWidth <= 260 ? 'grid-cols-3' : 'grid-cols-4'
           )}>
-            {HERMES_SUB_TABS.map(({ key, label, icon: Icon }) => (
+            {visibleTabs.map(({ key, label, icon: Icon }) => (
               <button
                 key={key}
                 onClick={() => setActiveSubTab(key)}
@@ -524,9 +531,19 @@ export const ChatSidebar: React.FC = () => {
                 <span className="leading-none">{label}</span>
               </button>
             ))}
+            <button
+              onClick={() => setShowAllTabs((v) => !v)}
+              aria-expanded={expanded}
+              aria-label={expanded ? 'Show fewer sections' : 'Show more sections'}
+              className="flex flex-col items-center justify-center gap-1 rounded-lg px-1 py-2.5 text-[10px] font-medium text-muted-foreground/60 transition-all duration-150 hover:bg-[hsl(var(--muted))]/40 hover:text-muted-foreground"
+            >
+              <ChevronDown className={cn('h-[18px] w-[18px] transition-transform duration-200', expanded && 'rotate-180')} />
+              <span className="leading-none">{expanded ? 'Less' : 'More'}</span>
+            </button>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Conditional content based on active sub-tab */}
       {!isHermes || activeSubTab === 'threads' ? (
