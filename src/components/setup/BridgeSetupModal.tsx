@@ -140,7 +140,7 @@ export const BridgeSetupModal: React.FC<{ onComplete: () => void }> = ({ onCompl
           label: 'Python interpreter',
           description: status.pythonPath
             ? `Found: ${status.pythonPath}`
-            : 'CloudChat needs Python 3 to run the Hermes bridge.',
+            : 'Spark needs Python 3 to run the Hermes bridge.',
           satisfied: Boolean(status.pythonPath),
           installable: false, // user must install Python themselves
           installing: false,
@@ -278,7 +278,7 @@ export const BridgeSetupModal: React.FC<{ onComplete: () => void }> = ({ onCompl
             <p className="text-[12px] text-muted-foreground">
               {phase === 'success'
                 ? 'Bridge is ready. Continuing…'
-                : 'CloudChat needs a few things to run the Hermes Agent.'}
+                : 'Spark needs a few things to run the Hermes Agent.'}
             </p>
           </div>
           {allSatisfied && phase === 'success' && (
