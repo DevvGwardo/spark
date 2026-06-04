@@ -245,7 +245,7 @@ export function normalizePersistedSettingsState(
   }
 
   return {
-    activeProvider: isProvider(persisted?.activeProvider) ? persisted.activeProvider : 'openai',
+    activeProvider: isProvider(persisted?.activeProvider) ? persisted.activeProvider : 'hermes',
     providers,
     availableModels: normalizeAvailableModels(persisted?.availableModels),
     theme: isThemeMode(persisted?.theme) ? persisted.theme : 'system',
