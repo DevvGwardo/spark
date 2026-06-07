@@ -4,6 +4,9 @@ import { ChatSidebar } from '@/components/sidebar/ChatSidebar';
 import { ChatPanelContainer } from '@/components/chat/ChatPanelContainer';
 import { CronHistoryChat } from '@/components/chat/CronHistoryChat';
 import { SessionHistoryChat } from '@/components/chat/SessionHistoryChat';
+import { KanbanBoard } from '@/components/kanban/KanbanBoard';
+import { McpStoreView } from '@/components/mcp/McpStoreView';
+import { useHermesModelSync } from '@/hooks/useHermesModelSync';
 import { useUIStore } from '@/stores/ui-store';
 import { useShallow } from 'zustand/shallow';
 import { useSettingsStore } from '@/stores/settings-store';
@@ -69,6 +72,11 @@ export const AppLayout: React.FC = () => {
     miniBrowserDocked,
     rightSidebarHidden,
     setRightSidebarHidden,
+    kanbanFullscreen,
+    setKanbanFullscreen,
+    mcpStoreFullscreen,
+    setMcpStoreFullscreen,
+    setBridgeSetupOpen,
   } = useUIStore();
   const { isSetupComplete, activeProvider, providers } = useSettingsStore(
     useShallow((s) => ({ isSetupComplete: s.isSetupComplete, activeProvider: s.activeProvider, providers: s.providers })),
@@ -80,6 +88,8 @@ export const AppLayout: React.FC = () => {
   const setPreviewOpen = usePreviewStore((s) => s.setOpen);
   const setPreviewView = usePreviewStore((s) => s.setView);
   const isMultiPanel = panels.length > 1;
+  // Keep Spark's hermes model in sync with the agent's CLI-configured default.
+  useHermesModelSync();
   const [prModalOpen, setPrModalOpen] = useState(false);
   const [prPanelId, setPrPanelId] = useState<string | null>(null); // which panel triggered the PR modal
   const [prModalMode, setPrModalMode] = useState<'create' | 'review'>('create');
@@ -182,6 +192,37 @@ export const AppLayout: React.FC = () => {
     };
   }, []);
 
+  // Auto-skip onboarding when a local Hermes provider is already credentialed.
+  // The bridge reports per-provider credential state (provider_credentials); if any
+  // provider is usable, the user is effectively set up, so complete setup instead of
+  // forcing the wizard (which otherwise gates on OpenRouter specifically). Only runs
+  // while setup is incomplete — e.g. a fresh dev build with an empty persisted store.
+  // The bridge can come up a few seconds after the renderer on a cold start, so retry
+  // a bounded number of times rather than checking only once at mount.
+  useEffect(() => {
+    if (isSetupComplete) return;
+    let cancelled = false;
+    let attempts = 0;
+    let timer: number | undefined;
+    const check = () => {
+      detectHermesBridge().then((status) => {
+        if (cancelled) return;
+        if (status?.hasAnyCreds) {
+          const store = useSettingsStore.getState();
+          if (store.activeProvider !== 'hermes') store.setActiveProvider('hermes');
+          store.completeSetup();
+          console.info('[setup] auto-completed — local Hermes bridge has a credentialed provider');
+          return;
+        }
+        if (++attempts < 20) timer = window.setTimeout(check, 1500);
+      }).catch(() => {
+        if (!cancelled && ++attempts < 20) timer = window.setTimeout(check, 1500);
+      });
+    };
+    check();
+    return () => { cancelled = true; if (timer) window.clearTimeout(timer); };
+  }, [isSetupComplete]);
+
   // Close header menu on outside click
   useEffect(() => {
     if (!headerMenuOpen) return;
@@ -260,6 +301,10 @@ const headerSecondaryLabel = selectedCronJobId
   // Polls `bridge:status` on mount; auto-hides when the bridge comes up.
   const [bridgeSetupVisible, setBridgeSetupVisible] = useState(false);
   const [bridgeSetupDismissed, setBridgeSetupDismissed] = useState(false);
+  // Publish the bridge-setup modal visibility so the product tour waits for it to clear.
+  useEffect(() => {
+    setBridgeSetupOpen(bridgeSetupVisible);
+  }, [bridgeSetupVisible, setBridgeSetupOpen]);
   useEffect(() => {
     if (!isSetupComplete) {
       setBridgeSetupVisible(false);
@@ -346,6 +391,28 @@ const headerSecondaryLabel = selectedCronJobId
     },
     [sidebarWidth, setSidebarWidth]
   );
+
+  // Propagate the resize-performance-lock to OS window resizing. Codex's lock
+  // only covered the sidebar/terminal drags, so dragging the window edge left
+  // every card's transitions + animate-pulse churning each frame. We add the
+  // lock on the first resize event and lift it shortly after resizing settles.
+  useEffect(() => {
+    let settleTimer: ReturnType<typeof setTimeout> | null = null;
+    const onWindowResize = () => {
+      document.body.classList.add('resize-performance-lock');
+      if (settleTimer) clearTimeout(settleTimer);
+      settleTimer = setTimeout(() => {
+        document.body.classList.remove('resize-performance-lock');
+        settleTimer = null;
+      }, 200);
+    };
+    window.addEventListener('resize', onWindowResize, { passive: true });
+    return () => {
+      window.removeEventListener('resize', onWindowResize);
+      if (settleTimer) clearTimeout(settleTimer);
+      document.body.classList.remove('resize-performance-lock');
+    };
+  }, []);
 
   return (
     <>
@@ -704,6 +771,19 @@ const headerSecondaryLabel = selectedCronJobId
 
             {/* Content — switches based on active tab */}
             <main className="flex-1 min-h-0 overflow-hidden flex flex-col">
+              {kanbanFullscreen ? (
+                <div className="flex-1 min-h-0 overflow-hidden">
+                  <ErrorBoundary>
+                    <KanbanBoard onExitFullscreen={() => setKanbanFullscreen(false)} />
+                  </ErrorBoundary>
+                </div>
+              ) : mcpStoreFullscreen ? (
+                <div className="flex-1 min-h-0 overflow-hidden">
+                  <ErrorBoundary>
+                    <McpStoreView onExitFullscreen={() => setMcpStoreFullscreen(false)} />
+                  </ErrorBoundary>
+                </div>
+              ) : (
               <div className="flex-1 overflow-hidden flex min-h-0">
                 <div className="app-independent-pane flex-1 overflow-hidden">
                   <div
@@ -725,6 +805,7 @@ const headerSecondaryLabel = selectedCronJobId
                 <DockedMiniBrowser />
                 <DockedChatSidebar />
               </div>
+              )}
               {hermesTerminalOpen && (
                 <div className="flex-shrink-0 border-t border-border/60 flex flex-col" style={{ height: 300 }}>
                   <HermesPTYPanel ref={hermesTerminalRef} />

@@ -853,4 +853,39 @@ The optimized code for \`KanbanBoard.tsx\`, \`cards.ts\`, and \`gateway-client.t
     expect(screen.getAllByText('index.html').length).toBeGreaterThan(0);
     expect(screen.getByText(/Here are the updated files:/i)).toBeInTheDocument();
   });
+
+  it('strips generic tool-activity markers for tools without a friendly label (e.g. "terminal")', () => {
+    // The bridge emits "> **<tool>**" / "> *<tool> — done*" for tools it has no
+    // display name for (raw name fallback), which previously leaked into the chat
+    // as a wall of "terminal" / "terminal — done" blockquotes. They must be
+    // stripped from the rendered text.
+    render(
+      <PanelProvider value="panel-1">
+        <MessageBubble
+          message={{
+            id: 'assistant-terminal-markers',
+            conversationId: 'conv-1',
+            role: 'assistant',
+            content: [
+              'Here is the result.',
+              '',
+              '> **terminal**',
+              '> *terminal — done*',
+              '',
+              '> **terminal**',
+              '> *terminal -- done*',
+              '',
+              'All done.',
+            ].join('\n'),
+            timestamp: new Date().toISOString(),
+          }}
+        />
+      </PanelProvider>,
+    );
+
+    const rendered = screen.getByTestId('markdown-renderer');
+    expect(rendered.textContent).toContain('Here is the result.');
+    expect(rendered.textContent).toContain('All done.');
+    expect(rendered.textContent).not.toMatch(/terminal/i);
+  });
 });

@@ -14,10 +14,10 @@ import { PROVIDERS, REASONING_EFFORTS, getVisibleModelOptions, supportsReasoning
 import type { QueuedMessage } from '@/lib/chat-queue';
 import { StreamingStatusBar } from './StreamingStatusBar';
 import { useChatStore } from '@/stores/chat-store';
-import { ContextUsageBar } from './ContextUsageBar';
 import { QueuedMessageTray } from './QueuedMessageTray';
 import { CommandSuggestions, commandTakesArgs } from './CommandSuggestions';
-import { parseCommand, findCommand, filterCommands, type CommandContext } from '@/lib/hermes-commands';
+import { HermesModelPicker } from './HermesModelPicker';
+import { parseCommand, findCommand, filterCommands, ensureHermesAgentCommandsLoaded, type CommandContext } from '@/lib/hermes-commands';
 import { useCommandCallbacks } from '@/contexts/CommandCallbacksContext';
 import {
   DropdownMenu,
@@ -103,6 +103,15 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
     }
   }, [value]);
 
+  // Load the installed hermes-agent's slash command catalog into the `/` menu.
+  // Shared, deduped, and at-most-once per session across every panel — the
+  // loader handles retries (transient only) and gives up on a 404 instead of
+  // hammering a missing endpoint. Optional — local commands still work if it
+  // never resolves.
+  useEffect(() => {
+    void ensureHermesAgentCommandsLoaded();
+  }, []);
+
   const safeValue = value ?? '';
 
   // Voice input
@@ -150,6 +159,9 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
 
     const cmd = findCommand(parsed.command);
     if (!cmd) return false;
+    // Skill/agent commands have no local handler — let them send to the bridge,
+    // which expands skills and forwards the rest to the agent.
+    if (!cmd.handler) return false;
 
     const context: CommandContext = {
       setActiveSubTab,
@@ -234,12 +246,13 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
     setShowCommandSuggestions(false);
     setSelectedIndex(0);
 
-    if (commandTakesArgs(cmd)) {
-      // Fill command into input so user can type the args
+    if (commandTakesArgs(cmd) || !cmd.handler) {
+      // Needs args, or is a skill/agent command — drop into the composer so the
+      // user can review/add input, then send (skills are expanded by the bridge).
       onChange('/' + cmd.name + ' ');
       setTimeout(() => textareaRef.current?.focus(), 0);
     } else {
-      // Execute immediately — clear input and run the command
+      // Local no-arg UI command — execute immediately and clear input
       onChange('');
       await executeCommand('/' + cmd.name);
     }
@@ -254,7 +267,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
     setShowCommandSuggestions(false);
     setSelectedIndex(0);
 
-    if (commandTakesArgs(cmd)) {
+    if (commandTakesArgs(cmd) || !cmd.handler) {
       onChange('/' + cmd.name + ' ');
       setTimeout(() => textareaRef.current?.focus(), 0);
     } else {
@@ -271,7 +284,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
     : (hasContent ? 'Ask for follow-up changes' : 'What do you want to build?');
 
   return (
-    <div className="w-full max-w-[720px] mx-auto px-3 md:px-20 pb-3 pt-2">
+    <div className="w-full max-w-[720px] mx-auto px-3 md:px-20 pb-3 pt-2" data-tour="composer">
       <div className="flex flex-col">
         <QueuedMessageTray
           messages={queuedMessages}
@@ -339,8 +352,10 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
               <Plus className="h-4 w-4" />
             </button>
 
-            {/* Model selector — hidden for hermes (model comes from active profile) */}
-            {selectedProvider !== 'hermes' && (
+            {/* Model selector — Hermes gets a provider+model picker over its configured providers */}
+            {selectedProvider === 'hermes' ? (
+              <HermesModelPicker />
+            ) : (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button className="flex items-center gap-1 px-2 py-1 rounded-[6px] text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors duration-100">
@@ -409,11 +424,6 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
 
 
             <div className="flex-1" />
-
-            {/* Context usage ring */}
-            {hasContent && (
-              <ContextUsageBar messages={messages} model={config.model} />
-            )}
 
             {/* Mic button */}
             {voiceInput.isTranscribing ? (

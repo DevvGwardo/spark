@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { Plus, Trash2, MoreHorizontal, ChevronDown, ChevronUp, Loader2, GripVertical } from 'lucide-react';
+import { Plus, Trash2, MoreHorizontal, ChevronDown, ChevronUp, Loader2, GripVertical, Minimize2 } from 'lucide-react';
 import { useKanbanStore, type KanbanCard, type KanbanLane } from '@/stores/kanban-store';
 import { CreateCardDialog } from '@/components/kanban/CreateCardDialog';
 import { cn } from '@/lib/utils';
@@ -15,7 +15,7 @@ const LANES: { key: KanbanLane; label: string; color: string }[] = [
 
 const LANE_ORDER: KanbanLane[] = LANES.map((l) => l.key);
 
-export function KanbanBoard() {
+export function KanbanBoard({ onExitFullscreen }: { onExitFullscreen?: () => void } = {}) {
   const { cards, loading, error, fetchCards, deleteCard, moveCard } = useKanbanStore();
   const [createOpen, setCreateOpen] = useState(false);
   const [createLane, setCreateLane] = useState<KanbanLane>('backlog');
@@ -92,7 +92,19 @@ export function KanbanBoard() {
           <span className="text-[13px] font-semibold text-foreground">Kanban Board</span>
           <span className="text-[11px] font-mono text-muted-foreground/50">{cards.length}</span>
         </div>
-        {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground/60" />}
+        <div className="flex items-center gap-2">
+          {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground/60" />}
+          {onExitFullscreen && (
+            <button
+              onClick={onExitFullscreen}
+              className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-border/60 bg-background/60 px-2.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-background/85 hover:text-foreground"
+              title="Exit fullscreen — back to chat"
+            >
+              <Minimize2 className="h-3.5 w-3.5" />
+              Exit fullscreen
+            </button>
+          )}
+        </div>
       </div>
 
       {error && (

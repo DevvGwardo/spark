@@ -390,6 +390,10 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const isAutoScroll = useRef(true);
   const isStreamingRef = useRef(false);
   isStreamingRef.current = isStreaming;
+  // True briefly while the user is actively wheel/touch scrolling, so we can
+  // tell a real scroll-away from streamed content pushing the bottom down.
+  const userScrollingRef = useRef(false);
+  const [scrollerEl, setScrollerEl] = useState<HTMLElement | null>(null);
   const pendingProposalCacheRef = useRef<{ digest: string; proposal: ReturnType<typeof findPendingProposal> }>({
     digest: '',
     proposal: null,
@@ -489,7 +493,10 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     // explicit user-scroll-away when NOT streaming.
     if (atBottom) {
       isAutoScroll.current = true;
-    } else if (!isStreamingRef.current) {
+    } else if (!isStreamingRef.current || userScrollingRef.current) {
+      // A genuine user scroll-away disables auto-scroll even mid-stream. Pure
+      // content-growth atBottom=false (no wheel/touch) is ignored so streaming
+      // keeps following the output.
       isAutoScroll.current = false;
     }
     setShowScrollButton((prev) => {
@@ -497,6 +504,35 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       return prev === next ? prev : next;
     });
   }, []);
+
+  // Grab the Virtuoso scroller element so we can watch for real user scrolling.
+  const handleScrollerRef = useCallback((ref: HTMLElement | Window | null) => {
+    setScrollerEl(ref instanceof HTMLElement ? ref : null);
+  }, []);
+
+  useEffect(() => {
+    if (!scrollerEl) return;
+    let release: ReturnType<typeof setTimeout> | null = null;
+    const markScrolling = () => {
+      userScrollingRef.current = true;
+      if (release) clearTimeout(release);
+      release = setTimeout(() => {
+        userScrollingRef.current = false;
+      }, 250);
+    };
+    // Upward wheel or any touch drag = the user taking over scrolling.
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) markScrolling();
+    };
+    const onTouchMove = () => markScrolling();
+    scrollerEl.addEventListener('wheel', onWheel, { passive: true });
+    scrollerEl.addEventListener('touchmove', onTouchMove, { passive: true });
+    return () => {
+      scrollerEl.removeEventListener('wheel', onWheel);
+      scrollerEl.removeEventListener('touchmove', onTouchMove);
+      if (release) clearTimeout(release);
+    };
+  }, [scrollerEl]);
 
   useEffect(() => {
     const hasMessageHistory = messages.some((message) => message.content.trim().length > 0);
@@ -552,10 +588,13 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   // change so followOutput won't fire.  Nudge the scroll position ourselves.
   useEffect(() => {
     if (!isStreaming || !isAutoScroll.current || messages.length === 0) return;
+    // Use instant ('auto') scrolling here, NOT smooth: this fires on every
+    // streamed chunk, and a smooth animation toward an ever-growing target
+    // restarts each token and makes the text visibly bounce/jitter.
     virtuosoRef.current?.scrollToIndex({
       index: messages.length - 1,
       align: 'end',
-      behavior: 'smooth',
+      behavior: 'auto',
     });
   }, [isStreaming, lastMessageDigest, toolActivityDigest, messages.length]);
 
@@ -799,8 +838,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         )}
         <Virtuoso
           ref={virtuosoRef}
+          scrollerRef={handleScrollerRef}
           data={messages}
-          followOutput={() => isAutoScroll.current ? 'smooth' : false}
+          followOutput={() => isAutoScroll.current ? (isStreamingRef.current ? 'auto' : 'smooth') : false}
           atBottomStateChange={handleAtBottomChange}
           className="min-h-0 flex-1"
           data-testid="virtuoso-scroller"
@@ -836,7 +876,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             || (isLastAssistantStreaming ? toolActivityMap?.['current'] : undefined);
 
           return (
-            <div className="max-w-[720px] mx-auto px-4 md:px-20 py-6">
+            <div className="max-w-[720px] mx-auto px-4 md:px-20 py-3">
               <MessageBubble
                 key={msg.id}
                 message={{

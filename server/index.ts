@@ -10,7 +10,7 @@ import { registerGitHubRoutes } from './routes/github';
 import { registerValidateRoute } from './routes/validate';
 import { registerProxyRoute } from './routes/proxy';
 import { registerTranslateRoute } from './routes/translate';
-import { registerHermesAdminRoute } from './routes/hermes-admin';
+import { registerHermesAdminRoute, warnIfBridgeMisconfigured } from './routes/hermes-admin';
 import { registerHermesRuntimesRoute } from './routes/hermes-runtimes';
 import { registerHermesUpdateRoute } from './routes/hermes-update';
 import { registerProfilesRoutes } from './routes/profiles';
@@ -358,6 +358,9 @@ export function startServer(port?: number) {
       logger.info('  POST /functions/v1/github-analyzer');
       logger.info('  POST /functions/v1/validate-key');
       logger.info('  POST /functions/v1/chat-proxy');
+
+      // Surface a mispointed HERMES_BRIDGE_URL (gateway vs full bridge) early.
+      warnIfBridgeMisconfigured();
 
       // ─── Terminal QR code for mobile access ─────────────────────────────
       if (serveFrontend) {

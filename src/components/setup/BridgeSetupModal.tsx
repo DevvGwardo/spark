@@ -13,9 +13,11 @@
  */
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { motion } from 'framer-motion';
 import { Check, Loader2, X, AlertCircle, Sparkles, Download, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { WebBridgeSetup } from './WebBridgeSetup';
+import { OnboardingMotionConfig, SOFT_SPRING, SPRING, EASE_OUT } from '@/components/onboarding/motion';
 
 type BridgeStatus = NonNullable<NonNullable<typeof window.electronAPI>['bridge']> extends infer B
   ? B extends { status: () => Promise<infer S> }
@@ -267,12 +269,31 @@ export const BridgeSetupModal: React.FC<{ onComplete: () => void }> = ({ onCompl
   const allSatisfied = requirements.every((r) => r.satisfied);
 
   return (
-    <div ref={modalRef} role="dialog" aria-modal="true" aria-label="Hermes Bridge Setup" className="fixed inset-0 z-[100] flex items-center justify-center bg-background/85 backdrop-blur-sm">
-      <div className="w-[480px] max-w-[92vw] rounded-xl border border-border/60 bg-card shadow-2xl overflow-hidden">
+    <OnboardingMotionConfig>
+    <motion.div
+      ref={modalRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Hermes Bridge Setup"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-background/85 backdrop-blur-sm"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={EASE_OUT}
+    >
+      <motion.div
+        className="w-[480px] max-w-[92vw] rounded-xl border border-border/60 bg-card shadow-2xl overflow-hidden"
+        initial={{ opacity: 0, y: 16, scale: 0.97 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={SOFT_SPRING}
+      >
         <div className="flex items-center gap-3 px-5 py-4 border-b border-border/60">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <motion.div
+            className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary"
+            animate={phase === 'success' ? { scale: [1, 1.12, 1] } : {}}
+            transition={{ duration: 0.5, ease: 'easeOut' }}
+          >
             <Sparkles className="h-4 w-4" />
-          </div>
+          </motion.div>
           <div className="flex-1 min-w-0">
             <h2 className="text-[14px] font-semibold tracking-tight">Setting up Hermes</h2>
             <p className="text-[12px] text-muted-foreground">
@@ -282,7 +303,9 @@ export const BridgeSetupModal: React.FC<{ onComplete: () => void }> = ({ onCompl
             </p>
           </div>
           {allSatisfied && phase === 'success' && (
-            <Check className="h-5 w-5 text-emerald-400" />
+            <motion.div initial={{ scale: 0, rotate: -15 }} animate={{ scale: 1, rotate: 0 }} transition={SPRING}>
+              <Check className="h-5 w-5 text-emerald-400" />
+            </motion.div>
           )}
         </div>
 
@@ -294,11 +317,14 @@ export const BridgeSetupModal: React.FC<{ onComplete: () => void }> = ({ onCompl
             </div>
           )}
 
-          {requirements.map((req) => (
-            <div
+          {requirements.map((req, i) => (
+            <motion.div
               key={req.key}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.34, ease: [0.16, 1, 0.3, 1], delay: 0.04 + i * 0.06 }}
               className={cn(
-                'flex items-start gap-3 rounded-lg border border-border/40 px-3 py-2.5',
+                'flex items-start gap-3 rounded-lg border border-border/40 px-3 py-2.5 transition-colors duration-300',
                 req.satisfied && 'bg-emerald-500/5 border-emerald-500/20',
                 req.installing && 'bg-primary/5 border-primary/30',
               )}
@@ -307,7 +333,9 @@ export const BridgeSetupModal: React.FC<{ onComplete: () => void }> = ({ onCompl
                 {req.installing ? (
                   <Loader2 className="h-4 w-4 animate-spin text-primary" />
                 ) : req.satisfied ? (
-                  <Check className="h-4 w-4 text-emerald-400" />
+                  <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={SPRING}>
+                    <Check className="h-4 w-4 text-emerald-400" />
+                  </motion.div>
                 ) : req.installable ? (
                   <Download className="h-4 w-4 text-muted-foreground" />
                 ) : (
@@ -349,15 +377,18 @@ export const BridgeSetupModal: React.FC<{ onComplete: () => void }> = ({ onCompl
                 )}
               </div>
               {!req.satisfied && req.installable && !req.installing && (
-                <button
+                <motion.button
                   onClick={() => handleInstall(req.key)}
                   disabled={installing !== null}
+                  whileHover={{ scale: 1.04 }}
+                  whileTap={{ scale: 0.96 }}
+                  transition={SPRING}
                   className="ml-2 shrink-0 inline-flex h-7 items-center rounded-md border border-border/60 bg-background/65 px-2.5 text-[11px] font-medium hover:bg-background/90 disabled:opacity-40"
                 >
                   Install
-                </button>
+                </motion.button>
               )}
-            </div>
+            </motion.div>
           ))}
 
           {error && (
@@ -425,7 +456,8 @@ export const BridgeSetupModal: React.FC<{ onComplete: () => void }> = ({ onCompl
             Skip for now
           </button>
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
+    </OnboardingMotionConfig>
   );
 };

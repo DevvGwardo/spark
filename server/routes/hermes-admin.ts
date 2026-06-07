@@ -55,6 +55,38 @@ async function proxyTo(
   }
 }
 
+/**
+ * Best-effort startup sanity check for HERMES_BRIDGE_URL.
+ *
+ * The CloudChat FastAPI bridge serves chat **and** the /workspace/* + /v1/providers
+ * admin routes. The bare hermes-agent gateway only answers /health + chat, so if
+ * HERMES_BRIDGE_URL is pointed at the gateway, /health passes but the command
+ * palette, model picker, and session admin all silently 404. /health alone can't
+ * tell them apart, so we additionally probe /v1/providers and warn loudly if it's
+ * missing. Fire-and-forget, non-blocking, delayed so the bridge has time to boot.
+ */
+export function warnIfBridgeMisconfigured(): void {
+  setTimeout(() => {
+    void (async () => {
+      try {
+        const health = await fetch(`${HERMES_BRIDGE_URL}/health`, { signal: AbortSignal.timeout(2500) });
+        if (!health.ok) return; // unreachable / still starting — not this check's concern
+        const probe = await fetch(`${HERMES_BRIDGE_URL}/v1/providers`, { signal: AbortSignal.timeout(2500) });
+        if (probe.status === 404) {
+          logger.warn(
+            `[hermes-admin] HERMES_BRIDGE_URL (${HERMES_BRIDGE_URL}) answers /health but 404s /v1/providers — ` +
+            'this looks like the hermes-agent gateway, not the CloudChat bridge. The command palette, model ' +
+            'picker, and session admin will fail. Point HERMES_BRIDGE_URL at the CloudChat bridge ' +
+            '(default http://localhost:3002/v1).',
+          );
+        }
+      } catch {
+        // Bridge not up at boot — detection/polling handles that elsewhere.
+      }
+    })();
+  }, 4000);
+}
+
 export function registerHermesAdminRoute(app: Express) {
   const getQuerySuffix = (req: Request) => (
     req.originalUrl.includes('?')
@@ -70,6 +102,10 @@ export function registerHermesAdminRoute(app: Express) {
 
   app.get('/api/hermes/health', async (req: Request, res: Response) => {
     await proxyTo(req, res, '/health');
+  });
+
+  app.get('/api/hermes/bridges/cursor-composer', async (req: Request, res: Response) => {
+    await proxyTo(req, res, '/bridges/cursor-composer');
   });
 
   // ─── Providers ────────────────────────────────────────────────────────────
@@ -122,7 +158,10 @@ export function registerHermesAdminRoute(app: Express) {
   // ─── Sessions ───────────────────────────────────────────────────────────
 
   app.get('/api/hermes/sessions', async (req: Request, res: Response) => {
-    await proxyTo(req, res, '/sessions');
+    // Forward pagination/search params (limit, offset, q) through to the bridge.
+    const queryIndex = req.originalUrl.indexOf('?');
+    const queryString = queryIndex >= 0 ? req.originalUrl.slice(queryIndex) : '';
+    await proxyTo(req, res, `/sessions${queryString}`);
   });
 
   app.get('/api/hermes/sessions/:id', async (req: Request, res: Response) => {
@@ -139,6 +178,14 @@ export function registerHermesAdminRoute(app: Express) {
 
   app.get('/api/hermes/workspace/overview', async (req: Request, res: Response) => {
     await proxyTo(req, res, '/workspace/overview');
+  });
+
+  app.get('/api/hermes/workspace/commands', async (req: Request, res: Response) => {
+    await proxyTo(req, res, '/workspace/commands');
+  });
+
+  app.get('/api/hermes/workspace/auth-providers', async (req: Request, res: Response) => {
+    await proxyTo(req, res, '/workspace/auth-providers');
   });
 
   app.get('/api/hermes/workspace/usage', async (req: Request, res: Response) => {
@@ -183,6 +230,29 @@ export function registerHermesAdminRoute(app: Express) {
     await proxyTo(req, res, '/workspace/skills/hub/install', {
       method: 'POST',
       body: JSON.stringify(req.body),
+    });
+  });
+
+  // ─── MCP Servers ──────────────────────────────────────────────────────
+
+  app.get('/api/hermes/workspace/mcp-servers', async (req: Request, res: Response) => {
+    await proxyTo(req, res, '/workspace/mcp-servers');
+  });
+
+  app.get('/api/hermes/workspace/mcp-catalog', async (req: Request, res: Response) => {
+    await proxyTo(req, res, '/workspace/mcp-catalog');
+  });
+
+  app.post('/api/hermes/workspace/mcp-servers/install', async (req: Request, res: Response) => {
+    await proxyTo(req, res, '/workspace/mcp-servers/install', {
+      method: 'POST',
+      body: JSON.stringify(req.body),
+    });
+  });
+
+  app.delete('/api/hermes/workspace/mcp-servers/:name', async (req: Request, res: Response) => {
+    await proxyTo(req, res, `/workspace/mcp-servers/${encodeURIComponent(req.params.name)}`, {
+      method: 'DELETE',
     });
   });
 

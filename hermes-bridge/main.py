@@ -602,7 +602,25 @@ def _workspace_overview_payload(*, hermes_home: Path, profile_name: str) -> dict
             }
             for row in top_models
         ],
+        "integrations": {
+            "cursor_composer": _cursor_composer_integration_status(hermes_home=hermes_home),
+        },
     }
+
+
+def _cursor_composer_integration_status(*, hermes_home: Path) -> dict:
+    try:
+        from cursor_composer_bridge import bridge_status
+
+        return bridge_status(hermes_home=hermes_home)
+    except Exception as exc:
+        return {
+            "id": "cursor-composer",
+            "name": "Cursor Composer",
+            "connected": False,
+            "skills_ready": False,
+            "detail": str(exc)[:200],
+        }
 
 
 def _workspace_usage_payload(*, hermes_home: Path) -> dict:
@@ -2003,6 +2021,13 @@ _PROVIDER_CONFIG: dict[str, dict] = {
         "auth_json_provider": "together",
         "env_var": "TOGETHER_API_KEY",
     },
+    "cursor-composer": {
+        "base_url": os.environ.get("CURSOR_COMPOSER_BRIDGE_URL", "http://127.0.0.1:8790/v1"),
+        "name": "Cursor Composer (local bridge)",
+        "model_prefixes": ["composer-"],
+        "auth_json_provider": "custom:Cursor-Composer",
+        "env_var": "CURSOR_API_KEY",
+    },
 }
 
 # Build a reverse lookup: model_prefix → provider_id
@@ -2350,6 +2375,7 @@ _STATIC_PROVIDER_MODELS = {
     "mistral": ["mistral-large-latest", "mistral-medium-latest", "mistral-small-latest", "open-mistral-nemo"],
     "cerebras": ["llama-3.3-70b", "qwen-3-32b", "openai/gpt-oss-120b", "llama-3.1-8b"],
     "together": ["meta-llama/Llama-3.3-70B-Instruct-Turbo", "Qwen/Qwen2.5-72B-Instruct-Turbo", "mistralai/Mixtral-8x22B-Instruct-v0.1", "deepseek-ai/DeepSeek-V3"],
+    "cursor-composer": ["composer-2.5", "composer-2.5-fast", "composer-2"],
 }
 
 
@@ -2484,6 +2510,15 @@ def _provider_has_credentials(pid: str) -> bool:
 
     Mirrors the exact credential logic the /health endpoint reports.
     """
+    if pid == "cursor-composer":
+        try:
+            from cursor_composer_bridge import probe_bridge_health
+
+            if probe_bridge_health().get("reachable"):
+                return True
+        except Exception:
+            pass
+
     pcfg = _PROVIDER_CONFIG.get(pid, {})
     env_var = pcfg.get("env_var", "")
     auth_provider = pcfg.get("auth_json_provider", pid)
@@ -2503,11 +2538,14 @@ async def health():
     for pid in _PROVIDER_CONFIG:
         provider_credentials[pid] = _provider_has_credentials(pid)
 
+    cursor_composer = _cursor_composer_integration_status(hermes_home=_HERMES_HOME)
+
     return {
         "status": "ok",
         "has_openrouter_creds": provider_credentials.get("openrouter", False),
         "has_minimax_creds": provider_credentials.get("minimax", False),
         "provider_credentials": provider_credentials,
+        "cursor_composer_bridge": cursor_composer,
         "launch_token_present": bool(HERMES_BRIDGE_TOKEN),
         "brain_initialized": _brain_initialized,
         "active_requests": _bridge_active_requests,
@@ -2547,7 +2585,17 @@ async def list_providers():
             "models": models,
         })
 
-    return {"object": "list", "default_provider": default_provider, "data": data}
+    # The agent's CLI-configured default model (config.yaml `model.default`),
+    # read fresh so a model change in the terminal is reflected by clients that
+    # follow the agent default. Mirrors /health's hermes_default_model.
+    default_model = _load_cli_default_model() or DEFAULT_MODEL
+
+    return {
+        "object": "list",
+        "default_provider": default_provider,
+        "default_model": default_model,
+        "data": data,
+    }
 
 
 class ChatMessage(BaseModel):
@@ -2945,6 +2993,12 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
         }
     _save_session_to_db(_sessions[session_id])
 
+    # If the latest user message is a hermes-agent skill command (/skill ...),
+    # expand it in place into the skill's invocation prompt so the agent loop
+    # actually runs the skill. The session record above keeps the original
+    # slash command for display.
+    _maybe_expand_skill_command(request_messages)
+
     def _finalize_session(success: bool, error_message: Optional[str] = None):
         with _sessions_lock:
             session = _sessions.get(session_id)
@@ -3013,8 +3067,19 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
     def _resolve_provider_from_model(model: str) -> Optional[str]:
         model_lower = model.lower()
         for prefix, provider_id in sorted(_MODEL_PREFIX_TO_PROVIDER.items(), key=lambda x: -len(x[0])):
-            if model_lower.startswith(prefix):
-                return provider_id
+            if not model_lower.startswith(prefix):
+                continue
+            # A vendor-style prefix (e.g. "deepseek/") is a *namespace*, not proof
+            # of the native provider: aggregators (nous, opencode-zen, openrouter)
+            # serve "deepseek/deepseek-v4-flash" too. Only let the prefix force the
+            # native provider when that provider actually offers this exact model
+            # id. If we have a non-empty catalog for it and the id isn't in it,
+            # fall through so routing defers to the caller's active_provider/config
+            # instead of 401-ing at the native API with an unknown model.
+            known = _models_for_provider(provider_id)
+            if known and not any(model_lower == m.lower() for m in known):
+                continue
+            return provider_id
         return None
 
     #   0. Explicit provider header (strongest — caller named the provider)
@@ -4010,7 +4075,21 @@ async def get_cron_history(job_id: str):
 # ------------------------------------------------------------------
 
 @app.get("/sessions")
-async def list_sessions(request: Request):
+async def list_sessions(
+    request: Request,
+    limit: Optional[int] = None,
+    offset: int = 0,
+    q: Optional[str] = None,
+):
+    """List session summaries, newest first.
+
+    Supports server-side search (``q``) and pagination (``limit``/``offset``)
+    so clients never have to download the full session history (which can be
+    tens of thousands of rows). When ``limit`` is omitted the full set is
+    returned for backward compatibility. The response always includes the
+    post-filter ``total`` and aggregate ``counts`` so the client can show
+    accurate totals and status pills without holding every row.
+    """
     profile_name = _resolve_profile_name(request)
     hermes_home = _resolve_hermes_home(profile_name)
     with _sessions_lock:
@@ -4026,7 +4105,32 @@ async def list_sessions(request: Request):
         if db_session["id"] not in in_memory_ids:
             summaries.append(db_session)
     summaries.sort(key=lambda item: item.get("created_at", ""), reverse=True)
-    return JSONResponse(content={"sessions": summaries})
+
+    # Server-side search across the same fields the client used to filter on.
+    needle = (q or "").strip().lower()
+    if needle:
+        def _matches(item: dict) -> bool:
+            for field in ("firstUserMessage", "id", "model", "repo"):
+                value = item.get(field)
+                if value and needle in str(value).lower():
+                    return True
+            return False
+
+        summaries = [item for item in summaries if _matches(item)]
+
+    # Aggregate counts over the full (post-search) set, before pagination.
+    counts = {"active": 0, "completed": 0, "error": 0, "total": len(summaries)}
+    for item in summaries:
+        status = item.get("status")
+        if status in ("active", "completed", "error"):
+            counts[status] += 1
+
+    total = len(summaries)
+    if limit is not None:
+        start = max(offset, 0)
+        summaries = summaries[start : start + max(limit, 0)]
+
+    return JSONResponse(content={"sessions": summaries, "total": total, "counts": counts})
 
 
 @app.get("/sessions/{session_id}")
@@ -4106,6 +4210,225 @@ async def delete_session(session_id: str, request: Request):
 # Workspace endpoints for Hermes overview/files/skills/usage
 # ------------------------------------------------------------------
 
+# Cache of the hermes-agent slash command catalog (built once per process).
+_HERMES_COMMANDS_CACHE: Optional[list] = None
+
+
+def _load_hermes_agent_commands() -> list:
+    """Build the catalog of hermes-agent slash commands a chat client can use:
+    built-ins from ``hermes_cli.commands`` (excluding CLI-only ones), installed
+    skill commands, and plugin commands. Cached after first load and degrades to
+    whatever subset imports successfully, so CloudChat still works if the agent
+    is missing or a different version.
+    """
+    global _HERMES_COMMANDS_CACHE
+    if _HERMES_COMMANDS_CACHE is not None:
+        return _HERMES_COMMANDS_CACHE
+
+    commands: list = []
+
+    # Built-in registry — surface only what a chat client can use (gateway
+    # available or "both"); skip CLI/TUI-only commands unless config-gated.
+    try:
+        from hermes_cli import commands as _hc
+        for c in _hc.COMMAND_REGISTRY:
+            if getattr(c, "cli_only", False) and not getattr(c, "gateway_config_gate", None):
+                continue
+            args_hint = getattr(c, "args_hint", "") or ""
+            commands.append({
+                "name": c.name,
+                "description": c.description,
+                "category": getattr(c, "category", "") or "General",
+                "usage": "/" + c.name + ((" " + args_hint) if args_hint else ""),
+                "aliases": list(getattr(c, "aliases", ()) or ()),
+                "kind": "agent",
+            })
+    except Exception as e:
+        print(f"[hermes-bridge] command registry unavailable: {e}", flush=True)
+
+    # Installed skill commands (one per skill in ~/.hermes/skills/).
+    try:
+        from agent.skill_commands import get_skill_commands
+        for key, info in get_skill_commands().items():
+            name = key.lstrip("/")
+            commands.append({
+                "name": name,
+                "description": info.get("description") or f"Run the {name} skill",
+                "category": "Skills",
+                "usage": "/" + name + " [instructions]",
+                "aliases": [],
+                "kind": "skill",
+            })
+    except Exception as e:
+        print(f"[hermes-bridge] skill commands unavailable: {e}", flush=True)
+
+    # Plugin-registered commands.
+    try:
+        from hermes_cli.commands import _iter_plugin_command_entries
+        for name, desc, args_hint in _iter_plugin_command_entries():
+            clean = name.lstrip("/")
+            commands.append({
+                "name": clean,
+                "description": desc,
+                "category": "Plugins",
+                "usage": "/" + clean + ((" " + args_hint) if args_hint else ""),
+                "aliases": [],
+                "kind": "agent",
+            })
+    except Exception as e:
+        print(f"[hermes-bridge] plugin commands unavailable: {e}", flush=True)
+
+    _HERMES_COMMANDS_CACHE = commands
+    return commands
+
+
+def _maybe_expand_skill_command(messages: list) -> None:
+    """If the latest user message is a hermes-agent skill command (``/skill ...``),
+    expand it in place into the skill's invocation prompt so CloudChat's agent
+    loop runs the skill. No-op for non-skill messages or when the agent's skill
+    system is unavailable."""
+    idx = None
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].get("role") == "user":
+            idx = i
+            break
+    if idx is None:
+        return
+    content = (messages[idx].get("content") or "").strip()
+    if not content.startswith("/"):
+        return
+    parts = content.split(None, 1)
+    cmd_token = parts[0]
+    user_instruction = parts[1] if len(parts) > 1 else ""
+    try:
+        from agent.skill_commands import (
+            resolve_skill_command_key,
+            build_skill_invocation_message,
+        )
+        # resolve_skill_command_key expects the bare name (no leading slash);
+        # it returns the canonical key WITH a slash for build_skill_invocation_message.
+        cmd_key = resolve_skill_command_key(cmd_token.lstrip("/"))
+        if not cmd_key:
+            return
+        expanded = build_skill_invocation_message(cmd_key, user_instruction)
+        if expanded:
+            messages[idx]["content"] = expanded
+            print(f"[hermes-bridge] Expanded skill command {cmd_token} -> {cmd_key}", flush=True)
+    except Exception as e:
+        print(f"[hermes-bridge] skill command expansion failed: {e}", flush=True)
+
+
+@app.get("/workspace/commands")
+async def workspace_commands(request: Request):
+    """List the hermes-agent slash commands available to the CloudChat menu."""
+    return JSONResponse(content={"commands": _load_hermes_agent_commands()})
+
+
+def _load_hermes_saved_providers() -> list:
+    """List the providers the user has saved/authenticated in the hermes-agent
+    (~/.hermes/auth.json: credential_pool + OAuth providers block), with a
+    derived status. Read-only, for display in the CloudChat settings UI.
+    Returns [] if the auth store is unavailable."""
+    auth_path = os.path.expanduser("~/.hermes/auth.json")
+    try:
+        with open(auth_path, "r") as f:
+            auth = json.load(f)
+    except Exception:
+        return []
+
+    try:
+        from hermes_cli.auth import get_auth_provider_display_name as _display
+    except Exception:
+        _display = None
+
+    def name_for(pid: str, label: str) -> str:
+        if _display:
+            try:
+                n = _display(pid)
+                if n and n != pid:
+                    return n
+            except Exception:
+                pass
+        return label or pid
+
+    active = (auth.get("active_provider") or "").strip()
+    pool = auth.get("credential_pool", {}) or {}
+    oauth_block = auth.get("providers", {}) or {}
+
+    result: list = []
+    seen = set()
+
+    for pid, entries in pool.items():
+        if not entries:
+            continue
+        entries_sorted = sorted(entries, key=lambda c: c.get("priority", 99))
+        best = entries_sorted[0]
+        has_token = any(
+            (e.get("access_token") or "").strip() not in ("", "***") for e in entries_sorted
+        )
+        has_fingerprint = any(e.get("secret_fingerprint") for e in entries_sorted)
+        if not has_token and not has_fingerprint and pid not in oauth_block:
+            continue  # nothing actually saved for this provider
+        last_status = (best.get("last_status") or "").strip().lower()
+        last_error = (best.get("last_error_message") or "").strip()
+        if last_error or last_status in ("error", "failed", "unauthorized", "invalid"):
+            status = "error"
+        elif has_token:
+            status = "active"
+        else:
+            status = "configured"
+        result.append({
+            "id": pid,
+            "name": name_for(pid, best.get("label", "") or ""),
+            "label": best.get("label", "") or "",
+            "auth_type": best.get("auth_type", "") or "api_key",
+            "base_url": best.get("base_url", "") or "",
+            "status": status,
+            "detail": last_error[:160],
+            "active": pid == active,
+            "request_count": int(best.get("request_count", 0) or 0),
+        })
+        seen.add(pid)
+
+    # OAuth-only providers stored in the `providers` block (codex, xai-oauth, nous).
+    for pid, state in oauth_block.items():
+        if pid in seen or not isinstance(state, dict):
+            continue
+        has_tokens = bool(state.get("tokens") or state.get("access_token") or state.get("agent_key"))
+        if not has_tokens:
+            continue
+        last_error = state.get("last_auth_error") or ""
+        last_error = last_error if isinstance(last_error, str) else ""
+        result.append({
+            "id": pid,
+            "name": name_for(pid, ""),
+            "label": "",
+            "auth_type": state.get("auth_mode") or "oauth",
+            "base_url": state.get("inference_base_url") or state.get("portal_base_url") or "",
+            "status": "error" if last_error else "active",
+            "detail": last_error[:160],
+            "active": pid == active,
+            "request_count": 0,
+        })
+
+    order = {"active": 0, "configured": 1, "error": 2}
+    result.sort(key=lambda p: (not p["active"], order.get(p["status"], 3), p["name"].lower()))
+    return result
+
+
+@app.get("/workspace/auth-providers")
+async def workspace_auth_providers(request: Request):
+    """List providers the user has saved/authenticated in their hermes-agent."""
+    return JSONResponse(content={"providers": _load_hermes_saved_providers()})
+
+
+@app.get("/bridges/cursor-composer")
+async def cursor_composer_bridge_status(request: Request):
+    """Status for the local Hermes → Cursor Composer bridge (:8790)."""
+    hermes_home = _resolve_hermes_home(_resolve_profile_name(request))
+    return JSONResponse(content=_cursor_composer_integration_status(hermes_home=hermes_home))
+
+
 @app.get("/workspace/overview")
 async def workspace_overview(request: Request):
     profile_name = _resolve_profile_name(request)
@@ -4156,6 +4479,289 @@ async def workspace_file_update(file_key: str, payload: HermesWorkspaceFileUpdat
 
     updated = _canonical_file_entry(file_key.lower(), hermes_home=hermes_home, include_content=True)
     return JSONResponse(content={"file": updated})
+
+
+# ------------------------------------------------------------------
+# MCP servers — surface the agent's installed MCP servers (read from
+# ~/.hermes/config.yaml `mcp_servers`) and one-click install/uninstall
+# from a small curated catalog. Writes are additive and backed up; the
+# agent's MCP layer is reloaded in-process when possible.
+# ------------------------------------------------------------------
+
+# Curated, intentionally-small set of one-click installable MCP servers.
+# Server-side is the source of truth so the install endpoint never writes a
+# client-supplied command. None of these require secrets.
+_MCP_CATALOG: list[dict] = [
+    {
+        "id": "filesystem",
+        "name": "filesystem",
+        "description": "Read and write files within a directory you choose.",
+        "transport": "stdio",
+        "runtime": "node",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", "{param}"],
+        "requires_param": {"key": "root", "label": "Root directory", "placeholder": "~/", "default": "~"},
+        "docs_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem",
+    },
+    {
+        "id": "fetch",
+        "name": "fetch",
+        "description": "Fetch a URL and return clean, readable markdown.",
+        "transport": "stdio",
+        "runtime": "python",
+        "command": "uvx",
+        "args": ["mcp-server-fetch"],
+        "docs_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/fetch",
+    },
+    {
+        "id": "git",
+        "name": "git",
+        "description": "Inspect and operate on a local git repository.",
+        "transport": "stdio",
+        "runtime": "python",
+        "command": "uvx",
+        "args": ["mcp-server-git", "--repository", "{param}"],
+        "requires_param": {"key": "repo", "label": "Repository path", "placeholder": "~/code/my-repo", "default": "."},
+        "docs_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/git",
+    },
+    {
+        "id": "memory",
+        "name": "memory",
+        "description": "A persistent knowledge-graph memory the agent can read and write.",
+        "transport": "stdio",
+        "runtime": "node",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-memory"],
+        "docs_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/memory",
+    },
+    {
+        "id": "sequential-thinking",
+        "name": "sequential-thinking",
+        "description": "A structured step-by-step reasoning scratchpad for hard problems.",
+        "transport": "stdio",
+        "runtime": "node",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+        "docs_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking",
+    },
+    {
+        "id": "playwright",
+        "name": "playwright",
+        "description": "Drive a real browser — navigate, click, read, and screenshot pages.",
+        "transport": "stdio",
+        "runtime": "node",
+        "command": "npx",
+        "args": ["-y", "@playwright/mcp@latest"],
+        "docs_url": "https://github.com/microsoft/playwright-mcp",
+    },
+]
+
+_MCP_CATALOG_BY_ID = {entry["id"]: entry for entry in _MCP_CATALOG}
+
+
+def _hermes_config_path(hermes_home: Path) -> Path:
+    return Path(hermes_home) / "config.yaml"
+
+
+def _read_hermes_config(hermes_home: Path) -> dict:
+    """Load the full config.yaml as a plain dict (empty on any error)."""
+    try:
+        import yaml
+        path = _hermes_config_path(hermes_home)
+        if not path.is_file():
+            return {}
+        with open(path) as f:
+            cfg = yaml.safe_load(f)
+        return cfg if isinstance(cfg, dict) else {}
+    except Exception:
+        return {}
+
+
+def _normalize_mcp_server_entry(name: str, cfg: dict) -> dict:
+    """Map a raw mcp_servers entry to a safe, display-friendly dict.
+
+    Secrets are never returned: env *values* are dropped (names only) and
+    HTTP `headers` (which often carry auth tokens) are omitted entirely.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    url = cfg.get("url")
+    transport = "http" if url else "stdio"
+    args = cfg.get("args")
+    env = cfg.get("env")
+    tools = cfg.get("tools")
+    return {
+        "name": name,
+        "transport": transport,
+        "command": str(cfg.get("command") or ""),
+        "args": [str(a) for a in args] if isinstance(args, list) else [],
+        "url": str(url) if isinstance(url, str) else "",
+        "enabled": cfg.get("enabled", True) is not False,
+        "env_keys": sorted(env.keys()) if isinstance(env, dict) else [],
+        "tool_count": len(tools) if isinstance(tools, dict) else 0,
+        "catalog_id": name if name in _MCP_CATALOG_BY_ID else None,
+    }
+
+
+def _load_hermes_mcp_servers(hermes_home: Path) -> list[dict]:
+    """List the agent's installed MCP servers from config.yaml (secrets redacted)."""
+    servers = _read_hermes_config(hermes_home).get("mcp_servers")
+    if not isinstance(servers, dict):
+        return []
+    return [_normalize_mcp_server_entry(name, entry) for name, entry in sorted(servers.items())]
+
+
+def _mcp_catalog_payload() -> list[dict]:
+    """Display-only view of the curated catalog (no internal arg templating)."""
+    return [
+        {
+            "id": e["id"],
+            "name": e["name"],
+            "description": e["description"],
+            "transport": e["transport"],
+            "runtime": e.get("runtime", ""),
+            "requires_param": e.get("requires_param"),
+            "docs_url": e.get("docs_url", ""),
+        }
+        for e in _MCP_CATALOG
+    ]
+
+
+def _build_mcp_entry_from_catalog(entry: dict, param: Optional[str]) -> dict:
+    """Build a config.yaml mcp_servers entry from a catalog template + param."""
+    req = entry.get("requires_param") or {}
+    resolved: list[str] = []
+    for arg in entry.get("args", []):
+        if arg == "{param}":
+            value = (param or "").strip() or req.get("default", "")
+            resolved.append(os.path.expanduser(value))
+        else:
+            resolved.append(arg)
+    built: dict = {"command": entry["command"], "enabled": True}
+    if resolved:
+        built["args"] = resolved
+    return built
+
+
+def _backup_hermes_config(path: Path) -> None:
+    if path.is_file():
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        path.with_name(f"config.yaml.bak-{ts}").write_text(
+            path.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+
+
+def _load_hermes_config_editable(hermes_home: Path):
+    """Load config.yaml for editing. Returns ``(dump, data)`` where ``dump()``
+    backs up the file and writes ``data`` back. Uses ruamel round-trip when
+    available (preserves comments/format), else PyYAML (comments lost)."""
+    path = _hermes_config_path(hermes_home)
+    text = path.read_text(encoding="utf-8") if path.is_file() else ""
+    try:
+        from ruamel.yaml import YAML
+        from ruamel.yaml.comments import CommentedMap
+
+        yaml_rt = YAML()
+        yaml_rt.preserve_quotes = True
+        # Don't fold long scalars (e.g. absolute command paths) across lines.
+        yaml_rt.width = 4096
+        data = yaml_rt.load(text) if text.strip() else CommentedMap()
+        if data is None:
+            data = CommentedMap()
+
+        def _dump():
+            _backup_hermes_config(path)
+            with open(path, "w") as f:
+                yaml_rt.dump(data, f)
+
+        return _dump, data
+    except Exception:
+        import yaml
+
+        data = (yaml.safe_load(text) if text.strip() else {}) or {}
+
+        def _dump():
+            _backup_hermes_config(path)
+            with open(path, "w") as f:
+                yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+
+        return _dump, data
+
+
+def _reload_agent_mcp() -> bool:
+    """Best-effort in-process reload of the installed agent's MCP layer so a
+    freshly-installed server connects without a full bridge restart."""
+    try:
+        from tools.mcp_tool import shutdown_mcp_servers, discover_mcp_tools
+
+        shutdown_mcp_servers()
+        discover_mcp_tools()
+        return True
+    except Exception as exc:
+        print(f"[hermes-bridge] MCP reload skipped: {exc}", flush=True)
+        return False
+
+
+class McpInstallRequest(BaseModel):
+    id: str
+    param: Optional[str] = None
+
+
+@app.get("/workspace/mcp-servers")
+async def workspace_mcp_servers(request: Request):
+    """List the MCP servers installed in the hermes-agent's config.yaml."""
+    hermes_home = _resolve_hermes_home(_resolve_profile_name(request))
+    return JSONResponse(content={"servers": _load_hermes_mcp_servers(hermes_home)})
+
+
+@app.get("/workspace/mcp-catalog")
+async def workspace_mcp_catalog(request: Request):
+    """The curated set of one-click installable MCP servers."""
+    return JSONResponse(content={"catalog": _mcp_catalog_payload()})
+
+
+@app.post("/workspace/mcp-servers/install")
+async def workspace_mcp_install(request: Request, body: McpInstallRequest):
+    """Install a curated MCP server into config.yaml and reload the agent."""
+    entry = _MCP_CATALOG_BY_ID.get(body.id)
+    if not entry:
+        return JSONResponse(status_code=400, content={"error": f"Unknown MCP id: {body.id}"})
+    hermes_home = _resolve_hermes_home(_resolve_profile_name(request))
+    dump, data = _load_hermes_config_editable(hermes_home)
+    servers = data.get("mcp_servers")
+    if not isinstance(servers, dict):
+        servers = {}
+        data["mcp_servers"] = servers
+    name = entry["name"]
+    if name in servers:
+        return JSONResponse(status_code=409, content={"error": f"'{name}' is already installed"})
+    servers[name] = _build_mcp_entry_from_catalog(entry, body.param)
+    try:
+        dump()
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"Failed to write config: {e}"})
+    reloaded = _reload_agent_mcp()
+    print(f"[hermes-bridge] Installed MCP server '{name}' (reloaded={reloaded})", flush=True)
+    return JSONResponse(content={"ok": True, "installed": name, "reloaded": reloaded})
+
+
+@app.delete("/workspace/mcp-servers/{name}")
+async def workspace_mcp_uninstall(name: str, request: Request):
+    """Remove a store-installed MCP server. Agent-managed servers stay read-only."""
+    if name not in _MCP_CATALOG_BY_ID:
+        return JSONResponse(status_code=403, content={"error": "Only store-installed servers can be removed here"})
+    hermes_home = _resolve_hermes_home(_resolve_profile_name(request))
+    dump, data = _load_hermes_config_editable(hermes_home)
+    servers = data.get("mcp_servers")
+    if not isinstance(servers, dict) or name not in servers:
+        return JSONResponse(status_code=404, content={"error": f"'{name}' is not installed"})
+    del servers[name]
+    try:
+        dump()
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"Failed to write config: {e}"})
+    reloaded = _reload_agent_mcp()
+    print(f"[hermes-bridge] Removed MCP server '{name}' (reloaded={reloaded})", flush=True)
+    return JSONResponse(content={"ok": True, "removed": name, "reloaded": reloaded})
 
 
 @app.get("/workspace/skills")

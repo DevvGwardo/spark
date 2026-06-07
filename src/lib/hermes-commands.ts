@@ -1,3 +1,5 @@
+import { fetchHermesAgentCommands, HermesApiError } from './hermes-api';
+
 export interface CommandContext {
   setActiveSubTab: (tab: 'overview' | 'threads' | 'queue' | 'chats' | 'cron' | 'memories' | 'skills' | 'usage') => void;
   setActiveTab: (tab: 'chat' | 'github' | 'analyzer' | 'knowledge') => void;
@@ -20,11 +22,21 @@ function callbackUnavailable(): string {
   return 'This command is not available in the current context.';
 }
 
+// 'ui' = handled locally in CloudChat (intercepted, runs a handler).
+// 'skill' = a hermes-agent skill; sent to the agent, which expands & runs it.
+// 'agent' = another hermes-agent built-in; inserted as editable text to send.
+export type HermesCommandKind = 'ui' | 'skill' | 'agent';
+
 export interface HermesCommand {
   name: string;
   description: string;
   usage: string;
-  handler: (args: string, context: CommandContext) => Promise<string>;
+  kind?: HermesCommandKind;
+  category?: string;
+  aliases?: string[];
+  // Only local 'ui' commands carry a handler; skill/agent commands are sent
+  // to the bridge instead of being intercepted.
+  handler?: (args: string, context: CommandContext) => Promise<string>;
 }
 
 const COMMANDS: HermesCommand[] = [
@@ -310,6 +322,80 @@ const COMMANDS: HermesCommand[] = [
 
 export { COMMANDS };
 
+// Dynamic commands fetched from the installed hermes-agent (skills + built-ins).
+// Local 'ui' COMMANDS always take precedence on a name collision.
+let DYNAMIC_COMMANDS: HermesCommand[] = [];
+// "Resolved" means we're done trying for this session — either the catalog
+// loaded, or the gateway told us the endpoint isn't there. Either way, stop.
+let agentCommandsResolved = false;
+let agentCommandsInflight: Promise<void> | null = null;
+
+export function setHermesAgentCommands(commands: HermesCommand[]): void {
+  const localNames = new Set(COMMANDS.map((c) => c.name));
+  const seen = new Set<string>();
+  DYNAMIC_COMMANDS = commands.filter((c) => {
+    if (localNames.has(c.name) || seen.has(c.name)) return false;
+    seen.add(c.name);
+    return true;
+  });
+  agentCommandsResolved = true;
+}
+
+export function agentCommandsAlreadyLoaded(): boolean {
+  return agentCommandsResolved;
+}
+
+/**
+ * Load the installed hermes-agent's slash-command catalog at most once per
+ * session, shared across every ChatInput via a single in-flight promise.
+ *
+ * Each ChatInput used to run its own 5×-with-backoff retry loop, and the guard
+ * only flipped on success — so when the gateway returns 404 for
+ * `/workspace/commands` (older bridge that doesn't expose it), every panel
+ * retried forever, producing the 4-requests-every-4s hammering seen in the
+ * bridge logs. Now: one shared loader; a 4xx means the endpoint genuinely
+ * isn't there, so we stop immediately; only transient errors (network / bridge
+ * still starting) are retried.
+ */
+export function ensureHermesAgentCommandsLoaded(): Promise<void> {
+  if (agentCommandsResolved) return Promise.resolve();
+  if (agentCommandsInflight) return agentCommandsInflight;
+
+  agentCommandsInflight = (async () => {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const commands = await fetchHermesAgentCommands();
+        if (commands.length) setHermesAgentCommands(commands);
+        // The endpoint answered (even if empty) — nothing more to retry.
+        agentCommandsResolved = true;
+        return;
+      } catch (err) {
+        // A 4xx (e.g. 404) means this gateway doesn't expose the endpoint;
+        // retrying it from every panel is pointless and is the loop we're
+        // fixing. Give up for the session.
+        if (err instanceof HermesApiError && err.status >= 400 && err.status < 500) {
+          agentCommandsResolved = true;
+          return;
+        }
+        // Transient (network / 5xx / bridge still coming up) — back off, retry.
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    // Exhausted transient retries — stop trying this session.
+    agentCommandsResolved = true;
+  })();
+
+  void agentCommandsInflight.finally(() => {
+    agentCommandsInflight = null;
+  });
+
+  return agentCommandsInflight;
+}
+
+function allCommands(): HermesCommand[] {
+  return DYNAMIC_COMMANDS.length ? [...COMMANDS, ...DYNAMIC_COMMANDS] : COMMANDS;
+}
+
 export function parseCommand(
   input: string
 ): { command: string; args: string } | null {
@@ -328,15 +414,19 @@ export function parseCommand(
 }
 
 export function findCommand(name: string): HermesCommand | undefined {
-  return COMMANDS.find((cmd) => cmd.name === name);
+  return allCommands().find(
+    (cmd) => cmd.name === name || cmd.aliases?.includes(name)
+  );
 }
 
 export function filterCommands(partial: string): HermesCommand[] {
   const query = partial.toLowerCase().replace(/^\//, '');
-  if (!query) return COMMANDS;
-  return COMMANDS.filter(
+  const commands = allCommands();
+  if (!query) return commands;
+  return commands.filter(
     (cmd) =>
       cmd.name.startsWith(query) ||
+      cmd.aliases?.some((a) => a.startsWith(query)) ||
       cmd.description.toLowerCase().includes(query)
   );
 }

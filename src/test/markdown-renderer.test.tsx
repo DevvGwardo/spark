@@ -167,4 +167,47 @@ ${lines}
     expect(screen.getByRole('img', { name: '/tmp/foo.png' })).toHaveAttribute('src', assetUrl('/tmp/foo.png'));
     expect(screen.getByRole('img', { name: '/tmp/bar.png' })).toHaveAttribute('src', assetUrl('/tmp/bar.png'));
   });
+
+  it('renders multi-block content split into separate blocks (heading, list, code)', () => {
+    render(
+      <MarkdownRenderer
+        streaming
+        content={`# Heading
+
+A paragraph with **bold**.
+
+- one
+- two
+
+\`\`\`ts
+const x = 1;
+\`\`\``}
+      />,
+    );
+
+    expect(screen.getByRole('heading', { name: 'Heading' })).toBeInTheDocument();
+    expect(screen.getByText('bold')).toBeInTheDocument();
+    expect(screen.getByText('one')).toBeInTheDocument();
+    expect(screen.getByText('two')).toBeInTheDocument();
+    // The fenced block renders as a CodeBlock (Shiki tokenizes the code into
+    // multiple spans, so assert on the block shell rather than the code text).
+    expect(screen.getByText('typescript')).toBeInTheDocument();
+  });
+
+  it('keeps earlier blocks intact while the trailing code fence is still streaming', () => {
+    // Mid-stream the closing ``` has not arrived yet. The completed paragraph
+    // above must still render as prose — block splitting must not let the open
+    // fence swallow earlier content.
+    const { rerender } = render(
+      <MarkdownRenderer streaming content={'Intro paragraph.\n\n```ts\nconst a'} />,
+    );
+
+    expect(screen.getByText('Intro paragraph.')).toBeInTheDocument();
+    expect(screen.getByText('typescript')).toBeInTheDocument();
+
+    // Stream completes — the earlier paragraph is still intact alongside the code.
+    rerender(<MarkdownRenderer streaming content={'Intro paragraph.\n\n```ts\nconst a = 1;\n```'} />);
+    expect(screen.getByText('Intro paragraph.')).toBeInTheDocument();
+    expect(screen.getByText('typescript')).toBeInTheDocument();
+  });
 });

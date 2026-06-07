@@ -6,6 +6,7 @@ import rehypeKatex from 'rehype-katex';
 import rehypeSanitize from 'rehype-sanitize';
 import { Check, ChevronDown, Copy, ExternalLink, Terminal } from 'lucide-react';
 import { codeToHtml } from 'shiki';
+import { marked } from 'marked';
 import {
   defaultSafeUrlTransform,
   getImageUrl,
@@ -270,145 +271,242 @@ const CodeBlock = React.forwardRef<HTMLElement, React.HTMLAttributes<HTMLElement
 );
 CodeBlock.displayName = 'CodeBlock';
 
+/**
+ * Throttle rapidly-changing streaming content so the markdown is re-parsed at a
+ * steady cadence (~25fps) instead of on every token. Re-parsing per token makes
+ * headings flip levels, code blocks appear, and lists reflow many times a
+ * second, which reads as the text "bouncing". Leading-edge so the first value
+ * shows immediately; trailing-edge so the final value is always exact.
+ */
+function useThrottledContent(content: string, enabled: boolean, intervalMs = 40): string {
+  const [shown, setShown] = useState(content);
+  const lastApplied = useRef(0);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latest = useRef(content);
+  latest.current = content;
+
+  useEffect(() => {
+    if (!enabled) {
+      if (timer.current) {
+        clearTimeout(timer.current);
+        timer.current = null;
+      }
+      setShown(content);
+      return;
+    }
+    const sinceLast = Date.now() - lastApplied.current;
+    if (sinceLast >= intervalMs) {
+      lastApplied.current = Date.now();
+      setShown(content);
+    } else if (!timer.current) {
+      timer.current = setTimeout(() => {
+        lastApplied.current = Date.now();
+        setShown(latest.current);
+        timer.current = null;
+      }, intervalMs - sinceLast);
+    }
+  }, [content, enabled, intervalMs]);
+
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+  }, []);
+
+  return enabled ? shown : content;
+}
+
+// Stable, module-level config so every <MarkdownBlock> shares the same plugin
+// and component references. Stable references are what let React.memo skip
+// re-rendering a completed block — without them every block would re-render
+// whenever the parent does.
+const REMARK_PLUGINS = [remarkGfm, remarkMath];
+const REHYPE_PLUGINS = [rehypeKatex, rehypeSanitize];
+
+const markdownUrlTransform: React.ComponentProps<typeof ReactMarkdown>['urlTransform'] = (url, key, node) => {
+  if (isImageSrcUrl(key, node)) {
+    const imageUrl = getImageUrl(url);
+    if (imageUrl) return imageUrl;
+  }
+
+  return defaultSafeUrlTransform(url);
+};
+
+const MARKDOWN_COMPONENTS: React.ComponentProps<typeof ReactMarkdown>['components'] = {
+  code({ className, children, node: _node, ...props }) {
+    const text = extractText(children);
+    const isBlock = className?.includes('language-') || text.includes('\n');
+    if (isBlock) {
+      if (className === 'language-mermaid') {
+        return <MermaidDiagram source={text.replace(/\n$/, '')} />;
+      }
+      return <CodeBlock className={className} {...props}>{children}</CodeBlock>;
+    }
+    const imageTarget = getLocalImageTarget(text);
+    if (imageTarget) {
+      return (
+        <span className="my-2 block">
+          <img
+            src={imageTarget.srcUrl}
+            alt={text.trim()}
+          data-open-url={imageTarget.openUrl}
+          className="max-h-[480px] max-w-full cursor-pointer rounded-lg border border-border/40 object-contain"
+          loading="lazy"
+          onClick={(event) => openExternalUrl(event.currentTarget.dataset.openUrl || imageTarget.openUrl)}
+        />
+          <span className="mt-1 block text-[11px] text-muted-foreground/60 font-mono truncate">
+            {text.trim()}
+          </span>
+        </span>
+      );
+    }
+    const openableUrl = getOpenableUrl(text);
+    if (openableUrl) {
+      return (
+        <span className="inline-flex items-center gap-1 align-baseline">
+          <code className="px-1.5 py-0.5 rounded bg-muted/60 text-[13px] font-mono border border-border/30 text-foreground/90" {...props}>
+            {children}
+          </code>
+          <button
+            type="button"
+            onClick={() => openExternalUrl(openableUrl)}
+            className="inline-flex h-5 w-5 items-center justify-center rounded border border-border/40 text-muted-foreground transition hover:bg-muted/60 hover:text-foreground"
+            title="Open in browser"
+            aria-label="Open in browser"
+          >
+            <ExternalLink className="h-3 w-3" />
+          </button>
+        </span>
+      );
+    }
+    return (
+      <code className="px-1.5 py-0.5 rounded bg-muted/60 text-[13px] font-mono border border-border/30 text-foreground/90" {...props}>
+        {children}
+      </code>
+    );
+  },
+  a({ href, children, ...props }) {
+    const isExternal = typeof href === 'string' && /^(https?:\/\/|file:\/\/\/)/i.test(href);
+    if (isExternal) {
+      return (
+        <a
+          href={href}
+          onClick={(e) => {
+            e.preventDefault();
+            openExternalUrl(href!);
+          }}
+          className="text-primary underline-offset-2 hover:underline cursor-pointer"
+          {...props}
+        >
+          {children}
+        </a>
+      );
+    }
+    return <a href={href} {...props}>{children}</a>;
+  },
+  img({ src, alt, ...props }) {
+    const rawSrc = typeof src === 'string' ? src : '';
+    const imageTarget = getLocalImageTarget(rawSrc) || (typeof alt === 'string' ? getLocalImageTarget(alt) : null);
+    if (!imageTarget) {
+      return <img src={src} alt={alt ?? ''} {...props} />;
+    }
+
+    const label = alt?.trim() || rawSrc.trim();
+    return (
+      <span className="my-2 block">
+        <img
+          src={imageTarget.srcUrl}
+          alt={label}
+          data-open-url={imageTarget.openUrl}
+          className="max-h-[480px] max-w-full cursor-pointer rounded-lg border border-border/40 object-contain"
+          loading="lazy"
+          onClick={(event) => openExternalUrl(event.currentTarget.dataset.openUrl || imageTarget.openUrl)}
+          {...props}
+        />
+        <span className="mt-1 block text-[11px] text-muted-foreground/60 font-mono truncate">
+          {label}
+        </span>
+      </span>
+    );
+  },
+  table({ children }) {
+    return (
+      <div className="overflow-x-auto my-3">
+        <table className="min-w-full border-collapse border border-border">{children}</table>
+      </div>
+    );
+  },
+  th({ children }) {
+    return <th className="border border-border px-3 py-2 bg-muted text-left text-sm font-medium">{children}</th>;
+  },
+  td({ children }) {
+    return <td className="border border-border px-3 py-2 text-sm">{children}</td>;
+  },
+};
+
+/**
+ * One top-level markdown block (paragraph, list, code fence, table, …).
+ *
+ * Memoized on its raw source text. While streaming, only the final, still-
+ * growing block changes its `source`; every block before it keeps identical
+ * raw text, so React.memo skips re-rendering them entirely. That's what stops
+ * already-rendered markdown — and its async Shiki highlighting and layout
+ * measurement — from reflowing/jittering on every streamed chunk. react-markdown
+ * renders a Fragment (no wrapper element), so a block here produces the same DOM
+ * as parsing the whole message at once.
+ */
+const MarkdownBlock = React.memo(function MarkdownBlock({ source }: { source: string }) {
+  const processed = useMemo(() => rewriteLocalImageTokens(source), [source]);
+  return (
+    <ReactMarkdown
+      remarkPlugins={REMARK_PLUGINS}
+      rehypePlugins={REHYPE_PLUGINS}
+      urlTransform={markdownUrlTransform}
+      components={MARKDOWN_COMPONENTS}
+    >
+      {processed}
+    </ReactMarkdown>
+  );
+});
+
+/**
+ * Split markdown into top-level block strings using marked's block lexer (the
+ * same primitive Codex uses for its streaming renderer). Each block's `raw`
+ * reconstructs the source exactly, and constructs that span blank lines (lists,
+ * fenced code, tables, blockquotes) stay in a single token — so completed
+ * blocks have stable text and never reflow. Falls back to one block on any
+ * parser error.
+ */
+function splitMarkdownBlocks(markdown: string): string[] {
+  if (!markdown) return [];
+  try {
+    const blocks: string[] = [];
+    for (const token of marked.lexer(markdown)) {
+      if (token.type === 'space') continue;
+      if (token.raw) blocks.push(token.raw);
+    }
+    return blocks.length > 0 ? blocks : [markdown];
+  } catch {
+    return [markdown];
+  }
+}
+
 interface MarkdownRendererProps {
   content: string;
+  /** When true, re-parse on a throttled cadence to avoid streaming reflow jitter. */
+  streaming?: boolean;
 }
 
 const MarkdownRendererInner = React.forwardRef<HTMLDivElement, MarkdownRendererProps>(
-  ({ content }, ref) => {
-    const plugins = useMemo(() => ({
-      remark: [remarkGfm, remarkMath],
-      rehype: [rehypeKatex, rehypeSanitize],
-    }), []);
-    const processedContent = useMemo(() => rewriteLocalImageTokens(content), [content]);
+  ({ content, streaming = false }, ref) => {
+    const renderedContent = useThrottledContent(content, streaming);
+    const blocks = useMemo(() => splitMarkdownBlocks(renderedContent), [renderedContent]);
 
     return (
-      <div ref={ref} className="prose prose-sm dark:prose-invert max-w-none overflow-hidden prose-pre:p-0 prose-pre:bg-transparent prose-pre:border-0 prose-code:before:content-none prose-code:after:content-none prose-headings:font-semibold prose-p:text-base prose-p:leading-relaxed">
-        <ReactMarkdown
-          remarkPlugins={plugins.remark}
-          rehypePlugins={plugins.rehype}
-          urlTransform={(url, key, node) => {
-            if (isImageSrcUrl(key, node)) {
-              const imageUrl = getImageUrl(url);
-              if (imageUrl) return imageUrl;
-            }
-
-            return defaultSafeUrlTransform(url);
-          }}
-          components={{
-            code({ className, children, node: _node, ...props }) {
-              const text = extractText(children);
-              const isBlock = className?.includes('language-') || text.includes('\n');
-              if (isBlock) {
-                if (className === 'language-mermaid') {
-                  return <MermaidDiagram source={text.replace(/\n$/, '')} />;
-                }
-                return <CodeBlock className={className} {...props}>{children}</CodeBlock>;
-              }
-              const imageTarget = getLocalImageTarget(text);
-              if (imageTarget) {
-                return (
-                  <span className="my-2 block">
-                    <img
-                      src={imageTarget.srcUrl}
-                      alt={text.trim()}
-                    data-open-url={imageTarget.openUrl}
-                    className="max-h-[480px] max-w-full cursor-pointer rounded-lg border border-border/40 object-contain"
-                    loading="lazy"
-                    onClick={(event) => openExternalUrl(event.currentTarget.dataset.openUrl || imageTarget.openUrl)}
-                  />
-                    <span className="mt-1 block text-[11px] text-muted-foreground/60 font-mono truncate">
-                      {text.trim()}
-                    </span>
-                  </span>
-                );
-              }
-              const openableUrl = getOpenableUrl(text);
-              if (openableUrl) {
-                return (
-                  <span className="inline-flex items-center gap-1 align-baseline">
-                    <code className="px-1.5 py-0.5 rounded bg-muted/60 text-[13px] font-mono border border-border/30 text-foreground/90" {...props}>
-                      {children}
-                    </code>
-                    <button
-                      type="button"
-                      onClick={() => openExternalUrl(openableUrl)}
-                      className="inline-flex h-5 w-5 items-center justify-center rounded border border-border/40 text-muted-foreground transition hover:bg-muted/60 hover:text-foreground"
-                      title="Open in browser"
-                      aria-label="Open in browser"
-                    >
-                      <ExternalLink className="h-3 w-3" />
-                    </button>
-                  </span>
-                );
-              }
-              return (
-                <code className="px-1.5 py-0.5 rounded bg-muted/60 text-[13px] font-mono border border-border/30 text-foreground/90" {...props}>
-                  {children}
-                </code>
-              );
-            },
-            a({ href, children, ...props }) {
-              const isExternal = typeof href === 'string' && /^(https?:\/\/|file:\/\/\/)/i.test(href);
-              if (isExternal) {
-                return (
-                  <a
-                    href={href}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      openExternalUrl(href!);
-                    }}
-                    className="text-primary underline-offset-2 hover:underline cursor-pointer"
-                    {...props}
-                  >
-                    {children}
-                  </a>
-                );
-              }
-              return <a href={href} {...props}>{children}</a>;
-            },
-            img({ src, alt, ...props }) {
-              const rawSrc = typeof src === 'string' ? src : '';
-              const imageTarget = getLocalImageTarget(rawSrc) || (typeof alt === 'string' ? getLocalImageTarget(alt) : null);
-              if (!imageTarget) {
-                return <img src={src} alt={alt ?? ''} {...props} />;
-              }
-
-              const label = alt?.trim() || rawSrc.trim();
-              return (
-                <span className="my-2 block">
-                  <img
-                    src={imageTarget.srcUrl}
-                    alt={label}
-                    data-open-url={imageTarget.openUrl}
-                    className="max-h-[480px] max-w-full cursor-pointer rounded-lg border border-border/40 object-contain"
-                    loading="lazy"
-                    onClick={(event) => openExternalUrl(event.currentTarget.dataset.openUrl || imageTarget.openUrl)}
-                    {...props}
-                  />
-                  <span className="mt-1 block text-[11px] text-muted-foreground/60 font-mono truncate">
-                    {label}
-                  </span>
-                </span>
-              );
-            },
-            table({ children }) {
-              return (
-                <div className="overflow-x-auto my-3">
-                  <table className="min-w-full border-collapse border border-border">{children}</table>
-                </div>
-              );
-            },
-            th({ children }) {
-              return <th className="border border-border px-3 py-2 bg-muted text-left text-sm font-medium">{children}</th>;
-            },
-            td({ children }) {
-              return <td className="border border-border px-3 py-2 text-sm">{children}</td>;
-            },
-          }}
-        >
-          {processedContent}
-        </ReactMarkdown>
+      <div ref={ref} className="prose prose-sm dark:prose-invert max-w-none overflow-hidden prose-pre:p-0 prose-pre:bg-transparent prose-pre:border-0 prose-code:before:content-none prose-code:after:content-none prose-headings:font-semibold prose-p:text-sm prose-p:leading-relaxed">
+        {/* Index keys (not content keys) are intentional: the last block must
+            stay mounted as it grows so its CodeBlock/Shiki state survives. */}
+        {blocks.map((block, index) => (
+          <MarkdownBlock key={index} source={block} />
+        ))}
       </div>
     );
   }

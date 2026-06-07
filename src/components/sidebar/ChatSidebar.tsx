@@ -43,44 +43,50 @@ import { useProfilesStore } from '@/stores/profiles-store';
 
 interface ConversationGroup {
   label: string;
+  /** Full label for the title attribute (e.g. owner/repo when the visible label is just the repo name). */
+  title?: string;
   conversations: Conversation[];
 }
 
-function groupConversationsByDate(conversations: Conversation[]): ConversationGroup[] {
-  const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const startOfYesterday = startOfToday - 86400000;
-  const startOf7DaysAgo = startOfToday - 7 * 86400000;
+const recencyOf = (c: Conversation) => new Date(c.updatedAt || c.createdAt).getTime();
+const byRecencyDesc = (a: Conversation, b: Conversation) => recencyOf(b) - recencyOf(a);
 
+// Group threads by attached project (GitHub repo). Pinned threads float to the top
+// across all projects; threads with no repo land in a trailing "No project" section.
+// Project sections are ordered by their most-recent thread.
+function groupConversationsByProject(conversations: Conversation[]): ConversationGroup[] {
   const pinned: Conversation[] = [];
-  const today: Conversation[] = [];
-  const yesterday: Conversation[] = [];
-  const previous7: Conversation[] = [];
-  const older: Conversation[] = [];
+  const byProject = new Map<string, Conversation[]>();
+  const noProject: Conversation[] = [];
 
   for (const conv of conversations) {
     if (conv.pinned) {
       pinned.push(conv);
       continue;
     }
-    const ts = new Date(conv.updatedAt || conv.createdAt).getTime();
-    if (ts >= startOfToday) {
-      today.push(conv);
-    } else if (ts >= startOfYesterday) {
-      yesterday.push(conv);
-    } else if (ts >= startOf7DaysAgo) {
-      previous7.push(conv);
+    const repo = conv.repoFullName;
+    if (repo) {
+      const list = byProject.get(repo);
+      if (list) list.push(conv);
+      else byProject.set(repo, [conv]);
     } else {
-      older.push(conv);
+      noProject.push(conv);
     }
   }
 
+  const projectGroups = Array.from(byProject.entries())
+    .map(([repo, convs]) => ({
+      label: repo.includes('/') ? repo.slice(repo.lastIndexOf('/') + 1) : repo,
+      title: repo,
+      conversations: convs.sort(byRecencyDesc),
+      mostRecent: Math.max(...convs.map(recencyOf)),
+    }))
+    .sort((a, b) => b.mostRecent - a.mostRecent);
+
   const groups: ConversationGroup[] = [];
-  if (pinned.length > 0) groups.push({ label: 'Pinned', conversations: pinned });
-  if (today.length > 0) groups.push({ label: 'Today', conversations: today });
-  if (yesterday.length > 0) groups.push({ label: 'Yesterday', conversations: yesterday });
-  if (previous7.length > 0) groups.push({ label: 'Previous 7 days', conversations: previous7 });
-  if (older.length > 0) groups.push({ label: 'Older', conversations: older });
+  if (pinned.length > 0) groups.push({ label: 'Pinned', conversations: pinned.sort(byRecencyDesc) });
+  for (const g of projectGroups) groups.push({ label: g.label, title: g.title, conversations: g.conversations });
+  if (noProject.length > 0) groups.push({ label: 'No project', conversations: noProject.sort(byRecencyDesc) });
   return groups;
 }
 
@@ -119,7 +125,7 @@ export const ChatSidebar: React.FC = () => {
 
   const { panels, focusedPanelId, setConversationForPanel, openPanel, openRoomPanel } = usePanelStore();
   const { activeTab, setActiveTab, setSettingsOpen, setRepoBrowserOpen, sidebarWidth, activeSubTab, setActiveSubTab, setSidebarOpen } = useUIStore();
-  const { activeProvider } = useSettingsStore();
+  const { activeProvider, githubPAT } = useSettingsStore();
   const isMobile = useIsMobile();
   // On mobile the sidebar is a slide-over drawer — dismiss it after navigating
   // to content so the user lands on the chat instead of staying behind the panel.
@@ -138,6 +144,14 @@ export const ChatSidebar: React.FC = () => {
   const [showAllTabs, setShowAllTabs] = useState(false);
   const [exportMenuId, setExportMenuId] = useState<string | null>(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const toggleGroup = (label: string) =>
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
+      return next;
+    });
   const [focusedRowId, setFocusedRowId] = useState<string | null>(null);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [tagEditorId, setTagEditorId] = useState<string | null>(null);
@@ -355,7 +369,7 @@ export const ChatSidebar: React.FC = () => {
   const displayLimit = showAll ? filteredConversations.length : 15;
   const visibleConversations = filteredConversations.slice(0, displayLimit);
   const hasMore = filteredConversations.length > 15 && !showAll;
-  const groups = useMemo(() => groupConversationsByDate(visibleConversations), [visibleConversations]);
+  const groups = useMemo(() => groupConversationsByProject(visibleConversations), [visibleConversations]);
 
   const handleTagClick = (tag: string, shift: boolean) => {
     setSelectedTags((prev) => {
@@ -504,7 +518,7 @@ export const ChatSidebar: React.FC = () => {
         const expanded = showAllTabs || overflowKeys.includes(activeSubTab);
         const visibleTabs = expanded ? HERMES_SUB_TABS : HERMES_SUB_TABS.slice(0, PRIMARY_TAB_COUNT);
         return (
-        <div className="px-3 pb-3 pt-1">
+        <div className="px-3 pb-3 pt-1" data-tour="subtab-nav">
           <div className={cn(
             'grid gap-1',
             sidebarWidth <= 260 ? 'grid-cols-3' : 'grid-cols-4'
@@ -668,7 +682,7 @@ export const ChatSidebar: React.FC = () => {
       )}
 
       {/* Thread list */}
-      <div className="flex-1 overflow-y-auto px-3 pb-3">
+      <div className="flex-1 overflow-y-auto px-3 pb-3" data-tour="threads-list">
         {conversations.length === 0 && archivedConversations.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 px-4">
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-background/60 mb-4">
@@ -679,12 +693,20 @@ export const ChatSidebar: React.FC = () => {
           </div>
         ) : (
           <>
-            {groups.map((group) => (
+            {groups.map((group) => {
+              const collapsed = collapsedGroups.has(group.label);
+              return (
               <div key={group.label}>
-                <div className="text-[10px] font-semibold uppercase tracking-[1.2px] text-[#666666] px-4 pt-4 pb-1">
-                  {group.label}
-                </div>
-                {group.conversations.map((conv) => {
+                <button
+                  onClick={() => toggleGroup(group.label)}
+                  className="flex w-full items-center gap-1.5 px-4 pt-4 pb-1 text-[10px] font-semibold uppercase tracking-[1.2px] text-[#666666] transition-colors hover:text-[hsl(var(--text-secondary))]"
+                  aria-expanded={!collapsed}
+                >
+                  {collapsed ? <ChevronRight className="h-3 w-3 shrink-0" /> : <ChevronDown className="h-3 w-3 shrink-0" />}
+                  <span className="min-w-0 truncate" title={group.title ?? group.label}>{group.label}</span>
+                  <span className="ml-auto shrink-0 font-mono text-[9px] text-muted-foreground/40">{group.conversations.length}</span>
+                </button>
+                {!collapsed && group.conversations.map((conv) => {
                   const isFocused = activeTab === 'chat' && focusedConvId === conv.id;
                   const isInAnotherPanel = !isFocused && panels.some((p) => p.conversationId === conv.id);
                   const activity = activities[conv.id];
@@ -968,7 +990,8 @@ export const ChatSidebar: React.FC = () => {
                   );
                 })}
               </div>
-            ))}
+              );
+            })}
 
             {hasMore && (
               <button
@@ -1136,50 +1159,51 @@ export const ChatSidebar: React.FC = () => {
         />
       )}
 
-      {/* Footer — permissions + repo status */}
-      <div className={cn(
-        'flex shrink-0 items-center border-t border-[#2F2F2F] px-3 py-2',
-        isCompactFooter ? 'gap-1.5' : 'gap-2'
-      )}>
-        <div
-          className={cn(
-            'inline-flex shrink-0 items-center rounded-full border border-[#2F2F2F] bg-[hsl(var(--card))]/70 py-1 text-[11px] text-[#666666]',
-            isUltraCompactFooter ? 'px-2' : 'gap-1.5 px-2.5'
-          )}
-          title={accessStatusLabel}
-          aria-label={accessStatusLabel}
-        >
-          <Lock className="h-3 w-3 text-[#555555]" />
-          {permissionsLabel && <span className="truncate">{permissionsLabel}</span>}
-          {!isUltraCompactFooter && <ChevronRight className="h-2.5 w-2.5 text-[#444444]" />}
-        </div>
-        <div
-          className={cn(
-            'min-w-0 flex-1 rounded-full border px-2.5 py-1',
-            activeRepo
-              ? 'border-emerald-500/15 bg-emerald-500/[0.06]'
-              : 'border-[#2F2F2F] bg-[hsl(var(--card))]/50'
-          )}
-          title={activeRepo ? activeRepo.fullName : 'No repo attached'}
-        >
-          <div className="flex min-w-0 items-center gap-1.5 text-[11px] leading-none">
-            <Circle
+      {/* Footer — repo status + GitHub connect */}
+      <div
+        data-tour="repo-footer"
+        className={cn(
+          'flex shrink-0 items-center border-t border-[#2F2F2F] px-3 py-2',
+          isCompactFooter ? 'gap-1.5' : 'gap-2'
+        )}
+      >
+        {activeRepo ? (
+          <>
+            <div
               className={cn(
-                'h-1.5 w-1.5 shrink-0',
-                activeRepo ? 'fill-emerald-500 text-emerald-500' : 'fill-[#4A4A4A] text-[#4A4A4A]'
+                'inline-flex h-7 shrink-0 items-center rounded-full border border-[#2F2F2F] bg-[hsl(var(--card))]/70 text-[11px] text-[#666666]',
+                isUltraCompactFooter ? 'px-2' : 'gap-1.5 px-2.5'
               )}
-            />
-            {activeRepo && <GitFork className="h-3 w-3 shrink-0 text-[hsl(var(--text-dim))]" />}
-            <span
-              className={cn(
-                'min-w-0 flex-1 truncate',
-                activeRepo ? 'font-medium text-[hsl(var(--text-secondary))]' : 'text-[#666666]'
-              )}
+              title={accessStatusLabel}
+              aria-label={accessStatusLabel}
             >
-              {repoDisplayName}
-            </span>
-          </div>
-        </div>
+              <Lock className="h-3 w-3 text-[#555555]" />
+              {permissionsLabel && <span className="truncate">{permissionsLabel}</span>}
+            </div>
+            <button
+              onClick={() => setRepoBrowserOpen(true)}
+              className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-full border border-emerald-500/15 bg-emerald-500/[0.06] px-2.5 text-[11px] leading-none transition-colors hover:border-emerald-500/30 hover:bg-emerald-500/[0.1]"
+              title={`${activeRepo.fullName} — change repository`}
+              style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+            >
+              <Circle className="h-1.5 w-1.5 shrink-0 fill-emerald-500 text-emerald-500" />
+              <GitFork className="h-3 w-3 shrink-0 text-[hsl(var(--text-dim))]" />
+              <span className="min-w-0 flex-1 truncate text-left font-medium text-[hsl(var(--text-secondary))]">
+                {repoDisplayName}
+              </span>
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={() => (githubPAT ? setRepoBrowserOpen(true) : setSettingsOpen(true, 'github'))}
+            className="flex h-7 w-full items-center justify-center gap-2 rounded-full border border-[#2F2F2F] bg-[hsl(var(--card))]/60 px-3 text-[11px] font-medium text-[#888888] transition-colors hover:border-primary/30 hover:bg-primary/[0.06] hover:text-[hsl(var(--text-secondary))]"
+            title={githubPAT ? 'Attach a repository to this thread' : 'Connect your GitHub account'}
+            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          >
+            <Github className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">{githubPAT ? 'Attach repository' : 'Connect GitHub'}</span>
+          </button>
+        )}
       </div>
 
       {showTreeOverlay && (

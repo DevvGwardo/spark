@@ -7,11 +7,13 @@ import {
   PlugZap,
   Plus,
   RefreshCw,
+  Store,
   Terminal,
   Trash2,
   Wrench,
   Zap,
 } from 'lucide-react';
+import { useUIStore } from '@/stores/ui-store';
 import {
   useHermesStore,
   type MCPServer,
@@ -379,6 +381,8 @@ export function HermesMCPPanel() {
   const removeMCPServer = useHermesStore((s) => s.removeMCPServer);
   const toggleMCPServer = useHermesStore((s) => s.toggleMCPServer);
 
+  const setMcpStoreFullscreen = useUIStore((s) => s.setMcpStoreFullscreen);
+
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
   const [connectingIds, setConnectingIds] = useState<Set<string>>(new Set());
@@ -446,6 +450,14 @@ export function HermesMCPPanel() {
           </p>
         </div>
         <div className="flex items-center gap-1">
+          <button
+            onClick={() => setMcpStoreFullscreen(true)}
+            className="inline-flex h-7 items-center gap-1 rounded-lg px-2 text-[11px] font-medium text-muted-foreground/60 transition-colors hover:bg-[hsl(var(--sidebar-active))] hover:text-foreground"
+            title="Browse the MCP store"
+          >
+            <Store className="h-3.5 w-3.5" />
+            Store
+          </button>
           <button
             onClick={() => { void discoverAllMCPTools(); }}
             className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground/60 transition-colors hover:bg-[hsl(var(--sidebar-active))] hover:text-foreground"

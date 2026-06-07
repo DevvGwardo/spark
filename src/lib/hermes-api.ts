@@ -98,6 +98,28 @@ export interface HermesWorkspaceOverview {
     output_tokens: number;
     total_tokens: number;
   }>;
+  integrations?: {
+    cursor_composer?: CursorComposerBridgeStatus;
+  };
+}
+
+export interface CursorComposerBridgeStatus {
+  id: string;
+  name: string;
+  description?: string;
+  connected: boolean;
+  skills_ready: boolean;
+  bridge_repo?: string;
+  launchd_label?: string;
+  bridge?: {
+    reachable?: boolean;
+    status?: string;
+    health_url?: string;
+    api_url?: string;
+    detail?: string;
+  };
+  skills?: Record<string, boolean>;
+  detail?: string;
 }
 
 export interface HermesSkillSummary {
@@ -202,6 +224,8 @@ export interface HermesProviderInfo {
 export interface HermesProvidersResponse {
   providers: HermesProviderInfo[];
   defaultProvider: string;
+  /** The agent's CLI-configured default model (config.yaml `model.default`). */
+  defaultModel: string;
 }
 
 /**
@@ -209,13 +233,20 @@ export interface HermesProvidersResponse {
  * agent can route to. Used to populate the provider/model picker.
  */
 export async function fetchHermesProviders(): Promise<HermesProvidersResponse> {
-  const data = await hermesFetch<{ data?: HermesProviderInfo[]; default_provider?: string }>(
-    '/providers',
-  );
+  const data = await hermesFetch<{
+    data?: HermesProviderInfo[];
+    default_provider?: string;
+    default_model?: string;
+  }>('/providers');
   return {
     providers: Array.isArray(data.data) ? data.data : [],
     defaultProvider: data.default_provider || 'openrouter',
+    defaultModel: data.default_model || '',
   };
+}
+
+export async function fetchCursorComposerBridge(): Promise<CursorComposerBridgeStatus> {
+  return hermesFetch<CursorComposerBridgeStatus>('/bridges/cursor-composer');
 }
 
 // ─── Cron Jobs ──────────────────────────────────────────────────────────────
@@ -299,13 +330,70 @@ export async function fetchCronRunHistory(jobId: string): Promise<CronRun[]> {
 
 // ─── Sessions ───────────────────────────────────────────────────────────────
 
-export async function fetchSessions(): Promise<HermesSession[]> {
-  const data = await hermesFetch<{ sessions: HermesSession[] }>('/sessions');
-  return data.sessions ?? [];
+export interface SessionStatusCounts {
+  active: number;
+  completed: number;
+  error: number;
+  total: number;
 }
 
-export async function getSession(sessionId: string): Promise<HermesSessionDetail> {
-  return hermesFetch<HermesSessionDetail>(`/sessions/${encodeURIComponent(sessionId)}`);
+export interface SessionsPage {
+  sessions: HermesSession[];
+  /** Total sessions matching the query, before pagination. */
+  total: number;
+  /** Aggregate status counts over the full matching set. */
+  counts: SessionStatusCounts;
+}
+
+export interface FetchSessionsParams {
+  limit?: number;
+  offset?: number;
+  q?: string;
+}
+
+export async function fetchSessions(params: FetchSessionsParams = {}): Promise<SessionsPage> {
+  const search = new URLSearchParams();
+  if (params.limit != null) search.set('limit', String(params.limit));
+  if (params.offset != null) search.set('offset', String(params.offset));
+  if (params.q && params.q.trim()) search.set('q', params.q.trim());
+  const suffix = search.toString() ? `?${search.toString()}` : '';
+
+  const data = await hermesFetch<{
+    sessions?: HermesSession[];
+    total?: number;
+    counts?: Partial<SessionStatusCounts>;
+  }>(`/sessions${suffix}`);
+
+  const sessions = data.sessions ?? [];
+  return {
+    sessions,
+    total: data.total ?? sessions.length,
+    counts: {
+      active: data.counts?.active ?? 0,
+      completed: data.counts?.completed ?? 0,
+      error: data.counts?.error ?? 0,
+      total: data.counts?.total ?? data.total ?? sessions.length,
+    },
+  };
+}
+
+// Coalesce concurrent requests for the same session. The sidebar
+// HermesChatsPanel and the main-area SessionHistoryChat both key off the same
+// selectedSessionId and each fetch the detail on select — without this they
+// fire two identical round-trips. Cleared the moment the request settles, so a
+// later poll still gets fresh data (we dedupe duplicates, we don't cache).
+const inflightSessionDetail = new Map<string, Promise<HermesSessionDetail>>();
+
+export function getSession(sessionId: string): Promise<HermesSessionDetail> {
+  const existing = inflightSessionDetail.get(sessionId);
+  if (existing) return existing;
+
+  const request = hermesFetch<HermesSessionDetail>(`/sessions/${encodeURIComponent(sessionId)}`)
+    .finally(() => {
+      inflightSessionDetail.delete(sessionId);
+    });
+  inflightSessionDetail.set(sessionId, request);
+  return request;
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
@@ -354,10 +442,107 @@ export async function fetchHermesSkills(): Promise<HermesSkillSummary[]> {
   return data.skills ?? [];
 }
 
+// ─── Slash commands ─────────────────────────────────────────────────────────
+
+export interface HermesAgentCommand {
+  name: string;
+  description: string;
+  category: string;
+  usage: string;
+  aliases: string[];
+  kind: 'agent' | 'skill';
+}
+
+/** Catalog of slash commands the installed hermes-agent exposes to a chat
+ *  client (built-ins + installed skills + plugin commands). */
+export async function fetchHermesAgentCommands(): Promise<HermesAgentCommand[]> {
+  const data = await hermesFetch<{ commands: HermesAgentCommand[] }>('/workspace/commands');
+  return data.commands ?? [];
+}
+
+// ─── Saved providers (hermes-agent auth store) ──────────────────────────────
+
+export interface HermesSavedProvider {
+  id: string;
+  name: string;
+  label: string;
+  auth_type: string;
+  base_url: string;
+  status: 'active' | 'configured' | 'error';
+  detail: string;
+  active: boolean;
+  request_count: number;
+}
+
+/** Providers the user has saved/authenticated in their hermes-agent
+ *  (~/.hermes/auth.json), with derived status. Read-only. */
+export async function fetchHermesSavedProviders(): Promise<HermesSavedProvider[]> {
+  const data = await hermesFetch<{ providers: HermesSavedProvider[] }>('/workspace/auth-providers');
+  return data.providers ?? [];
+}
+
 export async function fetchHermesSkillDetail(skillId: string): Promise<HermesSkillDetail> {
   const params = new URLSearchParams({ id: skillId });
   const data = await hermesFetch<{ skill: HermesSkillDetail }>(`/workspace/skills/content?${params.toString()}`);
   return data.skill;
+}
+
+// ─── MCP servers (hermes-agent config.yaml) ─────────────────────────────────
+
+/** An MCP server installed in the hermes-agent's config.yaml. Secrets are
+ *  redacted by the bridge (env_keys lists names only). */
+export interface HermesMcpServerInfo {
+  name: string;
+  transport: 'stdio' | 'http';
+  command: string;
+  args: string[];
+  url: string;
+  enabled: boolean;
+  env_keys: string[];
+  tool_count: number;
+  /** Non-null when this server came from the curated store catalog (removable). */
+  catalog_id: string | null;
+}
+
+/** A curated, one-click-installable MCP server. */
+export interface HermesMcpCatalogEntry {
+  id: string;
+  name: string;
+  description: string;
+  transport: 'stdio' | 'http';
+  runtime: string;
+  requires_param: { key: string; label: string; placeholder: string; default: string } | null;
+  docs_url: string;
+}
+
+/** MCP servers currently installed for the hermes-agent (read from config.yaml). */
+export async function fetchHermesMcpServers(): Promise<HermesMcpServerInfo[]> {
+  const data = await hermesFetch<{ servers: HermesMcpServerInfo[] }>('/workspace/mcp-servers');
+  return data.servers ?? [];
+}
+
+/** The curated catalog of MCP servers a user can install with one click. */
+export async function fetchHermesMcpCatalog(): Promise<HermesMcpCatalogEntry[]> {
+  const data = await hermesFetch<{ catalog: HermesMcpCatalogEntry[] }>('/workspace/mcp-catalog');
+  return data.catalog ?? [];
+}
+
+/** Install a curated MCP server into the agent's config.yaml and reload it. */
+export async function installHermesMcpServer(
+  id: string,
+  param?: string,
+): Promise<{ ok: boolean; installed: string; reloaded: boolean }> {
+  return hermesFetch('/workspace/mcp-servers/install', {
+    method: 'POST',
+    body: JSON.stringify(param ? { id, param } : { id }),
+  });
+}
+
+/** Remove a store-installed MCP server (agent-managed servers stay read-only). */
+export async function uninstallHermesMcpServer(
+  name: string,
+): Promise<{ ok: boolean; removed: string; reloaded: boolean }> {
+  return hermesFetch(`/workspace/mcp-servers/${encodeURIComponent(name)}`, { method: 'DELETE' });
 }
 
 export async function deleteHermesSkill(skillId: string): Promise<void> {

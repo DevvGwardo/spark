@@ -19,6 +19,8 @@ export interface Conversation {
   originalCreatedAt?: string;
   archivedAt?: string | null;
   tags?: string[];
+  /** Denormalized GitHub repo (owner/name) attached to this thread, used to group threads by project. */
+  repoFullName?: string | null;
 }
 
 export interface Message {

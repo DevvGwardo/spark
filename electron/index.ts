@@ -300,7 +300,7 @@ async function createWindow() {
           " font-src 'self' https://fonts.gstatic.com data:;" +
           " img-src 'self' data: https: http: file: cloudchat-asset:;" +
           " media-src 'self' blob:;" +
-          " connect-src 'self' data: http://localhost:* " + (is.dev ? "ws://localhost:* " : "") + "https://api.anthropic.com https://api.openai.com https://api.deepseek.com https://generativelanguage.googleapis.com https://api.minimax.chat https://api.moonshot.cn https://api.x.ai https://openrouter.ai https://api.together.xyz https://api.groq.com https://api.mistral.ai https://api.perplexity.ai https://cdn.jsdelivr.net;" +
+          " connect-src 'self' data: http://localhost:* " + (is.dev ? "ws://localhost:* " : "") + "https://api.github.com https://api.anthropic.com https://api.openai.com https://api.deepseek.com https://generativelanguage.googleapis.com https://api.minimax.chat https://api.moonshot.cn https://api.x.ai https://openrouter.ai https://api.together.xyz https://api.groq.com https://api.mistral.ai https://api.perplexity.ai https://cdn.jsdelivr.net;" +
           " worker-src 'self' blob:;"
         ]
       }

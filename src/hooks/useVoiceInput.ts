@@ -23,14 +23,17 @@ export interface UseVoiceInputResult extends VoiceInputState {
  */
 function resolveTranscriptionConfig(
   providers: Record<Provider, { apiKey: string }>,
-): { provider: TranscribeProvider; apiKey: string } | null {
+): { provider: TranscribeProvider; apiKey: string } {
   if (providers.groq?.apiKey?.trim()) {
     return { provider: 'groq', apiKey: providers.groq.apiKey.trim() };
   }
   if (providers.openai?.apiKey?.trim()) {
     return { provider: 'openai', apiKey: providers.openai.apiKey.trim() };
   }
-  return null;
+  // No local key — send an empty key so the server resolves the Groq/OpenAI
+  // credential from the Hermes agent (~/.hermes). Avoids re-entering a key you
+  // already have configured in Hermes.
+  return { provider: 'groq', apiKey: '' };
 }
 
 async function transcribeAudio(
@@ -124,12 +127,6 @@ export function useVoiceInput(
     setError(null);
     chunksRef.current = [];
 
-    const config = resolveTranscriptionConfig(providersRef.current);
-    if (!config) {
-      setError('No transcription provider available. Add a Groq or OpenAI API key in settings.');
-      return;
-    }
-
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -190,12 +187,6 @@ export function useVoiceInput(
     }
 
     const config = resolveTranscriptionConfig(providersRef.current);
-    if (!config) {
-      cleanupStream();
-      setIsRecording(false);
-      setError('No transcription provider available.');
-      return null;
-    }
 
     // Return a promise that resolves when the recorder stops and data is collected
     return new Promise<string | null>((resolve) => {

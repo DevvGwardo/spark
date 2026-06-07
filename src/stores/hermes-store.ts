@@ -87,11 +87,22 @@ interface HermesState {
    */
   underlyingProvider: string;
 
+  /**
+   * When true (default), Spark's hermes model tracks the agent's CLI-configured
+   * default (config.yaml `model.default`) and updates when it changes in the
+   * terminal. Picking a specific model in the in-app picker sets this false so
+   * the pick sticks; choosing "Agent default" sets it back to true.
+   */
+  followAgentModel: boolean;
+
   setToolset: (key: keyof HermesToolsets, enabled: boolean) => void;
   getEnabledToolsets: () => string[];
 
   /** Set the underlying provider for the Hermes agent ('' = auto). */
   setUnderlyingProvider: (provider: string) => void;
+
+  /** Toggle whether the hermes model follows the agent's CLI default. */
+  setFollowAgentModel: (follow: boolean) => void;
 
   addMCPServer: (server: MCPServer) => void;
   removeMCPServer: (id: string) => void;
@@ -143,6 +154,7 @@ export const useHermesStore = create<HermesState>()(
       swarm: { ...defaultSwarm },
       sessionApprovalPolicies: [],
       underlyingProvider: '',
+      followAgentModel: true,
 
       setToolset: (key, enabled) =>
         set((state) => ({
@@ -151,6 +163,9 @@ export const useHermesStore = create<HermesState>()(
 
       setUnderlyingProvider: (provider) =>
         set(() => ({ underlyingProvider: provider })),
+
+      setFollowAgentModel: (follow) =>
+        set(() => ({ followAgentModel: follow })),
 
       getEnabledToolsets: () => {
         const ts = get().toolsets;
@@ -287,6 +302,7 @@ export const useHermesStore = create<HermesState>()(
         mcpServers: state.mcpServers,
         swarm: state.swarm,
         underlyingProvider: state.underlyingProvider,
+        followAgentModel: state.followAgentModel,
       }),
       merge: (persisted, current) => {
         const merged = { ...current, ...(persisted as Partial<HermesState>) };

@@ -6,7 +6,6 @@ import { getSession, type HermesSessionDetail, type HermesSessionMessage } from 
 import { deriveTasks } from '@/lib/derive-tasks';
 import { cn } from '@/lib/utils';
 import { relativeTime } from '@/lib/relative-time';
-import { countSessionStatuses, filterSessions } from './hermesSidebarUtils';
 import { TaskList } from './TaskList';
 import { ToolMessageAccordion } from '@/components/chat/ToolMessageAccordion';
 
@@ -81,7 +80,7 @@ function SessionCard({
   return (
     <div
       className={cn(
-        'group overflow-hidden rounded-lg border transition-colors',
+        'session-card group overflow-hidden rounded-lg border transition-colors',
         isSelected
           ? 'border-border/70 bg-background/60'
           : 'border-border/30 bg-background/30 hover:border-border/60 hover:bg-background/50',
@@ -246,8 +245,23 @@ function SessionCard({
 }
 
 export function HermesChatsPanel() {
-  const { sessions, activeDetails, loading, error, fetchSessions, fetchActiveDetails, deleteSession } = useSessionsStore();
+  const {
+    sessions,
+    total,
+    counts,
+    hasMore,
+    loadingMore,
+    activeDetails,
+    loading,
+    error,
+    loadSessions,
+    loadMoreSessions,
+    refreshSessions,
+    fetchActiveDetails,
+    deleteSession,
+  } = useSessionsStore();
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
   const detailRequestRef = useRef(0);
   const [selectedSession, setSelectedSession] = useState<HermesSessionDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -261,10 +275,8 @@ export function HermesChatsPanel() {
   const setSelectedSessionId = useUIStore((s) => s.setSelectedSessionId);
   const viewMode = useUIStore((s) => s.hermesSessionViewMode);
   const setViewMode = useUIStore((s) => s.setHermesSessionViewMode);
-  const statusCounts = countSessionStatuses(sessions);
   const activeSessions = sessions.filter((session) => session.status === 'active');
   const activeSessionIds = activeSessions.map((session) => session.id).join(',');
-  const filteredSessions = filterSessions(sessions, query);
 
   const loadSessionDetail = useCallback(async (sessionId: string, silent = false) => {
     const requestId = ++detailRequestRef.current;
@@ -305,13 +317,22 @@ export function HermesChatsPanel() {
     }
   }, [fetchActiveDetails]);
 
+  // Load the first page, re-running when the search query changes. Debounced so
+  // typing in the filter box doesn't fire a request per keystroke; an empty
+  // query loads immediately (also handles the initial mount).
   useEffect(() => {
-    void fetchSessions();
+    const delay = query.trim() ? 300 : 0;
+    const timer = setTimeout(() => {
+      void loadSessions({ query });
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [query, loadSessions]);
 
-    // Auto-refresh every 10s
+  // Poll every 10s: silently refresh the loaded window plus active/selected detail.
+  useEffect(() => {
     intervalRef.current = setInterval(() => {
       void (async () => {
-        await fetchSessions();
+        await refreshSessions();
         if (viewMode === 'all-active') {
           await loadActiveSessionDetails(true);
         } else if (selectedSessionId) {
@@ -323,7 +344,7 @@ export function HermesChatsPanel() {
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [fetchSessions, loadActiveSessionDetails, loadSessionDetail, selectedSessionId, viewMode]);
+  }, [refreshSessions, loadActiveSessionDetails, loadSessionDetail, selectedSessionId, viewMode]);
 
   useEffect(() => {
     if (!selectedSessionId) {
@@ -346,16 +367,16 @@ export function HermesChatsPanel() {
     void loadActiveSessionDetails(true);
   }, [activeSessionIds, activeSessions.length, loadActiveSessionDetails, viewMode]);
 
-  useEffect(() => {
-    if (!selectedSessionId) return;
-    const stillExists = sessions.some((session) => session.id === selectedSessionId);
-    if (stillExists) return;
-    detailRequestRef.current += 1;
-    setSelectedSessionId(null);
-    setSelectedSession(null);
-    setDetailError(null);
-    setDetailLoading(false);
-  }, [selectedSessionId, sessions, setSelectedSessionId]);
+  // Infinite scroll: load the next page as the list nears the bottom. Reads are
+  // cheap during scroll (layout is already clean) and loadMoreSessions guards
+  // against redundant/in-flight calls.
+  const handleListScroll = useCallback(() => {
+    const el = listRef.current;
+    if (!el) return;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 240) {
+      void loadMoreSessions();
+    }
+  }, [loadMoreSessions]);
 
   const handleSelect = (id: string) => {
     if (selectedSessionId === id) {
@@ -383,7 +404,7 @@ export function HermesChatsPanel() {
 
   const handleRefresh = () => {
     void (async () => {
-      await fetchSessions();
+      await refreshSessions();
       if (viewMode === 'all-active') {
         await loadActiveSessionDetails();
       } else if (selectedSessionId) {
@@ -418,30 +439,30 @@ export function HermesChatsPanel() {
         </div>
       </div>
 
-      {/* Status counts */}
-      {statusCounts.total > 0 && (
+      {/* Status counts (server-computed over the full matching set) */}
+      {counts.total > 0 && (
         <div className="flex items-center gap-1.5 px-3 pb-2 text-[10px]">
-          {statusCounts.active > 0 && (
+          {counts.active > 0 && (
             <span className="rounded-full bg-blue-500/10 px-1.5 py-0.5 text-blue-400">
-              {statusCounts.active} active
+              {counts.active} active
             </span>
           )}
-          {statusCounts.completed > 0 && (
+          {counts.completed > 0 && (
             <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-emerald-400">
-              {statusCounts.completed} done
+              {counts.completed} done
             </span>
           )}
-          {statusCounts.error > 0 && (
+          {counts.error > 0 && (
             <span className="rounded-full bg-red-500/10 px-1.5 py-0.5 text-red-400">
-              {statusCounts.error} error
+              {counts.error} error
             </span>
           )}
-          <span className="ml-auto text-muted-foreground/40">{statusCounts.total} total</span>
+          <span className="ml-auto text-muted-foreground/40">{counts.total} total</span>
         </div>
       )}
 
       {/* Search */}
-      {viewMode !== 'all-active' && sessions.length > 0 && (
+      {viewMode !== 'all-active' && (sessions.length > 0 || query.trim().length > 0) && (
         <div className="mx-3 mb-2">
           <div className="relative">
             <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground/40" />
@@ -504,13 +525,17 @@ export function HermesChatsPanel() {
       )}
 
       {/* Session list */}
-      <div className="flex-1 space-y-1 overflow-y-auto px-3 pb-3">
+      <div
+        ref={listRef}
+        onScroll={handleListScroll}
+        className="flex-1 space-y-1 overflow-y-auto px-3 pb-3"
+      >
         {loading && sessions.length === 0 ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin text-muted-foreground/60" />
             <span className="text-[11px] text-muted-foreground/60">Loading...</span>
           </div>
-        ) : sessions.length === 0 ? (
+        ) : sessions.length === 0 && !query.trim() ? (
           <div className="flex flex-col items-center justify-center px-4 py-8">
             <Zap className="mb-2 h-7 w-7 text-muted-foreground/30" />
             <p className="text-center text-[11px] text-muted-foreground/50">No sessions yet</p>
@@ -518,29 +543,47 @@ export function HermesChatsPanel() {
               Sessions appear when Hermes processes requests
             </p>
           </div>
-        ) : filteredSessions.length === 0 ? (
+        ) : sessions.length === 0 ? (
           <div className="flex flex-col items-center justify-center px-4 py-8">
             <Search className="mb-2 h-7 w-7 text-muted-foreground/30" />
             <p className="text-center text-[11px] text-muted-foreground/50">No sessions match "{query}"</p>
           </div>
         ) : (
-          filteredSessions.map((session) => (
-            <SessionCard
-              key={session.id}
-              session={session}
-              isSelected={selectedSessionId === session.id}
-              onSelect={handleSelect}
-              deleteConfirmId={deleteConfirmId}
-              onDeleteRequest={setDeleteConfirmId}
-              onDeleteConfirm={handleDeleteConfirm}
-              onDeleteCancel={() => setDeleteConfirmId(null)}
-              detail={selectedSessionId === session.id ? selectedSession : null}
-              detailLoading={selectedSessionId === session.id ? detailLoading : false}
-              detailError={selectedSessionId === session.id ? detailError : null}
-              detailTab={detailTab}
-              onTabChange={setDetailTab}
-            />
-          ))
+          <>
+            {sessions.map((session) => (
+              <SessionCard
+                key={session.id}
+                session={session}
+                isSelected={selectedSessionId === session.id}
+                onSelect={handleSelect}
+                deleteConfirmId={deleteConfirmId}
+                onDeleteRequest={setDeleteConfirmId}
+                onDeleteConfirm={handleDeleteConfirm}
+                onDeleteCancel={() => setDeleteConfirmId(null)}
+                detail={selectedSessionId === session.id ? selectedSession : null}
+                detailLoading={selectedSessionId === session.id ? detailLoading : false}
+                detailError={selectedSessionId === session.id ? detailError : null}
+                detailTab={detailTab}
+                onTabChange={setDetailTab}
+              />
+            ))}
+            {loadingMore && (
+              <div className="flex items-center justify-center py-3">
+                <Loader2 className="mr-2 h-3 w-3 animate-spin text-muted-foreground/50" />
+                <span className="text-[10px] text-muted-foreground/50">Loading more…</span>
+              </div>
+            )}
+            {hasMore && !loadingMore && (
+              <p className="px-1 py-2 text-center text-[10px] text-muted-foreground/40">
+                Showing {sessions.length} of {total} · scroll for more
+              </p>
+            )}
+            {!hasMore && total > 0 && (
+              <p className="px-1 py-2 text-center text-[10px] text-muted-foreground/40">
+                {total} session{total === 1 ? '' : 's'}{query.trim() ? ' matching' : ''}
+              </p>
+            )}
+          </>
         )}
       </div>
     </div>

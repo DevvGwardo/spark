@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Activity, Database, Loader2, Orbit, RefreshCw, Rocket, Sparkles } from 'lucide-react';
+import { Activity, Check, Code2, Database, Loader2, Orbit, RefreshCw, Rocket, Sparkles, X } from 'lucide-react';
 import { fetchHermesWorkspaceOverview, type HermesWorkspaceOverview } from '@/lib/hermes-api';
 import { relativeTime } from '@/lib/relative-time';
 import { formatCompactNumber, formatBytes } from '@/components/sidebar/hermesSidebarUtils';
@@ -95,6 +95,31 @@ export function HermesOverviewPanel() {
               </div>
             ))}
           </div>
+
+          {overview.integrations?.cursor_composer && (
+            <div className="rounded-xl border border-border/40 bg-background/40 p-3">
+              <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground/45">
+                <Code2 className="h-3.5 w-3.5" />
+                Cursor Composer
+              </div>
+              <div className="mt-3 flex items-center justify-between gap-3 text-[12px]">
+                <span className="text-muted-foreground/55">Local bridge</span>
+                <span className={overview.integrations.cursor_composer.connected ? 'text-emerald-400' : 'text-amber-300'}>
+                  {overview.integrations.cursor_composer.connected ? (
+                    <span className="inline-flex items-center gap-1"><Check className="h-3 w-3" /> :8790</span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1"><X className="h-3 w-3" /> down</span>
+                  )}
+                </span>
+              </div>
+              <div className="mt-2 flex items-center justify-between gap-3 text-[12px]">
+                <span className="text-muted-foreground/55">Skills</span>
+                <span className="text-foreground/85">
+                  {overview.integrations.cursor_composer.skills_ready ? 'cursor-composer · composer-code' : 'missing'}
+                </span>
+              </div>
+            </div>
+          )}
 
           <div className="rounded-xl border border-border/40 bg-background/40 p-3">
             <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground/45">

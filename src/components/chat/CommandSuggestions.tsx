@@ -15,6 +15,13 @@ export function commandTakesArgs(cmd: { usage: string }): boolean {
   return cmd.usage.includes('<');
 }
 
+// Subtle right-aligned tag distinguishing skill / agent commands from the
+// native CloudChat (app) commands. Local 'ui' commands get no badge.
+const KIND_BADGE: Record<string, { label: string; className: string }> = {
+  skill: { label: 'skill', className: 'text-emerald-300/80 bg-emerald-500/10 border-emerald-500/20' },
+  agent: { label: 'agent', className: 'text-sky-300/80 bg-sky-500/10 border-sky-500/20' },
+};
+
 export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
   query,
   visible,
@@ -60,13 +67,14 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
         <span className="text-[10px] font-semibold uppercase tracking-wider text-[#666666]">
           Commands
         </span>
-        <span className="text-[10px] text-[#555555]">↑↓ navigate · Enter run</span>
+        <span className="text-[10px] text-[#555555]">↑↓ navigate · ↵ select</span>
       </div>
 
       {/* Command list */}
       <div className="py-1 max-h-48 overflow-y-auto">
         {filtered.map((cmd, i) => {
           const takesArgs = commandTakesArgs(cmd);
+          const badge = cmd.kind ? KIND_BADGE[cmd.kind] : undefined;
           return (
             <button
               key={cmd.name}
@@ -99,9 +107,21 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
                 >
                   {cmd.description}
                 </span>
-                {takesArgs && (
-                  <span className="ml-auto shrink-0 text-[10px] text-[#555555] italic">
-                    needs args
+                {(takesArgs || badge) && (
+                  <span className="ml-auto shrink-0 flex items-center gap-1.5">
+                    {takesArgs && (
+                      <span className="text-[10px] text-[#555555] italic">needs args</span>
+                    )}
+                    {badge && (
+                      <span
+                        className={cn(
+                          'text-[9px] font-medium uppercase tracking-wide px-1 py-px rounded border',
+                          badge.className
+                        )}
+                      >
+                        {badge.label}
+                      </span>
+                    )}
                   </span>
                 )}
               </div>

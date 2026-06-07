@@ -390,11 +390,13 @@ describe('ChatArea auto-scroll', () => {
     });
 
     expect(screen.getByText('hello from Hermes streaming')).toBeInTheDocument();
-    // The digest-watching useEffect should have called scrollToIndex
+    // The digest-watching useEffect should have called scrollToIndex with
+    // instant ('auto') scrolling during streaming — smooth would re-animate on
+    // every chunk and make the text bounce.
     expect(scrollToIndexMock).toHaveBeenCalledWith({
       index: 0,
       align: 'end',
-      behavior: 'smooth',
+      behavior: 'auto',
     });
   });
 

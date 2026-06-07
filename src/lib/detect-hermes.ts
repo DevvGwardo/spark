@@ -28,6 +28,10 @@ export interface HermesBridgeStatus {
   isReachable: boolean;
   hasOpenRouterCreds: boolean;
   hasMiniMaxCreds: boolean;
+  /** Full per-provider credential map from the bridge, e.g. { nous: true, openrouter: false }. */
+  providerCredentials: Record<string, boolean>;
+  /** True if the bridge has a usable credential for ANY provider (not just OpenRouter/MiniMax). */
+  hasAnyCreds: boolean;
   credentialSources: HermesBridgeCredentialSources;
   credentialSourcesMinimax: HermesBridgeMiniMaxCredentialSources;
   launchTokenPresent: boolean;
@@ -63,6 +67,7 @@ export async function detectHermesBridge(): Promise<HermesBridgeStatus | null> {
       status?: string;
       has_openrouter_creds?: boolean;
       has_minimax_creds?: boolean;
+      provider_credentials?: Record<string, boolean>;
       credential_sources?: {
         env?: boolean;
         auth_json?: boolean;
@@ -84,10 +89,18 @@ export async function detectHermesBridge(): Promise<HermesBridgeStatus | null> {
       return null;
     }
 
+    const providerCredentials = data.provider_credentials ?? {};
+    const hasAnyCreds =
+      (data.has_openrouter_creds ?? false) ||
+      (data.has_minimax_creds ?? false) ||
+      Object.values(providerCredentials).some(Boolean);
+
     return {
       isReachable: true,
       hasOpenRouterCreds: data.has_openrouter_creds ?? false,
       hasMiniMaxCreds: data.has_minimax_creds ?? false,
+      providerCredentials,
+      hasAnyCreds,
       credentialSources: {
         env: data.credential_sources?.env ?? false,
         authJson: data.credential_sources?.auth_json ?? false,
@@ -117,5 +130,5 @@ export async function detectHermesBridge(): Promise<HermesBridgeStatus | null> {
  */
 export async function hermesHasLocalCredentials(): Promise<boolean> {
   const status = await detectHermesBridge();
-  return status !== null && (status.hasOpenRouterCreds || status.hasMiniMaxCreds);
+  return status !== null && status.hasAnyCreds;
 }

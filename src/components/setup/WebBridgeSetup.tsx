@@ -9,9 +9,11 @@
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
+import { motion } from 'framer-motion';
 import { Check, Loader2, X, AlertCircle, Sparkles, Download, RefreshCw, Copy } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getApiBaseUrl } from '@/lib/api';
+import { OnboardingMotionConfig, SOFT_SPRING, SPRING, EASE_OUT } from '@/components/onboarding/motion';
 
 interface ServerBridgeStatus {
   pythonPath: string | null;
@@ -121,19 +123,41 @@ export const WebBridgeSetup: React.FC<{ onComplete: () => void }> = ({ onComplet
     : [];
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="Hermes Bridge Setup" className="fixed inset-0 z-[100] flex items-center justify-center bg-background/85 backdrop-blur-sm">
-      <div className="w-[480px] max-w-[92vw] rounded-xl border border-border/60 bg-card shadow-2xl overflow-hidden">
+    <OnboardingMotionConfig>
+    <motion.div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Hermes Bridge Setup"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-background/85 backdrop-blur-sm"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={EASE_OUT}
+    >
+      <motion.div
+        className="w-[480px] max-w-[92vw] rounded-xl border border-border/60 bg-card shadow-2xl overflow-hidden"
+        initial={{ opacity: 0, y: 16, scale: 0.97 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={SOFT_SPRING}
+      >
         <div className="flex items-center gap-3 px-5 py-4 border-b border-border/60">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <motion.div
+            className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary"
+            animate={done ? { scale: [1, 1.12, 1] } : {}}
+            transition={{ duration: 0.5, ease: 'easeOut' }}
+          >
             <Sparkles className="h-4 w-4" />
-          </div>
+          </motion.div>
           <div className="flex-1 min-w-0">
             <h2 className="text-[14px] font-semibold tracking-tight">Setting up Hermes</h2>
             <p className="text-[12px] text-muted-foreground">
               {done ? 'Bridge is ready. Continuing…' : 'Start the Hermes bridge on the computer hosting Spark.'}
             </p>
           </div>
-          {done && <Check className="h-5 w-5 text-emerald-400" />}
+          {done && (
+            <motion.div initial={{ scale: 0, rotate: -15 }} animate={{ scale: 1, rotate: 0 }} transition={SPRING}>
+              <Check className="h-5 w-5 text-emerald-400" />
+            </motion.div>
+          )}
         </div>
 
         <div className="px-5 py-4 space-y-2.5">
@@ -144,22 +168,31 @@ export const WebBridgeSetup: React.FC<{ onComplete: () => void }> = ({ onComplet
             </div>
           )}
 
-          {rows.map((row) => (
-            <div
+          {rows.map((row, i) => (
+            <motion.div
               key={row.label}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.34, ease: [0.16, 1, 0.3, 1], delay: 0.04 + i * 0.06 }}
               className={cn(
-                'flex items-start gap-3 rounded-lg border border-border/40 px-3 py-2.5',
+                'flex items-start gap-3 rounded-lg border border-border/40 px-3 py-2.5 transition-colors duration-300',
                 row.ok && 'bg-emerald-500/5 border-emerald-500/20',
               )}
             >
               <div className="flex h-5 w-5 items-center justify-center mt-0.5 shrink-0">
-                {row.ok ? <Check className="h-4 w-4 text-emerald-400" /> : <AlertCircle className="h-4 w-4 text-amber-400" />}
+                {row.ok ? (
+                  <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={SPRING}>
+                    <Check className="h-4 w-4 text-emerald-400" />
+                  </motion.div>
+                ) : (
+                  <AlertCircle className="h-4 w-4 text-amber-400" />
+                )}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="text-[13px] font-medium">{row.label}</div>
                 <div className="text-[11px] text-muted-foreground mt-0.5 break-words">{row.detail}</div>
               </div>
-            </div>
+            </motion.div>
           ))}
 
           {status && !pythonOk && (
@@ -228,7 +261,8 @@ export const WebBridgeSetup: React.FC<{ onComplete: () => void }> = ({ onComplet
             Skip for now
           </button>
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
+    </OnboardingMotionConfig>
   );
 };

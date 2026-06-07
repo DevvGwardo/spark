@@ -743,27 +743,85 @@ _TOOL_CALL_XML_RE = re.compile(
     r'<(?P<tag>function_calls|function_call|tool_calls|tool_call|tool_result)\b[^>]*>.*?</(?P=tag)>',
     re.DOTALL | re.IGNORECASE,
 )
-# Stray orphan closers that slip through after content extraction
-_STRAY_TOOL_CLOSER_RE = re.compile(
-    r'</(?:tool_call|tool_calls|tool_result|function_call|function_calls|function)>\s*',
+# Inline ``<function=NAME>...</function>`` dialect (usually wrapped in
+# ``<tool_call>``), with ``<parameter=KEY>VALUE</parameter>`` children.
+# Stripped as a whole block once any contained call has been recovered.
+_INLINE_FN_BLOCK_RE = re.compile(
+    r'<function=[^>]*>.*?</function>',
+    re.DOTALL | re.IGNORECASE,
+)
+# Stray opener/closer tags left behind by malformed or truncated blocks
+# (e.g. an unclosed ``<tool_call>`` whose ``</tool_call>`` never arrived).
+_STRAY_TOOL_TAG_RE = re.compile(
+    r'\s*</?(?:tool_call|tool_calls|tool_result|function_call|function_calls)\b[^>]*>'
+    r'|\s*</?function(?:=[^>]*)?>'
+    r'|\s*</?parameter(?:=[^>]*)?>',
     re.IGNORECASE,
+)
+# Parse one ``<function=NAME>...</function>`` block (name + body of params).
+_INLINE_FN_PARSE_RE = re.compile(
+    r'<function=(?P<name>[^>\s]+)\s*>(?P<body>.*?)</function>',
+    re.DOTALL | re.IGNORECASE,
+)
+# Parse one ``<parameter=KEY>VALUE</parameter>`` pair from a function body.
+_INLINE_PARAM_RE = re.compile(
+    r'<parameter=(?P<key>[^>\s]+)\s*>(?P<value>.*?)</parameter>',
+    re.DOTALL | re.IGNORECASE,
 )
 
 
 def _strip_tool_call_xml(content: str) -> str:
     """Strip inline tool-call XML blocks from model output.
 
-    Some providers (Gemma, MiniMax, DeepSeek variants) emit
-    ``<function_calls>...</function_calls>`` or ``<invoke>...</invoke>``
-    blocks as plain text alongside or instead of structured
-    ``tool_calls``. Remove these so they don't leak to the user.
+    Some providers (Gemma, MiniMax, DeepSeek, and small/"free" models) emit
+    ``<function_calls>...``, ``<tool_call><function=NAME>...``, or ``<invoke>...``
+    blocks as plain text alongside or instead of structured ``tool_calls``.
+    Remove these so they don't leak into the visible message. Recovering such
+    calls into executable form is handled separately by
+    :func:`_parse_inline_tool_calls`.
     """
     if not content:
         return content
     content = _TOOL_CALL_XML_RE.sub('', content)
-    # Strip stray orphan closers
-    content = _STRAY_TOOL_CLOSER_RE.sub('', content)
+    content = _INLINE_FN_BLOCK_RE.sub('', content)
+    # Remove any stray opener/closer tags from malformed or truncated blocks
+    content = _STRAY_TOOL_TAG_RE.sub('', content)
     return content.strip()
+
+
+def _parse_inline_tool_calls(content: str) -> list:
+    """Recover structured tool calls from the inline ``<function=...>`` dialect.
+
+    Weak/open models sometimes narrate a tool call as text in the
+    ``<tool_call><function=NAME><parameter=KEY>VALUE</parameter></function></tool_call>``
+    form instead of returning the structured ``tool_calls`` field. Convert each
+    well-formed ``<function=...>...</function>`` block into the OpenAI tool-call
+    shape so the agent loop can execute it. Only well-formed (closed) blocks are
+    recovered; malformed/truncated markup is left for
+    :func:`_strip_tool_call_xml` to remove. Returns ``[]`` when nothing
+    parseable is found.
+    """
+    if not content or '<function=' not in content:
+        return []
+    calls = []
+    for i, match in enumerate(_INLINE_FN_PARSE_RE.finditer(content)):
+        name = match.group('name').strip()
+        if not name:
+            continue
+        arguments = {}
+        for param in _INLINE_PARAM_RE.finditer(match.group('body')):
+            key = param.group('key').strip()
+            if key:
+                arguments[key] = param.group('value').strip()
+        calls.append({
+            "id": f"inline_call_{i}",
+            "type": "function",
+            "function": {
+                "name": name,
+                "arguments": json.dumps(arguments),
+            },
+        })
+    return calls
 
 
 def _strip_think_blocks(content: str) -> str:
@@ -2152,9 +2210,22 @@ class AIAgent:
                     self.on_reasoning(reasoning_text)
             else:
                 visible_content = raw_content
+            # Recover tool calls the model emitted as inline <function=...> text
+            # instead of the structured tool_calls field, so the intended tool
+            # actually runs instead of leaking into the visible message.
+            if not message.get("tool_calls"):
+                recovered_calls = _parse_inline_tool_calls(visible_content)
+                if recovered_calls:
+                    message["tool_calls"] = recovered_calls
+                    print(
+                        f"[hermes-agent] Recovered {len(recovered_calls)} inline tool call(s) "
+                        f"from text: {[c['function']['name'] for c in recovered_calls]}",
+                        flush=True,
+                    )
             # Strip inline tool-call XML (function_calls, tool_call, invoke, etc.)
-            # that some models emit as text alongside structured tool_calls
+            # that some models emit as text alongside / instead of structured tool_calls
             visible_content = _strip_tool_call_xml(visible_content)
+            message["content"] = visible_content
 
             # OpenRouter returns reasoning_content for some models (o-series, DeepSeek-R1)
             api_reasoning = message.get("reasoning_content") or ""

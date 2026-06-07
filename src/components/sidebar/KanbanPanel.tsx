@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
-import { Loader2, Play, Plus, Trash2, Columns3, Square, ExternalLink } from 'lucide-react';
+import { Loader2, Play, Plus, Trash2, Columns3, Square, ExternalLink, Maximize2 } from 'lucide-react';
 import { useKanbanStore, type KanbanLane } from '@/stores/kanban-store';
+import { useUIStore } from '@/stores/ui-store';
 import { useTaskOrchestratorStore } from '@/stores/task-orchestrator-store';
 import { getApiBaseUrl } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -56,6 +57,7 @@ function OrchestratorToggle() {
 export function KanbanPanel() {
   const { cards, loading, error, fetchCards, createCard, deleteCard } = useKanbanStore();
   const { enabled: autoDispatchOn } = useTaskOrchestratorStore();
+  const setKanbanFullscreen = useUIStore((s) => s.setKanbanFullscreen);
   const [quickInput, setQuickInput] = useState('');
   const [filterLane, setFilterLane] = useState<KanbanLane | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -183,7 +185,17 @@ export function KanbanPanel() {
           </span>
           <span className="text-[11px] font-mono text-muted-foreground/50">{cards.length}</span>
         </div>
-        <OrchestratorToggle />
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => setKanbanFullscreen(true)}
+            title="Open full board"
+            className="inline-flex items-center gap-1 rounded-md border border-border/40 px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground/60 transition-colors hover:border-border/70 hover:text-foreground"
+          >
+            <Maximize2 className="h-2.5 w-2.5" />
+            Board
+          </button>
+          <OrchestratorToggle />
+        </div>
       </div>
 
       <div className="px-3 pb-2">

@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware';
 
 export type AppTab = 'chat' | 'github' | 'analyzer' | 'knowledge';
 export type SubTab = 'overview' | 'threads' | 'queue' | 'chats' | 'cron' | 'memories' | 'skills' | 'usage' | 'profiles' | 'images' | 'mcp' | 'kanban' | 'tasks' | 'rooms' | 'teams';
+export type SettingsSection = 'providers' | 'messaging' | 'cursor-composer' | 'github' | 'knowledge' | 'general';
 
 export interface PendingPanelPrompt {
   content: string;
@@ -14,6 +15,8 @@ interface UIState {
   sidebarOpen: boolean;
   sidebarWidth: number;
   settingsOpen: boolean;
+  /** When Settings is opened with a target section, the modal jumps straight to it. */
+  settingsSection: SettingsSection | null;
   setupWizardOpen: boolean;
   repoBrowserOpen: boolean;
   terminalOpen: boolean;
@@ -27,12 +30,17 @@ interface UIState {
   miniBrowserDocked: boolean;
   miniBrowserDockedWidth: number;
   rightSidebarHidden: boolean;
+  kanbanFullscreen: boolean;
+  mcpStoreFullscreen: boolean;
+  tourSeen: boolean;
+  /** Mirrors AppLayout's bridge-setup modal visibility so the tour can wait for it to clear. */
+  bridgeSetupOpen: boolean;
   pendingPanelPrompts: Record<string, PendingPanelPrompt | undefined>;
   preservePanelRepoHandoffs: Record<string, boolean | undefined>;
   setSidebarOpen: (v: boolean) => void;
   toggleSidebar: () => void;
   setSidebarWidth: (w: number) => void;
-  setSettingsOpen: (v: boolean) => void;
+  setSettingsOpen: (v: boolean, section?: SettingsSection | null) => void;
   setSetupWizardOpen: (v: boolean) => void;
   setRepoBrowserOpen: (v: boolean) => void;
   setTerminalOpen: (v: boolean) => void;
@@ -47,6 +55,12 @@ interface UIState {
   setMiniBrowserDockedWidth: (w: number) => void;
   setRightSidebarHidden: (v: boolean) => void;
   toggleRightSidebarHidden: () => void;
+  setKanbanFullscreen: (v: boolean) => void;
+  toggleKanbanFullscreen: () => void;
+  setMcpStoreFullscreen: (v: boolean) => void;
+  toggleMcpStoreFullscreen: () => void;
+  setTourSeen: (v: boolean) => void;
+  setBridgeSetupOpen: (v: boolean) => void;
   queuePanelPrompt: (panelId: string, prompt: PendingPanelPrompt) => void;
   clearPanelPrompt: (panelId: string) => void;
   markPanelRepoHandoff: (panelId: string) => void;
@@ -67,6 +81,7 @@ export const useUIStore = create<UIState>()(
       sidebarOpen: false,
       sidebarWidth: 350,
       settingsOpen: false,
+      settingsSection: null,
       setupWizardOpen: false,
       repoBrowserOpen: false,
       terminalOpen: false,
@@ -80,12 +95,16 @@ export const useUIStore = create<UIState>()(
       miniBrowserDocked: false,
       miniBrowserDockedWidth: 400,
       rightSidebarHidden: false,
+      kanbanFullscreen: false,
+      mcpStoreFullscreen: false,
+      tourSeen: false,
+      bridgeSetupOpen: false,
       pendingPanelPrompts: {},
       preservePanelRepoHandoffs: {},
       setSidebarOpen: (v) => set({ sidebarOpen: v }),
       toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
       setSidebarWidth: (w) => set({ sidebarWidth: Math.max(200, Math.min(480, w)) }),
-      setSettingsOpen: (v) => set({ settingsOpen: v }),
+      setSettingsOpen: (v, section) => set({ settingsOpen: v, settingsSection: v ? section ?? null : null }),
       setSetupWizardOpen: (v) => set({ setupWizardOpen: v }),
       setRepoBrowserOpen: (v) => set({ repoBrowserOpen: v }),
       setTerminalOpen: (v) => set({ terminalOpen: v }),
@@ -101,6 +120,12 @@ export const useUIStore = create<UIState>()(
       setMiniBrowserDockedWidth: (w) => set({ miniBrowserDockedWidth: Math.max(300, Math.min(600, w)) }),
       setRightSidebarHidden: (v) => set({ rightSidebarHidden: v }),
       toggleRightSidebarHidden: () => set((s) => ({ rightSidebarHidden: !s.rightSidebarHidden })),
+      setKanbanFullscreen: (v) => set({ kanbanFullscreen: v }),
+      toggleKanbanFullscreen: () => set((s) => ({ kanbanFullscreen: !s.kanbanFullscreen })),
+      setMcpStoreFullscreen: (v) => set({ mcpStoreFullscreen: v }),
+      toggleMcpStoreFullscreen: () => set((s) => ({ mcpStoreFullscreen: !s.mcpStoreFullscreen })),
+      setTourSeen: (v) => set({ tourSeen: v }),
+      setBridgeSetupOpen: (v) => set({ bridgeSetupOpen: v }),
       queuePanelPrompt: (panelId, prompt) =>
         set((state) => ({
           pendingPanelPrompts: {
@@ -149,6 +174,7 @@ export const useUIStore = create<UIState>()(
         hermesTerminalOpen: state.hermesTerminalOpen,
         hermesTerminalHeight: state.hermesTerminalHeight,
         hermesSessionViewMode: state.hermesSessionViewMode,
+        tourSeen: state.tourSeen,
       }),
     }
   )

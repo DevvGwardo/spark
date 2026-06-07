@@ -5,7 +5,7 @@ import { COLOR_THEMES, ACCENT_COLORS } from '@/lib/themes';
 import { ChatSurfaceBackground } from '@/components/chat/ChatSurfaceBackground';
 import { useHermesStore } from '@/stores/hermes-store';
 import { discoverMCPTools } from '@/lib/mcp-connect';
-import { fetchHermesProviders, type HermesProviderInfo } from '@/lib/hermes-api';
+import { fetchHermesProviders, fetchHermesSavedProviders, type HermesProviderInfo, type HermesSavedProvider } from '@/lib/hermes-api';
 import { useUIStore } from '@/stores/ui-store';
 import { PROVIDERS, PROVIDER_ORDER, CATEGORY_LABELS, getVisibleModelOptions } from '@/lib/providers';
 import { validateApiKey, listGitHubRepos, type GitHubRepoSummary } from '@/lib/api';
@@ -18,6 +18,9 @@ import {
 } from '@/lib/chat-backgrounds';
 import { getLocalProviderRuntimeDetails, parseLocalProviderRuntimeError } from '@/lib/local-provider-runtime';
 import MessagingTab from './MessagingTab';
+import CursorComposerTab from './CursorComposerTab';
+import { useTour } from '@reactour/tour';
+import { prepareUiForTour } from '@/components/tour/TourController';
 import packageJson from '../../../package.json';
 
 const PROVIDER_COLORS: Partial<Record<Provider, string>> = {
@@ -45,6 +48,7 @@ const navSections = [
   { label: 'PROVIDERS', items: [{ id: 'providers' as const, label: 'Providers', icon: LayoutGrid }] },
   { label: 'INTEGRATIONS', items: [
     { id: 'messaging' as const, label: 'Messaging', icon: MessageSquare },
+    { id: 'cursor-composer' as const, label: 'Cursor Composer', icon: Code2 },
     { id: 'github' as const, label: 'GitHub', icon: Github },
   ]},
   { label: 'MANAGEMENT', items: [
@@ -210,6 +214,16 @@ function GeneralTab() {
   } = useSettingsStore();
   const sessionApprovalPolicies = useHermesStore((state) => state.sessionApprovalPolicies);
   const clearSessionApprovalPolicies = useHermesStore((state) => state.clearSessionApprovalPolicies);
+  const { setIsOpen: setTourOpen, setCurrentStep: setTourStep } = useTour();
+  const setSettingsOpen = useUIStore((s) => s.setSettingsOpen);
+  const startTour = () => {
+    setSettingsOpen(false);
+    prepareUiForTour();
+    setTimeout(() => {
+      setTourStep(0);
+      setTourOpen(true);
+    }, 350);
+  };
 
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [backgroundUploadError, setBackgroundUploadError] = useState<string | null>(null);
@@ -602,6 +616,25 @@ function GeneralTab() {
 
       <div className={settingsDividerClass} />
 
+      {/* GETTING STARTED */}
+      <div className="space-y-3">
+        <p className={sectionLabelClass}>Getting started</p>
+        <div className="flex items-center justify-between py-1">
+          <div className="min-w-0 flex-1 pr-4">
+            <p className="text-sm text-foreground">Product tour</p>
+            <p className="text-xs text-[#666666]">Replay the guided walkthrough of threads, GitHub, the board, and the composer</p>
+          </div>
+          <button
+            onClick={startTour}
+            className="rounded-[8px] border border-[#2a2a2a] bg-[#141414] px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors duration-100 hover:border-[#444444] hover:text-foreground"
+          >
+            Take the tour
+          </button>
+        </div>
+      </div>
+
+      <div className={settingsDividerClass} />
+
       {/* DATA & PRIVACY */}
       <div className="space-y-3">
         <p className={sectionLabelClass}>Data & Privacy</p>
@@ -642,7 +675,7 @@ function GeneralTab() {
 }
 
 export const SettingsModal: React.FC = () => {
-  const { settingsOpen, setSettingsOpen } = useUIStore();
+  const { settingsOpen, setSettingsOpen, settingsSection } = useUIStore();
   const {
     activeProvider,
     providers,
@@ -687,14 +720,24 @@ export const SettingsModal: React.FC = () => {
       setSyncingRepos(false);
     }
   }, [githubPAT]);
-  const [tab, setTab] = useState<'providers' | 'messaging' | 'github' | 'knowledge' | 'general'>('providers');
+  const [tab, setTab] = useState<'providers' | 'messaging' | 'cursor-composer' | 'github' | 'knowledge' | 'general'>('providers');
   const [search, setSearch] = useState('');
   const [providerView, setProviderView] = useState<'list' | 'detail'>('list');
+
+  // Deep-link: when Settings is opened with a target section (e.g. the sidebar's
+  // "Connect GitHub" button), jump straight to it.
+  useEffect(() => {
+    if (settingsOpen && settingsSection) {
+      setTab(settingsSection);
+      setProviderView('list');
+    }
+  }, [settingsOpen, settingsSection]);
   const [showMoreProviders, setShowMoreProviders] = useState(false);
   const [localRuntimeStatus, setLocalRuntimeStatus] = useState<string | null>(null);
   const [refreshingModels, setRefreshingModels] = useState(false);
   // Hermes underlying-provider catalog (providers + models the agent can route to)
   const [hermesProviders, setHermesProviders] = useState<HermesProviderInfo[]>([]);
+  const [savedProviders, setSavedProviders] = useState<HermesSavedProvider[]>([]);
 
   // MCP server management state
   const [mcpAddOpen, setMcpAddOpen] = useState(false);
@@ -965,6 +1008,24 @@ export const SettingsModal: React.FC = () => {
     };
   }, [settingsOpen, activeProvider]);
 
+  // Load the providers the user has saved/authenticated in their hermes-agent
+  // so they can see them all (with status) in the Providers settings.
+  useEffect(() => {
+    if (!settingsOpen || tab !== 'providers') return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const saved = await fetchHermesSavedProviders();
+        if (!cancelled) setSavedProviders(saved);
+      } catch {
+        // Bridge unreachable — hide the section
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [settingsOpen, tab]);
+
   const handleRefreshModels = useCallback(async () => {
     const apiKey = config.apiKey;
     if (activeProvider === 'hermes') {
@@ -1208,6 +1269,56 @@ export const SettingsModal: React.FC = () => {
                         </div>
                       ))
                     )}
+                  </div>
+                )}
+
+                {/* Providers saved on the Hermes agent */}
+                {savedProviders.length > 0 && (
+                  <div className={cn(settingsCardClass, 'p-4 space-y-3')}>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-[13px] font-semibold text-foreground">Saved on your Hermes agent</p>
+                        <p className="text-[11px] text-[#666666]">Providers authenticated in <span className="font-mono">~/.hermes</span> — managed by the agent.</p>
+                      </div>
+                      <span className="text-[10px] text-[#555555]">{savedProviders.length}</span>
+                    </div>
+                    <div className="space-y-1.5">
+                      {savedProviders.map((p) => {
+                        const dot =
+                          p.status === 'active'
+                            ? 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.45)]'
+                            : p.status === 'error'
+                              ? 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.45)]'
+                              : 'bg-amber-500';
+                        return (
+                          <div
+                            key={p.id}
+                            className="flex items-center gap-2.5 rounded-[8px] border border-[#222222] bg-white/[0.015] px-2.5 py-2"
+                          >
+                            <span
+                              className={cn('h-1.5 w-1.5 shrink-0 rounded-full', dot)}
+                              title={p.status}
+                            />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5">
+                                <span className="truncate text-[13px] text-foreground">{p.name}</span>
+                                {p.active && (
+                                  <span className="shrink-0 rounded border border-[#FF8400]/20 bg-[#FF8400]/10 px-1 py-px text-[9px] font-medium uppercase tracking-wide text-[#FF8400]">
+                                    Active
+                                  </span>
+                                )}
+                              </div>
+                              {p.detail ? (
+                                <p className="truncate text-[11px] text-red-400/70">{p.detail}</p>
+                              ) : p.base_url ? (
+                                <p className="truncate font-mono text-[11px] text-muted-foreground/50">{p.base_url}</p>
+                              ) : null}
+                            </div>
+                            <span className="shrink-0 text-[10px] text-[#555555]">{p.auth_type}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
 
@@ -1877,6 +1988,8 @@ export const SettingsModal: React.FC = () => {
             )}
 
             {tab === 'messaging' && <MessagingTab />}
+
+            {tab === 'cursor-composer' && <CursorComposerTab />}
 
             {tab === 'knowledge' && <KnowledgeTab />}
 

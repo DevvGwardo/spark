@@ -117,6 +117,11 @@ export const HermesTerminal: React.FC = () => {
         pushOutput('error', `Unknown command: /${parsed.command}. Type /help for available commands.`);
         return;
       }
+      // Skill/agent commands run through the chat agent, not this local terminal.
+      if (!cmd.handler) {
+        pushOutput('error', `/${parsed.command} is a hermes-agent command — use it from the chat composer.`);
+        return;
+      }
 
       try {
         const result = await cmd.handler(parsed.args, commandContext);

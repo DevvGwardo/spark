@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { motion } from 'framer-motion';
 import { ArrowRight, ArrowLeft, Eye, EyeOff, Check, Loader2, KeyRound, Lock, ChevronDown, ChevronUp } from 'lucide-react';
 import { useSettingsStore, type Provider } from '@/stores/settings-store';
 import { PROVIDERS, PROVIDER_ORDER } from '@/lib/providers';
@@ -6,6 +7,16 @@ import { validateApiKey } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { parseLocalProviderRuntimeError } from '@/lib/local-provider-runtime';
 import { detectHermesBridge, type HermesBridgeStatus } from '@/lib/detect-hermes';
+import {
+  OnboardingMotionConfig,
+  Stagger,
+  StaggerItem,
+  stepVariants,
+  popIn,
+  SPRING,
+  SOFT_SPRING,
+  EASE_OUT,
+} from '@/components/onboarding/motion';
 
 const STEP_LABELS = ['Provider', 'API Key', 'Finish'] as const;
 const HERMES_AGENT_DOCS_URL = 'https://hermes-agent.nousresearch.com/docs/getting-started/quickstart';
@@ -146,7 +157,7 @@ export const SetupWizard: React.FC = () => {
         }
       }
 
-      if (bridgeStatus?.hasOpenRouterCreds) {
+      if (bridgeStatus?.hasAnyCreds) {
         setActiveProvider('hermes');
         updateProviderConfig('hermes', {
           apiKey: '',
@@ -179,7 +190,7 @@ export const SetupWizard: React.FC = () => {
     if (result?.hermesDefaultModel) {
       setSelectedModel(result.hermesDefaultModel);
     }
-    if (result?.hasOpenRouterCreds) {
+    if (result?.hasAnyCreds) {
       setActiveProvider('hermes');
       updateProviderConfig('hermes', {
         apiKey: '',
@@ -235,7 +246,7 @@ export const SetupWizard: React.FC = () => {
 
   const providerInfo = PROVIDERS[selectedProvider];
   const needsApiKey = providerInfo.needsApiKey;
-  const hasHermesBridgeCreds = Boolean(hermesBridgeStatus?.hasOpenRouterCreds || hermesBridgeStatus?.hasMiniMaxCreds);
+  const hasHermesBridgeCreds = Boolean(hermesBridgeStatus?.hasAnyCreds);
   const shouldOfferOpenRouterOAuth = selectedProvider === 'openrouter' || (selectedProvider === 'hermes' && hermesBridgeStatus !== null && !hasHermesBridgeCreds);
   const shouldShowHermesInstallFlow = selectedProvider === 'hermes' && hermesBridgeStatus === null;
   const isHermesSetupBusy = installingHermesAgent || installingBridgeDeps || startingHermesBridge;
@@ -376,7 +387,7 @@ export const SetupWizard: React.FC = () => {
                   setSelectedModel(retriedBridgeStatus.hermesDefaultModel);
                 }
                 if (retriedBridgeStatus) {
-                  if (!retriedBridgeStatus.hasOpenRouterCreds && !retriedBridgeStatus.hasMiniMaxCreds) {
+                  if (!retriedBridgeStatus.hasAnyCreds) {
                     setValidationError('');
                     goToStep(1);
                     return;
@@ -394,7 +405,7 @@ export const SetupWizard: React.FC = () => {
           if (bridgeStatus.hermesDefaultModel) {
             setSelectedModel(bridgeStatus.hermesDefaultModel);
           }
-          if (!bridgeStatus.hasOpenRouterCreds && !bridgeStatus.hasMiniMaxCreds) {
+          if (!bridgeStatus.hasAnyCreds) {
             setValidationError('');
             goToStep(1);
             return;
@@ -542,7 +553,7 @@ export const SetupWizard: React.FC = () => {
         setSelectedModel(bridgeStatus.hermesDefaultModel);
       }
 
-      if (bridgeStatus.hasOpenRouterCreds || bridgeStatus.hasMiniMaxCreds) {
+      if (bridgeStatus.hasAnyCreds) {
         goToStep(2);
         return;
       }
@@ -579,13 +590,19 @@ export const SetupWizard: React.FC = () => {
         const isActive = i === step;
         const isCompleted = i < step;
         return (
-          <div
+          <motion.div
             key={label}
-            className={cn(
-              'h-1.5 rounded-full transition-all duration-200',
-              isActive ? 'w-6 bg-primary' : 'w-1.5',
-              isCompleted ? 'bg-primary/50' : !isActive && 'bg-[#2A2A2A]'
-            )}
+            className="h-1.5 rounded-full"
+            initial={false}
+            animate={{
+              width: isActive ? 24 : 6,
+              backgroundColor: isActive
+                ? 'hsl(var(--primary))'
+                : isCompleted
+                  ? 'hsl(var(--primary) / 0.5)'
+                  : '#2A2A2A',
+            }}
+            transition={SPRING}
           />
         );
       })}
@@ -619,19 +636,26 @@ export const SetupWizard: React.FC = () => {
         </div>
 
         {/* Hermes hero card */}
-        <button
+        <motion.button
           onClick={() => handleProviderSelect('hermes')}
+          whileHover={{ scale: 1.012 }}
+          whileTap={{ scale: 0.99 }}
+          transition={SPRING}
           className={cn(
-            'w-full text-left rounded-2xl p-4 transition-all duration-200 border',
+            'w-full text-left rounded-2xl p-4 transition-colors duration-200 border',
             isHermesSelected
               ? 'bg-[#8B5CF6]/8 border-[#8B5CF6]/25 shadow-[0_0_30px_rgba(139,92,246,0.06)]'
               : 'bg-[#161616] border-[#252525] hover:border-[#8B5CF6]/15 hover:bg-[#181818]'
           )}
         >
           <div className="flex items-center gap-3.5">
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[#8B5CF6] to-[#6D28D9] flex items-center justify-center flex-shrink-0 shadow-lg shadow-purple-500/10">
+            <motion.div
+              className="w-12 h-12 rounded-xl bg-gradient-to-br from-[#8B5CF6] to-[#6D28D9] flex items-center justify-center flex-shrink-0 shadow-lg shadow-purple-500/10"
+              animate={isHermesSelected ? { boxShadow: '0 0 22px 2px rgba(139,92,246,0.35)' } : { boxShadow: '0 10px 15px -3px rgba(139,92,246,0.10)' }}
+              transition={EASE_OUT}
+            >
               <span className="text-white font-bold text-lg">H</span>
-            </div>
+            </motion.div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
                 <span className="text-[14px] font-semibold text-foreground">Hermes Agent</span>
@@ -644,12 +668,17 @@ export const SetupWizard: React.FC = () => {
               </p>
             </div>
             {isHermesSelected && (
-              <div className="w-5 h-5 rounded-full bg-[#8B5CF6] flex items-center justify-center flex-shrink-0">
+              <motion.div
+                initial={{ scale: 0, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={SPRING}
+                className="w-5 h-5 rounded-full bg-[#8B5CF6] flex items-center justify-center flex-shrink-0"
+              >
                 <Check className="h-3 w-3 text-white" />
-              </div>
+              </motion.div>
             )}
           </div>
-        </button>
+        </motion.button>
 
         {/* Or divider */}
         <div className="flex items-center gap-3 my-4 px-1">
@@ -704,12 +733,15 @@ export const SetupWizard: React.FC = () => {
           </p>
         )}
 
-        <button
+        <motion.button
           onClick={handleContinueFromProvider}
-          className="mt-4 w-full flex items-center justify-center gap-2 h-11 rounded-xl bg-primary text-primary-foreground text-[13px] font-medium hover:opacity-90 active:scale-[0.98] transition-all duration-200"
+          whileHover={{ scale: 1.01 }}
+          whileTap={{ scale: 0.98 }}
+          transition={SPRING}
+          className="mt-4 w-full flex items-center justify-center gap-2 h-11 rounded-xl bg-primary text-primary-foreground text-[13px] font-medium hover:opacity-90 transition-colors duration-200"
         >
           Continue <ArrowRight className="h-3.5 w-3.5" />
-        </button>
+        </motion.button>
       </div>
     );
   };
@@ -982,15 +1014,34 @@ export const SetupWizard: React.FC = () => {
 
   // --- Step 2: Finish ---
   const renderFinishStep = () => (
-    <div key="finish" data-step-content className="flex flex-col items-center gap-5">
-      <div className="w-14 h-14 rounded-2xl flex items-center justify-center" style={{ backgroundColor: '#00FF8815' }}>
-        <Check className="h-6 w-6" style={{ color: '#00FF88' }} />
-      </div>
-      <div className="text-center">
+    <Stagger key="finish" data-step-content className="flex flex-col items-center gap-5">
+      <StaggerItem>
+        <motion.div
+          className="relative w-14 h-14 rounded-2xl flex items-center justify-center"
+          style={{ backgroundColor: '#00FF8815' }}
+          variants={popIn}
+        >
+          <motion.span
+            className="absolute inset-0 rounded-2xl"
+            style={{ backgroundColor: '#00FF8830' }}
+            initial={{ opacity: 0.6, scale: 1 }}
+            animate={{ opacity: 0, scale: 1.6 }}
+            transition={{ duration: 0.9, ease: 'easeOut', delay: 0.15 }}
+          />
+          <motion.div
+            initial={{ scale: 0, rotate: -20 }}
+            animate={{ scale: 1, rotate: 0 }}
+            transition={{ ...SPRING, delay: 0.08 }}
+          >
+            <Check className="h-6 w-6" style={{ color: '#00FF88' }} />
+          </motion.div>
+        </motion.div>
+      </StaggerItem>
+      <StaggerItem className="text-center">
         <h2 className="text-[15px] font-semibold text-foreground mb-1">You're all set</h2>
         <p className="text-[12px] text-[#666]">Start a new thread to begin chatting.</p>
-      </div>
-      <div className="w-full rounded-xl border border-[#2A2A2A] bg-[#161616] px-4 py-3">
+      </StaggerItem>
+      <StaggerItem className="w-full rounded-xl border border-[#2A2A2A] bg-[#161616] px-4 py-3">
         <div className="flex items-center gap-3">
           <ProviderIcon provider={selectedProvider} size={32} />
           <div className="flex-1 min-w-0">
@@ -1001,42 +1052,71 @@ export const SetupWizard: React.FC = () => {
             {selectedProvider === 'hermes' && !apiKey.trim() && hasHermesBridgeCreds ? 'Signed in via Hermes' : 'Connected'}
           </span>
         </div>
-      </div>
-      <button
-        onClick={handleComplete}
-        className="w-full flex items-center justify-center gap-2 h-11 rounded-xl bg-primary text-primary-foreground text-[13px] font-medium hover:opacity-90 active:scale-[0.98] transition-all duration-200"
-      >
-        Start Chatting <ArrowRight className="h-3.5 w-3.5" />
-      </button>
-    </div>
+      </StaggerItem>
+      <StaggerItem className="w-full">
+        <motion.button
+          onClick={handleComplete}
+          whileHover={{ scale: 1.01 }}
+          whileTap={{ scale: 0.98 }}
+          transition={SPRING}
+          className="w-full flex items-center justify-center gap-2 h-11 rounded-xl bg-primary text-primary-foreground text-[13px] font-medium hover:opacity-90 transition-colors duration-200"
+        >
+          Start Chatting <ArrowRight className="h-3.5 w-3.5" />
+        </motion.button>
+      </StaggerItem>
+    </Stagger>
   );
 
   const stepRenderers = [renderProviderGrid, renderApiKeyStep, renderFinishStep];
-
-  const animClass = isAnimating
-    ? direction === 'forward'
-      ? 'animate-in fade-in slide-in-from-right-4 duration-200'
-      : 'animate-in fade-in slide-in-from-left-4 duration-200'
-    : '';
+  const dir = direction === 'forward' ? 1 : -1;
 
   return (
-    <div ref={modalRef} role="dialog" aria-modal="true" aria-label="Spark Setup Wizard" className="fixed inset-0 z-50 flex items-center justify-center bg-background">
-      <div className="w-[380px] mx-4">
-        <div className="text-center mb-6">
-          <h1 className="text-lg font-bold tracking-tight text-foreground">Spark</h1>
-          <div className="mt-2">{renderStepIndicator()}</div>
-        </div>
+    <OnboardingMotionConfig>
+      <motion.div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Spark Setup Wizard"
+        className="fixed inset-0 z-50 flex items-center justify-center bg-background"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={EASE_OUT}
+      >
+        {/* Soft radial wash behind the card — subtle depth, no heavy gradient. */}
         <div
-          className="transition-[height] duration-200 ease-out overflow-hidden"
-          style={{ height: contentHeight ? `${contentHeight + 16}px` : 'auto' }}
+          aria-hidden
+          className="pointer-events-none absolute inset-0"
+          style={{ background: 'radial-gradient(60% 50% at 50% 38%, hsl(var(--primary) / 0.06), transparent 70%)' }}
+        />
+        <motion.div
+          className="relative w-[380px] mx-4"
+          initial={{ opacity: 0, y: 14, scale: 0.985 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={SOFT_SPRING}
         >
-          <div ref={contentRef}>
-            <div key={step} className={animClass}>
-              {stepRenderers[step]()}
-            </div>
+          <div className="text-center mb-6">
+            <h1 className="text-lg font-bold tracking-tight text-foreground">Spark</h1>
+            <div className="mt-2">{renderStepIndicator()}</div>
           </div>
-        </div>
-      </div>
-    </div>
+          <motion.div
+            className="overflow-hidden"
+            animate={{ height: contentHeight ? contentHeight + 16 : 'auto' }}
+            transition={SOFT_SPRING}
+          >
+            <div ref={contentRef}>
+              <motion.div
+                key={step}
+                custom={dir}
+                variants={stepVariants}
+                initial="enter"
+                animate="center"
+              >
+                {stepRenderers[step]()}
+              </motion.div>
+            </div>
+          </motion.div>
+        </motion.div>
+      </motion.div>
+    </OnboardingMotionConfig>
   );
 };

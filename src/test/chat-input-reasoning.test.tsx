@@ -55,7 +55,9 @@ describe('ChatInput reasoning selector', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('shows the context ring after the conversation has message history', () => {
+  it('does not show the context ring in the composer even with message history', () => {
+    // The context usage indicator was moved out of the composer; it now lives
+    // only in the bottom status bar (AppLayout).
     render(
       <ChatInput
         value=""
@@ -67,8 +69,8 @@ describe('ChatInput reasoning selector', () => {
     );
 
     expect(
-      screen.getByLabelText(/context used/i),
-    ).toBeInTheDocument();
+      screen.queryByLabelText(/context used/i),
+    ).not.toBeInTheDocument();
   });
 
   it('hides the reasoning selector for unsupported providers', () => {

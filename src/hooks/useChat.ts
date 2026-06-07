@@ -583,6 +583,18 @@ When the user asks you to make changes:
   const saveConversationFiles = useCallback((convId: string, sourceScopeId: string = scopeId) => {
     const cs = useChangesetStore.getState().getChangeset(sourceScopeId);
     const ps = usePreviewStore.getState().getPreview(sourceScopeId);
+
+    // Keep the denormalized project pointer (attached repo) in sync so the sidebar
+    // can group threads by project without loading each conversation's files. Only
+    // write when it actually changed to avoid redundant updates during streaming.
+    const repoFullName = cs.activeRepo?.fullName ?? null;
+    const conv = useChatStore.getState().conversations.find((c) => c.id === convId);
+    if (conv && (conv.repoFullName ?? null) !== repoFullName) {
+      void db.conversations.update(convId, { repoFullName }).then(() => {
+        void useChatStore.getState().loadConversations();
+      });
+    }
+
     const hasChanges = Object.keys(cs.changes).length > 0 || cs.activeRepo !== null;
     const hasFiles = ps.files.length > 0;
 
@@ -1096,6 +1108,12 @@ When the user asks you to make changes:
       ...(currentIsRepoMode && currentActiveRepo ? { repo_edit_intent: repoEditIntentForRequest } : {}),
       ...(effectiveProvider === 'hermes' ? { hermes_toolsets: currentEffectiveHermesToolsets.join(',') } : {}),
       ...(effectiveProvider === 'hermes' && hermesSwarmEnabled ? { hermes_swarm_mode: true } : {}),
+      // Only pin a provider when the user explicitly picked one. Otherwise send
+      // no provider and let the bridge route via the agent's own config
+      // (active_provider / config.yaml) — the bridge's prefix resolver already
+      // routes catalog ids like `deepseek/…` to the right aggregator. Deriving
+      // the provider here mis-pins bare ids (e.g. `deepseek-v4-flash` → native
+      // DeepSeek, which doesn't serve it → 401).
       ...(effectiveProvider === 'hermes' && useHermesStore.getState().underlyingProvider
         ? { hermes_provider: useHermesStore.getState().underlyingProvider }
         : {}),
@@ -1756,6 +1774,10 @@ When the user asks you to make changes:
     }
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
+    // The in-flight send is over — clear the guard synchronously so a deferred
+    // send queued right after stop (e.g. steering a queued message) isn't
+    // blocked by the duplicate-send guard and left lingering in the tray.
+    isSendingRef.current = false;
     sdkStop();
   }, [sdkStop]);
 
@@ -2192,6 +2214,15 @@ When the user asks you to make changes:
         const { changeset: cs, preview } = saved;
         if (cs.activeRepo) {
             csStore.switchActiveRepo(scopeId, cs.activeRepo);
+            // Backfill the thread→project pointer for threads whose repo was
+            // attached before the sidebar grouped by project, so they show
+            // under their project on open instead of "No project".
+            const conv = useChatStore.getState().conversations.find((c) => c.id === convId);
+            if (conv && (conv.repoFullName ?? null) !== cs.activeRepo.fullName) {
+              void db.conversations.update(convId, { repoFullName: cs.activeRepo.fullName })
+                .then(() => { void useChatStore.getState().loadConversations(); })
+                .catch(() => { /* best-effort grouping backfill */ });
+            }
           } else {
           csStore.clearActiveRepo(scopeId);
         }

@@ -189,6 +189,15 @@
     animation-delay: 0ms !important;
   }
 
+  /* Sessions list: skip layout/paint for off-screen cards (cheap, library-free
+     virtualization). This is the main lever for keeping window/sidebar resize
+     smooth when the session list is long. contain-intrinsic-size reserves an
+     approximate collapsed-card height so the scrollbar stays stable. */
+  .session-card {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 56px;
+  }
+
   /* Custom scrollbar */
   ::-webkit-scrollbar {
     width: 5px;
@@ -355,10 +364,12 @@ code, pre, .font-mono {
 
 .chat-code-block__line-num {
   padding: 0 0.75rem;
-  color: #374151;
+  color: #4b5563;
   text-align: right;
   font-size: 12px;
-  line-height: 1.7;
+  /* Fixed px height (not a unitless multiplier) so the 12px gutter rows match
+     the 13px code rows exactly — a multiplier would drift them apart. */
+  line-height: 20px;
   font-family: 'Geist Mono', ui-monospace, SFMono-Regular, monospace;
 }
 
@@ -385,7 +396,9 @@ code, pre, .font-mono {
 .chat-code-block__shiki {
   padding: 0.75rem 1rem;
   font-size: 13px;
-  line-height: 1.7;
+  /* Match the gutter's fixed 20px rows for perfect line-number alignment, and
+     a tighter, denser cadence than the old 1.7 (Codex renders code at ~1.5). */
+  line-height: 20px;
 }
 
 .chat-code-block__shiki pre {

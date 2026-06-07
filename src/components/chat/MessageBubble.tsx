@@ -186,36 +186,13 @@ function stripHermesActivityText(content: string): string {
   const filteredLines = content
     .split('\n')
     .filter((line) => {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith('>')) {
+      if (!line.trim().startsWith('>')) {
         return true;
       }
-
-      const normalized = trimmed
-        .replace(/^>\s*/, '')
-        .replace(/[*_`]/g, '')
-        .replace(/[“”]/g, '"')
-        .replace(/[‘’]/g, '\'')
-        .trim();
-
-      if (!normalized) {
-        return false;
-      }
-
-      return !(
-        /^"?proposing changes"?$/i.test(normalized) ||
-        /^"?reading file"?(?:\s+—\s+.+)?$/i.test(normalized) ||
-        /^"?editing file"?(?:\s+—\s+.+)?$/i.test(normalized) ||
-        /^"?editing files"?(?:\s+—\s+.+)?$/i.test(normalized) ||
-        /^"?creating file"?(?:\s+—\s+.+)?$/i.test(normalized) ||
-        /^"?deleting file"?(?:\s+—\s+.+)?$/i.test(normalized) ||
-        /^"?thinking\.\.\."?$/i.test(normalized) ||
-        /^"?done\s+[—-]\s+read\s+\d+\s+chars"?$/i.test(normalized) ||
-        /^"?done\s*[—-]:?\s*.+$/i.test(normalized) ||
-        /^"?failed:?\s*.+$/i.test(normalized) ||
-        /^"?found\s+\d+\s+results?"?$/i.test(normalized) ||
-        /^"?fetched\s+\d+\s+chars"?$/i.test(normalized)
-      );
+      // Drop Hermes tool-activity marker blockquotes (start or end/status) so
+      // they don't render as a wall of "> terminal" / "> terminal — done" quote
+      // lines. Blockquotes that don't match a marker shape are kept as content.
+      return !(isHermesToolStartLine(line) || isHermesEndOrStatusLine(line));
     })
     .join('\n')
     .replace(/\n{3,}/g, '\n\n');
@@ -230,11 +207,16 @@ function stripHermesActivityText(content: string): string {
 function isHermesToolStartLine(line: string): boolean {
   const trimmed = line.trim();
   if (!trimmed.startsWith('>')) return false;
-  const normalized = trimmed
-    .replace(/^>\s*/, '')
+  const inner = trimmed.replace(/^>\s*/, '').trim();
+  // Generic bridge start shape: a fully-bold label, optionally "— <summary>"
+  // (e.g. "**terminal**", "**Reading file** — `path`"). Catches tools with no
+  // friendly display name (the bridge falls back to the raw tool name), which
+  // the explicit label list below would miss.
+  if (/^\*\*[^*\n]+\*\*(?:\s*[—–-]+\s+.+)?$/.test(inner)) return true;
+  const normalized = inner
     .replace(/[*_`]/g, '')
-    .replace(/[""]/g, '"')
-    .replace(/['']/g, "'")
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
     .trim();
   if (!normalized) return false;
   return /^"?(?:reading file|editing files?|creating file|deleting file|proposing changes|searching the web|reading webpage|running command|writing file|running python|listing repositories)/i.test(normalized);
@@ -249,18 +231,21 @@ function isHermesEndOrStatusLine(line: string): boolean {
   const normalized = trimmed
     .replace(/^>\s*/, '')
     .replace(/[*_`]/g, '')
-    .replace(/[""]/g, '"')
-    .replace(/['']/g, "'")
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
     .trim();
   if (!normalized) return true;
   return (
     /^"?thinking\.\.\."?$/i.test(normalized) ||
-    /^"?done\s+[—-]\s+read\s+\d+\s+chars"?$/i.test(normalized) ||
-    /^"?done\s*[—-]:?\s*.+$/i.test(normalized) ||
+    /^"?done\b/i.test(normalized) ||
     /^"?failed:?\s*.+$/i.test(normalized) ||
     /^"?found\s+\d+\s+results?"?$/i.test(normalized) ||
     /^"?fetched\s+\d+\s+chars"?$/i.test(normalized) ||
-    /^"?search complete"?$/i.test(normalized)
+    /^"?search complete"?$/i.test(normalized) ||
+    /^"?(?:no tasks|\d+\s+tasks?)"?$/i.test(normalized) ||
+    // Generic completion marker for tools without a friendly label — the bridge
+    // emits "> *<tool> — done*" (e.g. "terminal — done", "terminal -- done").
+    /\s[—–-]{1,2}\s*done"?$/i.test(normalized)
   );
 }
 
@@ -1390,10 +1375,10 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function M
   if (message.role === 'system') return null;
 
   return (
-    <div className={cn('group mb-6', isUser ? '' : '')}>
-      <div className={cn('relative min-w-0 overflow-hidden', isUser ? 'w-full' : 'w-full')}>
+    <div className={cn('group', isUser && !editing && 'flex flex-col items-end')}>
+      <div className={cn('relative min-w-0 overflow-hidden', isUser && !editing ? 'max-w-[85%]' : 'w-full')}>
         {formattedTime && !editing && (
-          <span className="text-[10px] text-muted-foreground/50 mb-1 block opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+          <span className={cn('text-[10px] text-muted-foreground/50 mb-1 block opacity-0 group-hover:opacity-100 transition-opacity duration-150', isUser && 'text-right')}>
             {formattedTime}
           </span>
         )}
@@ -1416,7 +1401,9 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function M
         ) : (
           <>
             {isUser ? (
-              <p className="text-sm whitespace-pre-wrap font-medium">{displayContent}</p>
+              <div className="rounded-2xl bg-muted px-4 py-2.5 text-sm whitespace-pre-wrap text-foreground">
+                {displayContent}
+              </div>
             ) : (
               orderedParts.map((part, index) => {
                 if (part.type === 'step-start') {
@@ -1471,7 +1458,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function M
                   if (!cleanedText) return null;
                   return (
                     <div key={`text-${index}`} className={index > 0 ? 'mt-3' : undefined}>
-                      <MarkdownRenderer content={cleanedText} />
+                      <MarkdownRenderer content={cleanedText} streaming={!!isStreaming} />
                     </div>
                   );
                 }
@@ -1487,7 +1474,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function M
 
         {/* Action bar */}
         {!editing && !isStreaming && displayContent && (
-          <div className="flex items-center gap-1 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-100">
+          <div className={cn('flex items-center gap-1 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-100', isUser && 'justify-end')}>
             <button
               onClick={handleCopy}
               className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors duration-100"

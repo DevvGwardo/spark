@@ -1,10 +1,33 @@
 import { fetchRepoFileTreeResult } from '@/lib/api';
 import { getChatScopeId } from '@/lib/chat-scope';
+import { db } from '@/lib/db';
 import { usePanelStore } from '@/stores/panel-store';
+import { useChatStore } from '@/stores/chat-store';
 import type { ActiveRepo } from '@/stores/changeset-store';
 import { useChangesetStore } from '@/stores/changeset-store';
 import { usePreviewStore } from '@/stores/preview-store';
 import { useUIStore } from '@/stores/ui-store';
+
+/**
+ * Eagerly persist a panel's thread→project pointer so the sidebar groups the
+ * thread under its repo immediately. Without this the pointer is only written
+ * by useChat's debounced auto-save (which runs only while that conversation's
+ * panel is mounted), so a freshly-attached repo wouldn't show until later.
+ * No-ops for panels without a conversation yet — those get the pointer when the
+ * conversation is created and saved.
+ */
+async function persistPanelRepoPointer(panelId: string, repoFullName: string): Promise<void> {
+  try {
+    const convId = usePanelStore.getState().panels.find((p) => p.id === panelId)?.conversationId;
+    if (!convId) return;
+    const conv = useChatStore.getState().conversations.find((c) => c.id === convId);
+    if (conv && (conv.repoFullName ?? null) === repoFullName) return;
+    await db.conversations.update(convId, { repoFullName });
+    await useChatStore.getState().loadConversations();
+  } catch {
+    // Best-effort sidebar grouping sync — never block repo attach on a db hiccup.
+  }
+}
 
 interface AttachRepoToPanelInput {
   panelId: string;
@@ -56,6 +79,9 @@ export async function attachRepoToPanel({
   } else {
     changesetStore.setActiveRepo(scopeId, repo);
   }
+
+  // Reflect the attached project on the thread right away (sidebar grouping).
+  void persistPanelRepoPointer(panelId, repo.fullName);
 
   if (openPreview) {
     previewStore.setView(scopeId, 'repo');
