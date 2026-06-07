@@ -32,6 +32,10 @@ export interface HermesBridgeStatus {
   providerCredentials: Record<string, boolean>;
   /** True if the bridge has a usable credential for ANY provider (not just OpenRouter/MiniMax). */
   hasAnyCreds: boolean;
+  /** True if the agent's configured default model is servable — covers config.yaml
+   *  custom base_url providers (e.g. deepseek-v4-pro via opencode-go) absent from
+   *  the provider_credentials map. */
+  defaultModelCredentialed: boolean;
   credentialSources: HermesBridgeCredentialSources;
   credentialSourcesMinimax: HermesBridgeMiniMaxCredentialSources;
   launchTokenPresent: boolean;
@@ -68,6 +72,7 @@ export async function detectHermesBridge(): Promise<HermesBridgeStatus | null> {
       has_openrouter_creds?: boolean;
       has_minimax_creds?: boolean;
       provider_credentials?: Record<string, boolean>;
+      default_model_credentialed?: boolean;
       credential_sources?: {
         env?: boolean;
         auth_json?: boolean;
@@ -90,9 +95,11 @@ export async function detectHermesBridge(): Promise<HermesBridgeStatus | null> {
     }
 
     const providerCredentials = data.provider_credentials ?? {};
+    const defaultModelCredentialed = data.default_model_credentialed ?? false;
     const hasAnyCreds =
       (data.has_openrouter_creds ?? false) ||
       (data.has_minimax_creds ?? false) ||
+      defaultModelCredentialed ||
       Object.values(providerCredentials).some(Boolean);
 
     return {
@@ -101,6 +108,7 @@ export async function detectHermesBridge(): Promise<HermesBridgeStatus | null> {
       hasMiniMaxCreds: data.has_minimax_creds ?? false,
       providerCredentials,
       hasAnyCreds,
+      defaultModelCredentialed,
       credentialSources: {
         env: data.credential_sources?.env ?? false,
         authJson: data.credential_sources?.auth_json ?? false,

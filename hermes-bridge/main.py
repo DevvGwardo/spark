@@ -2531,6 +2531,26 @@ def _provider_has_credentials(pid: str) -> bool:
     )
 
 
+def _default_model_credentialed() -> bool:
+    """Whether the agent's configured default model can actually be served.
+
+    `provider_credentials` only covers _PROVIDER_CONFIG, so a default model
+    routed through a config.yaml custom base_url — e.g. deepseek-v4-pro via
+    opencode-go, which is not a _PROVIDER_CONFIG entry — is invisible there.
+    This mirrors the chat route's credential resolution for the configured
+    model so /health doesn't under-report what the bridge can serve.
+    """
+    cfg = _load_cli_model_config()
+    if (cfg.get("api_key") or "").strip():
+        return True
+    provider = (cfg.get("provider") or "").strip().lower()
+    if provider in _PROVIDER_CONFIG and _provider_has_credentials(provider):
+        return True
+    if provider and _get_credential_pool_key(provider):
+        return True
+    return bool(_get_local_gateway_key())
+
+
 @app.get("/health")
 async def health():
     # Check credential availability for all configured providers
@@ -2545,6 +2565,7 @@ async def health():
         "has_openrouter_creds": provider_credentials.get("openrouter", False),
         "has_minimax_creds": provider_credentials.get("minimax", False),
         "provider_credentials": provider_credentials,
+        "default_model_credentialed": _default_model_credentialed(),
         "cursor_composer_bridge": cursor_composer,
         "launch_token_present": bool(HERMES_BRIDGE_TOKEN),
         "brain_initialized": _brain_initialized,
