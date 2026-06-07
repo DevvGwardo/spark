@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Check, Code2, ExternalLink, Loader2, RefreshCw, AlertCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { fetchCursorComposerBridge, type CursorComposerBridgeStatus } from '@/lib/hermes-api';
