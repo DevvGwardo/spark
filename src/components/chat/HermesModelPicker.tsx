@@ -57,7 +57,7 @@ export const HermesModelPicker: React.FC = () => {
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
-          className="flex items-center gap-1 px-2 py-1 rounded-[6px] text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors duration-100 max-w-[230px]"
+          className="flex min-w-0 items-center gap-1 px-2 py-1 rounded-[6px] text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors duration-100 max-w-[44vw] sm:max-w-[230px]"
           title="Choose provider & model"
         >
           <Bot className="h-3 w-3 shrink-0" />
@@ -65,7 +65,7 @@ export const HermesModelPicker: React.FC = () => {
           <ChevronDown className="h-3 w-3 shrink-0" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="max-h-80 w-64 overflow-y-auto">
+      <DropdownMenuContent align="start" className="max-h-80 w-[min(16rem,calc(100vw-1.5rem))] overflow-y-auto">
         <DropdownMenuItem
           onClick={useAgentDefault}
           className={followAgentModel ? 'bg-accent' : ''}

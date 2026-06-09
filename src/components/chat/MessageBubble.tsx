@@ -895,7 +895,7 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
       <div
         onClick={isComplete ? handlePreviewClick : undefined}
         className={cn(
-          'my-3 rounded-xl border border-border overflow-hidden w-[280px] transition-all duration-150',
+          'my-3 rounded-xl border border-border overflow-hidden w-[280px] max-w-full transition-all duration-150',
           isComplete && 'cursor-pointer hover:border-primary/50 hover:shadow-md hover:shadow-primary/5'
         )}
       >
@@ -973,7 +973,7 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
         </span>
         {toolTargetLabel && (
           <code
-            className="text-[11px] text-foreground/70 bg-muted/50 px-1.5 py-0.5 rounded font-mono truncate max-w-[300px]"
+            className="text-[11px] text-foreground/70 bg-muted/50 px-1.5 py-0.5 rounded font-mono truncate min-w-0 max-w-[160px] sm:max-w-[300px]"
             title={toolTargetLabel}
           >
             {toolTargetLabel}
@@ -1474,7 +1474,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function M
 
         {/* Action bar */}
         {!editing && !isStreaming && displayContent && (
-          <div className={cn('flex items-center gap-1 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-100', isUser && 'justify-end')}>
+          <div className={cn('chat-hover-actions flex items-center gap-1 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-100', isUser && 'justify-end')}>
             <button
               onClick={handleCopy}
               className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors duration-100"

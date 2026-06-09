@@ -343,10 +343,10 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
           </div>
 
           {/* Bottom toolbar */}
-          <div className="flex items-center gap-1 h-9 px-3 pb-1.5">
+          <div className="flex items-center gap-1 h-9 px-3 pb-1.5 min-w-0">
             {/* Plus button */}
             <button
-              className="h-6 w-6 rounded-full flex items-center justify-center text-[#666666] hover:text-foreground hover:bg-muted transition-colors duration-100"
+              className="h-6 w-6 shrink-0 rounded-full flex items-center justify-center text-[#666666] hover:text-foreground hover:bg-muted transition-colors duration-100"
               title="Attach"
             >
               <Plus className="h-4 w-4" />
@@ -358,13 +358,13 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
             ) : (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <button className="flex items-center gap-1 px-2 py-1 rounded-[6px] text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors duration-100">
-                  <Bot className="h-3 w-3" />
-                  {displayModel}
-                  <ChevronDown className="h-3 w-3" />
+                <button className="flex min-w-0 items-center gap-1 px-2 py-1 rounded-[6px] text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors duration-100 max-w-[120px] sm:max-w-none">
+                  <Bot className="h-3 w-3 shrink-0" />
+                  <span className="truncate">{displayModel}</span>
+                  <ChevronDown className="h-3 w-3 shrink-0" />
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="max-h-64 overflow-y-auto">
+              <DropdownMenuContent align="start" className="max-h-64 max-w-[calc(100vw-1.5rem)] overflow-y-auto">
                 {models.map((model) => {
                   const label = model.split('/').pop() || model;
                   return (
@@ -387,10 +387,11 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
                   <button
                     aria-label={`Reasoning effort: ${reasoningLabel}`}
                     title="Adjust reasoning effort"
-                    className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors duration-100"
+                    className="flex shrink-0 items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors duration-100 whitespace-nowrap"
                   >
-                    {`Reasoning: ${reasoningLabel}`}
-                    <ChevronDown className="h-3 w-3" />
+                    <span className="hidden sm:inline">Reasoning:&nbsp;</span>
+                    {reasoningLabel}
+                    <ChevronDown className="h-3 w-3 shrink-0" />
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start">
@@ -411,15 +412,15 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
             <button
               onClick={() => setPlanMode(!planMode)}
               className={cn(
-                'inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors',
+                'inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors',
                 planMode
                   ? 'bg-purple-500/15 text-purple-400 ring-1 ring-purple-500/30'
                   : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
               )}
               title={planMode ? 'Exit Plan Mode' : 'Enter Plan Mode (read-only exploration)'}
             >
-              <ClipboardList className="h-3.5 w-3.5" />
-              <span>Plan</span>
+              <ClipboardList className="h-3.5 w-3.5 shrink-0" />
+              <span className="hidden sm:inline">Plan</span>
             </button>
 
 
@@ -428,7 +429,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
             {/* Mic button */}
             {voiceInput.isTranscribing ? (
               <button
-                className="p-1.5 rounded-lg text-muted-foreground"
+                className="p-1.5 shrink-0 rounded-lg text-muted-foreground"
                 title="Transcribing…"
                 aria-label="Transcribing"
                 disabled
@@ -440,7 +441,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
                 onClick={handleMicToggle}
                 disabled={disabled}
                 className={cn(
-                  'p-1.5 rounded-lg transition-colors duration-100',
+                  'p-1.5 shrink-0 rounded-lg transition-colors duration-100',
                   'text-red-500 hover:text-red-400 bg-red-500/10 hover:bg-red-500/20',
                   disabled && 'opacity-50 pointer-events-none'
                 )}
@@ -454,7 +455,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
                 onClick={handleMicToggle}
                 disabled={disabled}
                 className={cn(
-                  'p-1.5 rounded-lg transition-colors duration-100',
+                  'p-1.5 shrink-0 rounded-lg transition-colors duration-100',
                   voiceInput.error
                     ? 'text-amber-500 hover:text-amber-400'
                     : 'text-[#555555] hover:text-foreground hover:bg-muted',
@@ -467,7 +468,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
               </button>
             )}
             {voiceInput.error && (
-              <span className="text-[10px] text-amber-500 max-w-[120px] truncate" title={voiceInput.error}>
+              <span className="text-[10px] text-amber-500 max-w-[120px] shrink truncate" title={voiceInput.error}>
                 {voiceInput.error}
               </span>
             )}
@@ -478,7 +479,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
                 {canQueueDraft && (
                   <button
                     onClick={onSend}
-                    className="flex items-center gap-1.5 rounded-full border border-border/80 bg-background/80 px-3 py-1.5 text-xs font-medium text-foreground transition-colors duration-100 hover:bg-muted"
+                    className="flex shrink-0 items-center gap-1.5 rounded-full border border-border/80 bg-background/80 px-3 py-1.5 text-xs font-medium text-foreground transition-colors duration-100 hover:bg-muted"
                     title="Queue this message"
                   >
                     <CornerDownLeft className="h-3.5 w-3.5" />
@@ -487,7 +488,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
                 )}
                 <button
                   onClick={onStop}
-                  className="h-[30px] w-[30px] flex items-center justify-center rounded-[8px] bg-primary text-primary-foreground hover:opacity-80 transition-opacity duration-100"
+                  className="h-[30px] w-[30px] shrink-0 flex items-center justify-center rounded-[8px] bg-primary text-primary-foreground hover:opacity-80 transition-opacity duration-100"
                   title="Stop generating"
                 >
                   <Square className="h-3.5 w-3.5" />
@@ -498,7 +499,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
                 onClick={handleSendOrCommand}
                 disabled={!safeValue.trim() || disabled}
                 className={cn(
-                  "h-[30px] w-[30px] flex items-center justify-center rounded-[8px] transition-opacity duration-100",
+                  "h-[30px] w-[30px] shrink-0 flex items-center justify-center rounded-[8px] transition-opacity duration-100",
                   safeValue.trim()
                     ? "bg-primary text-primary-foreground hover:opacity-80"
                     : "bg-muted text-muted-foreground"

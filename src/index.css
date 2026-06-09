@@ -343,6 +343,19 @@ code, pre, .font-mono {
   outline-offset: 1px;
 }
 
+/* Touch devices have no hover, so hover-gated affordances would be unreachable.
+   Reveal the code-block copy button and message action bars on coarse pointers
+   (phones/tablets) so copy/regenerate/rewind stay tappable. */
+@media (hover: none) {
+  .chat-code-block__copy {
+    opacity: 1;
+  }
+
+  .chat-hover-actions {
+    opacity: 1 !important;
+  }
+}
+
 .chat-code-block__body {
   position: relative;
   background: #161616;
