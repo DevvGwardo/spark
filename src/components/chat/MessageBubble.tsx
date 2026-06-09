@@ -1355,9 +1355,14 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function M
   }, [effectiveReasoningStreaming]);
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(displayContent);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(displayContent);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard API unavailable (e.g. non-secure context like /m/chat over
+      // http) — fail silently rather than throwing an unhandled rejection.
+    }
   };
 
   const handleEditSubmit = () => {
@@ -1472,16 +1477,20 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function M
           </>
         )}
 
-        {/* Action bar */}
-        {!editing && !isStreaming && displayContent && (
+        {/* Action bar — show when there's text to copy, or (for assistant
+            messages) when regenerate/rewind are available even with no prose,
+            e.g. a tool-only turn. */}
+        {!editing && !isStreaming && (displayContent || (!isUser && (onRegenerate || onRewind))) && (
           <div className={cn('chat-hover-actions flex items-center gap-1 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-100', isUser && 'justify-end')}>
-            <button
-              onClick={handleCopy}
-              className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors duration-100"
-              title="Copy"
-            >
-              {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-            </button>
+            {displayContent && (
+              <button
+                onClick={handleCopy}
+                className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors duration-100"
+                title="Copy"
+              >
+                {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+              </button>
+            )}
             {isUser && onEdit && (
               <button
                 onClick={() => setEditing(true)}

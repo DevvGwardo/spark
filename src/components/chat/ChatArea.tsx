@@ -960,7 +960,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             )),
           }}
         />
-        {showScrollButton && isStreaming && (
+        {showScrollButton && (
           <div className="flex justify-center py-1">
             <button
               type="button"

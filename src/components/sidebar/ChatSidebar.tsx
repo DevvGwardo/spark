@@ -935,14 +935,6 @@ export const ChatSidebar: React.FC = () => {
                         )}
                       </div>
 
-                      {/* Preview line */}
-                      <div className={cn(
-                        'truncate pl-6 text-[12px] leading-relaxed',
-                        isFocused ? 'text-[hsl(var(--text-dim))]' : 'text-[hsl(var(--text-faint))]'
-                      )}>
-                        {conv.title}
-                      </div>
-
                       {/* Bottom row: line stats */}
                       {hasLineStats && (
                         <div className="flex items-center gap-1 pl-6">
