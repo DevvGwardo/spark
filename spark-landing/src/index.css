@@ -45,9 +45,9 @@ a { color: inherit; text-decoration: none; }
   overflow: hidden;
   isolation: isolate;
   background:
-    radial-gradient(46% 48% at 50% 42%, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0) 72%),
-    url("/hero-bg.jpg") center / cover no-repeat;
-  background-color: #6357d8;
+    radial-gradient(48% 46% at 50% 42%, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0) 72%),
+    url("/hero-bg.jpg") center 32% / cover no-repeat;
+  background-color: #b3a6e6;
 }
 /* thin pink top line */
 .hero-wrap::before {
