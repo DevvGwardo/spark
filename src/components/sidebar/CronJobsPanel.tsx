@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from 'react';
 import {
   Plus, X, Pause, Play, PlayCircle, Trash2, Clock, AlertCircle, CheckCircle2,
   XCircle, Loader2, Zap, GitPullRequest, Shield, Activity, FileSearch,
-  BookOpen, ChevronLeft, Pencil, type LucideIcon,
+  BookOpen, ChevronLeft, Pencil, Archive, ArchiveRestore, type LucideIcon,
 } from 'lucide-react';
 import { useCronStore, type CronJob, type CronRun } from '@/stores/cron-store';
 import { useUIStore } from '@/stores/ui-store';
@@ -357,13 +357,15 @@ function CronJobRow({
   expanded,
   onToggle,
   highlightConversation,
+  archived = false,
 }: {
   job: CronJob;
   expanded: boolean;
   onToggle: () => void;
   highlightConversation?: boolean;
+  archived?: boolean;
 }) {
-  const { pauseJob, resumeJob, runJob, deleteJob, fetchRunHistory, runHistory } = useCronStore();
+  const { pauseJob, resumeJob, runJob, deleteJob, archiveJob, restoreJob, fetchRunHistory, runHistory } = useCronStore();
   const isPaused = job.status === 'paused';
   const isCompleted = job.status === 'completed';
   const statusStyle = statusClasses(job);
@@ -414,18 +416,29 @@ function CronJobRow({
           )}
         </div>
         <div className="flex-shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-          {!isCompleted && (isPaused ? (
-            <button onClick={(e) => { e.stopPropagation(); resumeJob(job.id); }} className="p-1 rounded hover:bg-background/50" title="Resume">
-              <Play className="h-3.5 w-3.5 text-green-500" />
+          {archived ? (
+            <button onClick={(e) => { e.stopPropagation(); restoreJob(job.id); }} className="p-1 rounded hover:bg-background/50" title="Restore">
+              <ArchiveRestore className="h-3.5 w-3.5 text-green-500" />
             </button>
           ) : (
-            <button onClick={(e) => { e.stopPropagation(); pauseJob(job.id); }} className="p-1 rounded hover:bg-background/50" title="Pause">
-              <Pause className="h-3.5 w-3.5 text-yellow-500" />
-            </button>
-          ))}
-          <button onClick={(e) => { e.stopPropagation(); runJob(job.id); }} className="p-1 rounded hover:bg-background/50" title="Run now">
-            <PlayCircle className="h-3.5 w-3.5 text-blue-500" />
-          </button>
+            <>
+              {!isCompleted && (isPaused ? (
+                <button onClick={(e) => { e.stopPropagation(); resumeJob(job.id); }} className="p-1 rounded hover:bg-background/50" title="Resume">
+                  <Play className="h-3.5 w-3.5 text-green-500" />
+                </button>
+              ) : (
+                <button onClick={(e) => { e.stopPropagation(); pauseJob(job.id); }} className="p-1 rounded hover:bg-background/50" title="Pause">
+                  <Pause className="h-3.5 w-3.5 text-yellow-500" />
+                </button>
+              ))}
+              <button onClick={(e) => { e.stopPropagation(); runJob(job.id); }} className="p-1 rounded hover:bg-background/50" title="Run now">
+                <PlayCircle className="h-3.5 w-3.5 text-blue-500" />
+              </button>
+              <button onClick={(e) => { e.stopPropagation(); archiveJob(job.id); }} className="p-1 rounded hover:bg-background/50" title="Archive">
+                <Archive className="h-3.5 w-3.5 text-muted-foreground/70" />
+              </button>
+            </>
+          )}
           <button onClick={(e) => { e.stopPropagation(); deleteJob(job.id); }} className="p-1 rounded hover:bg-background/50" title="Delete">
             <Trash2 className="h-3.5 w-3.5 text-red-400" />
           </button>
@@ -522,8 +535,9 @@ function CronJobRow({
 }
 
 export function CronJobsPanel({ conversationId = null, conversationTitle = null }: CronJobsPanelProps) {
-  const { jobs, loading, error, fetchJobs, createJob } = useCronStore();
+  const { jobs, loading, error, fetchJobs, createJob, archivedIds } = useCronStore();
   const [showForm, setShowForm] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
   const [name, setName] = useState('');
   const [schedule, setSchedule] = useState('');
@@ -536,9 +550,14 @@ export function CronJobsPanel({ conversationId = null, conversationTitle = null 
 
   const scheduleHuman = useMemo(() => schedule ? cronToHuman(schedule) : null, [schedule]);
   const showingConversationScope = !!conversationId && !showAllJobs;
-  const visibleJobs = showingConversationScope
+  const archivedSet = useMemo(() => new Set(archivedIds), [archivedIds]);
+  const scopedJobs = showingConversationScope
     ? filterJobsForConversation(jobs, conversationId)
     : jobs;
+  const visibleJobs = scopedJobs.filter((job) =>
+    showArchived ? archivedSet.has(job.id) : !archivedSet.has(job.id),
+  );
+  const archivedCount = scopedJobs.filter((job) => archivedSet.has(job.id)).length;
 
   useEffect(() => {
     if (!conversationId) {
@@ -617,7 +636,7 @@ export function CronJobsPanel({ conversationId = null, conversationTitle = null 
             </button>
           ) : null}
           <span className="text-[12px] font-semibold text-muted-foreground uppercase tracking-wide">
-            {showTemplates ? 'Templates' : 'Cron Jobs'}
+            {showTemplates ? 'Templates' : showArchived ? 'Archived' : 'Cron Jobs'}
           </span>
           {!showTemplates && showingConversationScope && conversationTitle && (
             <p className="text-[11px] text-muted-foreground/50 truncate mt-0.5">
@@ -635,7 +654,19 @@ export function CronJobsPanel({ conversationId = null, conversationTitle = null 
               {showingConversationScope ? 'All' : 'This chat'}
             </button>
           )}
-          {!showTemplates && (
+          {!showTemplates && (archivedCount > 0 || showArchived) && (
+            <button
+              onClick={() => { setShowArchived((current) => !current); setShowForm(false); }}
+              className={cn(
+                'p-1 rounded hover:bg-[hsl(var(--sidebar-active))] transition-colors',
+                showArchived ? 'text-primary' : 'text-muted-foreground/70',
+              )}
+              title={showArchived ? 'Show active jobs' : `Show archived (${archivedCount})`}
+            >
+              <Archive className="h-4 w-4" />
+            </button>
+          )}
+          {!showTemplates && !showArchived && (
             <button
               onClick={() => { setShowTemplates(true); setShowForm(false); }}
               className="p-1 rounded hover:bg-[hsl(var(--sidebar-active))] transition-colors"
@@ -771,6 +802,18 @@ export function CronJobsPanel({ conversationId = null, conversationTitle = null 
             <div className="flex items-center justify-center py-8">
               <span className="text-[12px] text-muted-foreground/50">Loading...</span>
             </div>
+          ) : visibleJobs.length === 0 && showArchived ? (
+            <div className="flex flex-col items-center justify-center py-8 px-4">
+              <Archive className="h-8 w-8 text-muted-foreground/30 mb-2" />
+              <p className="text-[12px] text-muted-foreground/50 text-center">No archived jobs</p>
+              <button
+                onClick={() => setShowArchived(false)}
+                className="flex items-center gap-1.5 mt-3 px-3 py-1.5 text-[11px] font-medium rounded-md bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+                Back to active
+              </button>
+            </div>
           ) : visibleJobs.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-8 px-4">
               <Clock className="h-8 w-8 text-muted-foreground/30 mb-2" />
@@ -794,6 +837,7 @@ export function CronJobsPanel({ conversationId = null, conversationTitle = null 
                 <CronJobRow
                   key={job.id}
                   job={job}
+                  archived={showArchived}
                   expanded={_selectedJobId === job.id}
                   highlightConversation={!!conversationId && job.conversation_id === conversationId}
                   onToggle={() => useUIStore.getState().setSelectedCronJobId(job.id)}

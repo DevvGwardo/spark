@@ -5,6 +5,7 @@ import { existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { registerChatStoreRoutes } from './chat-store';
+import { registerCronArchiveRoutes } from './cron-archive-store';
 import { registerChatRoute } from './routes/chat';
 import { registerGitHubRoutes } from './routes/github';
 import { registerValidateRoute } from './routes/validate';
@@ -115,6 +116,7 @@ export function createApp(opts?: { serveFrontend?: boolean }) {
   }
 
   registerChatStoreRoutes(app);
+  registerCronArchiveRoutes(app);
 
   registerChatRoute(app);
   registerGitHubRoutes(app);

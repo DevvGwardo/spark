@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { parseToolCalls, type Segment } from '@/lib/tool-call-parser';
 import { ToolCallAccordion } from './ToolCallAccordion';
 import { summarizeCronRuns } from '@/components/sidebar/hermesSidebarUtils';
+import { nextRuns, formatRunChip, localTimezone } from '@/lib/cron-next';
 
 function formatDuration(ms: number | null): string {
   if (ms === null) return '';
@@ -142,6 +143,51 @@ export function CronHistoryChat() {
           </span>
         </div>
       )}
+
+      {/* Deployment detail strip — schedule, upcoming runs, and run-activity
+          sparkline (mirrors the Claude Console Deployments view). */}
+      {job && job.status !== 'completed' && (() => {
+        const upcoming = nextRuns(job.schedule, 5, new Date());
+        const recent = history.slice(0, 40).reverse();
+        return (
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2.5 border-b border-border/30 bg-muted/10">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] uppercase tracking-wide text-muted-foreground/50">Schedule</span>
+              <code className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-background/80 border border-border/40">{job.schedule}</code>
+            </div>
+            {upcoming.length > 0 && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] uppercase tracking-wide text-muted-foreground/50">Next</span>
+                {upcoming.slice(0, 4).map((d, i) => (
+                  <span key={i} className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-border/40 bg-background/60 text-muted-foreground/80">
+                    {formatRunChip(d)}
+                  </span>
+                ))}
+                {upcoming.length > 4 && (
+                  <span className="text-[10px] px-1 py-0.5 rounded text-muted-foreground/40">+{upcoming.length - 4}</span>
+                )}
+                <span className="text-[9px] text-muted-foreground/40 ml-0.5">{localTimezone()}</span>
+              </div>
+            )}
+            {recent.length > 0 && (
+              <div className="flex items-end gap-[2px] h-4 ml-auto" title={`${recent.length} recent runs`}>
+                {recent.map((run) => (
+                  <div
+                    key={run.run_id}
+                    className={cn(
+                      'w-[3px] rounded-[1px]',
+                      run.status === 'success' && 'bg-green-500 h-3.5',
+                      run.status === 'error' && 'bg-red-400 h-3.5',
+                      run.status === 'running' && 'bg-blue-400 h-2.5 animate-pulse',
+                      run.status !== 'success' && run.status !== 'error' && run.status !== 'running' && 'bg-muted-foreground/30 h-2',
+                    )}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Run history as chat messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">

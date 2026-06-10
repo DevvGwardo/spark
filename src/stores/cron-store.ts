@@ -10,6 +10,11 @@ import {
   type CronJob,
   type CronRun,
 } from '@/lib/hermes-api';
+import {
+  fetchArchivedJobIds,
+  archiveJobOnServer,
+  restoreJobOnServer,
+} from '@/lib/cron-archive-api';
 
 export type { CronJob, CronRun };
 
@@ -19,6 +24,11 @@ interface CronState {
   loading: boolean;
   error: string | null;
   scopedConversationId: string | null;
+  /** IDs of deployments archived in CloudChat's authoritative server store.
+   *  Hermes has no archive endpoint, so archiving pauses the job on Hermes and
+   *  records archived_at in CloudChat's SQLite — durable and shared across every
+   *  CloudChat surface. */
+  archivedIds: string[];
   fetchJobs: (conversationId?: string | null) => Promise<void>;
   createJob: (
     schedule: string,
@@ -30,6 +40,8 @@ interface CronState {
   pauseJob: (id: string) => Promise<void>;
   resumeJob: (id: string) => Promise<void>;
   runJob: (id: string) => Promise<void>;
+  archiveJob: (id: string) => Promise<void>;
+  restoreJob: (id: string) => Promise<void>;
   fetchRunHistory: (jobId: string) => Promise<void>;
 }
 
@@ -39,12 +51,24 @@ export const useCronStore = create<CronState>()((set, get) => ({
   loading: false,
   error: null,
   scopedConversationId: null,
+  archivedIds: [],
 
   fetchJobs: async (conversationId) => {
     set({ loading: true, error: null, scopedConversationId: conversationId ?? null });
     try {
-      const jobs = await apiFetchCronJobs(conversationId);
-      set({ jobs, loading: false, scopedConversationId: conversationId ?? null });
+      // Pull jobs from Hermes and the authoritative archive set from CloudChat in
+      // parallel. Archive state lives in CloudChat, so it survives even when a job
+      // is otherwise active on Hermes.
+      const [jobs, archived] = await Promise.all([
+        apiFetchCronJobs(conversationId),
+        fetchArchivedJobIds().catch(() => null),
+      ]);
+      set((s) => ({
+        jobs,
+        loading: false,
+        scopedConversationId: conversationId ?? null,
+        archivedIds: archived ? archived.map((entry) => entry.jobId) : s.archivedIds,
+      }));
     } catch (err) {
       set({ error: err instanceof Error ? err.message : 'Failed to fetch cron jobs', loading: false });
     }
@@ -66,7 +90,12 @@ export const useCronStore = create<CronState>()((set, get) => ({
     set({ error: null });
     try {
       await apiDeleteCronJob(id);
-      set((s) => ({ jobs: s.jobs.filter((j) => j.id !== id) }));
+      // Drop any archive row so a future job reusing the id isn't born archived.
+      await restoreJobOnServer(id).catch(() => {});
+      set((s) => ({
+        jobs: s.jobs.filter((j) => j.id !== id),
+        archivedIds: s.archivedIds.filter((archivedId) => archivedId !== id),
+      }));
     } catch (err) {
       set({ error: err instanceof Error ? err.message : 'Failed to delete job' });
     }
@@ -99,6 +128,36 @@ export const useCronStore = create<CronState>()((set, get) => ({
       await get().fetchJobs(get().scopedConversationId);
     } catch (err) {
       set({ error: err instanceof Error ? err.message : 'Failed to run job' });
+    }
+  },
+
+  archiveJob: async (id) => {
+    set({ error: null });
+    try {
+      // Record archive authoritatively in CloudChat first, then pause on Hermes so
+      // the scheduler stops firing the job.
+      await archiveJobOnServer(id);
+      const updated = await apiPauseCronJob(id);
+      set((s) => ({
+        jobs: s.jobs.map((j) => (j.id === id ? updated : j)),
+        archivedIds: s.archivedIds.includes(id) ? s.archivedIds : [...s.archivedIds, id],
+      }));
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : 'Failed to archive job' });
+    }
+  },
+
+  restoreJob: async (id) => {
+    set({ error: null });
+    try {
+      await restoreJobOnServer(id);
+      const updated = await apiResumeCronJob(id);
+      set((s) => ({
+        jobs: s.jobs.map((j) => (j.id === id ? updated : j)),
+        archivedIds: s.archivedIds.filter((archivedId) => archivedId !== id),
+      }));
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : 'Failed to restore job' });
     }
   },
 
