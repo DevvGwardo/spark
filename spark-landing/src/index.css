@@ -121,19 +121,23 @@ a { color: inherit; text-decoration: none; }
 .btn-sm { height: 40px; padding: 0 17px; font-size: 0.875rem; gap: 7px; }
 .btn-sm svg { width: 15px; height: 15px; }
 
-/* ---- Contained shimmer sweep on the download pill (clipped, no bleed) ---- */
-.btn-glimmer { overflow: hidden; }
-.btn-glimmer::after {
-  content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 45%;
+/* ---- Animated gradient border ("beam") traveling around the download pill ---- */
+@property --beam { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+.btn-glimmer::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1.6px;
   pointer-events: none;
-  background: linear-gradient(100deg, transparent 0%, rgba(255, 255, 255, 0.4) 50%, transparent 100%);
-  transform: translateX(-260%) skewX(-18deg);
-  animation: shimmer 4.6s ease-in-out infinite;
+  background: conic-gradient(from var(--beam),
+    transparent 0deg 232deg,
+    rgba(255, 255, 255, 0.95) 290deg,
+    #b9a8ff 320deg,
+    rgba(255, 255, 255, 0.95) 346deg,
+    transparent 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  animation: beam-rotate 2.8s linear infinite;
 }
-@keyframes shimmer {
-  0% { transform: translateX(-260%) skewX(-18deg); }
-  22%, 100% { transform: translateX(320%) skewX(-18deg); }
-}
+@keyframes beam-rotate { to { --beam: 360deg; } }
 
 /* ============ Hero ============ */
 .hero {
