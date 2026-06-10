@@ -16,7 +16,7 @@ export function Hero() {
       </p>
       <div className="hero-actions">
         <button
-          className="btn btn-pill"
+          className="btn btn-pill btn-glimmer"
           onClick={() => window.open(RELEASES, "_blank")}
         >
           Download for desktop

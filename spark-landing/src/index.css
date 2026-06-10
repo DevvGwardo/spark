@@ -45,9 +45,9 @@ a { color: inherit; text-decoration: none; }
   overflow: hidden;
   isolation: isolate;
   background:
-    radial-gradient(48% 46% at 50% 42%, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0) 72%),
-    url("/hero-bg.jpg") center 32% / cover no-repeat;
-  background-color: #b3a6e6;
+    radial-gradient(52% 48% at 50% 42%, rgba(255, 255, 255, 0.74), rgba(255, 255, 255, 0) 72%),
+    url("/hero-bg.jpg") center 38% / cover no-repeat;
+  background-color: #8fb9e6;
 }
 /* thin pink top line */
 .hero-wrap::before {
@@ -111,6 +111,24 @@ a { color: inherit; text-decoration: none; }
 
 .btn-sm { height: 40px; padding: 0 17px; font-size: 0.875rem; gap: 7px; }
 .btn-sm svg { width: 15px; height: 15px; }
+
+/* ---- Animated gradient border ("beam") traveling around the download pill ---- */
+@property --beam { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+.btn-glimmer::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1.6px;
+  pointer-events: none;
+  background: conic-gradient(from var(--beam),
+    transparent 0deg 232deg,
+    rgba(255, 255, 255, 0.95) 290deg,
+    #b9a8ff 320deg,
+    rgba(255, 255, 255, 0.95) 346deg,
+    transparent 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  animation: beam-rotate 2.8s linear infinite;
+}
+@keyframes beam-rotate { to { --beam: 360deg; } }
 
 /* ============ Hero ============ */
 .hero {
