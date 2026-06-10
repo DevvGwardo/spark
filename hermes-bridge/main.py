@@ -2384,6 +2384,28 @@ def _models_for_provider(pid: str) -> list[str]:
     return _CLI_PROVIDER_MODELS.get(_BRIDGE_TO_CLI_PROVIDER.get(pid, pid)) or _STATIC_PROVIDER_MODELS.get(pid, [])
 
 
+def _match_model_for_provider(pid: str, model: str) -> Optional[str]:
+    """Return this provider's catalog id for `model`, or None if it can't serve it.
+
+    Matches exactly first, then ignores any vendor namespace prefix on either
+    side so a bare `deepseek-v4-flash` resolves to an aggregator's namespaced
+    `deepseek/deepseek-v4-flash`. Used by credential-aware rerouting so a model
+    requested under its native id can be served by a credentialed aggregator.
+    """
+    models = _models_for_provider(pid)
+    if not models:
+        return None
+    ml = model.lower()
+    for m in models:
+        if m.lower() == ml:
+            return m
+    base = ml.split("/")[-1]
+    for m in models:
+        if m.lower().split("/")[-1] == base:
+            return m
+    return None
+
+
 def _read_positive_int_env(name: str, fallback: int) -> int:
     raw_value = os.environ.get(name)
     if not raw_value:
@@ -3124,6 +3146,38 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
     else:
         resolved_provider = "openrouter"
         route_source = "default"
+
+    # Credential-aware reroute: if the resolved provider can't be served (no usable
+    # credential) but the gateway IS authed for another provider that serves this
+    # model, switch to it so a running, credentialed Hermes gateway "just works"
+    # instead of 401-ing at an uncredentialed native API (e.g. deepseek-v4-flash
+    # name-routes to native DeepSeek, but only Nous is credentialed and serves it
+    # as deepseek/deepseek-v4-flash). The caller's explicit provider header and an
+    # explicit custom base_url both still win — only auto-resolved routes reroute.
+    if route_source != "explicit-header" and not cli_is_custom and (
+        resolved_provider not in _PROVIDER_CONFIG
+        or not _provider_has_credentials(resolved_provider)
+    ):
+        candidates = []
+        if active_provider and active_provider in _PROVIDER_CONFIG:
+            candidates.append(active_provider)
+        candidates += [p for p in _PROVIDER_CONFIG if p not in candidates]
+        for cand in candidates:
+            if not _provider_has_credentials(cand):
+                continue
+            remapped = _match_model_for_provider(cand, body.model)
+            if not remapped:
+                continue
+            print(
+                f"[hermes-bridge] Credential-aware reroute: {resolved_provider} → {cand} "
+                f"(model {body.model} → {remapped}); source was {route_source}",
+                flush=True,
+            )
+            if remapped != body.model:
+                body.model = remapped
+            resolved_provider = cand
+            route_source = "credential-fallback"
+            break
 
     # Custom non-hardcoded base_url overrides the resolved provider — UNLESS the
     # caller explicitly named a provider (UI picker), which always wins so the
