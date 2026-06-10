@@ -6,7 +6,7 @@ const REPO = "https://github.com/DevvGwardo/spark";
 export function GetSpark() {
   return (
     <section className="cta" id="get">
-      <div className="cta-card">
+      <div className="cta-card reveal">
         <div className="cta-head">
           <span className="live" />
           <h2>Get Spark</h2>

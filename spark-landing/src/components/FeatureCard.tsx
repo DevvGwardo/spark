@@ -1,9 +1,10 @@
+import type { CSSProperties } from "react";
 import type { Feature } from "../data/features";
 import { Icon } from "./Icon";
 
-export function FeatureCard({ feature }: { feature: Feature }) {
+export function FeatureCard({ feature, index = 0 }: { feature: Feature; index?: number }) {
   return (
-    <article className="feature-card">
+    <article className="feature-card" style={{ "--i": index } as CSSProperties}>
       <div className="feature-icon">
         <Icon name={feature.icon} />
       </div>
