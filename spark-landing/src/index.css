@@ -35,7 +35,14 @@ body {
   overflow-x: hidden;
 }
 a { color: inherit; text-decoration: none; }
-.site { display: flex; flex-direction: column; min-height: 100vh; }
+.site { position: relative; display: flex; flex-direction: column; min-height: 100vh; }
+
+/* fixed top sky strip — completes the 4-sided frame as content scrolls under it */
+.site::after {
+  content: ""; position: fixed; top: 0; left: 0; right: 0; height: 14px;
+  z-index: 10; pointer-events: none;
+  background: #8fb9e6 url("/hero-bg.jpg") center 38% / cover no-repeat fixed;
+}
 
 /* ============ Hero gradient field (Codex-style) ============ */
 .hero-wrap {
