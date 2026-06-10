@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { CategoryRail } from "./components/CategoryRail";
 import { Hero } from "./components/Hero";
 import { FeatureCard } from "./components/FeatureCard";
@@ -15,43 +15,6 @@ function App() {
     () => (filter === "all" ? features : features.filter((f) => f.category === filter)),
     [filter]
   );
-
-  useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const root = document.documentElement;
-
-    // scroll position → CSS var for parallax layers
-    let raf = 0;
-    const onScroll = () => {
-      if (raf) return;
-      raf = requestAnimationFrame(() => {
-        root.style.setProperty("--sy", String(window.scrollY));
-        raf = 0;
-      });
-    };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    onScroll();
-
-    // reveal stable sections as they scroll into view
-    const io = new IntersectionObserver(
-      (entries) => {
-        for (const e of entries) {
-          if (e.isIntersecting) {
-            e.target.classList.add("in");
-            io.unobserve(e.target);
-          }
-        }
-      },
-      { rootMargin: "0px 0px -10% 0px", threshold: 0.12 }
-    );
-    document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
-
-    return () => {
-      window.removeEventListener("scroll", onScroll);
-      io.disconnect();
-      cancelAnimationFrame(raf);
-    };
-  }, []);
 
   return (
     <div className="site">
@@ -78,7 +41,7 @@ function App() {
 
       <div className="content">
         <section className="section" id="features">
-          <div className="section-head reveal">
+          <div className="section-head">
             <p className="eyebrow">Features</p>
             <h2>Everything the agent needs, in one desktop.</h2>
             <p className="section-sub">
@@ -90,8 +53,8 @@ function App() {
           <CategoryRail currentFilter={filter} onFilterChange={setFilter} />
 
           <div className="grid">
-            {visible.map((feature, i) => (
-              <FeatureCard key={feature.id} feature={feature} index={i} />
+            {visible.map((feature) => (
+              <FeatureCard key={feature.id} feature={feature} />
             ))}
           </div>
         </section>
