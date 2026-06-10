@@ -18,25 +18,28 @@ function App() {
 
   return (
     <div className="site">
-      <div className="nav-wrap">
+      <div className="hero-wrap">
         <nav className="nav">
           <a className="nav-logo" href="#top" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
-            <img src="/spark-mark.svg" alt="Spark" width={26} height={26} />
+            <img src="/spark-mark.svg" alt="" width={24} height={24} />
             <span>Spark</span>
           </a>
-          <div className="nav-actions">
+          <div className="nav-links">
             <a className="nav-link" href="#features">Features</a>
-            <a className="nav-link" href={REPO} target="_blank" rel="noopener">GitHub</a>
+            <a className="nav-link" href="#get">Download</a>
+          </div>
+          <div className="nav-actions">
+            <a className="btn btn-frost btn-sm" href={REPO} target="_blank" rel="noopener">GitHub</a>
             <button className="btn btn-pill btn-sm" onClick={() => window.open(`${REPO}/releases`, "_blank")}>
-              Get started <Icon name="arrowRight" />
+              Get started <Icon name="arrowUpRight" />
             </button>
           </div>
         </nav>
+
+        <Hero />
       </div>
 
-      <main>
-        <Hero />
-
+      <div className="content">
         <section className="section" id="features">
           <div className="section-head">
             <p className="eyebrow">Features</p>
@@ -57,15 +60,15 @@ function App() {
         </section>
 
         <GetSpark />
-      </main>
 
-      <footer className="footer">
-        <span>Spark · desktop GUI for the Hermes agent</span>
-        <span>
-          Free · open source ·{" "}
-          <a href={REPO} target="_blank" rel="noopener">GitHub</a>
-        </span>
-      </footer>
+        <footer className="footer">
+          <span>Spark · desktop GUI for the Hermes agent</span>
+          <span>
+            Free · open source ·{" "}
+            <a href={REPO} target="_blank" rel="noopener">GitHub</a>
+          </span>
+        </footer>
+      </div>
     </div>
   );
 }

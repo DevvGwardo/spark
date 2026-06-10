@@ -86,6 +86,18 @@ const paths: Record<string, JSX.Element> = {
       <path d="m12 5 7 7-7 7" />
     </>
   ),
+  arrowUpRight: (
+    <>
+      <path d="M7 17 17 7" />
+      <path d="M8 7h9v9" />
+    </>
+  ),
+  terminal: (
+    <>
+      <path d="m5 8 4 4-4 4" />
+      <path d="M13 16h6" />
+    </>
+  ),
 };
 
 export function Icon({ name, className }: { name: string; className?: string }) {

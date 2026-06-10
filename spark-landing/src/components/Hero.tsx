@@ -1,28 +1,36 @@
 import { Icon } from "./Icon";
 
 const REPO = "https://github.com/DevvGwardo/spark";
+const RELEASES = `${REPO}/releases`;
 
 export function Hero() {
   return (
     <header className="hero" id="top">
-      <span className="badge">
-        <span className="dot" /> Desktop GUI for the Hermes agent
-      </span>
-      <h1>The AI desktop with an autonomous agent brain.</h1>
+      <div className="app-icon" aria-hidden="true">
+        <Icon name="terminal" />
+      </div>
+      <h1 className="wordmark">Spark</h1>
       <p className="subtitle">
-        Spark is a native desktop app built around Hermes — Nous Research's autonomous
-        agent that reads your code, runs terminals, browses the web, and ships pull
-        requests. Point it at any of 15+ providers and let it work.
+        A desktop coding agent that reads your code, runs terminals, and ships
+        PRs — powered by Hermes.
       </p>
       <div className="hero-actions">
-        <button className="btn btn-pill" onClick={() => window.open(`${REPO}/releases`, "_blank")}>
-          Get started <Icon name="arrowRight" />
+        <button
+          className="btn btn-pill btn-glimmer"
+          onClick={() => window.open(RELEASES, "_blank")}
+        >
+          Download for desktop
         </button>
-        <a className="btn btn-ghost" href={REPO} target="_blank" rel="noopener">
-          <Icon name="github" /> View on GitHub
+        <a className="btn btn-frost" href={REPO} target="_blank" rel="noopener">
+          Explore on GitHub
         </a>
       </div>
-      <p className="hero-foot">Free &amp; open source · macOS · Windows · Linux</p>
+      <p className="available">
+        Available on{" "}
+        <a href={RELEASES} target="_blank" rel="noopener">macOS</a>,{" "}
+        <a href={RELEASES} target="_blank" rel="noopener">Windows</a> and{" "}
+        <a href={RELEASES} target="_blank" rel="noopener">Linux</a>
+      </p>
     </header>
   );
 }
