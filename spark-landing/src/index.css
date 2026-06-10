@@ -28,7 +28,7 @@ html { scroll-behavior: smooth; }
 body {
   min-height: 100vh;
   color: var(--ink);
-  background: var(--bg);
+  background: #8fb9e6 url("/hero-bg.jpg") center 38% / cover no-repeat fixed;
   font-family: "Inter", system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -45,9 +45,7 @@ a { color: inherit; text-decoration: none; }
   overflow: hidden;
   isolation: isolate;
   background:
-    radial-gradient(52% 48% at 50% 42%, rgba(255, 255, 255, 0.74), rgba(255, 255, 255, 0) 72%),
-    url("/hero-bg.jpg") center 38% / cover no-repeat;
-  background-color: #8fb9e6;
+    radial-gradient(52% 48% at 50% 42%, rgba(255, 255, 255, 0.74), rgba(255, 255, 255, 0) 72%);
 }
 /* thin pink top line */
 .hero-wrap::before {
@@ -165,9 +163,9 @@ a { color: inherit; text-decoration: none; }
 .content {
   position: relative; z-index: 1;
   background: var(--bg);
-  border-top-left-radius: 28px; border-top-right-radius: 28px;
-  margin-top: -28px;
-  box-shadow: 0 -24px 60px -30px rgba(20, 12, 60, 0.45);
+  margin: -28px 14px 14px;
+  border-radius: 24px;
+  box-shadow: 0 20px 60px -28px rgba(20, 12, 60, 0.5);
 }
 
 .section { padding: 72px 24px 56px; }
