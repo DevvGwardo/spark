@@ -80,6 +80,12 @@ const paths: Record<string, JSX.Element> = {
   download: (
     <path d="M12 3v12M7 11l5 5 5-5M5 21h14" />
   ),
+  arrowRight: (
+    <>
+      <path d="M5 12h14" />
+      <path d="m12 5 7 7-7 7" />
+    </>
+  ),
 };
 
 export function Icon({ name, className }: { name: string; className?: string }) {

@@ -16,8 +16,8 @@ export function Hero() {
         requests. Point it at any of 15+ providers and let it work.
       </p>
       <div className="hero-actions">
-        <button className="btn btn-primary" onClick={() => window.open(`${REPO}/releases`, "_blank")}>
-          <Icon name="download" /> Download
+        <button className="btn btn-pill" onClick={() => window.open(`${REPO}/releases`, "_blank")}>
+          Get started <Icon name="arrowRight" />
         </button>
         <a className="btn" href={REPO} target="_blank" rel="noopener">
           <Icon name="github" /> View on GitHub
