@@ -45,13 +45,9 @@ a { color: inherit; text-decoration: none; }
   overflow: hidden;
   isolation: isolate;
   background:
-    radial-gradient(40% 42% at 50% 40%, rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0) 72%),
-    radial-gradient(58% 62% at 12% 28%, rgba(214, 228, 255, 0.92), transparent 70%),
-    radial-gradient(42% 120% at 28% 64%, rgba(255, 255, 255, 0.32), transparent 62%),
-    radial-gradient(62% 70% at 88% 16%, #8f7bf2, transparent 64%),
-    radial-gradient(70% 82% at 82% 96%, #5b4bd6, transparent 60%),
-    radial-gradient(82% 92% at 4% 100%, #3a3ea6, transparent 56%),
-    linear-gradient(158deg, #aebfff 0%, #908bf0 40%, #6357d8 74%, #463fb0 100%);
+    radial-gradient(46% 48% at 50% 42%, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0) 72%),
+    url("/hero-bg.jpg") center / cover no-repeat;
+  background-color: #6357d8;
 }
 /* thin pink top line */
 .hero-wrap::before {
