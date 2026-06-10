@@ -39,9 +39,9 @@ a { color: inherit; text-decoration: none; }
 
 /* ============ Hero gradient field (Codex-style) ============ */
 .hero-wrap {
-  position: relative;
+  position: sticky; top: 0; z-index: 0;
   display: flex; flex-direction: column;
-  min-height: 100vh;
+  height: 100vh;
   overflow: hidden;
   isolation: isolate;
   background:
