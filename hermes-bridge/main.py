@@ -2395,9 +2395,21 @@ def _native_provider_cannot_serve_model(pid: str, model: str) -> bool:
     return not _provider_serves_model(pid, model)
 
 
+# Pool-only providers Hermes CLI commonly uses for models that native APIs
+# don't host (deepseek-v4-flash via opencode-zen, etc.). Checked before the
+# alphabetical pool scan so crofai doesn't win by sort order.
+_POOL_ROUTE_PRIORITY = (
+    "opencode-zen",
+    "opencode-go",
+    "custom:opencode.ai",
+    "custom:opencode-go",
+)
+
+
 def _resolve_custom_credential_pool_route(
     *,
     prefer_providers: list[str],
+    model: str = "",
 ) -> Optional[tuple[str, str, str]]:
     """Pick a custom credential_pool provider (opencode-zen, etc.) for routing."""
     pool = _load_credential_pool()
@@ -2407,12 +2419,17 @@ def _resolve_custom_credential_pool_route(
     ordered: list[str] = []
     for raw in prefer_providers:
         pid = (raw or "").strip().lower()
-        if pid and pid not in ordered:
+        if pid and pid not in _PROVIDER_CONFIG and pid not in ordered:
+            ordered.append(pid)
+    for pid in _POOL_ROUTE_PRIORITY:
+        if pid in pool and pid not in ordered:
             ordered.append(pid)
     for pid in sorted(pool.keys()):
         if pid not in ordered:
             ordered.append(pid)
 
+    model_lower = (model or "").strip().lower()
+    best: Optional[tuple[int, str, str, str]] = None
     for pid in ordered:
         if pid in _PROVIDER_CONFIG:
             continue
@@ -2423,8 +2440,20 @@ def _resolve_custom_credential_pool_route(
         if not base_url or any(host in base_url for host in _KNOWN_HOSTS):
             continue
         key = (entry.get("access_token") or "").strip()
-        return (pid, base_url, key)
-    return None
+        score = 0
+        if model_lower and _match_model_for_provider(pid, model):
+            score += 100
+        if model_lower.startswith("deepseek") and "opencode" in pid:
+            score += 80
+        if pid in _POOL_ROUTE_PRIORITY:
+            score += 10 * (_POOL_ROUTE_PRIORITY.index(pid) + 1)
+        candidate = (score, pid, base_url, key)
+        if best is None or candidate[0] > best[0]:
+            best = candidate
+    if not best:
+        return None
+    _, pid, base_url, key = best
+    return (pid, base_url, key)
 
 
 # ── Provider → model catalog ──────────────────────────────────────────────
@@ -3230,9 +3259,18 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
 
     pool_custom_route: Optional[tuple[str, str, str]] = None
     if route_source != "explicit-header" and not cli_is_custom:
-        if _native_provider_cannot_serve_model(resolved_provider, body.model):
+        native_needs_pool = (
+            resolved_provider not in _AGGREGATOR_PROVIDERS
+            and resolved_provider in _PROVIDER_CONFIG
+            and (
+                not _provider_has_credentials(resolved_provider)
+                or _native_provider_cannot_serve_model(resolved_provider, body.model)
+            )
+        )
+        if native_needs_pool:
             pool_custom_route = _resolve_custom_credential_pool_route(
                 prefer_providers=[cli_provider, active_provider],
+                model=body.model,
             )
 
     # Credential-aware reroute: if the resolved provider can't be served (no usable
