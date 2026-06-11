@@ -1171,6 +1171,56 @@ class CliProviderRoutingTests(unittest.TestCase):
         self.assertEqual(adapter.last_init["base_url"], "https://my-llm.internal/v1")
         self.assertEqual(adapter.last_init["api_key"], "selfhost-key")
 
+    def test_deepseek_v4_flash_routes_to_opencode_zen_pool_when_not_native(self):
+        """Regression: config.yaml names deepseek + deepseek-v4-flash, but the
+        native DeepSeek API does not host that model. Telegram reaches it via
+        credential_pool (opencode-zen); Spark must do the same instead of Nous."""
+        adapter = self._fake_adapter()
+        fake_module = types.SimpleNamespace(HermesAgentAdapter=adapter)
+        body = main.ChatCompletionRequest.model_validate({
+            "model": "deepseek-v4-flash",
+            "messages": [{"role": "user", "content": "test"}],
+            "stream": True,
+        })
+        request = _FakeRequest({"authorization": "Bearer ignored"})
+
+        fake_pool = {
+            "deepseek": [{
+                "access_token": "deepseek-key",
+                "base_url": "https://api.deepseek.com/v1",
+                "priority": 0,
+                "last_status": "ok",
+            }],
+            "opencode-zen": [{
+                "access_token": "zen-key",
+                "base_url": "https://opencode.ai/zen/v1",
+                "priority": 0,
+                "last_status": "ok",
+            }],
+            "nous": [{
+                "access_token": "nous-key",
+                "base_url": "https://inference-api.nousresearch.com/v1",
+                "priority": 0,
+                "last_status": "ok",
+            }],
+        }
+
+        with patch.dict(sys.modules, {"hermes_adapter": fake_module}), \
+             patch.object(main, "_load_cli_model_config", return_value={
+                 "default": "deepseek-v4-flash",
+                 "provider": "deepseek",
+                 "base_url": "",
+             }), \
+             patch.object(main, "_get_active_provider", return_value="nous"), \
+             patch.object(main, "_provider_has_credentials", return_value=True), \
+             patch.object(main, "_provider_serves_model", side_effect=lambda pid, _model: pid != "deepseek"), \
+             patch.object(main, "_load_credential_pool", return_value=fake_pool):
+            asyncio.run(_invoke_chat_and_read_stream(request, body))
+
+        self.assertIsNotNone(adapter.last_init)
+        self.assertEqual(adapter.last_init["base_url"], "https://opencode.ai/zen/v1")
+        self.assertEqual(adapter.last_init["api_key"], "zen-key")
+
 
 class BrainRequestRegistrationTests(unittest.TestCase):
     def test_agent_loop_awaits_per_request_brain_register(self):

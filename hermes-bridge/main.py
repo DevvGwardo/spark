@@ -2346,6 +2346,116 @@ def _get_active_provider() -> Optional[str]:
     return None
 
 
+def _load_credential_pool() -> dict[str, list[dict]]:
+    """Return ~/.hermes/auth.json credential_pool entries keyed by provider id."""
+    auth_path = os.path.expanduser("~/.hermes/auth.json")
+    try:
+        with open(auth_path, "r") as f:
+            auth = json.load(f)
+        pool = auth.get("credential_pool", {}) or {}
+        return pool if isinstance(pool, dict) else {}
+    except Exception:
+        return {}
+
+
+def _credential_pool_entry_usable(entry: dict) -> bool:
+    key = (entry.get("access_token") or "").strip()
+    base_url = (entry.get("base_url") or "").strip()
+    if not key or key == "***" or not base_url:
+        return False
+    status = (entry.get("last_status") or "").strip().lower()
+    return status not in ("error", "failed", "unauthorized", "invalid", "exhausted")
+
+
+def _best_usable_credential_pool_entry(pool: dict[str, list[dict]], provider_name: str) -> Optional[dict]:
+    entries = pool.get(provider_name) or []
+    for entry in sorted(entries, key=lambda c: c.get("priority", 99)):
+        if _credential_pool_entry_usable(entry):
+            return entry
+    return None
+
+
+def _provider_serves_model(pid: str, model: str) -> bool:
+    """Whether a bridge provider's catalog includes this model id."""
+    catalog = _models_for_provider(pid)
+    if not catalog:
+        return True
+    return _match_model_for_provider(pid, model) is not None
+
+
+# Aggregators proxy arbitrary model ids — don't second-guess them via pool routing
+# when the local catalog is incomplete (e.g. OpenRouter hosting llama-3-70b).
+_AGGREGATOR_PROVIDERS = frozenset({"openrouter", "nous", "minimax"})
+
+
+def _native_provider_cannot_serve_model(pid: str, model: str) -> bool:
+    """True when a native API provider is selected but its catalog lacks this model."""
+    if pid in _AGGREGATOR_PROVIDERS or pid not in _PROVIDER_CONFIG:
+        return False
+    return not _provider_serves_model(pid, model)
+
+
+# Pool-only providers Hermes CLI commonly uses for models that native APIs
+# don't host (deepseek-v4-flash via opencode-zen, etc.). Checked before the
+# alphabetical pool scan so crofai doesn't win by sort order.
+_POOL_ROUTE_PRIORITY = (
+    "opencode-zen",
+    "opencode-go",
+    "custom:opencode.ai",
+    "custom:opencode-go",
+)
+
+
+def _resolve_custom_credential_pool_route(
+    *,
+    prefer_providers: list[str],
+    model: str = "",
+) -> Optional[tuple[str, str, str]]:
+    """Pick a custom credential_pool provider (opencode-zen, etc.) for routing."""
+    pool = _load_credential_pool()
+    if not pool:
+        return None
+
+    ordered: list[str] = []
+    for raw in prefer_providers:
+        pid = (raw or "").strip().lower()
+        if pid and pid not in _PROVIDER_CONFIG and pid not in ordered:
+            ordered.append(pid)
+    for pid in _POOL_ROUTE_PRIORITY:
+        if pid in pool and pid not in ordered:
+            ordered.append(pid)
+    for pid in sorted(pool.keys()):
+        if pid not in ordered:
+            ordered.append(pid)
+
+    model_lower = (model or "").strip().lower()
+    best: Optional[tuple[int, str, str, str]] = None
+    for pid in ordered:
+        if pid in _PROVIDER_CONFIG:
+            continue
+        entry = _best_usable_credential_pool_entry(pool, pid)
+        if not entry:
+            continue
+        base_url = (entry.get("base_url") or "").strip().rstrip("/")
+        if not base_url or any(host in base_url for host in _KNOWN_HOSTS):
+            continue
+        key = (entry.get("access_token") or "").strip()
+        score = 0
+        if model_lower and _match_model_for_provider(pid, model):
+            score += 100
+        if model_lower.startswith("deepseek") and "opencode" in pid:
+            score += 80
+        if pid in _POOL_ROUTE_PRIORITY:
+            score += 10 * (_POOL_ROUTE_PRIORITY.index(pid) + 1)
+        candidate = (score, pid, base_url, key)
+        if best is None or candidate[0] > best[0]:
+            best = candidate
+    if not best:
+        return None
+    _, pid, base_url, key = best
+    return (pid, base_url, key)
+
+
 # ── Provider → model catalog ──────────────────────────────────────────────
 # Best-effort import of the canonical Hermes CLI model catalog. Never crash the
 # bridge if the import fails (sys.path may not include the agent in all setups).
@@ -3147,6 +3257,22 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
         resolved_provider = "openrouter"
         route_source = "default"
 
+    pool_custom_route: Optional[tuple[str, str, str]] = None
+    if route_source != "explicit-header" and not cli_is_custom:
+        native_needs_pool = (
+            resolved_provider not in _AGGREGATOR_PROVIDERS
+            and resolved_provider in _PROVIDER_CONFIG
+            and (
+                not _provider_has_credentials(resolved_provider)
+                or _native_provider_cannot_serve_model(resolved_provider, body.model)
+            )
+        )
+        if native_needs_pool:
+            pool_custom_route = _resolve_custom_credential_pool_route(
+                prefer_providers=[cli_provider, active_provider],
+                model=body.model,
+            )
+
     # Credential-aware reroute: if the resolved provider can't be served (no usable
     # credential) but the gateway IS authed for another provider that serves this
     # model, switch to it so a running, credentialed Hermes gateway "just works"
@@ -3154,9 +3280,14 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
     # name-routes to native DeepSeek, but only Nous is credentialed and serves it
     # as deepseek/deepseek-v4-flash). The caller's explicit provider header and an
     # explicit custom base_url both still win — only auto-resolved routes reroute.
-    if route_source != "explicit-header" and not cli_is_custom and (
-        resolved_provider not in _PROVIDER_CONFIG
-        or not _provider_has_credentials(resolved_provider)
+    if (
+        not pool_custom_route
+        and route_source != "explicit-header"
+        and not cli_is_custom
+        and (
+            resolved_provider not in _PROVIDER_CONFIG
+            or not _provider_has_credentials(resolved_provider)
+        )
     ):
         candidates = []
         if active_provider and active_provider in _PROVIDER_CONFIG:
@@ -3202,6 +3333,14 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
         print(
             f"[hermes-bridge] Routing via ~/.hermes/config.yaml custom base_url. "
             f"provider={cli_provider} base_url={cli_base_url} model={body.model}",
+            flush=True,
+        )
+    elif pool_custom_route:
+        pool_provider, agent_base_url, agent_api_key = pool_custom_route
+        print(
+            f"[hermes-bridge] Routing via credential_pool. "
+            f"provider={pool_provider} base_url={agent_base_url} model={body.model} "
+            f"(native {resolved_provider} does not serve this model id)",
             flush=True,
         )
     else:

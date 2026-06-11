@@ -754,16 +754,16 @@ app.setAboutPanelOptions({
 app.whenReady().then(async () => {
   registerLocalAssetProtocol()
   applyAppIcon()
+
+  // Start the Hermes bridge before the renderer loads so /api/hermes/* proxies
+  // don't 502 while ChatInput and the status pill poll on first paint.
+  const bridgeResult = await startBridge()
+  console.log('[bridge] startup result:', bridgeResult.status, bridgeResult.message ?? '')
+
   await createWindow()
   createTray()
   setupDockMenu()
   registerGlobalShortcut()
-
-  // Fire-and-forget bridge startup. The renderer's first-run wizard polls
-  // bridge:status and surfaces failures; we don't block window display on it.
-  startBridge()
-    .then((r) => console.log('[bridge] startup result:', r.status, r.message ?? ''))
-    .catch((err) => console.warn('[bridge] startup threw', err))
 
   // Auto-updates (skip in dev)
   if (!is.dev) {
