@@ -1612,7 +1612,7 @@ export const SettingsModal: React.FC = () => {
                             <div className="text-xs text-muted-foreground">
                               {hermesSwarm.enabled
                                 ? 'Messages will run through the 3-phase pipeline'
-                                : 'Messages use the standard single-agent loop'}
+                                : 'Messages go straight to the Hermes agent'}
                             </div>
                           </div>
                           <button

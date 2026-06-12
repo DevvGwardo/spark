@@ -55,6 +55,7 @@ import {
   getServerToolEventKey,
   hasRecoverablePseudoRepoWrites,
   isAgentStatusData,
+  isHermesLoopStatusData,
   isHermesToolActivityData,
   isInvalidRepoReadPath,
   isServerExecutedRepoToolName,
@@ -442,6 +443,7 @@ export function useChat(
   const hermesToolsetConfig = useHermesStore((s) => s.toolsets);
   const hermesMcpServers = useHermesStore((s) => s.mcpServers);
   const hermesSwarmEnabled = useHermesStore((s) => s.swarm.enabled);
+  const hermesLoopEnabled = useHermesStore((s) => s.loops[panelId]?.enabled ?? false);
   const hermesCustomToolDefs = useMemo(() => {
     const servers = hermesMcpServers.filter((s) => s.enabled && s.tools.length > 0);
     return servers.flatMap((server) =>
@@ -1004,6 +1006,14 @@ When the user asks you to make changes:
                   updateAgentStatus(item.status);
                   continue;
                 }
+                if (isHermesLoopStatusData(item)) {
+                  useHermesStore.getState().setLoopStatus(panelId, {
+                    phase: item.status.phase,
+                    iteration: item.status.iteration,
+                    stopReason: item.status.stopReason ?? null,
+                  });
+                  continue;
+                }
                 if (isServerToolEvent(item)) {
                   applyServerToolEvent(item);
                 }
@@ -1089,7 +1099,9 @@ When the user asks you to make changes:
       temperature: config.temperature,
       top_p: config.topP,
       max_tokens: config.maxTokens,
-      ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+      ...(effectiveProvider === 'hermes'
+        ? { reasoning_effort: useHermesStore.getState().reasoningEffort }
+        : reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
       api_key: config.apiKey,
       system_prompt: buildRepoSystemPrompt(
         currentActiveRepo,
@@ -1108,6 +1120,14 @@ When the user asks you to make changes:
       ...(currentIsRepoMode && currentActiveRepo ? { repo_edit_intent: repoEditIntentForRequest } : {}),
       ...(effectiveProvider === 'hermes' ? { hermes_toolsets: currentEffectiveHermesToolsets.join(',') } : {}),
       ...(effectiveProvider === 'hermes' && hermesSwarmEnabled ? { hermes_swarm_mode: true } : {}),
+      ...(effectiveProvider === 'hermes' && !hermesSwarmEnabled && hermesLoopEnabled
+        ? {
+            hermes_loop_mode: {
+              max_iterations: useHermesStore.getState().getLoop(panelId).config.maxIterations,
+              time_budget_minutes: useHermesStore.getState().getLoop(panelId).config.timeBudgetMinutes,
+            },
+          }
+        : {}),
       // Only pin a provider when the user explicitly picked one. Otherwise send
       // no provider and let the bridge route via the agent's own config
       // (active_provider / config.yaml) — the bridge's prefix resolver already
@@ -1141,12 +1161,16 @@ When the user asks you to make changes:
     config.topP,
     hermesCustomToolDefs,
     hermesSwarmEnabled,
+    hermesLoopEnabled,
     hermesToolsets,
     effectiveModel,
     effectiveProvider,
     reasoningEffort,
     scopeId,
   ]);
+
+  const panelCount = usePanelStore((s) => s.panels.length);
+  const panelCountThrottle = panelCount <= 2 ? 32 : panelCount <= 4 ? 64 : 96;
 
   const requestBody = (() => {
     const nextBody = activeRequestBodyRef.current ?? buildRequestBody();
@@ -1178,7 +1202,10 @@ When the user asks you to make changes:
     }),
     id: aiChatSessionId,
     streamProtocol: 'data',
-    experimental_throttle: 32,
+    // Scale the render throttle with panel count so several concurrently
+    // streaming sessions stay smooth: each extra panel multiplies per-token
+    // render work, so coarser batching keeps total work roughly constant.
+    experimental_throttle: panelCountThrottle,
     maxSteps: Infinity,
     onFinish: async (message, options) => {
       // Use streamConvIdRef (captured at stream start) so mid-stream
@@ -1772,6 +1799,20 @@ When the user asks you to make changes:
       clearTimeout(autoContinueTimerRef.current);
       autoContinueTimerRef.current = null;
     }
+    // Hermes runs survive client disconnects (background continuation), so an
+    // explicit Stop must also cancel the run server-side — aborting the fetch
+    // alone would leave the agent running.
+    const convId = streamConvIdRef.current ?? convIdRef.current;
+    if (convId) {
+      void fetch(`${getApiBaseUrl()}/api/hermes/chat/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversationId: convId }),
+      }).catch(() => { /* best-effort */ });
+      // Stopping a detached background run: drop the polled flag right away
+      // so the UI doesn't keep showing it as running until the next poll.
+      useActivityStore.getState().clearBackgroundRun(convId);
+    }
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
     // The in-flight send is over — clear the guard synchronously so a deferred
@@ -1835,6 +1876,55 @@ When the user asks you to make changes:
   // Track streaming state in global activity store
   const isStreaming = status === 'streaming' || status === 'submitted';
   isStreamingRef.current = isStreaming;
+
+  // A hermes run for this conversation that is still active server-side but
+  // not streamed by this panel (the originating panel/window was closed).
+  // The panel treats it like a live stream: running indicator, Stop enabled,
+  // and the in-flight output polled in below.
+  const hasBackgroundRun = useActivityStore((s) =>
+    conversationId ? !!s.backgroundRuns[conversationId] : false,
+  );
+  const isBackgroundRunActive = hasBackgroundRun && !isStreaming;
+
+  // Poll the in-flight output of a detached background run and mirror it into
+  // the message buffer as a synthetic assistant message so the user sees the
+  // run progressing. On completion the run's persisted message replaces it
+  // via the hermes-background-run-finished re-hydration below.
+  useEffect(() => {
+    if (!isBackgroundRunActive || !conversationId) return;
+    let cancelled = false;
+
+    const syntheticId = `background-run-${conversationId}`;
+    const pollPartial = async () => {
+      try {
+        const response = await fetch(`${getApiBaseUrl()}/api/hermes/chat/active/${conversationId}`);
+        if (!response.ok || cancelled) return;
+        const payload = await response.json() as { active?: boolean; text?: string };
+        if (cancelled || !payload.active || !payload.text) return;
+        if (convIdRef.current !== conversationId || isStreamingRef.current) return;
+        const current = messagesRef.current;
+        const existingIdx = current.findIndex((m) => m.id === syntheticId);
+        const synthetic = {
+          id: syntheticId,
+          role: 'assistant' as const,
+          content: payload.text,
+        } as AIMessage;
+        const next = existingIdx >= 0
+          ? current.map((m, i) => (i === existingIdx ? synthetic : m))
+          : [...current, synthetic];
+        safeSetMessages(next);
+      } catch {
+        // Server unreachable — retry on the next tick.
+      }
+    };
+
+    void pollPartial();
+    const timer = setInterval(() => { void pollPartial(); }, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [isBackgroundRunActive, conversationId, safeSetMessages]);
 
   // Release the draft→conv session lock once the stream settles. Keeping the
   // lock past stream end would strand the next user turn on the draft bucket.
@@ -2173,9 +2263,22 @@ When the user asks you to make changes:
 
   // requestConversationIdRef is synced with conversationId during render (line 264)
 
+  // Anchor the elapsed timer globally so a panel close/reopen mid-stream
+  // doesn't restart it. Set on stream start; cleared only when a stream this
+  // panel owned ends while mounted (true→false transition). Deliberately NOT
+  // cleared on initial mount or in the unmount cleanup — the run may continue
+  // server-side and the reopened panel needs the anchor.
+  const streamedThisInstanceRef = useRef(false);
   useEffect(() => {
     if (conversationId) {
       useActivityStore.getState().setStreaming(conversationId, isStreaming);
+      if (isStreaming) {
+        streamedThisInstanceRef.current = true;
+        useActivityStore.getState().markStreamAnchor(conversationId, Date.now());
+      } else if (streamedThisInstanceRef.current) {
+        streamedThisInstanceRef.current = false;
+        useActivityStore.getState().clearStreamAnchor(conversationId);
+      }
     }
     return () => {
       if (conversationId) {
@@ -2273,6 +2376,21 @@ When the user asks you to make changes:
     });
   }, [safeSetMessages]);
 
+  // When a server-side background run (window closed mid-task) finishes, its
+  // assistant message is persisted server-side without flowing through this
+  // hook. If that conversation is open here and not streaming, re-hydrate so
+  // the result appears without a manual conversation switch.
+  useEffect(() => {
+    const onBackgroundRunFinished = (event: Event) => {
+      const finishedConvId = (event as CustomEvent<{ conversationId?: string }>).detail?.conversationId;
+      if (!finishedConvId || finishedConvId !== conversationId) return;
+      if (isStreamingRef.current) return;
+      hydrateConversationMessages(finishedConvId);
+    };
+    window.addEventListener('hermes-background-run-finished', onBackgroundRunFinished);
+    return () => window.removeEventListener('hermes-background-run-finished', onBackgroundRunFinished);
+  }, [conversationId, hydrateConversationMessages]);
+
   // Load messages (and file state) from IndexedDB when switching conversations
   useEffect(() => {
     // Always keep these refs in sync — they're needed by callbacks (onFinish, onToolCall)
@@ -2293,7 +2411,18 @@ When the user asks you to make changes:
     // their tool activity and changeset writes to the wrong conversation
     // during the window between this update and stop() taking effect.
     const prevConvId = prevConversationIdRef.current;
-    if (isStreaming && prevConvId !== null && conversationId !== prevConvId) {
+    // Identify the stream's owning conversation via streamConvIdRef rather than
+    // prevConvId: for a stream that started from a draft, prevConvId is still
+    // null (it's only updated when not streaming), so a "New thread" click
+    // mid-stream would otherwise be a no-op and the UI would stay pinned to
+    // the streaming conversation.
+    const streamOwnerConvId = streamConvIdRef.current ?? prevConvId;
+    // During draft→conv promotion the conversationId prop lags one render
+    // behind the panel binding; pendingConversationIdRef still points at the
+    // stream's conversation in that window. Don't treat the lag as navigation.
+    const isPromotionLag =
+      conversationId === null && pendingConversationIdRef.current === streamOwnerConvId;
+    if (isStreaming && streamOwnerConvId !== null && conversationId !== streamOwnerConvId && !isPromotionLag) {
       stop();
       // Release the session lock so chatSessionId falls back to the derived
       // id for the new conversation. Without this, a stream that started
@@ -2736,7 +2865,9 @@ When the user asks you to make changes:
     handleSteerQueuedMessage,
     handleStop: stop,
     handleRegenerate,
-    isStreaming,
+    // A detached background run reads as streaming to the UI so the running
+    // indicator and Stop control stay available after a window close/reopen.
+    isStreaming: isStreaming || isBackgroundRunActive,
     isAnotherPanelStreamingSameProfile,
     error,
     apiKeyModalOpen,

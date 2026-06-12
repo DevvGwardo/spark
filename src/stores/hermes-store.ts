@@ -75,10 +75,38 @@ export interface SwarmState {
   elapsedMs: number | null;
 }
 
+/** Loop mode phase tracker. */
+export type LoopPhase = 'idle' | 'agent' | 'judge' | 'done' | 'stopped' | 'error';
+
+export interface LoopConfig {
+  /** Hard cap on agent iterations (always enforced). */
+  maxIterations: number;
+  /** Optional wall-clock budget in minutes; null = no time limit. */
+  timeBudgetMinutes: number | null;
+}
+
+export interface LoopState {
+  enabled: boolean;
+  config: LoopConfig;
+  phase: LoopPhase;
+  iteration: number;
+  /** Why the loop stopped ('verdict-met', 'max-iterations', 'time-budget'). */
+  stopReason: string | null;
+}
+
+/** Reasoning effort levels accepted by the Hermes agent (hermes_constants.parse_reasoning_effort). */
+export type HermesReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+
+export const HERMES_REASONING_EFFORTS: HermesReasoningEffort[] = [
+  'none', 'minimal', 'low', 'medium', 'high', 'xhigh',
+];
+
 interface HermesState {
   toolsets: HermesToolsets;
   mcpServers: MCPServer[];
   swarm: SwarmState;
+  /** Loop mode state, keyed by panel id so each chat loops independently. */
+  loops: Record<string, LoopState>;
   sessionApprovalPolicies: ApprovalPolicy[];
   /**
    * The underlying provider the Hermes agent should route to (e.g. 'anthropic',
@@ -104,6 +132,10 @@ interface HermesState {
   /** Toggle whether the hermes model follows the agent's CLI default. */
   setFollowAgentModel: (follow: boolean) => void;
 
+  /** Reasoning effort sent to the Hermes agent (Faster ↔ Smarter slider). */
+  reasoningEffort: HermesReasoningEffort;
+  setReasoningEffort: (effort: HermesReasoningEffort) => void;
+
   addMCPServer: (server: MCPServer) => void;
   removeMCPServer: (id: string) => void;
   updateMCPServer: (id: string, patch: Partial<Omit<MCPServer, 'id'>>) => void;
@@ -115,6 +147,13 @@ interface HermesState {
 
   /** Build the custom tool definitions for all enabled MCP servers. */
   getCustomToolDefinitions: () => CustomToolDefinition[];
+
+  /** Loop mode controls — scoped per panel id. */
+  getLoop: (panelId: string) => LoopState;
+  setLoopEnabled: (panelId: string, enabled: boolean) => void;
+  setLoopConfig: (panelId: string, config: Partial<LoopConfig>) => void;
+  setLoopStatus: (panelId: string, status: { phase: LoopPhase; iteration: number; stopReason?: string | null }) => void;
+  resetLoop: (panelId: string) => void;
 
   /** Swarm mode controls. */
   setSwarmEnabled: (enabled: boolean) => void;
@@ -137,6 +176,14 @@ const defaultToolsets: HermesToolsets = {
   code_execution: true,
 };
 
+export const DEFAULT_LOOP_STATE: LoopState = {
+  enabled: false,
+  config: { maxIterations: 5, timeBudgetMinutes: null },
+  phase: 'idle',
+  iteration: 0,
+  stopReason: null,
+};
+
 const defaultSwarm: SwarmState = {
   enabled: false,
   phase: 'idle',
@@ -152,9 +199,11 @@ export const useHermesStore = create<HermesState>()(
       toolsets: { ...defaultToolsets },
       mcpServers: [],
       swarm: { ...defaultSwarm },
+      loops: {},
       sessionApprovalPolicies: [],
       underlyingProvider: '',
       followAgentModel: true,
+      reasoningEffort: 'medium',
 
       setToolset: (key, enabled) =>
         set((state) => ({
@@ -166,6 +215,9 @@ export const useHermesStore = create<HermesState>()(
 
       setFollowAgentModel: (follow) =>
         set(() => ({ followAgentModel: follow })),
+
+      setReasoningEffort: (effort) =>
+        set(() => ({ reasoningEffort: effort })),
 
       getEnabledToolsets: () => {
         const ts = get().toolsets;
@@ -257,6 +309,54 @@ export const useHermesStore = create<HermesState>()(
         return defs;
       },
 
+      getLoop: (panelId) => get().loops[panelId] ?? DEFAULT_LOOP_STATE,
+
+      setLoopEnabled: (panelId, enabled) =>
+        set((state) => {
+          const loop = state.loops[panelId] ?? DEFAULT_LOOP_STATE;
+          return {
+            loops: {
+              ...state.loops,
+              [panelId]: enabled
+                ? { ...loop, enabled, phase: 'idle', iteration: 0, stopReason: null }
+                : { ...DEFAULT_LOOP_STATE, config: loop.config },
+            },
+          };
+        }),
+
+      setLoopConfig: (panelId, config) =>
+        set((state) => {
+          const loop = state.loops[panelId] ?? DEFAULT_LOOP_STATE;
+          return {
+            loops: {
+              ...state.loops,
+              [panelId]: { ...loop, config: { ...loop.config, ...config } },
+            },
+          };
+        }),
+
+      setLoopStatus: (panelId, { phase, iteration, stopReason }) =>
+        set((state) => {
+          const loop = state.loops[panelId] ?? DEFAULT_LOOP_STATE;
+          return {
+            loops: {
+              ...state.loops,
+              [panelId]: { ...loop, phase, iteration, stopReason: stopReason ?? loop.stopReason },
+            },
+          };
+        }),
+
+      resetLoop: (panelId) =>
+        set((state) => {
+          const loop = state.loops[panelId] ?? DEFAULT_LOOP_STATE;
+          return {
+            loops: {
+              ...state.loops,
+              [panelId]: { ...DEFAULT_LOOP_STATE, enabled: loop.enabled, config: loop.config },
+            },
+          };
+        }),
+
       setSwarmEnabled: (enabled) =>
         set((state) => ({
           swarm: { ...state.swarm, enabled, ...(enabled ? {} : defaultSwarm) },
@@ -301,11 +401,22 @@ export const useHermesStore = create<HermesState>()(
         toolsets: state.toolsets,
         mcpServers: state.mcpServers,
         swarm: state.swarm,
+        loops: Object.fromEntries(
+          Object.entries(state.loops).map(([panelId, loop]) => [
+            panelId,
+            { ...loop, phase: 'idle' as LoopPhase, iteration: 0, stopReason: null },
+          ])
+        ),
         underlyingProvider: state.underlyingProvider,
         followAgentModel: state.followAgentModel,
+        reasoningEffort: state.reasoningEffort,
       }),
       merge: (persisted, current) => {
         const merged = { ...current, ...(persisted as Partial<HermesState>) };
+        // Backward compatibility: drop the legacy global `loop` slice (loop
+        // state is now per-panel under `loops`).
+        delete (merged as Record<string, unknown>).loop;
+        if (!merged.loops) merged.loops = {};
         // Backward compatibility: ensure MCP servers have new required fields
         if (merged.mcpServers) {
           merged.mcpServers = merged.mcpServers.map((s) => ({

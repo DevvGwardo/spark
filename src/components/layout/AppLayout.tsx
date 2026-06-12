@@ -7,6 +7,7 @@ import { SessionHistoryChat } from '@/components/chat/SessionHistoryChat';
 import { KanbanBoard } from '@/components/kanban/KanbanBoard';
 import { McpStoreView } from '@/components/mcp/McpStoreView';
 import { useHermesModelSync } from '@/hooks/useHermesModelSync';
+import { useBackgroundRuns } from '@/hooks/useBackgroundRuns';
 import { useUIStore } from '@/stores/ui-store';
 import { useShallow } from 'zustand/shallow';
 import { useSettingsStore } from '@/stores/settings-store';
@@ -77,21 +78,80 @@ export const AppLayout: React.FC = () => {
     mcpStoreFullscreen,
     setMcpStoreFullscreen,
     setBridgeSetupOpen,
-  } = useUIStore();
+  } = useUIStore(
+    useShallow((s) => ({
+      sidebarOpen: s.sidebarOpen,
+      setSidebarOpen: s.setSidebarOpen,
+      toggleSidebar: s.toggleSidebar,
+      sidebarWidth: s.sidebarWidth,
+      setSidebarWidth: s.setSidebarWidth,
+      activeTab: s.activeTab,
+      setActiveTab: s.setActiveTab,
+      repoBrowserOpen: s.repoBrowserOpen,
+      setRepoBrowserOpen: s.setRepoBrowserOpen,
+      terminalOpen: s.terminalOpen,
+      toggleTerminal: s.toggleTerminal,
+      hermesTerminalOpen: s.hermesTerminalOpen,
+      toggleHermesTerminal: s.toggleHermesTerminal,
+      selectedCronJobId: s.selectedCronJobId,
+      selectedSessionId: s.selectedSessionId,
+      miniBrowserDocked: s.miniBrowserDocked,
+      rightSidebarHidden: s.rightSidebarHidden,
+      setRightSidebarHidden: s.setRightSidebarHidden,
+      kanbanFullscreen: s.kanbanFullscreen,
+      setKanbanFullscreen: s.setKanbanFullscreen,
+      mcpStoreFullscreen: s.mcpStoreFullscreen,
+      setMcpStoreFullscreen: s.setMcpStoreFullscreen,
+      setBridgeSetupOpen: s.setBridgeSetupOpen,
+    })),
+  );
   const { isSetupComplete, activeProvider, providers } = useSettingsStore(
     useShallow((s) => ({ isSetupComplete: s.isSetupComplete, activeProvider: s.activeProvider, providers: s.providers })),
   );
-  const { getChangeset, getChangeCount, clearChanges, getStagedCount, getStagedChanges, setPullRequest, getLineTotals } = useChangesetStore();
-  const { conversations, deleteConversation, renameConversation, pinConversation } = useChatStore();
-  const { panels, focusedPanelId, openPanel, setConversationForPanel, focusPanel } = usePanelStore();
+  const [prPanelId, setPrPanelId] = useState<string | null>(null);
+  const { panels, focusedPanelId, openPanel, openConversation, setConversationForPanel, focusPanel } = usePanelStore(
+    useShallow((s) => ({
+      panels: s.panels,
+      focusedPanelId: s.focusedPanelId,
+      openPanel: s.openPanel,
+      openConversation: s.openConversation,
+      setConversationForPanel: s.setConversationForPanel,
+      focusPanel: s.focusPanel,
+    })),
+  );
+  const {
+    getChangeset,
+    getChangeCount,
+    clearChanges,
+    getStagedCount,
+    getStagedChanges,
+    setPullRequest,
+    getLineTotals,
+  } = useChangesetStore(
+    useShallow((s) => ({
+      getChangeset: s.getChangeset,
+      getChangeCount: s.getChangeCount,
+      clearChanges: s.clearChanges,
+      getStagedCount: s.getStagedCount,
+      getStagedChanges: s.getStagedChanges,
+      setPullRequest: s.setPullRequest,
+      getLineTotals: s.getLineTotals,
+    })),
+  );
+  const conversations = useChatStore((s) => s.conversations);
+  const deleteConversation = useChatStore((s) => s.deleteConversation);
+  const renameConversation = useChatStore((s) => s.renameConversation);
+  const pinConversation = useChatStore((s) => s.pinConversation);
   const footerUsage = useContextUsageStore((state) => state.panelUsage[focusedPanelId]);
   const setPreviewOpen = usePreviewStore((s) => s.setOpen);
   const setPreviewView = usePreviewStore((s) => s.setView);
   const isMultiPanel = panels.length > 1;
   // Keep Spark's hermes model in sync with the agent's CLI-configured default.
   useHermesModelSync();
+  // Track server-side hermes runs that outlive their panel/window so the
+  // sidebar keeps showing them as active and finished runs re-hydrate.
+  useBackgroundRuns();
   const [prModalOpen, setPrModalOpen] = useState(false);
-  const [prPanelId, setPrPanelId] = useState<string | null>(null); // which panel triggered the PR modal
   const [prModalMode, setPrModalMode] = useState<'create' | 'review'>('create');
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -100,26 +160,20 @@ export const AppLayout: React.FC = () => {
   const hermesTerminalRef = useRef<HermesPTYPanelHandle>(null);
   const focusedPanel = panels.find((p) => p.id === focusedPanelId);
   const focusedScopeId = getChatScopeId(focusedPanelId, focusedPanel?.conversationId ?? null);
-  const preview = usePreviewStore((s) => s.getPreview(focusedScopeId));
-
-  // Resolve room name if the focused panel is a room
-  const focusedRoom = focusedPanel?.roomId
-    ? useRoomStore.getState().rooms.find((r) => r.id === focusedPanel.roomId)
-    : null;
-
-  // Get changeset for the focused panel (used in global header for single-panel mode)
   const focusedChangeset = getChangeset(focusedScopeId);
   const activeRepo = focusedChangeset.activeRepo;
   const focusedPullRequest = focusedChangeset.pullRequest;
   const changeCount = getChangeCount(focusedScopeId);
   const stagedCount = getStagedCount(focusedScopeId);
-  // focusedConvId removed - unused
   const lineTotals = getLineTotals(focusedScopeId);
-
-  // For the PR modal, use the panel that triggered it (or focused panel in single-panel mode)
   const prTargetPanelId = prPanelId || focusedPanelId;
   const prPanel = panels.find((p) => p.id === prTargetPanelId);
   const prScopeId = getChatScopeId(prTargetPanelId, prPanel?.conversationId ?? null);
+  // Subscribe only to the focused and PR panels' changesets — a bare
+  // panelChangesets subscription re-renders the whole layout (and every
+  // panel) each time ANY panel's agent edits a file.
+  useChangesetStore((s) => s.panelChangesets[focusedScopeId]);
+  useChangesetStore((s) => s.panelChangesets[prScopeId]);
   const prChangeset = getChangeset(prScopeId);
   const prActiveRepo = prChangeset.activeRepo;
   const prPullRequest = prChangeset.pullRequest;
@@ -129,10 +183,14 @@ export const AppLayout: React.FC = () => {
     action: change.action,
     originalContent: change.originalContent,
   }));
-
-  // Get active conversation title
   const activeConv = focusedPanel?.conversationId
-    ? conversations.find((c) => c.id === focusedPanel.conversationId)
+    ? conversations.find((c) => c.id === focusedPanel.conversationId) ?? null
+    : null;
+  const preview = usePreviewStore((s) => s.getPreview(focusedScopeId));
+
+  // Resolve room name if the focused panel is a room
+  const focusedRoom = focusedPanel?.roomId
+    ? useRoomStore.getState().rooms.find((r) => r.id === focusedPanel.roomId)
     : null;
 
   // Keyboard shortcut: Ctrl+` to toggle terminal, Ctrl/Cmd+K to open command palette
@@ -525,7 +583,7 @@ const headerSecondaryLabel = selectedCronJobId
                   </button>
                   {activeTab === 'chat' && !selectedCronJobId && (
                     <button
-                      onClick={() => setConversationForPanel(focusedPanelId, null)}
+                      onClick={() => openConversation(null)}
                       className={cn(chromeActionButtonClass, 'whitespace-nowrap')}
                       title="New thread"
                     >

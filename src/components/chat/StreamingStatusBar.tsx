@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Clock, Wrench, Square } from 'lucide-react';
 
 interface StreamingStatusBarProps {
@@ -8,6 +8,9 @@ interface StreamingStatusBarProps {
   embedded?: boolean;
   currentTool?: string;
   onStop?: () => void;
+  /** Server start time (epoch ms) of the run. When provided, the elapsed
+   * timer anchors to it so closing/reopening the panel doesn't reset it. */
+  startedAt?: number;
 }
 
 function formatElapsed(seconds: number): string {
@@ -24,24 +27,20 @@ export const StreamingStatusBar: React.FC<StreamingStatusBarProps> = ({
   embedded = false,
   currentTool,
   onStop,
+  startedAt,
 }) => {
   const [elapsed, setElapsed] = useState(0);
-  const startTimeRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (isStreaming) {
-      startTimeRef.current = Date.now();
-      setElapsed(0);
-      const interval = setInterval(() => {
-        if (startTimeRef.current) {
-          setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000));
-        }
-      }, 1000);
-      return () => clearInterval(interval);
-    } else {
-      startTimeRef.current = null;
-    }
-  }, [isStreaming]);
+    if (!isStreaming) return;
+    // Anchor to the server start time when known (survives panel remounts);
+    // otherwise fall back to the moment streaming began locally.
+    const anchor = startedAt ?? Date.now();
+    const update = () => setElapsed(Math.max(0, Math.floor((Date.now() - anchor) / 1000)));
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  }, [isStreaming, startedAt]);
 
   if (!isStreaming) return null;
 

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { useRoomStore } from '@/stores/room-store';
+import { useChatQueueStore } from '@/stores/chat-queue-store';
 
 // Each panel is an isolated session: its own Hermes profile (state.db, skills/,
 // working dir). Sessions can stream in parallel because the bridge resolves to
@@ -26,9 +27,10 @@ interface PanelState {
   dockedPanel: DockedPanel | null;
   dockedPanelWidth: number;
   openPanel: (conversationId: string | null) => string;
+  openConversation: (conversationId: string | null) => string;
   closePanel: (panelId: string) => void;
   focusPanel: (panelId: string) => void;
-  setConversationForPanel: (panelId: string, conversationId: string | null) => void;
+  setConversationForPanel: (panelId: string, conversationId: string | null, opts?: { focus?: boolean }) => void;
   dockPanel: (panelId: string, conversationId: string) => void;
   undockPanel: () => void;
   setDockedPanelWidth: (width: number) => void;
@@ -93,6 +95,30 @@ export const usePanelStore = create<PanelState>()(
         return id;
       },
 
+      // Navigate to a conversation (or a blank new thread when null) without
+      // killing an in-flight stream. If the focused panel is currently
+      // streaming, the stream stays alive in its own panel and the target
+      // opens in a new panel — panels run parallel sessions by design.
+      // Otherwise this is a plain in-place switch of the focused panel.
+      openConversation: (conversationId) => {
+        const { panels, focusedPanelId, openPanel, setConversationForPanel } = get();
+        if (conversationId) {
+          const existingPanel = panels.find((p) => p.conversationId === conversationId);
+          if (existingPanel) {
+            set({ focusedPanelId: existingPanel.id });
+            return existingPanel.id;
+          }
+        }
+        const targetId = panels.some((p) => p.id === focusedPanelId) ? focusedPanelId : panels[0]?.id;
+        const focusedIsStreaming =
+          !!targetId && !!useChatQueueStore.getState().panelQueues[targetId]?.isStreaming;
+        if (focusedIsStreaming) {
+          return openPanel(conversationId);
+        }
+        setConversationForPanel(targetId ?? focusedPanelId, conversationId);
+        return targetId ?? focusedPanelId;
+      },
+
       closePanel: (panelId) => {
         const { panels, focusedPanelId } = get();
         if (panels.length <= 1) return;
@@ -125,8 +151,8 @@ export const usePanelStore = create<PanelState>()(
         }
       },
 
-      setConversationForPanel: (panelId, conversationId) => {
-        const { panels } = get();
+      setConversationForPanel: (panelId, conversationId, opts) => {
+        const { panels, focusedPanelId } = get();
         // If the target panel doesn't exist, fall back to the first panel
         const targetId = panels.some((p) => p.id === panelId) ? panelId : panels[0]?.id;
         if (!targetId) return;
@@ -138,7 +164,9 @@ export const usePanelStore = create<PanelState>()(
                 ? { ...p, conversationId: null }
                 : p
           ),
-          focusedPanelId: targetId,
+          // focus: false lets background panels rebind (e.g. draft→conversation
+          // promotion mid-stream) without yanking focus from the user's panel.
+          focusedPanelId: opts?.focus === false ? focusedPanelId : targetId,
         });
       },
 

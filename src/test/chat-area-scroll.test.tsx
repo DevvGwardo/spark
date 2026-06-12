@@ -84,6 +84,7 @@ vi.mock('react-virtuoso', () => {
       {
         data,
         itemContent,
+        context,
         followOutput: _followOutput,
         atBottomStateChange,
         className,
@@ -92,11 +93,12 @@ vi.mock('react-virtuoso', () => {
       }: {
         data: unknown[];
         itemContent: (index: number, item: unknown) => React.ReactNode;
+        context?: unknown;
         followOutput: string | boolean;
         atBottomChange?: (atBottom: boolean) => void;
         atBottomStateChange?: (atBottom: boolean) => void;
         className?: string;
-        components?: { Footer?: React.ComponentType };
+        components?: { Footer?: React.ComponentType<{ context?: unknown }> };
         'data-testid'?: string;
       },
       ref: React.Ref<{ scrollToIndex: (...args: unknown[]) => void }>,
@@ -129,7 +131,7 @@ vi.mock('react-virtuoso', () => {
               {itemContent(index, item)}
             </div>
           ))}
-          {FooterComponent && <FooterComponent />}
+          {FooterComponent && <FooterComponent context={context} />}
         </div>
       );
     },

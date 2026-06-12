@@ -1,5 +1,7 @@
 import React, { useRef, useEffect, useCallback, useState } from 'react';
-import { ArrowUp, Square, Plus, ChevronDown, Mic, MicOff, CornerDownLeft, Bot, ClipboardList, Loader2 } from 'lucide-react';
+import { ArrowUp, Square, Plus, ChevronDown, Mic, MicOff, CornerDownLeft, Bot, ClipboardList, Loader2, Repeat } from 'lucide-react';
+import { useHermesStore, DEFAULT_LOOP_STATE } from '@/stores/hermes-store';
+import { usePanelId } from '@/contexts/PanelContext';
 import { cn } from '@/lib/utils';
 import { useUIStore } from '@/stores/ui-store';
 
@@ -10,6 +12,7 @@ const SUBTAB_NAV_COMMANDS = new Set([
 import { useSettingsStore, type Provider } from '@/stores/settings-store';
 import { useShallow } from 'zustand/shallow';
 import { useVoiceInput } from '@/hooks/useVoiceInput';
+import { toolbarPopoverAlignment } from '@/hooks/chat-utils';
 import { PROVIDERS, REASONING_EFFORTS, getVisibleModelOptions, supportsReasoningEffort } from '@/lib/providers';
 import type { QueuedMessage } from '@/lib/chat-queue';
 import { StreamingStatusBar } from './StreamingStatusBar';
@@ -17,6 +20,7 @@ import { useChatStore } from '@/stores/chat-store';
 import { QueuedMessageTray } from './QueuedMessageTray';
 import { CommandSuggestions, commandTakesArgs } from './CommandSuggestions';
 import { HermesModelPicker } from './HermesModelPicker';
+import { HermesEffortSlider } from './HermesEffortSlider';
 import { parseCommand, findCommand, filterCommands, ensureHermesAgentCommandsLoaded, type CommandContext } from '@/lib/hermes-commands';
 import { useCommandCallbacks } from '@/contexts/CommandCallbacksContext';
 import {
@@ -36,10 +40,12 @@ interface ChatInputProps {
   toolCallCount?: number;
   disabled?: boolean;
   disabledPlaceholder?: string;
-  messages?: { role: string; content: string }[];
+  hasMessages?: boolean;
   activeProvider?: string;
   activeModel?: string;
   agentStatusLabel?: string;
+  /** Server start time (epoch ms) of the active run, for a remount-stable elapsed timer. */
+  streamStartedAt?: number;
   queuedMessages?: QueuedMessage[];
   onRemoveQueuedMessage?: (messageId: string) => void;
   onSteerQueuedMessage?: (messageId: string) => void;
@@ -61,9 +67,10 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
   toolCallCount = 0,
   disabled,
   disabledPlaceholder,
-  messages = [],
+  hasMessages = false,
   activeModel: _activeModel,
   agentStatusLabel,
+  streamStartedAt,
   queuedMessages = [],
   onRemoveQueuedMessage,
   onSteerQueuedMessage,
@@ -86,6 +93,34 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
   const reasoningLabel = REASONING_EFFORT_LABELS[config.reasoningEffort];
   const planMode = useChatStore((s) => s.planMode);
   const setPlanMode = useChatStore((s) => s.setPlanMode);
+  const panelId = usePanelId();
+  const loop = useHermesStore((s) => s.loops[panelId]) ?? DEFAULT_LOOP_STATE;
+  const setLoopEnabled = useHermesStore((s) => s.setLoopEnabled);
+  const setLoopConfig = useHermesStore((s) => s.setLoopConfig);
+  const [showLoopConfig, setShowLoopConfig] = useState(false);
+  const loopConfigRef = useRef<HTMLDivElement>(null);
+
+  // Close the loop config popover on outside click.
+  useEffect(() => {
+    if (!showLoopConfig) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (loopConfigRef.current && !loopConfigRef.current.contains(e.target as Node)) {
+        setShowLoopConfig(false);
+      }
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [showLoopConfig]);
+
+  const handleLoopToggle = () => {
+    if (loop.enabled) {
+      setLoopEnabled(panelId, false);
+      setShowLoopConfig(false);
+    } else {
+      setLoopEnabled(panelId, true);
+      setShowLoopConfig(true);
+    }
+  };
   const commandCallbacks = useCommandCallbacks();
 
   // Real UI store actions for command context
@@ -276,7 +311,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
     }
   }, [onChange, executeCommand]);
 
-  const hasContent = messages.length > 0;
+  const hasContent = hasMessages;
   const hasQueuedMessages = queuedMessages.length > 0;
   const canQueueDraft = isStreaming && !!safeValue.trim() && !disabled;
   const placeholder = disabled
@@ -305,6 +340,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
             isStreaming={isStreaming}
             toolCallCount={toolCallCount}
             statusLabel={agentStatusLabel}
+            startedAt={streamStartedAt}
             embedded
           />
 
@@ -342,8 +378,10 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
             />
           </div>
 
-          {/* Bottom toolbar */}
+          {/* Bottom toolbar — the left control cluster clips before it can
+              push the mic/send buttons out of the row in narrow panels. */}
           <div className="flex items-center gap-1 h-9 px-3 pb-1.5 min-w-0">
+            <div data-toolbar-clip className="flex min-w-0 flex-1 items-center gap-1 overflow-x-clip">
             {/* Plus button */}
             <button
               className="h-6 w-6 shrink-0 rounded-full flex items-center justify-center text-[#666666] hover:text-foreground hover:bg-muted transition-colors duration-100"
@@ -354,7 +392,10 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
 
             {/* Model selector — Hermes gets a provider+model picker over its configured providers */}
             {selectedProvider === 'hermes' ? (
-              <HermesModelPicker />
+              <>
+                <HermesModelPicker />
+                <HermesEffortSlider />
+              </>
             ) : (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -423,8 +464,114 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
               <span className="hidden sm:inline">Plan</span>
             </button>
 
+            {/* Loop mode toggle — Hermes only. Reruns the agent until a judge
+                verdict says the goal is met, bounded by iteration/time caps. */}
+            {selectedProvider === 'hermes' && (
+              <div className="relative shrink-0" ref={loopConfigRef}>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={loop.enabled}
+                  onClick={handleLoopToggle}
+                  className={cn(
+                    'inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-colors',
+                    loop.enabled
+                      ? 'text-emerald-400'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+                  )}
+                  title={
+                    loop.enabled
+                      ? 'Loop Mode on — click to disable'
+                      : 'Enable Loop Mode (rerun the agent until the goal is met)'
+                  }
+                >
+                  <Repeat className="h-3.5 w-3.5 shrink-0" />
+                  <span className="hidden sm:inline tabular-nums">
+                    {loop.enabled && isStreaming && loop.iteration > 0
+                      ? loop.phase === 'judge'
+                        ? `Judging ${loop.iteration}/${loop.config.maxIterations}`
+                        : `Loop ${loop.iteration}/${loop.config.maxIterations}`
+                      : 'Loop'}
+                  </span>
+                  {/* Switch track + thumb */}
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      'relative inline-flex h-3.5 w-6 shrink-0 items-center rounded-full transition-colors duration-150',
+                      loop.enabled ? 'bg-emerald-500' : 'bg-muted-foreground/30'
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'absolute h-2.5 w-2.5 rounded-full bg-background shadow-sm transition-transform duration-150',
+                        loop.enabled ? 'translate-x-3' : 'translate-x-0.5'
+                      )}
+                    />
+                  </span>
+                </button>
+                {loop.enabled && !isStreaming && (
+                  <button
+                    onClick={() => setShowLoopConfig((v) => !v)}
+                    className="ml-0.5 p-0.5 rounded text-emerald-400/70 hover:text-emerald-400"
+                    title="Loop settings"
+                    aria-label="Loop settings"
+                  >
+                    <ChevronDown className="h-3 w-3" />
+                  </button>
+                )}
+                {showLoopConfig && (
+                  <div
+                    className={cn(
+                      'absolute bottom-full mb-2 z-50 w-60 rounded-lg border border-border bg-popover p-3 shadow-lg space-y-3',
+                      toolbarPopoverAlignment(loopConfigRef.current),
+                    )}
+                  >
+                    <div>
+                      <p className="text-xs font-semibold text-foreground">Loop until the goal is met</p>
+                      <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+                        After each pass a judge checks your goal. The agent reruns with the judge's feedback until it passes or a cap is hit.
+                      </p>
+                    </div>
+                    <label className="flex items-center justify-between gap-2 text-xs text-foreground">
+                      Max iterations
+                      <input
+                        type="number"
+                        min={1}
+                        max={25}
+                        value={loop.config.maxIterations}
+                        onChange={(e) => {
+                          const n = parseInt(e.target.value, 10);
+                          if (Number.isFinite(n)) setLoopConfig(panelId, { maxIterations: Math.min(25, Math.max(1, n)) });
+                        }}
+                        className="w-16 rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground"
+                      />
+                    </label>
+                    <label className="flex items-center justify-between gap-2 text-xs text-foreground">
+                      Time budget (min)
+                      <input
+                        type="number"
+                        min={1}
+                        max={480}
+                        placeholder="∞"
+                        value={loop.config.timeBudgetMinutes ?? ''}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          if (raw === '') {
+                            setLoopConfig(panelId, { timeBudgetMinutes: null });
+                            return;
+                          }
+                          const n = parseInt(raw, 10);
+                          if (Number.isFinite(n) && n > 0) setLoopConfig(panelId, { timeBudgetMinutes: Math.min(480, n) });
+                        }}
+                        className="w-16 rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground"
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
+            )}
 
-            <div className="flex-1" />
+            </div>
 
             {/* Mic button */}
             {voiceInput.isTranscribing ? (

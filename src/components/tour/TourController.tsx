@@ -3,6 +3,7 @@ import { useTour } from '@reactour/tour';
 import { useUIStore } from '@/stores/ui-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { appTourSteps } from './tour-config';
 
 /**
  * Puts the UI into a known state (sidebar open, Threads tab, chat view) so every
@@ -18,7 +19,7 @@ export function prepareUiForTour() {
 }
 
 export function TourController() {
-  const { setIsOpen, isOpen, setCurrentStep } = useTour();
+  const { setIsOpen, isOpen, setCurrentStep, currentStep, setSteps } = useTour();
   const isMobile = useIsMobile();
   const isSetupComplete = useSettingsStore((s) => s.isSetupComplete);
   const tourSeen = useUIStore((s) => s.tourSeen);
@@ -38,13 +39,54 @@ export function TourController() {
     if (settingsOpen || setupWizardOpen || bridgeSetupOpen) return;
     startedRef.current = true;
     prepareUiForTour();
-    // Small delay lets the sidebar/composer mount before the mask measures them.
-    const t = setTimeout(() => {
+    // Wait until every tour target is actually mounted AND laid out before
+    // opening — a fixed delay races slower first-run mounts (notably Electron),
+    // where an unresolved selector makes reactour pin the popover at the
+    // window's top-left corner over the traffic lights. Poll briefly, then
+    // open anyway as a last resort so the tour can't be lost entirely.
+    const targetsReady = () =>
+      appTourSteps.every((step) => {
+        const el = typeof step.selector === 'string' ? document.querySelector(step.selector) : null;
+        if (!el) return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      });
+    const deadline = Date.now() + 8000;
+    let timer: ReturnType<typeof setTimeout>;
+    const tryOpen = () => {
+      if (!targetsReady() && Date.now() < deadline) {
+        timer = setTimeout(tryOpen, 200);
+        return;
+      }
       setCurrentStep(0);
       setIsOpen(true);
-    }, 650);
-    return () => clearTimeout(t);
+    };
+    // Initial delay still lets the sidebar/composer entrance animations settle.
+    timer = setTimeout(tryOpen, 650);
+    return () => clearTimeout(timer);
   }, [isMobile, isSetupComplete, tourSeen, settingsOpen, setupWizardOpen, bridgeSetupOpen, setIsOpen, setCurrentStep]);
+
+  // Re-anchor when the current step's target node is remounted. Reactour
+  // resolves the selector once and keeps the node — if the sidebar re-renders
+  // it away (threads loading in after the tour opened, layout branch swaps),
+  // the detached node measures as a zero rect and the popover collapses to the
+  // window's top-left corner. Touching `steps` forces reactour to re-resolve.
+  useEffect(() => {
+    if (!isOpen) return;
+    const step = appTourSteps[currentStep];
+    const selector = typeof step?.selector === 'string' ? step.selector : null;
+    if (!selector) return;
+    let tracked = document.querySelector(selector);
+    const interval = setInterval(() => {
+      const current = document.querySelector(selector);
+      if (!current) return;
+      if (current !== tracked || !tracked?.isConnected) {
+        tracked = current;
+        setSteps?.((prev) => [...prev]);
+      }
+    }, 400);
+    return () => clearInterval(interval);
+  }, [isOpen, currentStep, setSteps]);
 
   // Mark as seen the first time the tour closes (manual close or finish).
   useEffect(() => {

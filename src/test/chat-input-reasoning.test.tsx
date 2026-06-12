@@ -64,7 +64,7 @@ describe('ChatInput reasoning selector', () => {
         onChange={() => {}}
         onSend={() => {}}
         isStreaming={false}
-        messages={[{ role: 'user', content: 'Build the dashboard shell.' }]}
+        hasMessages={true}
       />
     );
 

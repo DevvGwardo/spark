@@ -664,7 +664,7 @@ export const SetupWizard: React.FC = () => {
                 </span>
               </div>
               <p className="text-[11px] text-[#777] mt-1 leading-relaxed">
-                400+ models via OpenRouter &middot; tool use &middot; agent loop
+                400+ models via OpenRouter &middot; tool use &middot; autonomous tool agent
               </p>
             </div>
             {isHermesSelected && (

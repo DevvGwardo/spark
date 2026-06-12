@@ -2798,6 +2798,47 @@ body { color: white; }
     await appendDeferred.promise;
   });
 
+  it('aborts the stream and switches to a fresh draft when New thread is clicked mid-stream on a draft-promoted conversation', async () => {
+    const appendDeferred = deferred<void>();
+    aiChatState.append.mockImplementation(() => appendDeferred.promise);
+
+    const onConversationCreated = vi.fn();
+    const { result, rerender } = renderHook(
+      ({ convId }) => useChat(convId, onConversationCreated),
+      { initialProps: { convId: null as string | null } },
+    );
+
+    // Start a message from a blank thread (creates a pending conversation)
+    await act(async () => {
+      result.current.handleQuickSend('Hello');
+      await Promise.resolve();
+    });
+
+    // Simulate streaming and the panel binding to the created conversation
+    aiChatState.status = 'streaming';
+    aiChatState.messages = [
+      { id: 'msg-1', role: 'user', content: 'Hello' },
+      { id: 'msg-2', role: 'assistant', content: 'Hi there' },
+    ];
+    rerender({ convId: null });
+    rerender({ convId: 'conv-1' });
+    expect(aiChatState.stop).not.toHaveBeenCalled();
+
+    // User clicks "New thread" while the stream is still going
+    rerender({ convId: null });
+
+    // The stream is aborted and the session moves to a fresh draft bucket
+    await waitFor(() => expect(aiChatState.stop).toHaveBeenCalled());
+    const idAfter = (latestUseChatOptions as Record<string, unknown>)?.id;
+    expect(idAfter).toMatch(/^draft-/);
+    expect(idAfter).not.toBe('draft-0:default');
+
+    // Cleanup
+    aiChatState.status = 'ready';
+    appendDeferred.resolve();
+    await appendDeferred.promise;
+  });
+
   it('switches the AI chat session when changing conversations while idle', async () => {
     const { rerender } = renderHook(
       ({ convId }) => useChat(convId),

@@ -42,6 +42,10 @@ function TourStep({ title, body }: { title: string; body: React.ReactNode }) {
 export const appTourSteps: StepType[] = [
   {
     selector: '[data-tour="threads-list"]',
+    // The target is a flex-1, full-height container, so auto-placement puts the
+    // popover above it and it clips off the top of the window. Anchor it to the
+    // right of the sidebar, vertically centered on the (tall) list, instead.
+    position: 'right',
     content: (
       <TourStep
         title="Threads, grouped by project"
@@ -51,6 +55,9 @@ export const appTourSteps: StepType[] = [
   },
   {
     selector: '[data-tour="repo-footer"]',
+    // Sits at the very bottom of the sidebar — place the popover above it so it
+    // doesn't clip off the bottom edge.
+    position: 'top',
     content: (
       <TourStep
         title="Connect GitHub"
@@ -60,6 +67,7 @@ export const appTourSteps: StepType[] = [
   },
   {
     selector: '[data-tour="subtab-nav"]',
+    position: 'right',
     content: (
       <TourStep
         title="Board, Sessions & more"
@@ -74,6 +82,8 @@ export const appTourSteps: StepType[] = [
   },
   {
     selector: '[data-tour="composer"]',
+    // Bottom-anchored input bar — keep the popover above it.
+    position: 'top',
     content: (
       <TourStep
         title="Build something"

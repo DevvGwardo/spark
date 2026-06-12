@@ -829,7 +829,6 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
     : invocation.toolName === 'execute_python' ? 'Executing...'
     : invocation.toolName === 'write_file' ? 'Writing...'
     : 'In progress';
-  const panelChanges = useChangesetStore((s) => s.getChangeset(scopeId).changes);
 
   // Extract file info from args
   const filePath = invocation.args?.path as string | undefined;
@@ -844,16 +843,19 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
   const primaryBatchChange = shouldFocusPrimaryBatchFile ? batchChanges?.[0] : undefined;
   const primaryBatchPath = primaryBatchChange?.path;
   const isFileCreationTool = FILE_CREATION_TOOLS.has(invocation.toolName);
-  const stagedPaths = React.useMemo(
-    () =>
-      Object.values(panelChanges)
-        .filter((change) => change.staged)
-        .map((change) => change.path),
-    [panelChanges],
-  );
+  const isFileModifyingTool = ['edit_repo_file', 'create_repo_file', 'delete_repo_file', 'batch_edit_repo_files'].includes(invocation.toolName);
+  const needsStagedPaths = isFileModifyingTool && !filePath && !isBatch;
+  const stagedPathsKey = useChangesetStore((s) => {
+    if (!needsStagedPaths) return null;
+    return Object.values(s.getChangeset(scopeId).changes)
+      .filter((change) => change.staged)
+      .map((change) => change.path)
+      .sort()
+      .join('\0');
+  });
+  const stagedPaths = stagedPathsKey ? stagedPathsKey.split('\0') : [];
 
   // Determine which file paths this tool call affected (for staging display)
-  const isFileModifyingTool = ['edit_repo_file', 'create_repo_file', 'delete_repo_file', 'batch_edit_repo_files'].includes(invocation.toolName);
   const affectedPaths: string[] = isBatch
     ? batchChanges!.map((c) => c.path)
     : filePath && isFileModifyingTool

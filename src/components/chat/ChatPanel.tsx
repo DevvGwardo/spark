@@ -268,7 +268,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = React.memo(({
       changesetStore.replaceChangeset(nextScopeId, changesetStore.getChangeset(panelId));
       previewStore.replacePreview(nextScopeId, previewStore.getPreview(panelId));
     }
-    setConversationForPanel(panelId, newId);
+    // focus: false — this fires when a draft promotes to a real conversation
+    // mid-stream. If the user has since moved to another panel (e.g. started a
+    // new thread while this one streams), binding must not steal focus back.
+    setConversationForPanel(panelId, newId, { focus: false });
   }, [panelId, setConversationForPanel]);
 
   // Get conversation for the panel header

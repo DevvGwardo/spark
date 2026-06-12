@@ -226,6 +226,24 @@ export function isAgentStatusData(
     && typeof ((value as { status: { label?: unknown } }).status.label) === 'string';
 }
 
+export interface HermesLoopStatusEvent {
+  phase: 'agent' | 'judge' | 'done' | 'stopped' | 'error';
+  iteration: number;
+  maxIterations: number;
+  stopReason?: string;
+}
+
+export function isHermesLoopStatusData(
+  value: unknown,
+): value is { type: 'hermes_loop_status'; status: HermesLoopStatusEvent } {
+  return !!value
+    && typeof value === 'object'
+    && (value as { type?: unknown }).type === 'hermes_loop_status'
+    && !!(value as { status?: unknown }).status
+    && typeof (value as { status?: unknown }).status === 'object'
+    && typeof ((value as { status: { phase?: unknown } }).status.phase) === 'string';
+}
+
 export async function upsertStoredMessage(message: StoredMessage): Promise<void> {
   try {
     await db.messages.add(message);
@@ -539,4 +557,18 @@ export function allowPseudoRepoWritesForAssistantMessage(
   );
 
   return previousUserMessage ? isRepoWriteMessage(previousUserMessage.content) : false;
+}
+
+/**
+ * Tailwind anchor class for a composer toolbar popover. The toolbar row clips
+ * horizontally (`overflow-x-clip`, tagged `data-toolbar-clip`), so a popover
+ * anchored `left-0` near the right edge of a narrow/split panel gets cut off —
+ * flip it to `right-0` when it wouldn't fit.
+ */
+export function toolbarPopoverAlignment(anchor: HTMLElement | null, popoverWidth = 240): 'left-0' | 'right-0' {
+  if (!anchor) return 'left-0';
+  const clip = anchor.closest('[data-toolbar-clip]');
+  if (!clip) return 'left-0';
+  const fitsLeft = anchor.getBoundingClientRect().left + popoverWidth <= clip.getBoundingClientRect().right;
+  return fitsLeft ? 'left-0' : 'right-0';
 }

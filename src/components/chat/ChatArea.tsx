@@ -5,6 +5,7 @@ import { MessageBubble } from './MessageBubble';
 import { ChatInput } from './ChatInput';
 import { ContextualSuggestions } from './ContextualSuggestions';
 import { ActivityIndicator } from './ActivityIndicator';
+import { AgentTaskPanel } from './AgentTaskPanel';
 import { VerificationGhostOverlay } from './VerificationGhostOverlay';
 import type { AgentStatusEvent } from '@/hooks/useChat';
 import { WelcomeScreen } from './WelcomeScreen';
@@ -31,11 +32,13 @@ import {
   findPendingProposal,
   getProposalDigest,
   hasRepoContinuationAfterProposal,
+  type PendingProposal,
   type ProposalToolInvocationLike,
 } from '@/lib/proposed-changes';
 import { getContextUsage } from '@/lib/tokens';
 import type { QueuedMessage } from '@/lib/chat-queue';
 import type { ToolActivityEvent } from './AgentActivity';
+import { useActivityStore } from '@/stores/activity-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useChatStore } from '@/stores/chat-store';
 import { useContextUsageStore } from '@/stores/context-usage-store';
@@ -329,6 +332,123 @@ function IssueNextStepCallout({
   );
 }
 
+interface ChatVirtuosoFooterState {
+  showInlineApprovalBanner: boolean;
+  approvalModalOpen: boolean;
+  onApprovalModalOpenChange: (open: boolean) => void;
+  pendingProposal: PendingProposal | null;
+  onApproveOnce: () => void | Promise<void>;
+  onApproveSession: () => void | Promise<void>;
+  onApproveAlways: () => void | Promise<void>;
+  handleQuickSend?: (content: string) => Promise<void> | void;
+  isStreaming: boolean;
+  acceptingProposalId: string | null;
+  showIssueNextStepCallout: boolean;
+  issueContext: { number: number; title: string } | null;
+  onIssueUpdate: () => void;
+  onIssueFix: () => void;
+  repoComposerLocked: boolean;
+  buddyResponse?: BuddyResponse | null;
+  lastAssistantMessage?: ChatMessageLike | null;
+  activeModel: string;
+  onUseBuddyResponse?: (content: string) => void;
+  showFooterActivity: boolean;
+  messages: ChatMessageLike[];
+  toolActivity?: ToolActivityEvent[];
+  agentStatusLabel?: string;
+}
+
+interface ChatVirtuosoContext {
+  footer: ChatVirtuosoFooterState;
+}
+
+const ChatVirtuosoFooter = React.memo(function ChatVirtuosoFooter({
+  context,
+}: {
+  context?: ChatVirtuosoContext;
+}) {
+  const footer = context?.footer;
+  if (!footer) return null;
+
+  const {
+    showInlineApprovalBanner,
+    approvalModalOpen,
+    onApprovalModalOpenChange,
+    pendingProposal,
+    onApproveOnce,
+    onApproveSession,
+    onApproveAlways,
+    handleQuickSend,
+    isStreaming,
+    acceptingProposalId,
+    showIssueNextStepCallout,
+    issueContext,
+    onIssueUpdate,
+    onIssueFix,
+    repoComposerLocked,
+    buddyResponse,
+    lastAssistantMessage,
+    activeModel,
+    onUseBuddyResponse,
+    showFooterActivity,
+    messages,
+    toolActivity,
+    agentStatusLabel,
+  } = footer;
+
+  return (
+    <>
+      {showInlineApprovalBanner && pendingProposal && (
+        <div className="mx-auto max-w-[720px] px-4 md:px-20">
+          <ChangeApprovalModal
+            open={approvalModalOpen}
+            onOpenChange={onApprovalModalOpenChange}
+            proposal={pendingProposal}
+            onApproveOnce={onApproveOnce}
+            onApproveSession={onApproveSession}
+            onApproveAlways={onApproveAlways}
+            disabled={!handleQuickSend || isStreaming || acceptingProposalId === pendingProposal.messageId}
+          />
+        </div>
+      )}
+      {showIssueNextStepCallout && issueContext && (
+        <div className="mx-auto max-w-[720px] px-4 md:px-20 pb-6">
+          <IssueNextStepCallout
+            issueNumber={issueContext.number}
+            issueTitle={issueContext.title}
+            onUpdateIssue={onIssueUpdate}
+            onFix={onIssueFix}
+            disabled={repoComposerLocked}
+          />
+        </div>
+      )}
+      {buddyResponse && (
+        <div className="mx-auto max-w-[720px] px-4 md:px-20 pb-4">
+          <BuddyComparisonPanel
+            buddyResponse={buddyResponse}
+            primaryResponse={lastAssistantMessage ? {
+              content: lastAssistantMessage.content,
+              modelName: activeModel,
+            } : undefined}
+            autoExpandOnArrival={true}
+            onUseBuddyResponse={onUseBuddyResponse}
+          />
+        </div>
+      )}
+      {showFooterActivity && (
+        <ActivityIndicator
+          isStreaming={isStreaming}
+          messages={messages}
+          toolActivity={toolActivity}
+          statusLabel={agentStatusLabel}
+        />
+      )}
+    </>
+  );
+});
+
+const CHAT_VIRTUOSO_COMPONENTS = { Footer: ChatVirtuosoFooter };
+
 interface ChatAreaProps {
   conversationId: string | null;
   messages: ChatMessageLike[];
@@ -399,6 +519,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     proposal: null,
   });
   const messageTimestampCacheRef = useRef<Record<string, string>>({});
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  const conversationIdRef = useRef(conversationId);
+  conversationIdRef.current = conversationId;
+  const toolActivityMapRef = useRef(toolActivityMap);
+  toolActivityMapRef.current = toolActivityMap;
   const [dismissedError, setDismissedError] = useState<string | null>(null);
   const [acceptingProposalId, setAcceptingProposalId] = useState<string | null>(null);
   const [approvalModalOpen, setApprovalModalOpen] = useState(false);
@@ -484,6 +610,30 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       lastAssistantAllowsPseudoRepoWrites,
     ),
     [activeToolActivity, lastAssistantAllowsPseudoRepoWrites, lastAssistantMessage],
+  );
+
+  // Conversation-ordered tool activity for the composer task panel: per-message
+  // activity in message order, then the in-flight 'current' stream.
+  const panelToolActivity = useMemo(() => {
+    if (!toolActivityMap) return [];
+    const ordered: ToolActivityEvent[] = [];
+    for (const message of messages) {
+      const activity = toolActivityMap[message.id];
+      if (activity) ordered.push(...activity);
+    }
+    if (toolActivityMap.current) ordered.push(...toolActivityMap.current);
+    return ordered;
+  }, [toolActivityMap, messages]);
+
+  // Start time of this conversation's active run. Prefers the server's start
+  // time (background runs poll); falls back to the locally persisted stream
+  // anchor for runs the server doesn't report (loop/swarm) and the poll-race
+  // window. Anchors the elapsed timer so closing/reopening the panel doesn't
+  // restart it from 0.
+  const streamStartedAt = useActivityStore((s) =>
+    conversationId
+      ? s.backgroundRuns[conversationId] ?? s.streamAnchors[conversationId]
+      : undefined,
   );
 
   const handleAtBottomChange = useCallback((atBottom: boolean) => {
@@ -704,16 +854,6 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     }
   }, [conversationId]);
 
-  const handleOpenSettings = useCallback(() => {
-    setSettingsOpen(true);
-  }, [setSettingsOpen]);
-
-  const handleSwitchHermesModel = useCallback((model: string) => {
-    if (activeProvider !== 'hermes') return;
-    updateProviderConfig('hermes', { model });
-    setDismissedError(errorMessage);
-  }, [activeProvider, errorMessage, updateProviderConfig]);
-
   const handleIssueFix = useCallback(() => {
     const activeRepo = useChangesetStore.getState().getChangeset(scopeId).activeRepo;
     if (!activeRepo?.issue) {
@@ -752,6 +892,133 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     });
   }, [panelId, queuePanelPrompt, scopeId]);
 
+  const itemContent = useCallback((index: number, msg: ChatMessageLike) => {
+    const messages = messagesRef.current;
+    const isStreaming = isStreamingRef.current;
+    const conversationId = conversationIdRef.current;
+    const toolActivityMap = toolActivityMapRef.current;
+    const isLastAssistantStreaming =
+      isStreaming && msg.role === 'assistant' && index === messages.length - 1;
+    const allowPseudoRepoWrites = msg.role === 'assistant'
+      ? allowPseudoRepoWritesForAssistant(messages, index)
+      : false;
+    const parts = getAssistantParts(msg);
+    const toolInvocations = msg.role === 'assistant'
+      ? getMessageToolInvocations(msg)
+      : [];
+    const displayParts = msg.role === 'assistant'
+      ? mergeAssistantPartsWithToolInvocations(parts, toolInvocations)
+      : parts;
+
+    const reasoning = msg.role === 'assistant'
+      ? displayParts
+          .filter((p) => p.type === 'reasoning')
+          .map((p: ChatPartLike) => p.reasoning)
+          .join('\n') || undefined
+      : undefined;
+
+    const isReasoningStreaming = isLastAssistantStreaming && !!reasoning && !msg.content;
+
+    const messageToolActivity = toolActivityMap?.[msg.id]
+      || (isLastAssistantStreaming ? toolActivityMap?.['current'] : undefined);
+
+    return (
+      <div className="max-w-[720px] mx-auto px-4 md:px-20 py-3">
+        <MessageBubble
+          key={msg.id}
+          message={{
+            id: msg.id,
+            conversationId: conversationId || '',
+            role: msg.role as 'user' | 'assistant',
+            content: msg.content,
+            timestamp: msg.timestamp || (messageTimestampCacheRef.current[msg.id] ??= new Date().toISOString()),
+          }}
+          isStreaming={isLastAssistantStreaming}
+          streamingContent={isLastAssistantStreaming ? msg.content : undefined}
+          parts={displayParts as React.ComponentProps<typeof MessageBubble>['parts']}
+          reasoning={reasoning}
+          isReasoningStreaming={isReasoningStreaming}
+          toolInvocations={toolInvocations as React.ComponentProps<typeof MessageBubble>['toolInvocations']}
+          toolActivity={messageToolActivity}
+          allowPseudoRepoWrites={allowPseudoRepoWrites}
+          onRegenerate={
+            msg.role === 'assistant' && index === messages.length - 1 && !isStreaming
+              ? handleRegenerate
+              : undefined
+          }
+          onRewind={
+            msg.role === 'assistant' && !isLastAssistantStreaming && msg.id
+              ? () => handleRewind(msg.id)
+              : undefined
+          }
+        />
+      </div>
+    );
+  }, [handleRegenerate, handleRewind]);
+
+  const virtuosoContext = useMemo<ChatVirtuosoContext>(() => ({
+    footer: {
+      showInlineApprovalBanner,
+      approvalModalOpen,
+      onApprovalModalOpenChange: setApprovalModalOpen,
+      pendingProposal,
+      onApproveOnce: handleApproveOnce,
+      onApproveSession: handleApproveSession,
+      onApproveAlways: handleApproveAlways,
+      handleQuickSend,
+      isStreaming,
+      acceptingProposalId,
+      showIssueNextStepCallout,
+      issueContext,
+      onIssueUpdate: handleIssueUpdate,
+      onIssueFix: handleIssueFix,
+      repoComposerLocked,
+      buddyResponse,
+      lastAssistantMessage,
+      activeModel,
+      onUseBuddyResponse,
+      showFooterActivity,
+      messages,
+      toolActivity: toolActivityMap?.current,
+      agentStatusLabel: agentStatus?.label,
+    },
+  }), [
+    acceptingProposalId,
+    activeModel,
+    agentStatus?.label,
+    approvalModalOpen,
+    buddyResponse,
+    handleApproveAlways,
+    handleApproveOnce,
+    handleApproveSession,
+    handleIssueFix,
+    handleIssueUpdate,
+    handleQuickSend,
+    isStreaming,
+    issueContext,
+    lastAssistantMessage,
+    messages,
+    onUseBuddyResponse,
+    pendingProposal,
+    repoComposerLocked,
+    showFooterActivity,
+    showInlineApprovalBanner,
+    showIssueNextStepCallout,
+    toolActivityMap,
+  ]);
+
+  const hasMessages = messages.length > 0;
+
+  const handleOpenSettings = useCallback(() => {
+    setSettingsOpen(true);
+  }, [setSettingsOpen]);
+
+  const handleSwitchHermesModel = useCallback((model: string) => {
+    if (activeProvider !== 'hermes') return;
+    updateProviderConfig('hermes', { model });
+    setDismissedError(errorMessage);
+  }, [activeProvider, errorMessage, updateProviderConfig]);
+
   const modal = (
     <ApiKeyModal
       open={apiKeyModalOpen}
@@ -776,22 +1043,29 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     return (
       <div className="relative flex h-full flex-col overflow-hidden px-4">
         <ChatSurfaceBackground testId="chat-surface-background" />
-        <div className="relative z-10 flex h-full flex-col">
+        <div className="relative z-10 flex h-full min-h-0 flex-col">
           {planMode && (
             <div className="mx-auto mt-2 flex items-center gap-2 rounded-md bg-purple-500/10 px-3 py-1.5 text-xs text-purple-400 ring-1 ring-purple-500/20">
               <ClipboardList className="h-3.5 w-3.5" />
               <span>Plan Mode — read-only exploration, no file edits</span>
             </div>
           )}
-          <div className="flex-1" />
-          <WelcomeScreen onSendMessage={(message) => {
-            if (handleQuickSend) {
-              handleQuickSend(message);
-            } else {
-              setInput(message);
-            }
-          }} disableRepoActions={repoComposerLocked} />
-          <div className="mx-auto mt-6 w-full max-w-[720px]">
+          {/* The hero scrolls; the composer is pinned below it so it stays
+              reachable in short panels (e.g. multi-panel grid rows). */}
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="flex min-h-full flex-col">
+              <div className="flex-1" />
+              <WelcomeScreen onSendMessage={(message) => {
+                if (handleQuickSend) {
+                  handleQuickSend(message);
+                } else {
+                  setInput(message);
+                }
+              }} disableRepoActions={repoComposerLocked} />
+              <div className="flex-[2]" />
+            </div>
+          </div>
+          <div className="mx-auto mt-2 w-full max-w-[720px] pb-3">
             {errorBanner}
             <VerificationGhostOverlay />
             <ActivityIndicator
@@ -800,6 +1074,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               toolActivity={toolActivityMap?.current}
               statusLabel={agentStatus?.label}
             />
+            <div className="mx-auto w-full max-w-[720px] px-3 md:px-20">
+              <AgentTaskPanel events={panelToolActivity} />
+            </div>
             <ChatInput
               value={input}
               onChange={setInput}
@@ -810,16 +1087,16 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               toolCallCount={toolCallCount}
               disabled={repoComposerLocked}
               disabledPlaceholder={disabledPlaceholder}
-              messages={messages}
+              hasMessages={hasMessages}
               activeProvider={activeProvider}
               activeModel={activeModel}
               agentStatusLabel={agentStatus?.label}
+              streamStartedAt={streamStartedAt}
               queuedMessages={queuedMessages}
               onRemoveQueuedMessage={handleRemoveQueuedMessage}
               onSteerQueuedMessage={handleSteerQueuedMessage}
             />
           </div>
-          <div className="flex-[2]" />
         </div>
         {modal}
       </div>
@@ -844,121 +1121,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           atBottomStateChange={handleAtBottomChange}
           className="min-h-0 flex-1"
           data-testid="virtuoso-scroller"
-          itemContent={(index, msg) => {
-          const isLastAssistantStreaming =
-            isStreaming && msg.role === 'assistant' && index === messages.length - 1;
-          const allowPseudoRepoWrites = msg.role === 'assistant'
-            ? allowPseudoRepoWritesForAssistant(messages, index)
-            : false;
-          const parts = getAssistantParts(msg);
-          const toolInvocations = msg.role === 'assistant'
-            ? getMessageToolInvocations(msg)
-            : [];
-          const displayParts = msg.role === 'assistant'
-            ? mergeAssistantPartsWithToolInvocations(parts, toolInvocations)
-            : parts;
-
-          // Extract reasoning from message parts
-          const reasoning = msg.role === 'assistant'
-            ? displayParts
-                .filter((p) => p.type === 'reasoning')
-                .map((p: ChatPartLike) => p.reasoning)
-                .join('\n') || undefined
-            : undefined;
-
-          // Reasoning is streaming if we're streaming, have reasoning content, but no text content yet (or still accumulating)
-          const isReasoningStreaming = isLastAssistantStreaming && !!reasoning && !msg.content;
-
-          // Only the currently-streaming assistant message should receive
-          // 'current' tool activity. Other messages use their migrated
-          // message-specific activity (keyed by msg.id) or nothing.
-          const messageToolActivity = toolActivityMap?.[msg.id]
-            || (isLastAssistantStreaming ? toolActivityMap?.['current'] : undefined);
-
-          return (
-            <div className="max-w-[720px] mx-auto px-4 md:px-20 py-3">
-              <MessageBubble
-                key={msg.id}
-                message={{
-                  id: msg.id,
-                  conversationId: conversationId || '',
-                  role: msg.role as 'user' | 'assistant',
-                  content: msg.content,
-                  timestamp: msg.timestamp || (messageTimestampCacheRef.current[msg.id] ??= new Date().toISOString()),
-                }}
-                isStreaming={isLastAssistantStreaming}
-                streamingContent={isLastAssistantStreaming ? msg.content : undefined}
-                parts={displayParts as React.ComponentProps<typeof MessageBubble>['parts']}
-                reasoning={reasoning}
-                isReasoningStreaming={isReasoningStreaming}
-                toolInvocations={toolInvocations as React.ComponentProps<typeof MessageBubble>['toolInvocations']}
-                toolActivity={messageToolActivity}
-                allowPseudoRepoWrites={allowPseudoRepoWrites}
-                onRegenerate={
-                  msg.role === 'assistant' && index === messages.length - 1 && !isStreaming
-                    ? handleRegenerate
-                    : undefined
-                }
-                onRewind={
-                  msg.role === 'assistant' && !isLastAssistantStreaming && msg.id
-                    ? () => handleRewind(msg.id)
-                    : undefined
-                }
-              />
-            </div>
-          );
-          }}
-          components={{
-            Footer: React.memo(() => (
-              <>
-                {showInlineApprovalBanner && (
-                  <div className="mx-auto max-w-[720px] px-4 md:px-20">
-                    <ChangeApprovalModal
-                      open={approvalModalOpen}
-                      onOpenChange={setApprovalModalOpen}
-                      proposal={pendingProposal}
-                      onApproveOnce={handleApproveOnce}
-                      onApproveSession={handleApproveSession}
-                      onApproveAlways={handleApproveAlways}
-                      disabled={!handleQuickSend || isStreaming || acceptingProposalId === pendingProposal.messageId}
-                    />
-                  </div>
-                )}
-                {showIssueNextStepCallout && issueContext && (
-                  <div className="mx-auto max-w-[720px] px-4 md:px-20 pb-6">
-                    <IssueNextStepCallout
-                      issueNumber={issueContext.number}
-                      issueTitle={issueContext.title}
-                      onUpdateIssue={handleIssueUpdate}
-                      onFix={handleIssueFix}
-                      disabled={repoComposerLocked}
-                    />
-                  </div>
-                )}
-                {buddyResponse && (
-                  <div className="mx-auto max-w-[720px] px-4 md:px-20 pb-4">
-                    <BuddyComparisonPanel
-                      buddyResponse={buddyResponse}
-                      primaryResponse={lastAssistantMessage ? {
-                        content: lastAssistantMessage.content,
-                        modelName: activeModel,
-                      } : undefined}
-                      autoExpandOnArrival={true}
-                      onUseBuddyResponse={onUseBuddyResponse}
-                    />
-                  </div>
-                )}
-                {showFooterActivity && (
-                  <ActivityIndicator
-                    isStreaming={isStreaming}
-                    messages={messages}
-                    toolActivity={toolActivityMap?.current}
-                    statusLabel={agentStatus?.label}
-                  />
-                )}
-              </>
-            )),
-          }}
+          context={virtuosoContext}
+          itemContent={itemContent}
+          components={CHAT_VIRTUOSO_COMPONENTS}
         />
         {showScrollButton && (
           <div className="flex justify-center py-1">
@@ -986,6 +1151,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             }
           }}
         />
+        <div className="mx-auto w-full max-w-[720px] px-3 md:px-20">
+          <AgentTaskPanel events={panelToolActivity} />
+        </div>
         <ChatInput
           value={input}
           onChange={setInput}
@@ -996,10 +1164,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           toolCallCount={toolCallCount}
           disabled={repoComposerLocked}
           disabledPlaceholder={disabledPlaceholder}
-          messages={messages}
+          hasMessages={hasMessages}
           activeProvider={activeProvider}
           activeModel={activeModel}
           agentStatusLabel={agentStatus?.label}
+          streamStartedAt={streamStartedAt}
           queuedMessages={queuedMessages}
           onRemoveQueuedMessage={handleRemoveQueuedMessage}
           onSteerQueuedMessage={handleSteerQueuedMessage}

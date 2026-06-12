@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { usePanelStore } from '@/stores/panel-store';
 import { usePreviewStore } from '@/stores/preview-store';
+import { useChatQueueStore } from '@/stores/chat-queue-store';
 
 describe('panel state isolation', () => {
   beforeEach(() => {
@@ -10,6 +11,7 @@ describe('panel state isolation', () => {
       focusedPanelId: 'default',
     });
     usePreviewStore.setState({ panelPreviews: {} });
+    useChatQueueStore.setState({ panelQueues: {} });
   });
 
   it('keeps preview files isolated per panel', () => {
@@ -89,6 +91,83 @@ describe('panel state isolation', () => {
       { id: 'default', conversationId: null, profile: 'default' },
       { id: 'panel-2', conversationId: 'conv-1', profile: 'default' },
     ]);
+    expect(usePanelStore.getState().focusedPanelId).toBe('panel-2');
+  });
+
+  it('openConversation reuses the focused panel when it is idle', () => {
+    usePanelStore.setState({
+      panels: [{ id: 'default', conversationId: 'conv-1', profile: 'default' }],
+      focusedPanelId: 'default',
+    });
+
+    const panelId = usePanelStore.getState().openConversation(null);
+
+    expect(panelId).toBe('default');
+    expect(usePanelStore.getState().panels).toHaveLength(1);
+    expect(usePanelStore.getState().panels[0].conversationId).toBeNull();
+  });
+
+  it('openConversation opens a new panel when the focused panel is streaming', () => {
+    usePanelStore.setState({
+      panels: [{ id: 'default', conversationId: 'conv-1', profile: 'default' }],
+      focusedPanelId: 'default',
+    });
+    useChatQueueStore.getState().setPanelQueue({
+      panelId: 'default',
+      conversationId: 'conv-1',
+      profile: 'default',
+      isStreaming: true,
+      waitingForOtherPanel: false,
+      messages: [],
+    });
+
+    const panelId = usePanelStore.getState().openConversation(null);
+
+    expect(panelId).not.toBe('default');
+    const { panels, focusedPanelId } = usePanelStore.getState();
+    expect(panels).toHaveLength(2);
+    // The streaming panel keeps its conversation; the new panel is the blank thread
+    expect(panels[0]).toMatchObject({ id: 'default', conversationId: 'conv-1' });
+    expect(panels[1]).toMatchObject({ id: panelId, conversationId: null });
+    expect(focusedPanelId).toBe(panelId);
+  });
+
+  it('openConversation focuses the existing panel when the conversation is already open', () => {
+    usePanelStore.setState({
+      panels: [
+        { id: 'default', conversationId: 'conv-1', profile: 'default' },
+        { id: 'panel-2', conversationId: 'conv-2', profile: 'session-x' },
+      ],
+      focusedPanelId: 'panel-2',
+    });
+    useChatQueueStore.getState().setPanelQueue({
+      panelId: 'panel-2',
+      conversationId: 'conv-2',
+      profile: 'session-x',
+      isStreaming: true,
+      waitingForOtherPanel: false,
+      messages: [],
+    });
+
+    const panelId = usePanelStore.getState().openConversation('conv-1');
+
+    expect(panelId).toBe('default');
+    expect(usePanelStore.getState().panels).toHaveLength(2);
+    expect(usePanelStore.getState().focusedPanelId).toBe('default');
+  });
+
+  it('setConversationForPanel with focus: false does not steal focus', () => {
+    usePanelStore.setState({
+      panels: [
+        { id: 'default', conversationId: null, profile: 'default' },
+        { id: 'panel-2', conversationId: null, profile: 'session-x' },
+      ],
+      focusedPanelId: 'panel-2',
+    });
+
+    usePanelStore.getState().setConversationForPanel('default', 'conv-1', { focus: false });
+
+    expect(usePanelStore.getState().panels[0].conversationId).toBe('conv-1');
     expect(usePanelStore.getState().focusedPanelId).toBe('panel-2');
   });
 

@@ -396,6 +396,19 @@ export function getSession(sessionId: string): Promise<HermesSessionDetail> {
   return request;
 }
 
+const inflightHermesFetch = new Map<string, Promise<unknown>>();
+
+function coalesceHermesFetch<T>(key: string, factory: () => Promise<T>): Promise<T> {
+  const existing = inflightHermesFetch.get(key) as Promise<T> | undefined;
+  if (existing) return existing;
+
+  const request = factory().finally(() => {
+    inflightHermesFetch.delete(key);
+  });
+  inflightHermesFetch.set(key, request);
+  return request;
+}
+
 export async function deleteSession(sessionId: string): Promise<void> {
   await hermesFetch(`/sessions/${encodeURIComponent(sessionId)}`, {
     method: 'DELETE',
@@ -410,6 +423,144 @@ export async function fetchHermesWorkspaceOverview(): Promise<HermesWorkspaceOve
 
 export async function fetchHermesWorkspaceUsage(): Promise<HermesUsageOverview> {
   return hermesFetch<HermesUsageOverview>('/workspace/usage');
+}
+
+// ─── Logs ───────────────────────────────────────────────────────────────
+
+export type HermesLogFile = 'agent' | 'errors' | 'gateway';
+export type HermesLogLevel = 'ALL' | 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL';
+
+export interface HermesLogEntry {
+  ts: string | null;
+  level: string;
+  component: string;
+  message: string;
+  raw: string;
+}
+
+export interface HermesLogsResponse {
+  file: HermesLogFile;
+  entries: HermesLogEntry[];
+  /** Distinct logger components found in the file, for the filter dropdown. */
+  components: string[];
+  available_files: HermesLogFile[];
+  missing: boolean;
+}
+
+export interface FetchHermesLogsParams {
+  file?: HermesLogFile;
+  level?: HermesLogLevel;
+  component?: string;
+  lines?: number;
+}
+
+export function fetchHermesLogs(params: FetchHermesLogsParams = {}): Promise<HermesLogsResponse> {
+  const query = new URLSearchParams();
+  if (params.file) query.set('file', params.file);
+  if (params.level) query.set('level', params.level);
+  if (params.component) query.set('component', params.component);
+  if (params.lines) query.set('lines', String(params.lines));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return coalesceHermesFetch(`fetchHermesLogs${suffix}`, () =>
+    hermesFetch<HermesLogsResponse>(`/workspace/logs${suffix}`),
+  );
+}
+
+// ─── System ─────────────────────────────────────────────────────────────
+
+export interface HermesSystemStats {
+  host: {
+    os: string | null;
+    arch: string | null;
+    hostname: string | null;
+    python_version: string | null;
+    cpu_count: number | null;
+    load_avg: number[] | null;
+    memory_total: number | null;
+    disk: { total: number; used: number; free: number } | null;
+  };
+  gateway: { port: number; reachable: boolean; status: number | null };
+  hermes: { version: string | null };
+  providers: { active: string | null; count: number };
+}
+
+export function fetchHermesSystem(): Promise<HermesSystemStats> {
+  return coalesceHermesFetch('fetchHermesSystem', () =>
+    hermesFetch<HermesSystemStats>('/workspace/system'),
+  );
+}
+
+// ─── Webhooks ───────────────────────────────────────────────────────────
+
+export interface HermesWebhook {
+  name: string;
+  description: string;
+  events: string[];
+  prompt: string;
+  skills: string[];
+  deliver: string;
+  deliver_only: boolean;
+  created_at: string;
+  has_secret: boolean;
+  secret_preview: string;
+  /** Only present in the response to a create call (shown once). */
+  secret?: string;
+}
+
+export interface CreateWebhookInput {
+  name: string;
+  description?: string;
+  events?: string[];
+  prompt?: string;
+  skills?: string[];
+  deliver?: string;
+}
+
+export function fetchHermesWebhooks(): Promise<HermesWebhook[]> {
+  return coalesceHermesFetch('fetchHermesWebhooks', async () => {
+    const data = await hermesFetch<{ subscriptions: HermesWebhook[] }>('/webhooks');
+    return data.subscriptions ?? [];
+  });
+}
+
+export async function createHermesWebhook(input: CreateWebhookInput): Promise<HermesWebhook> {
+  const data = await hermesFetch<{ subscription: HermesWebhook }>('/webhooks', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  return data.subscription;
+}
+
+export async function deleteHermesWebhook(name: string): Promise<void> {
+  await hermesFetch(`/webhooks/${encodeURIComponent(name)}`, { method: 'DELETE' });
+}
+
+// ─── Pairing ────────────────────────────────────────────────────────────
+
+export interface HermesPendingPairing {
+  platform: string;
+  code: string;
+  user_id?: string;
+  user_name?: string;
+  created_at?: string;
+}
+
+export interface HermesApprovedPairing {
+  platform: string;
+  user_id: string;
+  user_name?: string;
+  approved_at?: string;
+}
+
+export interface HermesPairingState {
+  pending: HermesPendingPairing[];
+  approved: HermesApprovedPairing[];
+}
+
+export function fetchHermesPairing(): Promise<HermesPairingState> {
+  return coalesceHermesFetch('fetchHermesPairing', () =>
+    hermesFetch<HermesPairingState>('/pairing'),
+  );
 }
 
 export async function fetchHermesWorkspaceFiles(): Promise<HermesWorkspaceFileSummary[]> {

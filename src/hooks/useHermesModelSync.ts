@@ -1,6 +1,7 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useHermesProviders } from '@/hooks/useHermesProviders';
 import { useHermesStore } from '@/stores/hermes-store';
+import { useProfilesStore } from '@/stores/profiles-store';
 import { useSettingsStore } from '@/stores/settings-store';
 
 /**
@@ -31,4 +32,15 @@ export function useHermesModelSync(): void {
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
   }, [activeProvider, reload]);
+
+  // The bridge reports the default model per profile (X-Hermes-Profile), so a
+  // profile switch in Spark must refetch — the session cache would otherwise
+  // keep showing the previous profile's model.
+  const activeProfile = useProfilesStore((s) => s.activeProfile);
+  const prevProfileRef = useRef(activeProfile);
+  useEffect(() => {
+    if (prevProfileRef.current === activeProfile) return;
+    prevProfileRef.current = activeProfile;
+    if (activeProvider === 'hermes') reload();
+  }, [activeProfile, activeProvider, reload]);
 }

@@ -1,5 +1,6 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork, Search, ChevronRight, Zap, Clock, House, BookOpen, Sparkles, BarChart3, User, Network, Image, Download, Upload, Archive, ArchiveRestore, ChevronDown, Tag, X, Kanban, CornerDownLeft, ListChecks, Users } from 'lucide-react';
+import React, { Suspense, useEffect, useRef, useState, useMemo } from 'react';
+import { useShallow } from 'zustand/shallow';
+import { Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork, Search, ChevronRight, Zap, Clock, House, BookOpen, Sparkles, BarChart3, User, Network, Image, Download, Upload, Archive, ArchiveRestore, ChevronDown, Tag, X, Kanban, CornerDownLeft, ListChecks, Users, ScrollText, Server, Webhook, Link2 } from 'lucide-react';
 import { Github } from 'lucide-react';
 import { GhostIcon } from '@/components/chat/GhostIcon';
 import { useChatStore } from '@/stores/chat-store';
@@ -13,19 +14,31 @@ import { getRepoAccessLabel } from '@/lib/repo-access';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { cn } from '@/lib/utils';
 import { SlotNumber } from '@/components/ui/SlotNumber';
-import { CronJobsPanel } from '@/components/sidebar/CronJobsPanel';
-import { HermesChatsPanel } from '@/components/sidebar/HermesChatsPanel';
-import { HermesOverviewPanel } from '@/components/sidebar/HermesOverviewPanel';
-import { HermesMemoriesPanel } from '@/components/sidebar/HermesMemoriesPanel';
-import { ProfilesPanel } from '@/components/sidebar/ProfilesPanel';
-import { HermesSkillsPanel } from '@/components/sidebar/HermesSkillsPanel';
-import { HermesUsagePanel } from '@/components/sidebar/HermesUsagePanel';
-import { ImagesPanel } from '@/components/sidebar/ImagesPanel';
-import { KanbanPanel } from '@/components/sidebar/KanbanPanel';
-import { TaskQueuePanel } from '@/components/sidebar/TaskQueuePanel';
-import { TeamPanel } from '@/components/sidebar/TeamPanel';
-import { HermesQueuePanel } from '@/components/sidebar/HermesQueuePanel';
-import { HermesMCPPanel } from '@/components/sidebar/HermesMCPPanel';
+const CronJobsPanel = React.lazy(() => import('@/components/sidebar/CronJobsPanel').then((m) => ({ default: m.CronJobsPanel })));
+const HermesChatsPanel = React.lazy(() => import('@/components/sidebar/HermesChatsPanel').then((m) => ({ default: m.HermesChatsPanel })));
+const HermesOverviewPanel = React.lazy(() => import('@/components/sidebar/HermesOverviewPanel').then((m) => ({ default: m.HermesOverviewPanel })));
+const HermesMemoriesPanel = React.lazy(() => import('@/components/sidebar/HermesMemoriesPanel').then((m) => ({ default: m.HermesMemoriesPanel })));
+const ProfilesPanel = React.lazy(() => import('@/components/sidebar/ProfilesPanel').then((m) => ({ default: m.ProfilesPanel })));
+const HermesSkillsPanel = React.lazy(() => import('@/components/sidebar/HermesSkillsPanel').then((m) => ({ default: m.HermesSkillsPanel })));
+const HermesUsagePanel = React.lazy(() => import('@/components/sidebar/HermesUsagePanel').then((m) => ({ default: m.HermesUsagePanel })));
+const HermesLogsPanel = React.lazy(() => import('@/components/sidebar/HermesLogsPanel').then((m) => ({ default: m.HermesLogsPanel })));
+const HermesSystemPanel = React.lazy(() => import('@/components/sidebar/HermesSystemPanel').then((m) => ({ default: m.HermesSystemPanel })));
+const HermesWebhooksPanel = React.lazy(() => import('@/components/sidebar/HermesWebhooksPanel').then((m) => ({ default: m.HermesWebhooksPanel })));
+const HermesPairingPanel = React.lazy(() => import('@/components/sidebar/HermesPairingPanel').then((m) => ({ default: m.HermesPairingPanel })));
+const ImagesPanel = React.lazy(() => import('@/components/sidebar/ImagesPanel').then((m) => ({ default: m.ImagesPanel })));
+const KanbanPanel = React.lazy(() => import('@/components/sidebar/KanbanPanel').then((m) => ({ default: m.KanbanPanel })));
+const TaskQueuePanel = React.lazy(() => import('@/components/sidebar/TaskQueuePanel').then((m) => ({ default: m.TaskQueuePanel })));
+const TeamPanel = React.lazy(() => import('@/components/sidebar/TeamPanel').then((m) => ({ default: m.TeamPanel })));
+const HermesQueuePanel = React.lazy(() => import('@/components/sidebar/HermesQueuePanel').then((m) => ({ default: m.HermesQueuePanel })));
+const HermesMCPPanel = React.lazy(() => import('@/components/sidebar/HermesMCPPanel').then((m) => ({ default: m.HermesMCPPanel })));
+const SwarmRoomPanel = React.lazy(() => import('@/components/chat/SwarmRoomPanel').then((m) => ({ default: m.SwarmRoomPanel })));
+const RoomSettingsPanel = React.lazy(() => import('@/components/rooms/RoomSettingsPanel').then((m) => ({ default: m.RoomSettingsPanel })));
+
+const PanelFallback = () => (
+  <div className="flex flex-1 items-center justify-center p-8">
+    <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+  </div>
+);
 import { ConversationTreeOverlay } from '@/components/workflow/ConversationTreeOverlay';
 import type { Conversation } from '@/lib/db';
 import { exportConversationJson, exportConversationMarkdown, importConversationJson } from '@/lib/db';
@@ -36,9 +49,7 @@ import type { SubTab } from '@/stores/ui-store';
 import { relativeTime } from '@/lib/relative-time';
 import { useChatQueueStore } from '@/stores/chat-queue-store';
 import { useRoomStore } from '@/stores/room-store';
-import { SwarmRoomPanel } from '@/components/chat/SwarmRoomPanel';
 import { CreateRoomDialog } from '@/components/rooms/CreateRoomDialog';
-import { RoomSettingsPanel } from '@/components/rooms/RoomSettingsPanel';
 import { useProfilesStore } from '@/stores/profiles-store';
 
 interface ConversationGroup {
@@ -100,12 +111,16 @@ const HERMES_SUB_TABS: Array<{ key: SubTab; label: string; icon: React.Component
   { key: 'memories', label: 'Memories', icon: BookOpen },
   { key: 'skills', label: 'Skills', icon: Sparkles },
   { key: 'usage', label: 'Usage', icon: BarChart3 },
+  { key: 'logs', label: 'Logs', icon: ScrollText },
   { key: 'images', label: 'Images', icon: Image },
   { key: 'mcp', label: 'MCP', icon: Network },
   { key: 'kanban', label: 'Board', icon: Kanban },
   { key: 'tasks', label: 'Tasks', icon: ListChecks },
   { key: 'rooms', label: 'Rooms', icon: Users },
   { key: 'teams', label: 'Teams', icon: Users },
+  { key: 'webhooks', label: 'Webhooks', icon: Webhook },
+  { key: 'pairing', label: 'Pairing', icon: Link2 },
+  { key: 'system', label: 'System', icon: Server },
 ];
 
 export const ChatSidebar: React.FC = () => {
@@ -121,16 +136,56 @@ export const ChatSidebar: React.FC = () => {
     unarchiveConversation,
     addTagToConversation,
     removeTagFromConversation,
-  } = useChatStore();
+  } = useChatStore(
+    useShallow((s) => ({
+      conversations: s.conversations,
+      archivedConversations: s.archivedConversations,
+      loadConversations: s.loadConversations,
+      deleteConversation: s.deleteConversation,
+      deleteOldConversations: s.deleteOldConversations,
+      renameConversation: s.renameConversation,
+      pinConversation: s.pinConversation,
+      archiveConversation: s.archiveConversation,
+      unarchiveConversation: s.unarchiveConversation,
+      addTagToConversation: s.addTagToConversation,
+      removeTagFromConversation: s.removeTagFromConversation,
+    })),
+  );
 
-  const { panels, focusedPanelId, setConversationForPanel, openPanel, openRoomPanel } = usePanelStore();
-  const { activeTab, setActiveTab, setSettingsOpen, setRepoBrowserOpen, sidebarWidth, activeSubTab, setActiveSubTab, setSidebarOpen } = useUIStore();
-  const { activeProvider, githubPAT } = useSettingsStore();
+  const { panels, focusedPanelId, setConversationForPanel, openConversation, openPanel, openRoomPanel } = usePanelStore();
+  const {
+    activeTab,
+    setActiveTab,
+    setSettingsOpen,
+    setRepoBrowserOpen,
+    sidebarWidth,
+    activeSubTab,
+    setActiveSubTab,
+    setSidebarOpen,
+  } = useUIStore(
+    useShallow((s) => ({
+      activeTab: s.activeTab,
+      setActiveTab: s.setActiveTab,
+      setSettingsOpen: s.setSettingsOpen,
+      setRepoBrowserOpen: s.setRepoBrowserOpen,
+      sidebarWidth: s.sidebarWidth,
+      activeSubTab: s.activeSubTab,
+      setActiveSubTab: s.setActiveSubTab,
+      setSidebarOpen: s.setSidebarOpen,
+    })),
+  );
+  const { activeProvider, githubPAT } = useSettingsStore(
+    useShallow((s) => ({
+      activeProvider: s.activeProvider,
+      githubPAT: s.githubPAT,
+    })),
+  );
   const isMobile = useIsMobile();
   // On mobile the sidebar is a slide-over drawer — dismiss it after navigating
   // to content so the user lands on the chat instead of staying behind the panel.
   const closeOnMobile = () => { if (isMobile) setSidebarOpen(false); };
   const activities = useActivityStore((s) => s.activities);
+  const backgroundRuns = useActivityStore((s) => s.backgroundRuns);
   const getLineTotals = useChangesetStore((s) => s.getLineTotals);
   const panelQueues = useChatQueueStore((s) => s.panelQueues);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -206,7 +261,9 @@ export const ChatSidebar: React.FC = () => {
 
   const handleNew = () => {
     setActiveTab('chat');
-    setConversationForPanel(focusedPanelId, null);
+    // openConversation keeps an in-flight stream alive: if the focused panel
+    // is streaming, the new thread opens in its own panel instead.
+    openConversation(null);
     closeOnMobile();
   };
 
@@ -252,10 +309,10 @@ export const ChatSidebar: React.FC = () => {
   useEffect(() => {
     const cleanup = window.electronAPI?.onNewChat?.(() => {
       setActiveTab('chat');
-      setConversationForPanel(focusedPanelId, null);
+      openConversation(null);
     });
     return () => { cleanup?.(); };
-  }, [focusedPanelId, setActiveTab, setConversationForPanel]);
+  }, [setActiveTab, openConversation]);
 
   const handleRename = async (id: string) => {
     if (editTitle.trim()) await renameConversation(id, editTitle.trim());
@@ -315,7 +372,9 @@ export const ChatSidebar: React.FC = () => {
 
   const handleSelectConversation = (convId: string) => {
     setActiveTab('chat');
-    setConversationForPanel(focusedPanelId, convId);
+    // Don't kill a running stream by switching the focused panel away from it —
+    // open the selected conversation in a new panel if the focused one is busy.
+    openConversation(convId);
     closeOnMobile();
   };
 
@@ -710,7 +769,7 @@ export const ChatSidebar: React.FC = () => {
                   const isFocused = activeTab === 'chat' && focusedConvId === conv.id;
                   const isInAnotherPanel = !isFocused && panels.some((p) => p.conversationId === conv.id);
                   const activity = activities[conv.id];
-                  const isProcessing = activity?.streaming;
+                  const isProcessing = activity?.streaming || !!backgroundRuns[conv.id];
                   const convLineTotals = getLineTotals(conv.id);
                   const totalAdded = convLineTotals.added;
                   const totalRemoved = convLineTotals.removed;
@@ -1035,7 +1094,9 @@ export const ChatSidebar: React.FC = () => {
       </div>
 
         </>
-      ) : activeSubTab === 'overview' ? (
+      ) : (
+        <Suspense fallback={<PanelFallback />}>
+      {activeSubTab === 'overview' ? (
         <HermesOverviewPanel />
       ) : activeSubTab === 'queue' ? (
         <HermesQueuePanel />
@@ -1049,6 +1110,14 @@ export const ChatSidebar: React.FC = () => {
         <HermesSkillsPanel />
       ) : activeSubTab === 'usage' ? (
         <HermesUsagePanel />
+      ) : activeSubTab === 'logs' ? (
+        <HermesLogsPanel />
+      ) : activeSubTab === 'system' ? (
+        <HermesSystemPanel />
+      ) : activeSubTab === 'webhooks' ? (
+        <HermesWebhooksPanel />
+      ) : activeSubTab === 'pairing' ? (
+        <HermesPairingPanel />
       ) : activeSubTab === 'images' ? (
         <ImagesPanel />
       ) : activeSubTab === 'mcp' ? (
@@ -1149,6 +1218,8 @@ export const ChatSidebar: React.FC = () => {
           conversationId={focusedConversation?.id ?? null}
           conversationTitle={focusedConversation?.title ?? null}
         />
+      )}
+        </Suspense>
       )}
 
       {/* Footer — repo status + GitHub connect */}
