@@ -1,5 +1,16 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+build/
+out/
+release/
+dist-electron/
+
 # Logs
-logs
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -7,54 +18,65 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-*.local
-
 # Environment variables
 .env
 .env.*
 !.env.example
 
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-.aider*
+# OS
 .DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+!.vscode/extensions.json
+.idea/
+
+# Next.js / framework cache
+.next/
+.cache/
+.turbo/
+.vercel/
+
+# Local overrides
+*.local
+
+# TypeScript
+*.tsbuildinfo
+
+# Test / coverage
+coverage/
+e2e-results/
+test-results/
+playwright-report/
+
+# Bundle analysis
+stats.html
+
+# Electron
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
 
-# Electron
-out/
-release/
-dist-electron/
-
-# Playwright test artifacts
-e2e-results/
-test-results/
-playwright-report/
-
 # Worktrees
 .worktrees/
 .claude/worktrees/
 
-# Claude / agent workflow artifacts (internal to dev workflow)
+# Claude / agent workflow artifacts
 .claude/audit-reports/
-
-# Dev artifacts
-my-passwd-symlink
 .claude/scheduled_tasks.lock
+.aider*
 .codex_task*
 .codex_session*
 .overstory/
 .seeds/
 .mulch/
 .canopy/
+
+# Dev artifacts
+my-passwd-symlink
 
 # Standalone sub-projects (split out of this repo)
 /twitter-engagement-analyzer/
@@ -67,16 +89,11 @@ packages/*/*.tsbuildinfo
 # Python cache artifacts
 __pycache__/
 *.pyc
+.pytest_cache/
 
 # Backup files
 *.bak
 *.backup
-
-# TypeScript build info
-*.tsbuildinfo
-
-# Bundle analysis
-stats.html
 
 # Hermes bridge runtime data
 hermes-bridge/data/*.json
@@ -84,3 +101,6 @@ hermes-bridge/data/*.json
 # Agent runtime scratch
 .commandcode/
 .tasks/
+
+# Local promo/video renders
+videos/
