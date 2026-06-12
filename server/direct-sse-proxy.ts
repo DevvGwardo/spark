@@ -28,6 +28,21 @@ interface ProxySseToDataStreamInput {
   emptyTextFallback?: string;
   throwOnEmpty?: string;
   onFirstEvent?: (kind: 'text' | 'data') => void;
+  /**
+   * When false the caller owns the HTTP response lifecycle: headers are not
+   * written, no finish_message is emitted, and the response is left open so
+   * multiple upstream streams can be piped into one data stream (loop mode).
+   * Defaults to true (single-shot proxy behavior).
+   */
+  manageResponse?: boolean;
+  /** Called with each text delta forwarded to the client. */
+  onText?: (text: string) => void;
+  /**
+   * When true, a client disconnect does NOT cancel the upstream stream: the
+   * proxy keeps consuming (so onText keeps accumulating) and simply stops
+   * writing to the dead response. Used for background session continuation.
+   */
+  continueOnClientDisconnect?: boolean;
 }
 
 /** Maximum size for the SSE buffer before forcibly flushing (1 MB). */
@@ -112,11 +127,15 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
     throw new Error('Upstream provider returned no response body.');
   }
 
-  input.res.writeHead(200, {
-    ...input.corsHeaders,
-    'Content-Type': 'text/plain; charset=utf-8',
-    'x-vercel-ai-data-stream': 'v1',
-  });
+  const manageResponse = input.manageResponse !== false;
+
+  if (manageResponse) {
+    input.res.writeHead(200, {
+      ...input.corsHeaders,
+      'Content-Type': 'text/plain; charset=utf-8',
+      'x-vercel-ai-data-stream': 'v1',
+    });
+  }
 
   const decoder = new TextDecoder();
   const reader = input.upstreamResponse.body.getReader();
@@ -126,8 +145,13 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
   let finishReason: ProxyFinishReason = 'unknown';
   let usage: ProxyUsage = EMPTY_USAGE;
   const disconnect = bindClientDisconnect(input.req, input.res, () => {
-    reader.cancel().catch(() => {});
+    if (!input.continueOnClientDisconnect) {
+      reader.cancel().catch(() => {});
+    }
   });
+  // Once the client is gone, writes to the response would either throw or
+  // block forever waiting for a drain that never comes.
+  const canWrite = () => !disconnect.isDisconnected() && !input.res.writableEnded;
 
   const flushEventBlock = async (eventBlock: string) => {
     const payload = extractSsePayload(eventBlock);
@@ -154,7 +178,7 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
       finishReason = normalized.finishReason;
     }
 
-    if (normalized.reasoning) {
+    if (normalized.reasoning && canWrite()) {
       await writeDataStreamChunk(input.res, formatDataStreamPart('reasoning', normalized.reasoning));
     }
 
@@ -163,7 +187,10 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
         input.onFirstEvent?.('text');
       }
       sawVisibleOutput = true;
-      await writeDataStreamChunk(input.res, formatDataStreamPart('text', normalized.text));
+      input.onText?.(normalized.text);
+      if (canWrite()) {
+        await writeDataStreamChunk(input.res, formatDataStreamPart('text', normalized.text));
+      }
     }
 
     if (normalized.data && normalized.data.length > 0) {
@@ -171,7 +198,9 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
         input.onFirstEvent?.('data');
       }
       sawDataEvent = true;
-      await writeDataStreamChunk(input.res, formatDataStreamPart('data', normalized.data as unknown as JSONValue[]));
+      if (canWrite()) {
+        await writeDataStreamChunk(input.res, formatDataStreamPart('data', normalized.data as unknown as JSONValue[]));
+      }
     }
   };
 
@@ -204,10 +233,12 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
           `[sse-proxy] Buffer exceeded ${MAX_BUFFER_SIZE} bytes (${buffer.length}). Flushing and resetting.`,
         );
         buffer = '';
-        await writeDataStreamChunk(
-          input.res,
-          formatDataStreamPart('error', 'Stream buffer overflow — some data may have been lost.'),
-        );
+        if (canWrite()) {
+          await writeDataStreamChunk(
+            input.res,
+            formatDataStreamPart('error', 'Stream buffer overflow — some data may have been lost.'),
+          );
+        }
       }
 
       const eventBlocks = buffer.split(/\r?\n\r?\n/);
@@ -257,6 +288,10 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
 
   if (!sawVisibleOutput && !sawDataEvent && input.throwOnEmpty) {
     throw new Error(input.throwOnEmpty);
+  }
+
+  if (!manageResponse) {
+    return;
   }
 
   if (!input.res.writableEnded) {

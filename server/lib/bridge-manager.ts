@@ -26,6 +26,11 @@ const HEALTH_POLL_MS = 500;
 let bridgeProcess: ChildProcess | null = null;
 let startPromise: Promise<BridgeStartResult> | null = null;
 let lastStartError: string | null = null;
+let depsInstalledCache: { python: string; result: boolean } | null = null;
+
+function invalidateDepsInstalledCache(): void {
+  depsInstalledCache = null;
+}
 
 export interface BridgeStartResult {
   status: 'started' | 'reused-existing' | 'failed';
@@ -130,10 +135,13 @@ async function waitForHealthy(timeoutMs = HEALTH_TIMEOUT_MS): Promise<boolean> {
 
 function depsInstalled(python: string | null): boolean {
   if (!python) return false;
+  if (depsInstalledCache?.python === python) return depsInstalledCache.result;
   try {
     execFileSync(python, ['-c', 'import fastapi, uvicorn, httpx, pydantic'], { stdio: 'ignore' });
+    depsInstalledCache = { python, result: true };
     return true;
   } catch {
+    depsInstalledCache = { python, result: false };
     return false;
   }
 }
@@ -166,6 +174,7 @@ export async function getBridgeStatus(): Promise<ServerBridgeStatus> {
 // ── Start / stop ──────────────────────────────────────────────────────────────
 
 export async function startManagedBridge(): Promise<BridgeStartResult> {
+  invalidateDepsInstalledCache();
   if (startPromise) return startPromise;
 
   startPromise = (async (): Promise<BridgeStartResult> => {
@@ -241,6 +250,7 @@ export function stopManagedBridge(): void {
  * Streams pip output via onProgress. Idempotent.
  */
 export async function installBridgeDeps(onProgress?: (line: string) => void): Promise<{ ok: boolean; message?: string }> {
+  invalidateDepsInstalledCache();
   const source = resolveBridgeSource();
   if (!source) return { ok: false, message: 'Bridge source not found' };
   const reqs = join(source, 'requirements.txt');

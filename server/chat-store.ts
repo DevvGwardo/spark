@@ -164,6 +164,9 @@ const SCHEMA_SQL = `
     tags TEXT
   );
 
+  CREATE INDEX IF NOT EXISTS idx_conversations_active_list
+    ON conversations (archived_at, pinned, updated_at);
+
   CREATE TABLE IF NOT EXISTS messages (
     id TEXT PRIMARY KEY,
     conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -676,12 +679,32 @@ function createChatStore(dbPath = resolveDbPath()) {
 
 export type ChatStore = ReturnType<typeof createChatStore>;
 
+// Shared store instance so server-side code (e.g. background hermes session
+// continuation) writes to the same SQLite connection as the HTTP routes.
+let sharedChatStore: ChatStore | null = null;
+let sharedChatStorePath: string | null = null;
+export function getChatStore(): ChatStore {
+  // Re-create when the resolved path changes (tests point CLOUDCHAT_DB_PATH
+  // at a fresh temp DB per test; in production the path never changes).
+  const dbPath = resolveDbPath();
+  // An in-memory DB (vitest default) must stay per-instance — sharing it
+  // would leak rows across test servers.
+  if (dbPath === ':memory:') {
+    return createChatStore(dbPath);
+  }
+  if (!sharedChatStore || sharedChatStorePath !== dbPath) {
+    sharedChatStore = createChatStore(dbPath);
+    sharedChatStorePath = dbPath;
+  }
+  return sharedChatStore;
+}
+
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
 export function registerChatStoreRoutes(app: express.Express) {
-  const chatStore = createChatStore();
+  const chatStore = getChatStore();
 
   let isShuttingDown = false;
   const shutdown = () => {

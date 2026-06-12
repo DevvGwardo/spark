@@ -20,6 +20,7 @@ interface CachedScan {
 }
 
 const CACHE_TTL_MS = 15_000;      // 15 seconds
+const CACHE_MAX_ENTRIES = 20;
 const MAX_ENTRIES = 25_000;
 const GIT_CHECK_IGNORE_MAX_STDIN = 256 * 1024; // 256KB
 
@@ -29,6 +30,8 @@ export class WorkspaceIndex {
   async scan(rootPath: string): Promise<FileEntry[]> {
     const cached = this.cache.get(rootPath);
     if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      this.cache.delete(rootPath);
+      this.cache.set(rootPath, cached);
       return cached.entries;
     }
 
@@ -37,6 +40,7 @@ export class WorkspaceIndex {
 
     const filtered = await this.filterGitIgnored(rootPath, entries);
 
+    this.pruneCache();
     this.cache.set(rootPath, {
       entries: filtered,
       timestamp: Date.now(),
@@ -44,6 +48,20 @@ export class WorkspaceIndex {
     });
 
     return filtered;
+  }
+
+  private pruneCache(): void {
+    const now = Date.now();
+    for (const [key, value] of this.cache) {
+      if (now - value.timestamp >= CACHE_TTL_MS) {
+        this.cache.delete(key);
+      }
+    }
+    while (this.cache.size >= CACHE_MAX_ENTRIES) {
+      const oldest = this.cache.keys().next().value;
+      if (oldest === undefined) break;
+      this.cache.delete(oldest);
+    }
   }
 
   private async scanDir(

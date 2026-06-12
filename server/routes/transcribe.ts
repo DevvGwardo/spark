@@ -2,7 +2,7 @@ import { logger } from '../lib/logger';
 import { Router } from 'express';
 import { sendJson } from '../lib/helpers';
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,27 +17,77 @@ function isTranscribeProvider(value: unknown): value is TranscribeProvider {
   return value === 'groq' || value === 'openai';
 }
 
-/** Read a single KEY=value from the hermes-agent's ~/.hermes/.env file. */
-function readHermesEnvValue(name: string): string | null {
+const HERMES_ENV_PATH = join(homedir(), '.hermes', '.env');
+const HERMES_AUTH_PATH = join(homedir(), '.hermes', 'auth.json');
+const HERMES_FILES_CACHE_TTL_MS = 60_000;
+
+let hermesFilesCache: {
+  envContent: string | null;
+  authRaw: string | null;
+  envMtimeMs: number;
+  authMtimeMs: number;
+  loadedAt: number;
+} | null = null;
+
+function hermesFileMtimeMs(path: string): number {
   try {
-    const content = readFileSync(join(homedir(), '.hermes', '.env'), 'utf8');
-    for (const line of content.split('\n')) {
-      const eq = line.indexOf('=');
-      if (eq === -1) continue;
-      if (line.slice(0, eq).trim() !== name) continue;
-      const value = line.slice(eq + 1).trim().replace(/^['"]|['"]$/g, '');
-      return value || null;
-    }
+    return statSync(path).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+function getHermesFilesCache(): { envContent: string | null; authRaw: string | null } {
+  const envMtimeMs = hermesFileMtimeMs(HERMES_ENV_PATH);
+  const authMtimeMs = hermesFileMtimeMs(HERMES_AUTH_PATH);
+  const now = Date.now();
+  const c = hermesFilesCache;
+  if (
+    c &&
+    now - c.loadedAt < HERMES_FILES_CACHE_TTL_MS &&
+    c.envMtimeMs === envMtimeMs &&
+    c.authMtimeMs === authMtimeMs
+  ) {
+    return { envContent: c.envContent, authRaw: c.authRaw };
+  }
+
+  let envContent: string | null = null;
+  let authRaw: string | null = null;
+  try {
+    envContent = readFileSync(HERMES_ENV_PATH, 'utf8');
   } catch {
     // no ~/.hermes/.env
+  }
+  try {
+    authRaw = readFileSync(HERMES_AUTH_PATH, 'utf8');
+  } catch {
+    // no ~/.hermes/auth.json
+  }
+
+  hermesFilesCache = { envContent, authRaw, envMtimeMs, authMtimeMs, loadedAt: now };
+  return { envContent, authRaw };
+}
+
+/** Read a single KEY=value from the hermes-agent's ~/.hermes/.env file. */
+function readHermesEnvValue(name: string): string | null {
+  const { envContent } = getHermesFilesCache();
+  if (!envContent) return null;
+  for (const line of envContent.split('\n')) {
+    const eq = line.indexOf('=');
+    if (eq === -1) continue;
+    if (line.slice(0, eq).trim() !== name) continue;
+    const value = line.slice(eq + 1).trim().replace(/^['"]|['"]$/g, '');
+    return value || null;
   }
   return null;
 }
 
 /** Read the highest-priority usable API key from ~/.hermes/auth.json credential_pool. */
 function readHermesPoolKey(provider: string): string | null {
+  const { authRaw } = getHermesFilesCache();
+  if (!authRaw) return null;
   try {
-    const auth = JSON.parse(readFileSync(join(homedir(), '.hermes', 'auth.json'), 'utf8')) as {
+    const auth = JSON.parse(authRaw) as {
       credential_pool?: Record<string, Array<{ access_token?: string; priority?: number }>>;
     };
     const pool = auth.credential_pool?.[provider];
@@ -49,7 +99,7 @@ function readHermesPoolKey(provider: string): string | null {
       }
     }
   } catch {
-    // no ~/.hermes/auth.json
+    // malformed ~/.hermes/auth.json
   }
   return null;
 }

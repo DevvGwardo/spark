@@ -1,3 +1,5 @@
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { logger } from '../lib/logger';
 import type { Express, Request, Response } from 'express';
 import { sendJson } from '../lib/helpers';
@@ -12,31 +14,78 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+const BRIDGE_CACHE_TTL_MS = 10_000;
+
+const CACHEABLE_BRIDGE_PATHS = new Set([
+  '/health',
+  '/v1/providers',
+  '/workspace/commands',
+  '/workspace/overview',
+]);
+
+type BridgeCacheEntry = {
+  status: number;
+  contentType: string;
+  body: string;
+  expiresAt: number;
+};
+
+const bridgeReadCache = new Map<string, BridgeCacheEntry>();
+const BRIDGE_CACHE_ENABLED = process.env.VITEST !== 'true';
+
+function bridgeCacheKey(path: string, profile: string): string {
+  return `${path}\0${profile}`;
+}
+
+function isCacheableBridgePath(path: string): boolean {
+  const base = path.split('?')[0] ?? path;
+  return CACHEABLE_BRIDGE_PATHS.has(base);
+}
+
+function invalidateBridgeReadCache(): void {
+  bridgeReadCache.clear();
+}
+
 async function proxyTo(
   req: Request,
   res: Response,
   path: string,
   options?: RequestInit,
 ): Promise<void> {
+  const method = (options?.method ?? 'GET').toUpperCase();
+  const profile = getProfileFromRequest(req);
+  const isGet = method === 'GET';
+
+  if (!isGet) {
+    invalidateBridgeReadCache();
+  }
+
+  if (BRIDGE_CACHE_ENABLED && isGet && isCacheableBridgePath(path)) {
+    const cached = bridgeReadCache.get(bridgeCacheKey(path, profile));
+    if (cached && cached.expiresAt > Date.now()) {
+      res.status(cached.status).type(cached.contentType).send(cached.body);
+      return;
+    }
+  }
+
   try {
     const response = await fetch(`${HERMES_BRIDGE_URL}${path}`, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
-        'X-Hermes-Profile': getProfileFromRequest(req),
+        'X-Hermes-Profile': profile,
         ...options?.headers,
       },
     });
 
-    const rawText = await response.text();
-    let data: unknown = {};
-    try {
-      data = rawText ? JSON.parse(rawText) : {};
-    } catch {
-      // Non-JSON response
-    }
-
     if (!response.ok) {
+      const rawText = await response.text();
+      let data: unknown = {};
+      try {
+        data = rawText ? JSON.parse(rawText) : {};
+      } catch {
+        // Non-JSON response
+      }
       const errorData = isObjectRecord(data) ? data : {};
       const plainTextError = rawText.trim();
       const error =
@@ -46,7 +95,30 @@ async function proxyTo(
       return sendJson(res, response.status, { error });
     }
 
-    return sendJson(res, response.status, data);
+    const contentType = response.headers.get('content-type') ?? 'application/json';
+
+    if (isGet && !isCacheableBridgePath(path)) {
+      res.status(response.status).type(contentType);
+      if (response.body) {
+        await pipeline(Readable.fromWeb(response.body as ReadableStream<Uint8Array>), res);
+      } else {
+        res.end();
+      }
+      return;
+    }
+
+    const rawText = await response.text();
+
+    if (BRIDGE_CACHE_ENABLED && isGet && isCacheableBridgePath(path)) {
+      bridgeReadCache.set(bridgeCacheKey(path, profile), {
+        status: response.status,
+        contentType,
+        body: rawText,
+        expiresAt: Date.now() + BRIDGE_CACHE_TTL_MS,
+      });
+    }
+
+    res.status(response.status).type(contentType).send(rawText);
   } catch (err) {
     const message =
       err instanceof Error ? err.message : 'Failed to reach hermes-bridge';
@@ -190,6 +262,39 @@ export function registerHermesAdminRoute(app: Express) {
 
   app.get('/api/hermes/workspace/usage', async (req: Request, res: Response) => {
     await proxyTo(req, res, '/workspace/usage');
+  });
+
+  app.get('/api/hermes/workspace/logs', async (req: Request, res: Response) => {
+    await proxyTo(req, res, `/workspace/logs${getQuerySuffix(req)}`);
+  });
+
+  app.get('/api/hermes/workspace/system', async (req: Request, res: Response) => {
+    await proxyTo(req, res, '/workspace/system');
+  });
+
+  // ─── Webhooks ─────────────────────────────────────────────────────────
+
+  app.get('/api/hermes/webhooks', async (req: Request, res: Response) => {
+    await proxyTo(req, res, '/webhooks');
+  });
+
+  app.post('/api/hermes/webhooks', async (req: Request, res: Response) => {
+    await proxyTo(req, res, '/webhooks', {
+      method: 'POST',
+      body: JSON.stringify(req.body),
+    });
+  });
+
+  app.delete('/api/hermes/webhooks/:name', async (req: Request, res: Response) => {
+    await proxyTo(req, res, `/webhooks/${encodeURIComponent(req.params.name)}`, {
+      method: 'DELETE',
+    });
+  });
+
+  // ─── Pairing ──────────────────────────────────────────────────────────
+
+  app.get('/api/hermes/pairing', async (req: Request, res: Response) => {
+    await proxyTo(req, res, '/pairing');
   });
 
   app.get('/api/hermes/workspace/files', async (req: Request, res: Response) => {

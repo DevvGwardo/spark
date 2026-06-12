@@ -28,7 +28,11 @@ import {
   proxyCompatibleProviderToDataStream,
   proxyHermesAgentLoopToDataStream,
   proxyHermesSwarmToDataStream,
+  proxyHermesLoopToDataStream,
   shouldDirectProxyCompatibleProvider,
+  cancelHermesRun,
+  getActiveHermesRuns,
+  getHermesRunPartialText,
 } from '../lib/hermes';
 import { buildLocalExecutionTools, parseAgentToolsets, getLocalToolsSystemPromptFragment } from '../local-tools';
 import { MAX_AGENT_STEPS } from '../config';
@@ -248,6 +252,32 @@ function formatCachedFilesForPrompt(cache: Record<string, unknown>): string {
 
 export function registerChatRoute(app: Express) {
 
+// Explicit cancel for a background-capable hermes run. The UI Stop button
+// calls this — a plain client disconnect (window closed) intentionally does
+// NOT stop the run; it continues server-side and persists its result.
+app.post('/api/hermes/chat/cancel', (req, res) => {
+  const { conversationId } = (req.body ?? {}) as { conversationId?: unknown };
+  if (typeof conversationId !== 'string' || conversationId.length === 0) {
+    return sendJson(res, 400, { error: 'conversationId must be a non-empty string' });
+  }
+  const cancelled = cancelHermesRun(conversationId);
+  sendJson(res, 200, { cancelled });
+});
+
+// Conversations with hermes runs still active server-side (including runs
+// whose client window has closed). The UI polls this to keep the sidebar
+// status accurate and to re-hydrate a conversation when its run finishes.
+app.get('/api/hermes/chat/active', (_req, res) => {
+  sendJson(res, 200, { runs: getActiveHermesRuns() });
+});
+
+// In-flight output of a background run, polled by a reopened panel so the
+// user sees the run progressing (and can Stop it) after a window close.
+app.get('/api/hermes/chat/active/:conversationId', (req, res) => {
+  const text = getHermesRunPartialText(req.params.conversationId);
+  sendJson(res, 200, { active: text !== null, text: text ?? '' });
+});
+
 app.post('/functions/v1/chat', async (req, res) => {
   if (!chatRateLimiter.isAllowed(getClientIp(req))) {
     return sendJson(res, 429, { error: 'Too many requests. Please try again later.' });
@@ -290,6 +320,7 @@ app.post('/functions/v1/chat', async (req, res) => {
       hermes_minimax_key,
       hermes_provider,
       hermes_swarm_mode,
+      hermes_loop_mode,
       planMode: rawPlanMode,
       repo_file_cache,
       repo_file_tree,
@@ -677,6 +708,45 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
         logger.warn(`[chat] WARNING: activeRepo set (${activeRepo.owner}/${activeRepo.name}) but no valid github_pat in request body — repo tools unavailable`);
     }
 
+    // Loop mode: rerun the agent until a judge verdict says the goal is met,
+    // bounded by a max-iteration cap and an optional time budget.
+    if (
+      provider === 'hermes' &&
+      runtimeProvider === 'hermes' &&
+      hermes_loop_mode &&
+      typeof hermes_loop_mode === 'object'
+    ) {
+      const loopConfig = {
+        maxIterations: Number((hermes_loop_mode as { max_iterations?: unknown }).max_iterations) || 5,
+        timeBudgetMinutes: Number((hermes_loop_mode as { time_budget_minutes?: unknown }).time_budget_minutes) || null,
+      };
+      logger.info(
+        `[chat] Proxying Hermes loop mode. model=${model} maxIterations=${loopConfig.maxIterations} timeBudget=${loopConfig.timeBudgetMinutes ?? '-'}m`,
+      );
+      await proxyHermesLoopToDataStream({
+        req,
+        res,
+        apiKey,
+        model,
+        messages: normalizedChatInput.messages,
+        loop: loopConfig,
+        temperature,
+        topP: top_p,
+        maxTokens: max_tokens,
+        hermesToolsets: hermes_toolsets,
+        hermesProvider: hermes_provider,
+        repoEditIntent: !!repo_edit_intent,
+        activeRepo: shouldForwardHermesRepoContext ? activeRepo : undefined,
+        githubPAT: shouldForwardHermesRepoContext ? githubPAT : undefined,
+        hermesMiniMaxKey: hermes_minimax_key,
+        repoFileTree: shouldForwardHermesRepoContext ? sanitizeFileTree(repo_file_tree) : undefined,
+        customTools: Array.isArray(custom_tools) ? custom_tools : undefined,
+        activeProfile: activeHermesProfile ?? undefined,
+        conversationId: typeof conversation_id === 'string' ? conversation_id : undefined,
+      });
+      return;
+    }
+
     // Swarm mode: Architect → Implementor → Reviewer pipeline
     if (provider === 'hermes' && runtimeProvider === 'hermes' && hermes_swarm_mode) {
       logger.info(`[chat] Proxying Hermes swarm pipeline. model=${model}`);
@@ -721,6 +791,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
         customTools: Array.isArray(custom_tools) ? custom_tools : undefined,
         activeProfile: activeHermesProfile ?? undefined,
         conversationId: typeof conversation_id === 'string' ? conversation_id : undefined,
+        reasoningEffort: typeof reasoning_effort === 'string' ? reasoning_effort : undefined,
       });
       return;
     }

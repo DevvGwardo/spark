@@ -161,6 +161,7 @@ async function detectCompletions(): Promise<void> {
   // Fetch all running cards from the API
   const runningCards = await fetchCards('running');
   const runningIds = new Set(runningCards.map((c) => c.id));
+  const cardById = new Map((await fetchCards('')).map((c) => [c.id, c]));
 
   // Find tracked cards that are no longer running (moved by the agent)
   for (const [cardId, _task] of state.activeTasks) {
@@ -169,8 +170,7 @@ async function detectCompletions(): Promise<void> {
       state.activeTasks.delete(cardId);
 
       // Try to determine the final status
-      const allCards = await fetchCards('');
-      const card = allCards.find((c) => c.id === cardId);
+      const card = cardById.get(cardId);
       const finalStatus = card?.status || 'unknown';
 
       if (finalStatus === 'done') {

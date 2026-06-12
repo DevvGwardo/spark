@@ -45,48 +45,76 @@ function countFilesRecursive(rootPath: string, predicate: (p: string) => boolean
   return count;
 }
 
+type ProfileListEntry = {
+  name: string; path: string; model?: string; provider?: string;
+  skillCount: number; sessionCount: number; hasEnv: boolean;
+};
+
+const PROFILE_LIST_TTL_MS = 30_000;
+let profileListCache: { data: ProfileListEntry[]; expiresAt: number } | null = null;
+
+function invalidateProfileListCache(): void {
+  profileListCache = null;
+}
+
+function buildProfileList(): ProfileListEntry[] {
+  const profilesRoot = getProfilesRoot();
+  const results: ProfileListEntry[] = [];
+
+  if (fs.existsSync(profilesRoot)) {
+    let entries: fs.Dirent[] = [];
+    try { entries = fs.readdirSync(profilesRoot, { withFileTypes: true }); } catch { /* empty */ }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const name = entry.name;
+      const profilePath = path.join(profilesRoot, name);
+      const config = readYamlConfig(path.join(profilePath, 'config.yaml'));
+      results.push({
+        name, path: profilePath,
+        model: config.model as string | undefined,
+        provider: config.provider as string | undefined,
+        skillCount: countFilesRecursive(path.join(profilePath, 'skills'), (p) => path.basename(p) === 'SKILL.md'),
+        sessionCount: countFilesRecursive(path.join(profilePath, 'sessions'), (p) => /\.(jsonl|json|sqlite|db)$/i.test(p)),
+        hasEnv: fs.existsSync(path.join(profilePath, '.env')),
+      });
+    }
+  }
+
+  const root = getHermesRoot();
+  const defaultConfig = readYamlConfig(path.join(root, 'config.yaml'));
+  results.unshift({
+    name: 'default', path: root,
+    model: defaultConfig.model as string | undefined,
+    provider: defaultConfig.provider as string | undefined,
+    skillCount: countFilesRecursive(path.join(root, 'skills'), (p) => path.basename(p) === 'SKILL.md'),
+    sessionCount: countFilesRecursive(path.join(root, 'sessions'), (p) => /\.(jsonl|json|sqlite|db)$/i.test(p)),
+    hasEnv: fs.existsSync(path.join(root, '.env')),
+  });
+
+  return results;
+}
+
+function getCachedProfileList(): ProfileListEntry[] {
+  const now = Date.now();
+  if (profileListCache && profileListCache.expiresAt > now) {
+    return profileListCache.data;
+  }
+  const data = buildProfileList();
+  profileListCache = { data, expiresAt: now + PROFILE_LIST_TTL_MS };
+  return data;
+}
+
 export function registerProfilesRoutes(app: Express) {
   // GET /api/hermes/profiles - list all profiles. The `active` flag reflects
   // the requesting window's selection (sent via X-Hermes-Profile header);
   // the server itself holds no active-profile state.
   app.get('/api/hermes/profiles', (req: Request, res: Response) => {
     try {
-      const profilesRoot = getProfilesRoot();
       const requestProfile = getProfileFromRequest(req);
-      const results: Array<{
-        name: string; path: string; active: boolean; model?: string;
-        provider?: string; skillCount: number; sessionCount: number; hasEnv: boolean;
-      }> = [];
-
-      if (fs.existsSync(profilesRoot)) {
-        let entries: fs.Dirent[] = [];
-        try { entries = fs.readdirSync(profilesRoot, { withFileTypes: true }); } catch { /* empty */ }
-        for (const entry of entries) {
-          if (!entry.isDirectory()) continue;
-          const name = entry.name;
-          const profilePath = path.join(profilesRoot, name);
-          const config = readYamlConfig(path.join(profilePath, 'config.yaml'));
-          results.push({
-            name, path: profilePath, active: name === requestProfile,
-            model: config.model as string | undefined,
-            provider: config.provider as string | undefined,
-            skillCount: countFilesRecursive(path.join(profilePath, 'skills'), (p) => path.basename(p) === 'SKILL.md'),
-            sessionCount: countFilesRecursive(path.join(profilePath, 'sessions'), (p) => /\.(jsonl|json|sqlite|db)$/i.test(p)),
-            hasEnv: fs.existsSync(path.join(profilePath, '.env')),
-          });
-        }
-      }
-
-      const root = getHermesRoot();
-      const defaultConfig = readYamlConfig(path.join(root, 'config.yaml'));
-      results.unshift({
-        name: 'default', path: root, active: requestProfile === 'default',
-        model: defaultConfig.model as string | undefined,
-        provider: defaultConfig.provider as string | undefined,
-        skillCount: countFilesRecursive(path.join(root, 'skills'), (p) => path.basename(p) === 'SKILL.md'),
-        sessionCount: countFilesRecursive(path.join(root, 'sessions'), (p) => /\.(jsonl|json|sqlite|db)$/i.test(p)),
-        hasEnv: fs.existsSync(path.join(root, '.env')),
-      });
+      const results = getCachedProfileList().map((profile) => ({
+        ...profile,
+        active: profile.name === requestProfile,
+      }));
 
       results.sort((a, b) => {
         if (a.active && !b.active) return -1;
@@ -124,6 +152,7 @@ export function registerProfilesRoutes(app: Express) {
       if (!configContent) configContent = 'model: ""\nprovider: ""\n';
       fs.writeFileSync(path.join(profilePath, 'config.yaml'), configContent, 'utf-8');
 
+      invalidateProfileListCache();
       sendJson(res, 200, { ok: true, profile: { name: normalized, path: profilePath } });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to create profile';
@@ -145,6 +174,7 @@ export function registerProfilesRoutes(app: Express) {
       const trashDir = path.join(getHermesRoot(), 'trash');
       fs.mkdirSync(trashDir, { recursive: true });
       fs.renameSync(profilePath, path.join(trashDir, `${normalized}-${Date.now()}`));
+      invalidateProfileListCache();
       sendJson(res, 200, { ok: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to delete profile';
@@ -338,6 +368,7 @@ export function registerProfilesRoutes(app: Express) {
       }
 
       fs.renameSync(oldPath, newPath);
+      invalidateProfileListCache();
       sendJson(res, 200, { ok: true, profile: { name: normalizedNew, path: newPath } });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to rename profile';

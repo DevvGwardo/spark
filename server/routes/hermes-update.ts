@@ -11,6 +11,45 @@ const HERMES_BIN = process.env.HOME + '/.hermes/hermes-agent/venv/bin/hermes';
 // Track if an update is currently running
 let updateInProgress = false;
 
+// Progress of the current (or last) update, polled by the UI modal
+interface UpdateProgress {
+  step: number;
+  totalSteps: number;
+  label: string;
+  done: boolean;
+  success: boolean | null;
+  error: string | null;
+  newVersion: string | null;
+}
+
+const TOTAL_STEPS = 6;
+
+let updateProgress: UpdateProgress = {
+  step: 0,
+  totalSteps: TOTAL_STEPS,
+  label: '',
+  done: false,
+  success: null,
+  error: null,
+  newVersion: null,
+};
+
+function setProgress(step: number, label: string) {
+  updateProgress = { ...updateProgress, step, label };
+}
+
+function finishProgress(success: boolean, error: string | null, newVersion: string | null = null) {
+  updateProgress = {
+    ...updateProgress,
+    step: success ? TOTAL_STEPS : updateProgress.step,
+    label: success ? 'Update complete' : updateProgress.label,
+    done: true,
+    success,
+    error,
+    newVersion,
+  };
+}
+
 // Conflict markers in `git status --porcelain` output
 const CONFLICT_RE = /^(U[AUD]|A[UA]|D[UA])/m;
 
@@ -103,6 +142,11 @@ export function registerHermesUpdateRoute(app: Express) {
     }
   });
 
+  // GET /api/hermes/update/progress — poll progress of a running update
+  app.get('/api/hermes/update/progress', (_req, res) => {
+    sendJson(res, 200, { ...updateProgress, updateInProgress });
+  });
+
   // POST /api/hermes/update — trigger the update
   app.post('/api/hermes/update', async (_req, res) => {
     if (updateInProgress) {
@@ -110,9 +154,19 @@ export function registerHermesUpdateRoute(app: Express) {
     }
 
     updateInProgress = true;
+    updateProgress = {
+      step: 0,
+      totalSteps: TOTAL_STEPS,
+      label: 'Starting update...',
+      done: false,
+      success: null,
+      error: null,
+      newVersion: null,
+    };
 
     try {
       // Step 0: refuse if not on main or local-main — we will not create merge commits onto other branches
+      setProgress(1, 'Checking repository state...');
       const { stdout: branchOut } = await execFileAsync(
         'git',
         ['rev-parse', '--abbrev-ref', 'HEAD'],
@@ -120,6 +174,7 @@ export function registerHermesUpdateRoute(app: Express) {
       );
       const currentBranch = branchOut.trim();
       if (currentBranch !== 'main' && currentBranch !== 'local-main') {
+        finishProgress(false, `hermes repo is on branch ${currentBranch}, expected main`);
         return sendJson(res, 409, {
           success: false,
           error: `hermes repo is on branch ${currentBranch}, expected main`,
@@ -136,12 +191,14 @@ export function registerHermesUpdateRoute(app: Express) {
       const preUpdateSha = shaOut.trim();
 
       // Step 2: git fetch
+      setProgress(2, 'Fetching latest changes...');
       await execFileAsync('git', ['fetch', 'origin'], {
         cwd: HERMES_DIR,
         timeout: 60000,
       });
 
       // Step 3: stash local changes so the merge sees a clean tree
+      setProgress(3, 'Stashing local changes...');
       let hadStash = false;
       try {
         const stashResult = await execFileAsync('git', ['stash', 'push', '-m', 'cloud-chat-hub-update'], {
@@ -155,6 +212,7 @@ export function registerHermesUpdateRoute(app: Express) {
       }
 
       // Step 4: git merge --ff-only origin/main
+      setProgress(4, 'Applying update...');
       try {
         await execFileAsync(
           'git',
@@ -171,14 +229,17 @@ export function registerHermesUpdateRoute(app: Express) {
             });
           } catch {}
         }
+        const mergeErrMsg = 'Merge failed (non fast-forward): ' + (mergeErr.stderr?.trim() || mergeErr.message);
+        finishProgress(false, mergeErrMsg);
         return sendJson(res, 500, {
           success: false,
-          error: 'Merge failed (non fast-forward): ' + (mergeErr.stderr?.trim() || mergeErr.message),
+          error: mergeErrMsg,
           stderr: mergeErr.stderr?.slice(-500),
         });
       }
 
       // Step 5: restore local changes — detect stash-pop conflicts and roll back
+      setProgress(5, 'Restoring local changes...');
       if (hadStash) {
         let stashPopFailed = false;
         try {
@@ -202,9 +263,11 @@ export function registerHermesUpdateRoute(app: Express) {
               cwd: HERMES_DIR,
               timeout: 10000,
             });
+            const stashErrMsg = `stash pop conflict — rolled back to ${preUpdateSha.slice(0, 7)}. Local changes preserved in stash@{0}.`;
+            finishProgress(false, stashErrMsg);
             return sendJson(res, 500, {
               success: false,
-              error: `stash pop conflict — rolled back to ${preUpdateSha.slice(0, 7)}. Local changes preserved in stash@{0}.`,
+              error: stashErrMsg,
               stashRef: 'stash@{0}',
             });
           }
@@ -212,6 +275,7 @@ export function registerHermesUpdateRoute(app: Express) {
       }
 
       // Step 6: reinstall dependencies via hermes update
+      setProgress(6, 'Installing dependencies...');
       const updateResult = await execFileAsync(HERMES_BIN, ['update'], {
         cwd: HERMES_DIR,
         timeout: 300000, // 5 min max
@@ -229,12 +293,14 @@ export function registerHermesUpdateRoute(app: Express) {
         if (match) newVersion = match[1];
       } catch {}
 
+      finishProgress(true, null, newVersion);
       sendJson(res, 200, {
         success: true,
         newVersion,
         output: updateResult.stdout.slice(-500), // last 500 chars of output
       });
     } catch (err: any) {
+      finishProgress(false, err.message);
       sendJson(res, 500, {
         success: false,
         error: err.message,

@@ -87,11 +87,19 @@ interface AgentSoul {
   excerpt: string;
 }
 
+const SOUL_CACHE_TTL_MS = 5 * 60 * 1000;
+const soulCache = new Map<string, { excerpt: string; expiresAt: number }>();
+
 /**
  * Fetch a profile's SOUL.md excerpt from the Hermes bridge.
  * Returns the preview text or a fallback description.
  */
 async function fetchAgentSoul(profileName: string, displayName: string): Promise<AgentSoul> {
+  const cached = soulCache.get(profileName);
+  if (cached && cached.expiresAt > Date.now()) {
+    return { profileName, displayName, excerpt: cached.excerpt };
+  }
+
   const apiKey = resolveBridgeApiKey();
   const headers: Record<string, string> = {
     'X-Hermes-Profile': profileName,
@@ -100,13 +108,18 @@ async function fetchAgentSoul(profileName: string, displayName: string): Promise
 
   try {
     const res = await fetch(`${HERMES_BRIDGE_BASE}/workspace/files/soul`, { headers, signal: AbortSignal.timeout(5000) });
-    if (!res.ok) return { profileName, displayName, excerpt: '' };
+    if (!res.ok) {
+      soulCache.set(profileName, { excerpt: '', expiresAt: Date.now() + SOUL_CACHE_TTL_MS });
+      return { profileName, displayName, excerpt: '' };
+    }
     const data = await res.json() as { file?: { preview?: string; content?: string } };
     const content = data.file?.content || data.file?.preview || '';
     // First line or first 200 chars of soul
     const excerpt = content.split('\n')[0]?.replace(/^#+\s*/, '').trim().slice(0, 200) || '';
+    soulCache.set(profileName, { excerpt, expiresAt: Date.now() + SOUL_CACHE_TTL_MS });
     return { profileName, displayName, excerpt };
   } catch {
+    soulCache.set(profileName, { excerpt: '', expiresAt: Date.now() + SOUL_CACHE_TTL_MS });
     return { profileName, displayName, excerpt: '' };
   }
 }

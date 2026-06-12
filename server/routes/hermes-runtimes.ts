@@ -181,12 +181,32 @@ export async function inspectHermesRuntimes(deps?: {
   };
 }
 
+type HermesRuntimesPayload = Awaited<ReturnType<typeof inspectHermesRuntimes>>;
+
+const RUNTIMES_CACHE_TTL_MS = 45_000;
+const RUNTIMES_CACHE_ENABLED = process.env.VITEST !== 'true';
+
+let runtimesCache: { payload: HermesRuntimesPayload; expiresAt: number } | null = null;
+
 export function registerHermesRuntimesRoute(app: Express) {
 
   // GET /api/hermes/runtimes — inspect host and container Hermes runtimes
   app.get('/api/hermes/runtimes', async (_req, res) => {
     try {
+      const now = Date.now();
+      if (
+        RUNTIMES_CACHE_ENABLED &&
+        runtimesCache &&
+        runtimesCache.expiresAt > now
+      ) {
+        sendJson(res, 200, runtimesCache.payload);
+        return;
+      }
+
       const payload = await inspectHermesRuntimes();
+      if (RUNTIMES_CACHE_ENABLED) {
+        runtimesCache = { payload, expiresAt: now + RUNTIMES_CACHE_TTL_MS };
+      }
       sendJson(res, 200, payload);
     } catch (err: any) {
       sendJson(res, 500, {

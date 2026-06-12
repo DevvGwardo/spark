@@ -69,6 +69,22 @@ type UpdateKanbanCardInput = Partial<Omit<CreateKanbanCardInput, 'createdBy'>>;
 // ─── SQLite connection (singleton) ──────────────────────────────────────────
 
 let _db: DatabaseSync | null = null;
+let _taskIndexesEnsured = false;
+
+function ensureTaskIndexes(db: DatabaseSync): void {
+  if (_taskIndexesEnsured) return;
+  _taskIndexesEnsured = true;
+
+  const tasksTable = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tasks'")
+    .get();
+  if (!tasksTable) return;
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+    CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee);
+  `);
+}
 
 function getDb(): DatabaseSync {
   if (!_db) {
@@ -77,6 +93,7 @@ function getDb(): DatabaseSync {
     _db = new DatabaseSync(DB_PATH);
     _db.prepare('PRAGMA journal_mode = WAL').run();
     _db.prepare('PRAGMA foreign_keys = ON').run();
+    ensureTaskIndexes(_db);
   }
   return _db;
 }
