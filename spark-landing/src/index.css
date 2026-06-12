@@ -38,6 +38,23 @@ body {
   overflow-x: hidden;
 }
 a { color: inherit; text-decoration: none; }
+
+/* ============ Viewport frame ============ */
+/* The whole page scrolls inside this fixed container. As --frame goes 0→1 it
+   insets on all four sides and rounds every corner, revealing the fixed sky
+   background as a clean padded gutter — and reverses on the way back up. */
+.frame {
+  position: fixed;
+  inset: calc(18px * var(--frame));
+  border-radius: calc(34px * var(--frame));
+  overflow: hidden;
+}
+.frame-scroll {
+  height: 100%;
+  overflow-y: auto;
+  scrollbar-width: none; /* Lenis drives the scroll; hide the inner bar */
+}
+.frame-scroll::-webkit-scrollbar { display: none; }
 .site { position: relative; display: flex; flex-direction: column; min-height: 100vh; }
 
 /* ============ Hero gradient field (Codex-style) ============ */
@@ -161,18 +178,10 @@ a { color: inherit; text-decoration: none; }
 .content {
   position: relative; z-index: 1;
   background: var(--bg);
-  /* Scroll-in frame: at the top the panel is a full-width sheet with rounded
-     top corners; as you scroll (--frame 0→1) it insets on all sides so the
-     sky shows through a clean padded gutter around a fully rounded card.
-     overflow: clip keeps children from leaking over the radius. */
-  border-radius: calc(28px + 6px * var(--frame))
-                 calc(28px + 6px * var(--frame))
-                 calc(34px * var(--frame))
-                 calc(34px * var(--frame));
+  /* The viewport .frame supplies the scroll-in gutter + corner radius; the
+     panel itself stays a full-width sheet with rounded top corners. */
+  border-top-left-radius: 28px; border-top-right-radius: 28px;
   margin-top: -28px;
-  margin-inline: calc(22px * var(--frame));
-  margin-bottom: calc(22px * var(--frame));
-  overflow: clip;
   box-shadow: 0 -24px 60px -30px rgba(20, 12, 60, 0.45);
 }
 
