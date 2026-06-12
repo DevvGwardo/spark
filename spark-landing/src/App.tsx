@@ -20,8 +20,9 @@ function App() {
     <div className="site">
       <div className="hero-wrap">
         <nav className="nav">
-          <a className="nav-logo" href="#top" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
-            <img src="/spark-mark.svg" alt="" width={24} height={24} />
+          {/* Lenis handles smooth anchor scrolling (anchors: true) */}
+          <a className="nav-logo" href="#top">
+            <img src="/spark-app-icon.png" alt="" width={30} height={30} />
             <span>Spark</span>
           </a>
           <div className="nav-links">

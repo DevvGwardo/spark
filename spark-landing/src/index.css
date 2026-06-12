@@ -23,7 +23,10 @@
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html { scroll-behavior: smooth; }
+/* Smooth scrolling is handled by Lenis (see main.tsx); CSS smooth scroll
+   would fight it. --frame (0→1, set on scroll) drives the content panel's
+   inset frame below. */
+:root { --frame: 0; }
 
 body {
   min-height: 100vh;
@@ -72,7 +75,9 @@ a { color: inherit; text-decoration: none; }
   display: inline-flex; align-items: center; gap: 9px;
   font-weight: 700; font-size: 1.05rem; letter-spacing: -0.02em; color: var(--ink);
 }
-.nav-logo img { width: 24px; height: 24px; border-radius: 7px; display: block; }
+/* App-icon render ships its own squircle + shadow with transparent margins,
+   so no extra radius/background — just size it a touch larger to compensate. */
+.nav-logo img { width: 30px; height: 30px; display: block; }
 .nav-links { display: flex; align-items: center; gap: 4px; }
 .nav-link {
   padding: 8px 13px; font-size: 0.9rem; font-weight: 500; color: rgba(13, 13, 17, 0.74);
@@ -134,17 +139,10 @@ a { color: inherit; text-decoration: none; }
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   text-align: center; padding: 40px 24px 80px;
 }
-.app-icon {
-  width: 92px; height: 92px; display: grid; place-items: center;
-  border-radius: 25px;
-  background: linear-gradient(155deg, #9c8cff 0%, #6f5cf0 55%, #5b48e6 100%);
-  color: #fff;
-  box-shadow:
-    0 22px 44px -14px rgba(50, 32, 130, 0.55),
-    inset 0 1px 0 rgba(255, 255, 255, 0.5),
-    0 0 0 6px rgba(255, 255, 255, 0.6);
-}
-.app-icon svg { width: 44px; height: 44px; stroke-width: 2.2; }
+/* The macOS app-icon render bakes in its own squircle, gloss, and shadow —
+   render it bare, slightly oversized to offset its transparent margins. */
+.app-icon { width: 116px; height: 116px; }
+.app-icon img { width: 100%; height: 100%; display: block; }
 .wordmark {
   margin: 34px 0 18px;
   font-size: clamp(3.4rem, 9vw, 6rem);
@@ -163,8 +161,18 @@ a { color: inherit; text-decoration: none; }
 .content {
   position: relative; z-index: 1;
   background: var(--bg);
-  border-top-left-radius: 28px; border-top-right-radius: 28px;
+  /* Scroll-in frame: at the top the panel is a full-width sheet with rounded
+     top corners; as you scroll (--frame 0→1) it insets on all sides so the
+     sky shows through a clean padded gutter around a fully rounded card.
+     overflow: clip keeps children from leaking over the radius. */
+  border-radius: calc(28px + 6px * var(--frame))
+                 calc(28px + 6px * var(--frame))
+                 calc(34px * var(--frame))
+                 calc(34px * var(--frame));
   margin-top: -28px;
+  margin-inline: calc(22px * var(--frame));
+  margin-bottom: calc(22px * var(--frame));
+  overflow: clip;
   box-shadow: 0 -24px 60px -30px rgba(20, 12, 60, 0.45);
 }
 

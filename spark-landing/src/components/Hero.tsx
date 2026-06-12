@@ -1,5 +1,3 @@
-import { Icon } from "./Icon";
-
 const REPO = "https://github.com/DevvGwardo/spark";
 const RELEASES = `${REPO}/releases`;
 
@@ -7,7 +5,7 @@ export function Hero() {
   return (
     <header className="hero" id="top">
       <div className="app-icon" aria-hidden="true">
-        <Icon name="terminal" />
+        <img src="/spark-app-icon.png" alt="" />
       </div>
       <h1 className="wordmark">Spark</h1>
       <p className="subtitle">
