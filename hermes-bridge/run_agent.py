@@ -1288,6 +1288,9 @@ class AIAgent:
         repo_file_tree: Optional[list[str]] = None,
         custom_tools: Optional[list[dict]] = None,
         workspace_id: Optional[str] = None,
+        # Accepted for parity with HermesAgentAdapter — the custom fallback
+        # agent has no reasoning controls, so this is currently unused.
+        reasoning_effort: Optional[str] = None,
         on_tool_start: Optional[Callable] = None,
         on_tool_end: Optional[Callable] = None,
         on_text: Optional[Callable] = None,

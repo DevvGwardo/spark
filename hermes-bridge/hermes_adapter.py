@@ -873,6 +873,7 @@ class HermesAgentAdapter:
         repo_file_tree: Optional[list[str]] = None,
         custom_tools: Optional[list[dict]] = None,
         workspace_id: Optional[str] = None,
+        reasoning_effort: Optional[str] = None,
         on_tool_start: Optional[Callable] = None,
         on_tool_end: Optional[Callable] = None,
         on_text: Optional[Callable] = None,
@@ -993,6 +994,19 @@ class HermesAgentAdapter:
         # Only pass parameters the real hermes-agent AIAgent actually accepts.
         # The real signature is: base_url, api_key, provider, api_mode, model,
         # max_iterations, enabled_toolsets, quiet_mode, platform, callbacks, etc.
+        # Reasoning effort from CloudChat's Effort slider → the real agent's
+        # reasoning_config ({"enabled": False} for "none", else {"enabled", "effort"}).
+        reasoning_config = None
+        if reasoning_effort:
+            try:
+                from hermes_constants import parse_reasoning_effort
+                reasoning_config = parse_reasoning_effort(reasoning_effort)
+            except Exception:
+                reasoning_config = (
+                    {"enabled": False} if reasoning_effort == "none"
+                    else {"enabled": True, "effort": reasoning_effort}
+                )
+
         self._agent = RealAIAgent(
             base_url=base_url,
             api_key=api_key,
@@ -1000,6 +1014,7 @@ class HermesAgentAdapter:
             model=model,
             max_iterations=max_iterations,
             enabled_toolsets=real_toolsets,
+            reasoning_config=reasoning_config,
             platform="cloudchat",
             quiet_mode=True,
             # Callbacks — translated to CloudChat's format
@@ -1033,7 +1048,10 @@ class HermesAgentAdapter:
     def _on_tool_complete(self, tc_id: str, name: str, args: dict, result: str):
         """Map real agent's tool_complete_callback to CloudChat's on_tool_end."""
         if self.on_tool_end:
-            self.on_tool_end(name, json.dumps(args) if args else "", (result or "")[:500])
+            # Composer task panel tools need their JSON output intact (see
+            # main.py on_tool_end) — main.py applies the per-tool cap.
+            cap = 4000 if name in ("todo", "delegate_task", "process", "terminal") else 500
+            self.on_tool_end(name, json.dumps(args) if args else "", (result or "")[:cap])
 
     def _on_reasoning(self, text: str):
         """Forward reasoning deltas."""

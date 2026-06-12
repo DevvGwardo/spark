@@ -1788,14 +1788,15 @@ HERMES_BRIDGE_TOKEN = os.environ.get("HERMES_BRIDGE_TOKEN", "")
 HERMES_BRIDGE_VERSION = os.environ.get("HERMES_BRIDGE_VERSION", "dev")
 DEFAULT_TOOLSETS = os.environ.get("HERMES_TOOLSETS", "web,browser,terminal")
 
-def _load_cli_model_config() -> dict:
-    """Read the `model:` block from ~/.hermes/config.yaml (Hermes CLI config).
+def _load_cli_model_config(hermes_home: Optional[Path] = None) -> dict:
+    """Read the `model:` block from <hermes_home>/config.yaml (Hermes CLI config).
 
+    Defaults to ~/.hermes; pass a profile home to read that profile's config.
     Returns a dict with keys: default, provider, base_url, api_key (each may be None).
     """
     result = {"default": None, "provider": None, "base_url": None, "api_key": None}
     try:
-        config_path = Path.home() / ".hermes" / "config.yaml"
+        config_path = (hermes_home or Path.home() / ".hermes") / "config.yaml"
         if not config_path.is_file():
             return result
         try:
@@ -2718,9 +2719,17 @@ async def list_models():
 
 
 @app.get("/v1/providers")
-async def list_providers():
-    """List configured providers with credential status and known models."""
-    cfg_provider = (_load_cli_model_config().get("provider") or "").strip().lower()
+async def list_providers(request: Request):
+    """List configured providers with credential status and known models.
+
+    Profile-aware: honors `X-Hermes-Profile` (like chat requests do) so the
+    reported default model/provider reflects the active profile's config.yaml,
+    falling back to the global ~/.hermes config for unset values.
+    """
+    profile_home = _resolve_hermes_home(_resolve_profile_name(request))
+    profile_cfg = _load_cli_model_config(profile_home)
+    global_cfg = _load_cli_model_config()
+    cfg_provider = (profile_cfg.get("provider") or global_cfg.get("provider") or "").strip().lower()
     default_provider = cfg_provider if (cfg_provider and cfg_provider in _PROVIDER_CONFIG) else "openrouter"
 
     data = []
@@ -2740,8 +2749,8 @@ async def list_providers():
 
     # The agent's CLI-configured default model (config.yaml `model.default`),
     # read fresh so a model change in the terminal is reflected by clients that
-    # follow the agent default. Mirrors /health's hermes_default_model.
-    default_model = _load_cli_default_model() or DEFAULT_MODEL
+    # follow the agent default. Profile config wins over the global one.
+    default_model = profile_cfg.get("default") or global_cfg.get("default") or DEFAULT_MODEL
 
     return {
         "object": "list",
@@ -3504,7 +3513,11 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
                 _brain_claim(resource, ttl=120)
 
     def on_tool_end(tool_name: str, tool_input: str, tool_output: str):
-        _qput(("tool_end", tool_name, tool_output[:500]))
+        # The composer task panel parses these tools' JSON output (todo lists,
+        # subagent results, background process previews) — a 500-char cap
+        # truncates the JSON mid-document, so give them more headroom.
+        cap = 4000 if tool_name in ("todo", "delegate_task", "process", "terminal") else 500
+        _qput(("tool_end", tool_name, tool_output[:cap]))
         _append_session_chat_chunk(
             session_id,
             "assistant",
@@ -3564,6 +3577,16 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
             )
             if custom_tools:
                 print(f"[hermes-bridge] Received {len(custom_tools)} custom MCP tool(s)", flush=True)
+            # Reasoning effort from the CloudChat Effort slider (Faster ↔ Smarter)
+            reasoning_effort_raw = (body.model_extra or {}).get("reasoning_effort")
+            reasoning_effort = (
+                reasoning_effort_raw.strip().lower()
+                if isinstance(reasoning_effort_raw, str)
+                and reasoning_effort_raw.strip().lower() in {"none", "minimal", "low", "medium", "high", "xhigh"}
+                else None
+            )
+            if reasoning_effort:
+                print(f"[hermes-bridge] Reasoning effort: {reasoning_effort}", flush=True)
             agent = AIAgent(
                 base_url=agent_base_url,
                 api_key=agent_api_key,
@@ -3578,6 +3601,7 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
                 repo_file_tree=repo_file_tree,
                 custom_tools=custom_tools,
                 workspace_id=workspace_id,
+                reasoning_effort=reasoning_effort,
                 on_tool_start=on_tool_start,
                 on_tool_end=on_tool_end,
                 on_text=on_text,
