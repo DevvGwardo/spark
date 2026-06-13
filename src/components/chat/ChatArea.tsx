@@ -1095,6 +1095,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               queuedMessages={queuedMessages}
               onRemoveQueuedMessage={handleRemoveQueuedMessage}
               onSteerQueuedMessage={handleSteerQueuedMessage}
+              onSendContent={handleQuickSend}
             />
           </div>
         </div>
@@ -1172,6 +1173,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           queuedMessages={queuedMessages}
           onRemoveQueuedMessage={handleRemoveQueuedMessage}
           onSteerQueuedMessage={handleSteerQueuedMessage}
+          onSendContent={handleQuickSend}
         />
       </div>
       {modal}

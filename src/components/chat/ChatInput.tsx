@@ -1,9 +1,10 @@
 import React, { useRef, useEffect, useCallback, useState } from 'react';
-import { ArrowUp, Square, Plus, ChevronDown, Mic, MicOff, CornerDownLeft, Bot, ClipboardList, Loader2, Repeat } from 'lucide-react';
+import { ArrowUp, Square, Plus, ChevronDown, Mic, MicOff, CornerDownLeft, Bot, ClipboardList, Loader2, Repeat, X } from 'lucide-react';
 import { useHermesStore, DEFAULT_LOOP_STATE } from '@/stores/hermes-store';
 import { usePanelId } from '@/contexts/PanelContext';
 import { cn } from '@/lib/utils';
 import { useUIStore } from '@/stores/ui-store';
+import { getApiBaseUrl } from '@/lib/api';
 
 // Commands that switch to a sidebar sub-tab — after running, open the sidebar
 const SUBTAB_NAV_COMMANDS = new Set([
@@ -49,6 +50,32 @@ interface ChatInputProps {
   queuedMessages?: QueuedMessage[];
   onRemoveQueuedMessage?: (messageId: string) => void;
   onSteerQueuedMessage?: (messageId: string) => void;
+  /** Send composed content directly (used when image attachments are present). */
+  onSendContent?: (content: string) => void;
+}
+
+interface PastedImageAttachment {
+  id: string;
+  /** Object URL for the local thumbnail preview. */
+  previewUrl: string;
+  /** Absolute server path, set once the upload finishes. */
+  path?: string;
+  status: 'uploading' | 'ready';
+}
+
+// Image types the upload endpoint accepts for pasted images.
+const PASTEABLE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      resolve(result.slice(result.indexOf(',') + 1));
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
 }
 
 const REASONING_EFFORT_LABELS = {
@@ -74,6 +101,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
   queuedMessages = [],
   onRemoveQueuedMessage,
   onSteerQueuedMessage,
+  onSendContent,
 }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [showCommandSuggestions, setShowCommandSuggestions] = useState(false);
@@ -188,6 +216,65 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
     }
   }, [onChange]);
 
+  // Paste an image → show a thumbnail chip immediately, upload it to
+  // ~/.hermes/images in the background, and compose the saved path into the
+  // message at send time. The path renders inline in the sent message and is
+  // readable by the hermes agent.
+  const [attachments, setAttachments] = useState<PastedImageAttachment[]>([]);
+  const [pasteError, setPasteError] = useState<string | null>(null);
+  const attachmentIdRef = useRef(0);
+
+  const removeAttachment = useCallback((id: string) => {
+    setAttachments((prev) => {
+      const target = prev.find((a) => a.id === id);
+      if (target) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((a) => a.id !== id);
+    });
+  }, []);
+
+  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(e.clipboardData?.items ?? [])
+      .filter((i) => PASTEABLE_IMAGE_TYPES.has(i.type))
+      .map((i) => i.getAsFile())
+      .filter((f): f is File => !!f);
+    if (files.length === 0) return;
+
+    e.preventDefault();
+    setPasteError(null);
+
+    for (const file of files) {
+      const id = `pasted-${++attachmentIdRef.current}`;
+      const previewUrl = URL.createObjectURL(file);
+      setAttachments((prev) => [...prev, { id, previewUrl, status: 'uploading' }]);
+
+      void (async () => {
+        try {
+          const data = await fileToBase64(file);
+          const res = await fetch(`${getApiBaseUrl()}/functions/v1/images/upload`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ data, mimeType: file.type }),
+          });
+          const json = await res.json().catch(() => null);
+          if (!res.ok || typeof json?.path !== 'string') {
+            throw new Error(json?.error || 'Image upload failed');
+          }
+          setAttachments((prev) =>
+            prev.map((a) => (a.id === id ? { ...a, path: json.path, status: 'ready' as const } : a))
+          );
+        } catch (err) {
+          setPasteError(err instanceof Error ? err.message : 'Image upload failed');
+          removeAttachment(id);
+        }
+      })();
+    }
+  }, [removeAttachment]);
+
+  const readyAttachmentPaths = attachments
+    .filter((a) => a.status === 'ready' && a.path)
+    .map((a) => a.path as string);
+  const hasUploadingAttachments = attachments.some((a) => a.status === 'uploading');
+
   const executeCommand = useCallback(async (input: string): Promise<boolean> => {
     const parsed = parseCommand(input);
     if (!parsed) return false;
@@ -231,19 +318,31 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
   }, [commandCallbacks, onChange, setActiveSubTab, setMiniBrowserOpen, setMiniBrowserUrl, setSidebarOpen, setActiveTab]);
 
   const handleSendOrCommand = useCallback(async () => {
+    // With image attachments, compose text + image paths and send directly.
+    if (readyAttachmentPaths.length > 0 && onSendContent) {
+      if (hasUploadingAttachments) return; // wait for in-flight uploads
+      const content = [safeValue.trim(), ...readyAttachmentPaths].filter(Boolean).join('\n');
+      onSendContent(content);
+      setAttachments((prev) => {
+        prev.forEach((a) => URL.revokeObjectURL(a.previewUrl));
+        return [];
+      });
+      onChange('');
+      return;
+    }
     if (!safeValue.trim()) return;
     const wasCommand = await executeCommand(safeValue);
     if (!wasCommand) {
       onSend();
     }
-  }, [safeValue, executeCommand, onSend]);
+  }, [safeValue, executeCommand, onSend, onSendContent, onChange, readyAttachmentPaths, hasUploadingAttachments]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       if (showCommandSuggestions) {
         handleCommandSelectAtIndex(selectedIndex);
-      } else if (safeValue.trim()) {
+      } else if (safeValue.trim() || readyAttachmentPaths.length > 0) {
         handleSendOrCommand();
       }
       return;
@@ -357,6 +456,33 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
             </div>
           )}
 
+          {/* Pasted image thumbnails */}
+          {attachments.length > 0 && (
+            <div className="flex flex-wrap gap-2 px-4 pt-3">
+              {attachments.map((a) => (
+                <div
+                  key={a.id}
+                  className="group relative h-14 w-14 shrink-0 overflow-hidden rounded-[8px] border border-[#3F3F3F] bg-muted"
+                >
+                  <img src={a.previewUrl} alt="Pasted image" className="h-full w-full object-cover" />
+                  {a.status === 'uploading' && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                      <Loader2 className="h-4 w-4 animate-spin text-white" />
+                    </div>
+                  )}
+                  <button
+                    onClick={() => removeAttachment(a.id)}
+                    className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/70 text-white opacity-0 transition-opacity duration-100 hover:bg-black group-hover:opacity-100"
+                    title="Remove image"
+                    aria-label="Remove image"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Textarea area */}
           <div className="flex items-end gap-2 px-4 py-3 min-h-[50px]">
             <textarea
@@ -368,11 +494,12 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
                 setShowCommandSuggestions(val.startsWith('/'));
               }}
               onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
               placeholder={placeholder}
               rows={1}
               disabled={disabled}
               className={cn(
-                "flex-1 resize-none bg-transparent text-[13px] leading-relaxed placeholder:text-[hsl(var(--text-dim))] focus:outline-none min-h-[20px] max-h-[200px]",
+                "chat-composer-textarea flex-1 resize-none bg-transparent text-[13px] leading-relaxed placeholder:text-[hsl(var(--text-dim))] focus:outline-none min-h-[20px] max-h-[200px]",
                 disabled && "opacity-50"
               )}
             />
@@ -573,6 +700,13 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
 
             </div>
 
+            {/* Pasted-image upload error */}
+            {pasteError && (
+              <span className="text-[10px] text-amber-500 max-w-[120px] shrink truncate" title={pasteError}>
+                {pasteError}
+              </span>
+            )}
+
             {/* Mic button */}
             {voiceInput.isTranscribing ? (
               <button
@@ -644,10 +778,10 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
             ) : (
               <button
                 onClick={handleSendOrCommand}
-                disabled={!safeValue.trim() || disabled}
+                disabled={(!safeValue.trim() && readyAttachmentPaths.length === 0) || hasUploadingAttachments || disabled}
                 className={cn(
                   "h-[30px] w-[30px] shrink-0 flex items-center justify-center rounded-[8px] transition-opacity duration-100",
-                  safeValue.trim()
+                  (safeValue.trim() || readyAttachmentPaths.length > 0)
                     ? "bg-primary text-primary-foreground hover:opacity-80"
                     : "bg-muted text-muted-foreground"
                 )}

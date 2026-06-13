@@ -1,3 +1,5 @@
+import { getApiBaseUrl } from '@/lib/api';
+
 const LOCAL_PATH_RE = /^\/(?:Users|home|tmp|var|opt|etc|private)\/.+$/;
 const CLOUDCHAT_ASSET_PROTOCOL = 'cloudchat-asset:';
 const HERMES_IMAGE_PATH_RE = /^\/(?:Users|home)\/[^/]+\/\.hermes\/images\/[^/]+$/;
@@ -40,7 +42,20 @@ function isSafeAssetBasename(basename: string): boolean {
   return !!basename && !basename.includes('..') && !basename.includes('/') && !basename.includes('\\');
 }
 
+/**
+ * Outside Electron (web browser, mobile remote) cloudchat-asset:// and
+ * file:// don't resolve — serve ~/.hermes/images over the HTTP API instead.
+ */
+function getHermesImageHttpUrl(basename: string): string | null {
+  try {
+    return `${getApiBaseUrl()}/functions/v1/images/file/${encodeURIComponent(basename)}`;
+  } catch {
+    return null;
+  }
+}
+
 function getLocalImageAssetUrl(path: string): string | null {
+  const isElectron = !!window.electronAPI;
   const snapshotDir = window.electronAPI?.snapshotDir;
   if (snapshotDir) {
     const snapshotPrefix = `${snapshotDir}/`;
@@ -55,17 +70,22 @@ function getLocalImageAssetUrl(path: string): string | null {
     return `cloudchat-asset://tmp/${encodeURIComponent(tmpBasename)}`;
   }
 
+  const toHermesUrl = (basename: string) =>
+    isElectron
+      ? `cloudchat-asset://hermes/${encodeURIComponent(basename)}`
+      : getHermesImageHttpUrl(basename);
+
   const homeDir = getCurrentHomeDir();
   if (homeDir) {
     const hermesPrefix = `${homeDir}/.hermes/images/`;
     const hermesBasename = path.startsWith(hermesPrefix) ? path.slice(hermesPrefix.length) : null;
     if (hermesBasename && isSafeAssetBasename(hermesBasename)) {
-      return `cloudchat-asset://hermes/${encodeURIComponent(hermesBasename)}`;
+      return toHermesUrl(hermesBasename);
     }
   } else if (HERMES_IMAGE_PATH_RE.test(path)) {
     const basename = path.slice(path.lastIndexOf('/') + 1);
     if (isSafeAssetBasename(basename)) {
-      return `cloudchat-asset://hermes/${encodeURIComponent(basename)}`;
+      return toHermesUrl(basename);
     }
   }
 

@@ -12,6 +12,13 @@ function assetUrl(path: string): string {
   return `cloudchat-asset://hermes/${encodeURIComponent(basename)}`;
 }
 
+// Outside Electron (no window.electronAPI), hermes images resolve to the
+// HTTP file endpoint so web/mobile-remote browsers can load them.
+function httpImageUrl(path: string): string {
+  const basename = path.slice(path.lastIndexOf('/') + 1);
+  return `http://localhost:3001/functions/v1/images/file/${encodeURIComponent(basename)}`;
+}
+
 // --- Unit tests for extractImageUrls ---
 
 function makeMsg(overrides: Partial<Message> = {}): Message {
@@ -131,7 +138,7 @@ describe('extractImageUrls', () => {
 
     expect(result).toHaveLength(1);
     expect(result[0].url).toBe('/Users/devgwardo/.hermes/images/foo.png');
-    expect(result[0].srcUrl).toBe(assetUrl('/Users/devgwardo/.hermes/images/foo.png'));
+    expect(result[0].srcUrl).toBe(httpImageUrl('/Users/devgwardo/.hermes/images/foo.png'));
   });
 
   it('extracts bare local tmp image paths from tool-style output', () => {
@@ -183,8 +190,8 @@ describe('extractImageUrls', () => {
       '/Users/devgwardo/.hermes/images/banana-1.png',
       '/Users/devgwardo/.hermes/images/banana-2.png',
     ]);
-    expect(result[0].srcUrl).toBe(assetUrl('/Users/devgwardo/.hermes/images/banana-1.png'));
-    expect(result[1].srcUrl).toBe(assetUrl('/Users/devgwardo/.hermes/images/banana-2.png'));
+    expect(result[0].srcUrl).toBe(httpImageUrl('/Users/devgwardo/.hermes/images/banana-1.png'));
+    expect(result[1].srcUrl).toBe(httpImageUrl('/Users/devgwardo/.hermes/images/banana-2.png'));
   });
 });
 

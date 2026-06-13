@@ -12,6 +12,13 @@ function assetUrl(path: string): string {
   return `cloudchat-asset://hermes/${encodeURIComponent(basename)}`;
 }
 
+// Outside Electron (these tests clear window.electronAPI), hermes images
+// resolve to the HTTP file endpoint so browsers can load them.
+function httpImageUrl(path: string): string {
+  const basename = path.slice(path.lastIndexOf('/') + 1);
+  return `http://localhost:3001/functions/v1/images/file/${encodeURIComponent(basename)}`;
+}
+
 describe('MarkdownRenderer', () => {
   beforeEach(() => {
     window.history.replaceState({}, '', '/');
@@ -108,9 +115,9 @@ ${lines}
     );
 
     expect(screen.getByRole('img', { name: '/Users/devgwardo/.hermes/images/bar-agents.png' }))
-      .toHaveAttribute('src', assetUrl('/Users/devgwardo/.hermes/images/bar-agents.png'));
+      .toHaveAttribute('src', httpImageUrl('/Users/devgwardo/.hermes/images/bar-agents.png'));
     expect(screen.getByRole('img', { name: '/Users/devgwardo/.hermes/images/foo-agents.png' }))
-      .toHaveAttribute('src', assetUrl('/Users/devgwardo/.hermes/images/foo-agents.png'));
+      .toHaveAttribute('src', httpImageUrl('/Users/devgwardo/.hermes/images/foo-agents.png'));
   });
 
   it('keeps /tmp image paths unchanged on load error', () => {

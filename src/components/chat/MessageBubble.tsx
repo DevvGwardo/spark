@@ -10,6 +10,7 @@ import { computeDiffLines, getChangeLineDelta, summarizeChangeLines } from '@/li
 import { cn } from '@/lib/utils';
 import { AgentActivity, type ToolActivityEvent } from './AgentActivity';
 import { extractPseudoToolInvocations, extractTextFileEdits, getPseudoToolSourceText, stripPseudoToolInvocations } from '@/lib/pseudo-tool-calls';
+import { getLocalImageTarget } from '@/lib/local-images';
 import '@shoelace-style/shoelace/dist/components/details/details.js';
 
 /**
@@ -1111,6 +1112,54 @@ function ToolInvocationDisplay({ invocation, isLatest }: { invocation: ToolInvoc
   );
 }
 
+// Lines that are exactly an image reference (local path, cloudchat-asset://,
+// or http(s) image URL) render as inline thumbnails in user bubbles — the
+// composer appends pasted-image paths as their own lines.
+const HTTP_IMAGE_LINE_RE = /^https?:\/\/\S+\.(?:png|jpe?g|gif|webp|svg|avif)(?:\?\S*)?$/i;
+
+function getUserLineImageSrc(line: string): string | null {
+  const trimmed = line.trim();
+  if (!trimmed || /\s/.test(trimmed)) return null;
+  if (HTTP_IMAGE_LINE_RE.test(trimmed)) return trimmed;
+  return getLocalImageTarget(trimmed)?.srcUrl ?? null;
+}
+
+const UserMessageContent: React.FC<{ content: string }> = ({ content }) => {
+  const lines = content.split('\n');
+  const hasImages = lines.some((line) => getUserLineImageSrc(line));
+  if (!hasImages) return <>{content}</>;
+
+  return (
+    <>
+      {lines.map((line, i) => {
+        const src = getUserLineImageSrc(line);
+        if (!src) {
+          return <React.Fragment key={i}>{i > 0 ? '\n' : ''}{line}</React.Fragment>;
+        }
+        return (
+          <UserImageAttachment key={i} src={src} alt={line.trim()} />
+        );
+      })}
+    </>
+  );
+};
+
+const UserImageAttachment: React.FC<{ src: string; alt: string }> = ({ src, alt }) => {
+  const [hasError, setHasError] = useState(false);
+  // Fall back to the raw path text if the image can't load (e.g. file removed)
+  if (hasError) return <>{'\n'}{alt}</>;
+  return (
+    <img
+      src={src}
+      alt={alt}
+      title={alt}
+      loading="lazy"
+      onError={() => setHasError(true)}
+      className="my-1.5 block max-h-60 max-w-full rounded-lg border border-border/40 object-contain"
+    />
+  );
+};
+
 export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function MessageBubble({
   message,
   isStreaming,
@@ -1409,7 +1458,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function M
           <>
             {isUser ? (
               <div className="rounded-2xl bg-muted px-4 py-2.5 text-sm whitespace-pre-wrap text-foreground">
-                {displayContent}
+                <UserMessageContent content={displayContent} />
               </div>
             ) : (
               orderedParts.map((part, index) => {
