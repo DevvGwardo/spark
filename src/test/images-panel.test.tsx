@@ -19,6 +19,14 @@ function httpImageUrl(path: string): string {
   return `http://localhost:3001/functions/v1/images/file/${encodeURIComponent(basename)}`;
 }
 
+// Pin the API base so getApiBaseUrl() resolves to http://localhost:3001 in any
+// environment. getStoredApiPort() is consulted before VITE_API_URL, so this is
+// deterministic in CI (which has no .env / VITE_API_URL) and matches the
+// hardcoded httpImageUrl above.
+beforeEach(() => {
+  window.sessionStorage.setItem('cloudchat.apiPort', '3001');
+});
+
 // --- Unit tests for extractImageUrls ---
 
 function makeMsg(overrides: Partial<Message> = {}): Message {
