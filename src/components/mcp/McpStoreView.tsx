@@ -19,7 +19,10 @@ import {
   Brain,
   ListTree,
   MousePointerClick,
+  LayoutDashboard,
+  Store,
 } from 'lucide-react';
+import { McpDashboard } from './McpDashboard';
 import {
   fetchHermesMcpServers,
   fetchHermesMcpCatalog,
@@ -201,7 +204,10 @@ function AvailableCard({
 
 // ── Main view ───────────────────────────────────────────────────────────────
 
+type McpTab = 'dashboard' | 'store';
+
 export function McpStoreView({ onExitFullscreen }: { onExitFullscreen?: () => void } = {}) {
+  const [tab, setTab] = useState<McpTab>('dashboard');
   const [servers, setServers] = useState<HermesMcpServerInfo[]>([]);
   const [catalog, setCatalog] = useState<HermesMcpCatalogEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -262,24 +268,49 @@ export function McpStoreView({ onExitFullscreen }: { onExitFullscreen?: () => vo
     [reload],
   );
 
+  const tabButton = (id: McpTab, label: string, Icon: React.ComponentType<{ className?: string }>) => (
+    <button
+      onClick={() => setTab(id)}
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[12px] font-medium transition-colors',
+        tab === id
+          ? 'bg-[hsl(var(--sidebar-active))] text-foreground'
+          : 'text-muted-foreground/60 hover:text-foreground',
+      )}
+    >
+      <Icon className="h-3.5 w-3.5" />
+      {label}
+    </button>
+  );
+
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border/40 px-4 py-2.5">
-        <div className="flex items-center gap-2">
-          <PlugZap className="h-4 w-4" style={{ color: ACCENT }} />
-          <span className="text-[13px] font-semibold text-foreground">MCP Store</span>
-          <span className="text-[11px] font-mono text-muted-foreground/50">{servers.length} installed</span>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <PlugZap className="h-4 w-4" style={{ color: ACCENT }} />
+            <span className="text-[13px] font-semibold text-foreground">MCP</span>
+          </div>
+          <div className="flex items-center gap-1 rounded-xl border border-border/30 bg-background/40 p-0.5">
+            {tabButton('dashboard', 'Activity', LayoutDashboard)}
+            {tabButton('store', 'Store', Store)}
+          </div>
         </div>
         <div className="flex items-center gap-2">
-          {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground/60" />}
-          <button
-            onClick={() => void reload()}
-            className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground/60 transition-colors hover:bg-[hsl(var(--sidebar-active))] hover:text-foreground"
-            title="Refresh"
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-          </button>
+          {tab === 'store' && (
+            <>
+              <span className="text-[11px] font-mono text-muted-foreground/50">{servers.length} installed</span>
+              {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground/60" />}
+              <button
+                onClick={() => void reload()}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground/60 transition-colors hover:bg-[hsl(var(--sidebar-active))] hover:text-foreground"
+                title="Refresh"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+              </button>
+            </>
+          )}
           {onExitFullscreen && (
             <button
               onClick={onExitFullscreen}
@@ -293,7 +324,10 @@ export function McpStoreView({ onExitFullscreen }: { onExitFullscreen?: () => vo
         </div>
       </div>
 
-      {/* Body */}
+      {tab === 'dashboard' ? (
+        <McpDashboard />
+      ) : (
+      /* Store body */
       <div className="flex-1 overflow-y-auto px-5 py-4">
         <div className="mx-auto max-w-5xl space-y-8">
           {loadError && (
@@ -358,6 +392,7 @@ export function McpStoreView({ onExitFullscreen }: { onExitFullscreen?: () => vo
           </section>
         </div>
       </div>
+      )}
     </div>
   );
 }

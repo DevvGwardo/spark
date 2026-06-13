@@ -156,6 +156,9 @@ _PARALLEL_SAFE_TOOLS = frozenset({
     "read_file",
     "read_repo_file",
     "list_user_repos",
+    "git_log",
+    "git_show",
+    "git_diff",
 })
 _PATH_SCOPED_TOOLS = frozenset({
     "read_file",
@@ -208,6 +211,68 @@ REPO_TOOL_DEFINITIONS = [
                     }
                 },
                 "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "git_log",
+            "description": "View the repository's git commit history (read-only). Use this to understand recent changes, who changed what, and when. Optionally filter to commits that touched a specific file or directory.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Optional file or directory path to filter history to commits that touched it.",
+                    },
+                    "ref": {
+                        "type": "string",
+                        "description": "Optional branch, tag, or commit SHA to start from. Defaults to the repository's default branch.",
+                    },
+                    "max_count": {
+                        "type": "integer",
+                        "description": "How many commits to return (default 15, max 50).",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "git_show",
+            "description": "Show a single commit (read-only): its message, author, date, and the diff/patch for each changed file. Use a SHA from git_log.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sha": {
+                        "type": "string",
+                        "description": "The commit SHA (or ref) to show.",
+                    },
+                },
+                "required": ["sha"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "git_diff",
+            "description": "Show the diff between two git refs (read-only), e.g. two branches, tags, or commit SHAs. Returns the changed-files summary and per-file patches.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "base": {
+                        "type": "string",
+                        "description": "The base ref (branch, tag, or SHA) to compare from.",
+                    },
+                    "head": {
+                        "type": "string",
+                        "description": "The head ref (branch, tag, or SHA) to compare to.",
+                    },
+                },
+                "required": ["base", "head"],
             },
         },
     },
@@ -312,6 +377,14 @@ REPO_TOOL_DEFINITIONS = [
 ]
 
 REPO_TOOL_NAMES = {t["function"]["name"] for t in REPO_TOOL_DEFINITIONS}
+# Read-only repo tools — always safe to expose, even when edit intent is off.
+REPO_READONLY_TOOL_NAMES = {
+    "read_repo_file",
+    "list_user_repos",
+    "git_log",
+    "git_show",
+    "git_diff",
+}
 REPO_EDIT_TOOL_NAMES = {
     "batch_edit_repo_files",
     "edit_repo_file",
@@ -521,6 +594,17 @@ _HALLUCINATED_TOOL_MAP: dict[str, str] = {
     "python": "execute_python",
     "run_python": "execute_python",
     "list_repos": "list_user_repos",
+
+    # Git history tool aliases (models often invent these names)
+    "git_history": "git_log",
+    "git_commits": "git_log",
+    "commits": "git_log",
+    "log": "git_log",
+    "show_commit": "git_show",
+    "git_commit": "git_show",
+    "diff": "git_diff",
+    "git_compare": "git_diff",
+    "compare": "git_diff",
 
     # Kanban tool aliases
     "kanban_read_card": "kanban_read_current_card",
@@ -1333,7 +1417,7 @@ class AIAgent:
                 if self.github_pat and self.github_repo_owner and self.github_repo_name:
                     repo_tools = [
                         t for t in REPO_TOOL_DEFINITIONS
-                        if t["function"]["name"] in ("read_repo_file", "list_user_repos")
+                        if t["function"]["name"] in REPO_READONLY_TOOL_NAMES
                     ]
             else:
                 repo_tools = list(REPO_TOOL_DEFINITIONS)
@@ -1701,6 +1785,32 @@ class AIAgent:
             self._emit_event({"type": "repo_file_read", "path": path, "content": result})
             return result
 
+        if tool_name in ("git_log", "git_show", "git_diff"):
+            if tool_name == "git_log":
+                label = arguments.get("path", "") or arguments.get("ref", "")
+                if self.on_tool_start:
+                    self.on_tool_start("git_log", label)
+                result = self._git_log(
+                    path=arguments.get("path", ""),
+                    ref=arguments.get("ref", ""),
+                    max_count=arguments.get("max_count", 15),
+                )
+            elif tool_name == "git_show":
+                sha = arguments.get("sha", "")
+                if self.on_tool_start:
+                    self.on_tool_start("git_show", sha)
+                result = self._git_show(sha)
+            else:  # git_diff
+                base = arguments.get("base", "")
+                head = arguments.get("head", "")
+                if self.on_tool_start:
+                    self.on_tool_start("git_diff", f"{base}...{head}")
+                result = self._git_diff(base, head)
+            result = _cap_tool_response(result)
+            if self.on_tool_end:
+                self.on_tool_end(tool_name, "", result[:200])
+            return result
+
         if tool_name == "edit_repo_file":
             path = arguments.get("path", "")
             content = arguments.get("content", "")
@@ -1880,6 +1990,174 @@ class AIAgent:
         except Exception as e:
             print(f"[hermes-agent] Failed to read {path} from GitHub: {e}", flush=True)
             return f"Error reading file '{path}' from GitHub: {str(e)}"
+
+    def _github_headers(self) -> dict:
+        return {
+            "Authorization": f"Bearer {self.github_pat}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "Hermes-Agent",
+        }
+
+    def _github_creds_missing(self) -> Optional[str]:
+        """Return an error string if GitHub credentials are not configured."""
+        missing = []
+        if not self.github_pat:
+            missing.append("GitHub PAT")
+        if not self.github_repo_owner:
+            missing.append("repo owner")
+        if not self.github_repo_name:
+            missing.append("repo name")
+        if missing:
+            return (
+                f"Error: Cannot access git history — missing GitHub credentials "
+                f"({', '.join(missing)}). The user needs to configure a GitHub "
+                f"Personal Access Token in Settings."
+            )
+        return None
+
+    def _github_get(self, sub_path: str, params: Optional[dict] = None):
+        """GET a GitHub REST endpoint scoped to the active repo.
+
+        Returns ``(data, None)`` on success or ``(None, error_str)`` on any
+        failure, so callers can surface a model-readable message.
+        """
+        encoded_owner = quote(self.github_repo_owner, safe="")
+        encoded_repo = quote(self.github_repo_name, safe="")
+        url = f"https://api.github.com/repos/{encoded_owner}/{encoded_repo}/{sub_path}"
+        try:
+            with httpx.Client(timeout=15) as client:
+                resp = client.get(url, headers=self._github_headers(), params=params or {})
+            if resp.status_code == 401:
+                return None, "Error: GitHub token is invalid or expired. The user should update their token in Settings."
+            if resp.status_code == 403:
+                return None, (
+                    f"Error: Access denied (HTTP 403) for {self.github_repo_owner}/{self.github_repo_name}. "
+                    f"The GitHub token may lack the required permissions (needs 'repo' scope for private repositories)."
+                )
+            if resp.status_code == 404:
+                return None, (
+                    f"Error: Not found (HTTP 404) for {self.github_repo_owner}/{self.github_repo_name}. "
+                    f"The repo, branch, or commit ref may not exist or the token may lack access. "
+                    f"Call list_user_repos to see accessible repositories."
+                )
+            resp.raise_for_status()
+            return resp.json(), None
+        except Exception as e:
+            return None, f"Error reaching the GitHub API: {e}"
+
+    @staticmethod
+    def _format_commit_patch(files: list, per_file_cap: int = 4000) -> str:
+        """Render a list of GitHub commit/compare ``files`` as a unified diff."""
+        chunks = []
+        for f in files:
+            if not isinstance(f, dict):
+                continue
+            filename = f.get("filename", "?")
+            status = f.get("status", "modified")
+            add = f.get("additions", 0)
+            dele = f.get("deletions", 0)
+            header = f"diff --- {filename} ({status}, +{add} -{dele})"
+            patch = f.get("patch")
+            if patch:
+                if len(patch) > per_file_cap:
+                    patch = patch[:per_file_cap] + f"\n[... patch truncated, {len(patch) - per_file_cap} more chars ...]"
+                chunks.append(f"{header}\n{patch}")
+            else:
+                # Binary files and very large diffs have no patch from the API.
+                chunks.append(f"{header}\n(no textual diff available — binary or too large)")
+        return "\n\n".join(chunks) if chunks else "(no file changes)"
+
+    def _git_log(self, path: str = "", ref: str = "", max_count: int = 15) -> str:
+        """List recent commits via the GitHub commits API (read-only)."""
+        creds_err = self._github_creds_missing()
+        if creds_err:
+            return creds_err
+        try:
+            per_page = max(1, min(int(max_count or 15), 50))
+        except (TypeError, ValueError):
+            per_page = 15
+        params: dict = {"per_page": per_page}
+        if path:
+            params["path"] = path
+        if ref:
+            params["sha"] = ref
+        data, err = self._github_get("commits", params)
+        if err:
+            return err
+        if not isinstance(data, list) or not data:
+            scope = f" touching '{path}'" if path else ""
+            return f"No commits found{scope}."
+        lines = []
+        for c in data:
+            if not isinstance(c, dict):
+                continue
+            sha = (c.get("sha") or "")[:8]
+            commit = c.get("commit") or {}
+            author = (commit.get("author") or {})
+            name = author.get("name", "?")
+            date = (author.get("date", "") or "")[:10]
+            message = (commit.get("message", "") or "").split("\n", 1)[0]
+            lines.append(f"{sha}  {date}  {name}: {message}")
+        scope = f" touching '{path}'" if path else ""
+        ref_note = f" from '{ref}'" if ref else ""
+        return f"Last {len(lines)} commit(s){scope}{ref_note}:\n" + "\n".join(lines)
+
+    def _git_show(self, sha: str) -> str:
+        """Show one commit's metadata and per-file patch (read-only)."""
+        creds_err = self._github_creds_missing()
+        if creds_err:
+            return creds_err
+        if not sha:
+            return "Error: 'sha' is required. Use a SHA from git_log."
+        data, err = self._github_get(f"commits/{quote(sha, safe='')}")
+        if err:
+            return err
+        if not isinstance(data, dict):
+            return f"Error: Unexpected response for commit '{sha}'."
+        commit = data.get("commit") or {}
+        author = commit.get("author") or {}
+        full_sha = data.get("sha", sha)
+        message = commit.get("message", "")
+        name = author.get("name", "?")
+        email = author.get("email", "")
+        date = author.get("date", "")
+        files = data.get("files") if isinstance(data.get("files"), list) else []
+        stats = data.get("stats") or {}
+        header = (
+            f"commit {full_sha}\n"
+            f"Author: {name} <{email}>\n"
+            f"Date:   {date}\n"
+            f"Files:  {len(files)} changed, +{stats.get('additions', 0)} -{stats.get('deletions', 0)}\n\n"
+            f"{message}\n"
+        )
+        return header + "\n" + self._format_commit_patch(files)
+
+    def _git_diff(self, base: str, head: str) -> str:
+        """Compare two refs via the GitHub compare API (read-only)."""
+        creds_err = self._github_creds_missing()
+        if creds_err:
+            return creds_err
+        if not base or not head:
+            return "Error: both 'base' and 'head' refs are required."
+        # GitHub's compare basehead uses a triple-dot range.
+        basehead = f"{quote(base, safe='')}...{quote(head, safe='')}"
+        data, err = self._github_get(f"compare/{basehead}")
+        if err:
+            return err
+        if not isinstance(data, dict):
+            return f"Error: Unexpected response comparing '{base}...{head}'."
+        status = data.get("status", "?")
+        ahead = data.get("ahead_by", 0)
+        behind = data.get("behind_by", 0)
+        total = data.get("total_commits", 0)
+        files = data.get("files") if isinstance(data.get("files"), list) else []
+        header = (
+            f"Comparing {base}...{head}\n"
+            f"Status: {status} (ahead {ahead}, behind {behind}), {total} commit(s), "
+            f"{len(files)} file(s) changed\n"
+        )
+        return header + "\n" + self._format_commit_patch(files)
 
     @staticmethod
     def _should_retry_api_error(status_code: int) -> bool:

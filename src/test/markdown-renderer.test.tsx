@@ -23,6 +23,9 @@ describe('MarkdownRenderer', () => {
   beforeEach(() => {
     window.history.replaceState({}, '', '/');
     window.electronAPI = undefined;
+    // Pin the API base so getApiBaseUrl() resolves to http://localhost:3001 in
+    // any environment (CI has no .env / VITE_API_URL); matches httpImageUrl above.
+    window.sessionStorage.setItem('cloudchat.apiPort', '3001');
     vi.stubGlobal('navigator', {
       clipboard: {
         writeText: vi.fn().mockResolvedValue(undefined),

@@ -195,7 +195,7 @@ export function HermesLogsPanel() {
         <div className="flex flex-1 items-center justify-center px-6 text-center text-[12px] text-muted-foreground/50">
           No matching log lines.
         </div>
-      ) : (
+      ) : data ? (
         <Virtuoso
           ref={virtuosoRef}
           data={data.entries}
@@ -203,7 +203,7 @@ export function HermesLogsPanel() {
           itemContent={renderLogEntry}
           followOutput={live ? 'auto' : false}
         />
-      )}
+      ) : null}
     </div>
   );
 }

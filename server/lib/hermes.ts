@@ -919,7 +919,7 @@ export async function proxyHermesLoopToDataStream(input: {
 
   await writePart(formatDataStreamPart('finish_message', {
     finishReason: 'stop',
-    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    usage: { promptTokens: 0, completionTokens: 0 },
   }));
   input.res.end();
 }
