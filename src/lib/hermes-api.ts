@@ -696,6 +696,75 @@ export async function uninstallHermesMcpServer(
   return hermesFetch(`/workspace/mcp-servers/${encodeURIComponent(name)}`, { method: 'DELETE' });
 }
 
+// ─── MCP live telemetry (dashboard) ─────────────────────────────────────────
+
+/** Live connection status for one MCP server (from the agent's in-process MCP layer). */
+export interface HermesMcpLiveStatus {
+  name: string;
+  transport: 'stdio' | 'http';
+  tools: number;
+  connected: boolean;
+  disabled: boolean;
+  status: 'connected' | 'connecting' | 'disabled' | 'failed' | 'configured' | string;
+  error?: string;
+}
+
+/** A single recorded MCP tool call. */
+export interface HermesMcpCall {
+  server: string;
+  tool: string;
+  ts: number;
+  latency_ms: number | null;
+  ok: boolean;
+  input: string;
+  output: string;
+}
+
+/** Per-server tool-call metrics. ``buckets`` are [epochMinute, calls, errors]. */
+export interface HermesMcpServerStats {
+  calls: number;
+  errors: number;
+  avg_latency_ms: number | null;
+  last_call_at: number | null;
+  last_tool: string | null;
+  last_error: string | null;
+  recent: HermesMcpCall[];
+  buckets: [number, number, number][];
+}
+
+/** Full live telemetry snapshot powering the MCP dashboard. */
+export interface HermesMcpTelemetry {
+  generated_at: number;
+  tracking_since: number;
+  status: HermesMcpLiveStatus[];
+  tools: Record<string, string[]>;
+  servers: Record<string, HermesMcpServerStats>;
+  recent: HermesMcpCall[];
+}
+
+/** Fetch the live MCP telemetry snapshot (status + per-server metrics + activity). */
+export async function fetchHermesMcpTelemetry(): Promise<HermesMcpTelemetry> {
+  return hermesFetch<HermesMcpTelemetry>('/workspace/mcp-telemetry');
+}
+
+/** A single tailed MCP stderr log line for one server. */
+export interface HermesMcpLogLine {
+  ts: string | null;
+  line: string;
+  marker: boolean;
+}
+
+/** Tail a single MCP server's stderr log (most recent lines). */
+export async function fetchHermesMcpServerLogs(
+  name: string,
+  limit = 200,
+): Promise<HermesMcpLogLine[]> {
+  const data = await hermesFetch<{ server: string; lines: HermesMcpLogLine[] }>(
+    `/workspace/mcp-servers/${encodeURIComponent(name)}/logs?limit=${limit}`,
+  );
+  return data.lines ?? [];
+}
+
 export async function deleteHermesSkill(skillId: string): Promise<void> {
   await hermesFetch('/workspace/skills', {
     method: 'DELETE',

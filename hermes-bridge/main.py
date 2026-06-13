@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Optional
 import httpx
 import pricing
+import mcp_telemetry
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -3500,6 +3501,8 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
         return resources
 
     def on_tool_start(tool_name: str, tool_input: str):
+        # Record MCP tool activity for the MCP dashboard (no-op for non-mcp_ tools).
+        mcp_telemetry.record_tool_start(tool_name, tool_input)
         # Emit tool start as visible text so user sees activity
         _qput(("tool_start", tool_name, tool_input))
         _append_session_chat_chunk(
@@ -3517,6 +3520,8 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
         # subagent results, background process previews) — a 500-char cap
         # truncates the JSON mid-document, so give them more headroom.
         cap = 4000 if tool_name in ("todo", "delegate_task", "process", "terminal") else 500
+        # Record MCP tool completion (latency, ok/err) for the MCP dashboard.
+        mcp_telemetry.record_tool_end(tool_name, tool_output)
         _qput(("tool_end", tool_name, tool_output[:cap]))
         _append_session_chat_chunk(
             session_id,
@@ -5002,6 +5007,33 @@ async def workspace_mcp_uninstall(name: str, request: Request):
     return JSONResponse(content={"ok": True, "removed": name, "reloaded": reloaded})
 
 
+@app.get("/workspace/mcp-telemetry")
+async def workspace_mcp_telemetry(request: Request):
+    """Live MCP dashboard snapshot: per-server connection status, tool-call
+    metrics (counts, latency, errors), minute-bucketed activity, and a recent
+    global activity feed. All in-memory; resets on bridge restart."""
+    try:
+        snap = mcp_telemetry.snapshot()
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"telemetry unavailable: {e}"})
+    return JSONResponse(content=snap)
+
+
+@app.get("/workspace/mcp-servers/{name}/logs")
+async def workspace_mcp_server_logs(name: str, request: Request):
+    """Tail the shared MCP stderr log for a single server (most recent lines)."""
+    hermes_home = _resolve_hermes_home(_resolve_profile_name(request))
+    try:
+        limit = int(request.query_params.get("limit", "200"))
+    except (TypeError, ValueError):
+        limit = 200
+    try:
+        lines = mcp_telemetry.read_server_logs(hermes_home, name, limit=limit)
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"could not read logs: {e}"})
+    return JSONResponse(content={"server": name, "lines": lines})
+
+
 @app.get("/workspace/skills")
 async def workspace_skills(request: Request):
     hermes_home = _resolve_hermes_home(_resolve_profile_name(request))
@@ -5356,6 +5388,17 @@ async def _cron_scheduler_loop():
         except Exception as e:
             print(f"[cron-scheduler] Scheduler loop error: {e}", flush=True)
         await asyncio.sleep(30)
+
+
+@app.on_event("startup")
+async def _init_mcp_telemetry():
+    """Restore persisted MCP dashboard telemetry so metrics survive restarts."""
+    try:
+        db_path = _HERMES_HOME / "mcp-telemetry.db"
+        ok = mcp_telemetry.init_persistence(db_path)
+        print(f"[mcp-telemetry] persistence {'enabled' if ok else 'unavailable'} ({db_path})", flush=True)
+    except Exception as e:
+        print(f"[mcp-telemetry] startup init failed: {e}", flush=True)
 
 
 @app.on_event("startup")

@@ -100,7 +100,10 @@ async function proxyTo(
     if (isGet && !isCacheableBridgePath(path)) {
       res.status(response.status).type(contentType);
       if (response.body) {
-        await pipeline(Readable.fromWeb(response.body as ReadableStream<Uint8Array>), res);
+        await pipeline(
+          Readable.fromWeb(response.body as unknown as import('node:stream/web').ReadableStream),
+          res,
+        );
       } else {
         res.end();
       }
@@ -359,6 +362,19 @@ export function registerHermesAdminRoute(app: Express) {
     await proxyTo(req, res, `/workspace/mcp-servers/${encodeURIComponent(req.params.name)}`, {
       method: 'DELETE',
     });
+  });
+
+  // Live MCP dashboard telemetry (status, metrics, activity) and per-server logs.
+  app.get('/api/hermes/workspace/mcp-telemetry', async (req: Request, res: Response) => {
+    await proxyTo(req, res, '/workspace/mcp-telemetry');
+  });
+
+  app.get('/api/hermes/workspace/mcp-servers/:name/logs', async (req: Request, res: Response) => {
+    await proxyTo(
+      req,
+      res,
+      `/workspace/mcp-servers/${encodeURIComponent(req.params.name)}/logs${getQuerySuffix(req)}`,
+    );
   });
 
   // ─── Messaging Platforms ──────────────────────────────────────────────
