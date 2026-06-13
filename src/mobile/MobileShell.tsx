@@ -1,12 +1,20 @@
 import { useNavigate } from "react-router-dom";
 import StatusCard from "./StatusCard";
 import RevivalPanel from "./RevivalPanel";
+import OfflineBanner from "./OfflineBanner";
 
 const MobileShell = () => {
   const navigate = useNavigate();
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-[390px] flex-col overflow-x-hidden bg-background px-4 py-5">
+    <div
+      className="mx-auto flex min-h-dvh w-full max-w-full flex-col overflow-x-hidden bg-background px-4 py-5 md:max-w-[420px]"
+      style={{
+        paddingTop: 'max(1.25rem, env(safe-area-inset-top))',
+        paddingBottom: 'max(1.25rem, env(safe-area-inset-bottom))',
+      }}
+    >
+      <OfflineBanner />
       {/* Top bar */}
       <div className="mb-5 flex items-center justify-between">
         <h1 className="font-sans text-sm font-medium text-foreground">

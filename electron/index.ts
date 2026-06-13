@@ -298,7 +298,8 @@ async function createWindow() {
             : " script-src 'self' https://cdn.jsdelivr.net 'sha256-0vw5FNYeotOv1pKtYDJoVY1QPOJ7d3jJvy4jR5P0U2Q=';") +
           " style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net;" +
           " font-src 'self' https://fonts.gstatic.com data:;" +
-          " img-src 'self' data: https: http: file: cloudchat-asset:;" +
+          // blob: allows local object-URL previews (pasted image thumbnails)
+          " img-src 'self' data: blob: https: http: file: cloudchat-asset:;" +
           " media-src 'self' blob:;" +
           " connect-src 'self' data: http://localhost:* " + (is.dev ? "ws://localhost:* " : "") + "https://api.github.com https://api.anthropic.com https://api.openai.com https://api.deepseek.com https://generativelanguage.googleapis.com https://api.minimax.chat https://api.moonshot.cn https://api.x.ai https://openrouter.ai https://api.together.xyz https://api.groq.com https://api.mistral.ai https://api.perplexity.ai https://cdn.jsdelivr.net;" +
           " worker-src 'self' blob:;"

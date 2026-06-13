@@ -243,7 +243,7 @@ export const RemoteAccessModal: React.FC<{ open: boolean; onOpenChange: (v: bool
 
                 <p className="text-[11px] text-muted-foreground leading-relaxed break-words">
                   {tunnel?.running
-                    ? 'Your Spark desktop is publicly accessible at the URL above. Anyone with the link can access it — keep it private.'
+                    ? 'Your Spark desktop is reachable at the URL above. Access requires the key embedded in the QR/link, so only devices that scan it can connect — still, keep the link private.'
                     : tunnel?.cloudflaredAvailable
                     ? 'Start a public tunnel to access Spark from anywhere, even outside your home network.'
                     : tunnel?.brewAvailable

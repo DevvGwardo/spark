@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import compression from 'compression';
 import { existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -19,6 +20,7 @@ import { registerKanbanRoutes } from './routes/kanban';
 import { registerOrchestratorRoutes } from './routes/orchestrator';
 import { registerTeamRoutes } from './routes/team';
 import { registerTranscribeRoute } from './routes/transcribe';
+import { registerImagesRoute } from './routes/images';
 import { registerRoomRoutes } from './routes/rooms';
 import { sendJson, csrfProtection } from './lib/helpers';
 import { logger, requestIdMiddleware } from './lib/logger';
@@ -102,9 +104,56 @@ export function createApp(opts?: { serveFrontend?: boolean }) {
   const app = express();
   app.set('trust proxy', 1);
   app.use(helmet({ contentSecurityPolicy: false }));
+  // Gzip responses (JS bundles, JSON) — big win on LAN/tunnel mobile access.
+  // Streaming responses (SSE and the AI data stream) must NOT be compressed:
+  // gzip buffers output and would break incremental token delivery.
+  app.use(compression({ filter: (req, res) => {
+    if ((res.getHeader('Content-Type') || '').toString().includes('text/event-stream')) return false;
+    if (res.getHeader('x-vercel-ai-data-stream')) return false;
+    return compression.filter(req, res);
+  } }));
   app.use(cors());
   app.use(requestIdMiddleware);
   app.use(csrfProtection);
+
+  // ─── Public-tunnel access gate ─────────────────────────────────────────────
+  // Tunnel traffic terminates at the local cloudflared/localtunnel process, so
+  // it arrives from 127.0.0.1 — identify it by the Host header instead. While
+  // a tunnel is running, any request addressed to the tunnel hostname must
+  // present the per-tunnel token (?key=… on first visit, cookie afterwards).
+  // Local and LAN access is unaffected.
+  const REMOTE_KEY_COOKIE = 'spark_remote_key';
+  app.use((req, res, next) => {
+    const tunnel = getTunnelState();
+    if (!tunnel.running || !tunnel.url || !tunnel.accessToken) return next();
+
+    const tunnelHost = new URL(tunnel.url).host;
+    if ((req.headers.host || '').toLowerCase() !== tunnelHost.toLowerCase()) return next();
+
+    const cookies = req.headers.cookie || '';
+    const cookieMatch = cookies.match(new RegExp(`(?:^|;\\s*)${REMOTE_KEY_COOKIE}=([^;]+)`));
+    if (cookieMatch?.[1] === tunnel.accessToken) return next();
+
+    const queryKey = typeof req.query.key === 'string' ? req.query.key : null;
+    if (queryKey === tunnel.accessToken) {
+      res.setHeader(
+        'Set-Cookie',
+        `${REMOTE_KEY_COOKIE}=${tunnel.accessToken}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400`
+      );
+      return next();
+    }
+
+    logger.warn(`[server] blocked unauthenticated tunnel request: ${req.method} ${req.originalUrl}`);
+    res.status(401);
+    if (req.accepts('html') && !req.path.startsWith('/api/')) {
+      res
+        .type('html')
+        .send('<!doctype html><html><body style="background:#0a0a0a;color:#e0e0e0;font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100dvh"><div style="text-align:center"><h1 style="font-size:1.1rem">🔒 Spark Remote</h1><p style="color:#888;font-size:.85rem">This link requires an access key.<br>Scan the QR code from the Spark desktop app to connect.</p></div></body></html>');
+    } else {
+      sendJson(res, 401, { error: 'Remote access key required' });
+    }
+  });
+
   app.use(express.json({ limit: MAX_BODY_SIZE }));
 
   // ─── Production: serve the built frontend ─────────────────────────────────
@@ -137,6 +186,7 @@ export function createApp(opts?: { serveFrontend?: boolean }) {
   registerOrchestratorRoutes(app);
   registerTeamRoutes(app);
   registerTranscribeRoute(app);
+  registerImagesRoute(app);
   registerHermesStreamResumeRoute(app);
   registerRoomRoutes(app);
   registerRemoteRevivalRoutes(app);
@@ -169,6 +219,11 @@ export function createApp(opts?: { serveFrontend?: boolean }) {
 
   // ─── Remote access QR page ─────────────────────────────────────────────────
   if (opts?.serveFrontend) {
+    // Tunnel URLs shown to the user (and baked into the QR) carry the access
+    // key so scanning the code authenticates the phone in one step.
+    const keyedTunnelUrl = (t: ReturnType<typeof getTunnelState>) =>
+      t.url && t.accessToken ? `${t.url}/?key=${t.accessToken}` : t.url;
+
     // JSON endpoint for the frontend component
     app.get('/api/remote/info', async (_req, res) => {
       const ip = getLanIp();
@@ -176,9 +231,11 @@ export function createApp(opts?: { serveFrontend?: boolean }) {
       const { lanUrl, localUrl } = formatConnectionInfo(ip, port);
       const tunnelState = getTunnelState();
       // Use tunnel URL if available (works from anywhere), otherwise LAN URL
-      const url = tunnelState.running && tunnelState.url ? tunnelState.url : (ip ? lanUrl : localUrl);
+      const url = tunnelState.running && tunnelState.url
+        ? keyedTunnelUrl(tunnelState)!
+        : (ip ? lanUrl : localUrl);
       const qrSvg = await generateQrSvgDataUri(url);
-      sendJson(res, 200, { url, lanUrl, localUrl, qrSvg, tunnelUrl: tunnelState.url });
+      sendJson(res, 200, { url, lanUrl, localUrl, qrSvg, tunnelUrl: keyedTunnelUrl(tunnelState) });
     });
 
     // Tunnel management endpoints
@@ -186,7 +243,7 @@ export function createApp(opts?: { serveFrontend?: boolean }) {
       const t = getTunnelState();
       sendJson(res, 200, {
         running: t.running,
-        url: t.url,
+        url: keyedTunnelUrl(t),
         provider: t.provider,
         error: t.error,
         cloudflaredAvailable: cloudflaredAvailable(),
@@ -199,12 +256,12 @@ export function createApp(opts?: { serveFrontend?: boolean }) {
       // If already running, return current state
       const current = getTunnelState();
       if (current.running) {
-        sendJson(res, 200, current);
+        sendJson(res, 200, { ...current, url: keyedTunnelUrl(current), accessToken: undefined });
         return;
       }
       // Try to start
       const result = await startTunnel(port);
-      sendJson(res, result.running ? 200 : 500, result);
+      sendJson(res, result.running ? 200 : 500, { ...result, url: keyedTunnelUrl(result), accessToken: undefined });
     });
 
     app.post('/api/remote/tunnel/stop', (_req, res) => {

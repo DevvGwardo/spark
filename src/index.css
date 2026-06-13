@@ -763,3 +763,11 @@ sl-details.tool-details::part(content) {
 .transition-theme {
   transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease;
 }
+
+/* Mobile composer: iOS Safari zooms into inputs with font-size < 16px.
+   Bump the chat textarea to 16px on touch devices to prevent focus zoom. */
+@media (pointer: coarse) {
+  .chat-composer-textarea {
+    font-size: 16px;
+  }
+}

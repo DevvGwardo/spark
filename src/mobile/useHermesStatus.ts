@@ -87,9 +87,29 @@ export function useHermesStatus(): UseHermesStatusReturn {
 
     fetchStatus();
 
+    // Mobile browsers throttle/suspend timers in background tabs and drop the
+    // network when the phone locks — refetch immediately on wake or
+    // reconnect, and stop polling while hidden to save battery.
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        backoffRef.current = POLL_INTERVAL_MS;
+        fetchStatus();
+      } else if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+    };
+    const onOnline = () => {
+      backoffRef.current = POLL_INTERVAL_MS;
+      fetchStatus();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('online', onOnline);
+
     return () => {
       mountedRef.current = false;
       if (timerRef.current) clearTimeout(timerRef.current);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('online', onOnline);
     };
   }, [scheduleNext]);
 

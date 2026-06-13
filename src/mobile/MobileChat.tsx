@@ -4,6 +4,8 @@ import { ArrowLeft, Plus } from 'lucide-react';
 import { useChat } from '@/hooks/useChat';
 import { ChatArea } from '@/components/chat/ChatArea';
 import { useChatStore } from '@/stores/chat-store';
+import { useVisualViewportHeight } from './useVisualViewportHeight';
+import OfflineBanner from './OfflineBanner';
 
 const MOBILE_PANEL_ID = 'mobile-chat';
 
@@ -70,10 +72,18 @@ const MobileChat = () => {
     }
   }, [conversationId, chat.messages]);
 
+  // Fixed-height column pinned to the visual viewport: the message list
+  // scrolls internally and the composer stays visible above the keyboard.
+  const viewportHeight = useVisualViewportHeight();
+
   return (
-    <div className="mx-auto flex min-h-screen max-w-[390px] flex-col overflow-x-hidden bg-background">
+    <div
+      className="mx-auto flex h-dvh w-full max-w-full flex-col overflow-x-hidden bg-background md:max-w-[420px]"
+      style={viewportHeight ? { height: viewportHeight } : undefined}
+    >
+      <OfflineBanner />
       {/* Top bar */}
-      <header className="flex shrink-0 items-center gap-2 border-b border-border/40 px-3 py-2.5">
+      <header className="flex shrink-0 items-center gap-2 border-b border-border/40 px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))]">
         <button
           type="button"
           onClick={() => navigate('/m')}
@@ -107,7 +117,7 @@ const MobileChat = () => {
       </header>
 
       {/* Chat area */}
-      <div className="flex-1 min-h-0">
+      <div className="flex-1 min-h-0 pb-[env(safe-area-inset-bottom)]">
         <ChatArea
           conversationId={conversationId}
           messages={chat.messages}

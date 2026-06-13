@@ -1,5 +1,9 @@
 import { spawn, type ChildProcess, execSync } from 'child_process';
 import { createInterface } from 'readline';
+import { randomBytes } from 'crypto';
+import { writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 type TunnelProvider = 'cloudflared' | 'localtunnel';
 
@@ -9,6 +13,8 @@ interface TunnelState {
   provider: TunnelProvider | null;
   error: string | null;
   pid: number | null;
+  /** Per-tunnel access token; requests via the tunnel hostname must present it. */
+  accessToken: string | null;
 }
 
 let state: TunnelState = {
@@ -17,6 +23,7 @@ let state: TunnelState = {
   provider: null,
   error: null,
   pid: null,
+  accessToken: null,
 };
 
 let currentProcess: ChildProcess | null = null;
@@ -86,8 +93,24 @@ export function startTunnel(localPort: number): Promise<TunnelState> {
   });
 }
 
+/**
+ * cloudflared silently merges ~/.cloudflared/config.yml into quick tunnels.
+ * If that config defines named-tunnel ingress rules (with the mandatory
+ * http_status:404 catch-all), every quick-tunnel request 404s instead of
+ * reaching --url. Point --config at an empty file to isolate the quick tunnel.
+ */
+function emptyConfigPath(): string {
+  const p = join(tmpdir(), 'spark-cloudflared-quick-tunnel.yml');
+  try {
+    writeFileSync(p, '');
+  } catch {
+    // fall back to default config resolution
+  }
+  return p;
+}
+
 function startCloudflaredTunnel(localPort: number, resolve: (s: TunnelState) => void) {
-  const proc = spawn('cloudflared', ['tunnel', '--url', `http://localhost:${localPort}`], {
+  const proc = spawn('cloudflared', ['tunnel', '--config', emptyConfigPath(), '--url', `http://localhost:${localPort}`], {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   currentProcess = proc;
@@ -101,7 +124,7 @@ function startCloudflaredTunnel(localPort: number, resolve: (s: TunnelState) => 
     if (match && !resolved) {
       resolved = true;
       const url = match[0];
-      state = { running: true, url, provider: 'cloudflared', error: null, pid: proc.pid ?? null };
+      state = { running: true, url, provider: 'cloudflared', error: null, pid: proc.pid ?? null, accessToken: randomBytes(16).toString('hex') };
       resolve({ ...state });
     }
   });
@@ -112,14 +135,14 @@ function startCloudflaredTunnel(localPort: number, resolve: (s: TunnelState) => 
     if (match && !resolved) {
       resolved = true;
       const url = match[0];
-      state = { running: true, url, provider: 'cloudflared', error: null, pid: proc.pid ?? null };
+      state = { running: true, url, provider: 'cloudflared', error: null, pid: proc.pid ?? null, accessToken: randomBytes(16).toString('hex') };
       resolve({ ...state });
     }
   });
 
   proc.on('close', (code) => {
     if (!resolved) {
-      state = { running: false, url: null, provider: null, error: `cloudflared exited with code ${code}`, pid: null };
+      state = { running: false, url: null, provider: null, error: `cloudflared exited with code ${code}`, pid: null, accessToken: null };
       currentProcess = null;
       resolve({ ...state });
     }
@@ -127,7 +150,7 @@ function startCloudflaredTunnel(localPort: number, resolve: (s: TunnelState) => 
 
   proc.on('error', (err) => {
     if (!resolved) {
-      state = { running: false, url: null, provider: null, error: err.message, pid: null };
+      state = { running: false, url: null, provider: null, error: err.message, pid: null, accessToken: null };
       currentProcess = null;
       resolve({ ...state });
     }
@@ -137,7 +160,7 @@ function startCloudflaredTunnel(localPort: number, resolve: (s: TunnelState) => 
   setTimeout(() => {
     if (!resolved) {
       resolved = true;
-      state = { running: false, url: null, provider: null, error: 'cloudflared timed out (15s)', pid: null };
+      state = { running: false, url: null, provider: null, error: 'cloudflared timed out (15s)', pid: null, accessToken: null };
       killTunnel();
       resolve({ ...state });
     }
@@ -159,7 +182,7 @@ function startLocaltunnel(localPort: number, resolve: (s: TunnelState) => void) 
     if (match && !resolved) {
       resolved = true;
       const url = match[0];
-      state = { running: true, url, provider: 'localtunnel', error: null, pid: proc.pid ?? null };
+      state = { running: true, url, provider: 'localtunnel', error: null, pid: proc.pid ?? null, accessToken: randomBytes(16).toString('hex') };
       resolve({ ...state });
     }
   });
@@ -170,14 +193,14 @@ function startLocaltunnel(localPort: number, resolve: (s: TunnelState) => void) 
     if (match && !resolved) {
       resolved = true;
       const url = match[0];
-      state = { running: true, url, provider: 'localtunnel', error: null, pid: proc.pid ?? null };
+      state = { running: true, url, provider: 'localtunnel', error: null, pid: proc.pid ?? null, accessToken: randomBytes(16).toString('hex') };
       resolve({ ...state });
     }
   });
 
   proc.on('close', (code) => {
     if (!resolved) {
-      state = { running: false, url: null, provider: null, error: `localtunnel exited with code ${code}`, pid: null };
+      state = { running: false, url: null, provider: null, error: `localtunnel exited with code ${code}`, pid: null, accessToken: null };
       currentProcess = null;
       resolve({ ...state });
     }
@@ -185,7 +208,7 @@ function startLocaltunnel(localPort: number, resolve: (s: TunnelState) => void) 
 
   proc.on('error', (err) => {
     if (!resolved) {
-      state = { running: false, url: null, provider: null, error: err.message, pid: null };
+      state = { running: false, url: null, provider: null, error: err.message, pid: null, accessToken: null };
       currentProcess = null;
       resolve({ ...state });
     }
@@ -195,7 +218,7 @@ function startLocaltunnel(localPort: number, resolve: (s: TunnelState) => void) 
   setTimeout(() => {
     if (!resolved) {
       resolved = true;
-      state = { running: false, url: null, provider: null, error: 'localtunnel timed out (15s)', pid: null };
+      state = { running: false, url: null, provider: null, error: 'localtunnel timed out (15s)', pid: null, accessToken: null };
       killTunnel();
       resolve({ ...state });
     }
@@ -208,7 +231,7 @@ export function killTunnel() {
     try { currentProcess.kill('SIGTERM'); } catch {}
     currentProcess = null;
   }
-  state = { running: false, url: null, provider: null, error: null, pid: null };
+  state = { running: false, url: null, provider: null, error: null, pid: null, accessToken: null };
 }
 
 /** Get current tunnel state. */
