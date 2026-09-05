@@ -75,14 +75,18 @@ function findBundledPython(): string | null {
   return candidates.find((p) => existsSync(p)) ?? null
 }
 
+function hermesAgentPythonPath(): string {
+  return process.platform === 'win32'
+    ? join(hermesAgentDir(), 'venv', 'Scripts', 'python.exe')
+    : join(hermesAgentDir(), 'venv', 'bin', 'python3')
+}
+
 /**
  * Look for an existing hermes-agent venv that already has fastapi installed.
  * If present, reusing it skips the bridge-deps install entirely.
  */
 function findHermesAgentPython(): string | null {
-  const venvPython = process.platform === 'win32'
-    ? join(homedir(), '.hermes', 'hermes-agent', 'venv', 'Scripts', 'python.exe')
-    : join(homedir(), '.hermes', 'hermes-agent', 'venv', 'bin', 'python3')
+  const venvPython = hermesAgentPythonPath()
 
   if (!existsSync(venvPython)) return null
 
@@ -399,8 +403,16 @@ export async function startBridge(): Promise<BridgeStartResult> {
         HERMES_BRIDGE_HOST: process.env.HERMES_BRIDGE_HOST || '127.0.0.1',
         HERMES_BRIDGE_TOKEN: BRIDGE_TOKEN,
         HERMES_BRIDGE_VERSION: app.getVersion(),
-        // Ensure the bridge can find its lazily-installed deps.
-        PYTHONPATH: [bridgePackagesDir(), source].join(process.platform === 'win32' ? ';' : ':'),
+        // Ensure the bridge can find its lazily-installed deps — EXCEPT when
+        // running under the hermes-agent venv, which already ships every
+        // dependency (verified via `import fastapi`). Prepending
+        // cloudchat-pkgs there can shadow working copies with incompatible
+        // ones (e.g. a pydantic_core wheel built for a different CPython
+        // crashes the bridge at import), so only the bridge source itself
+        // goes on PYTHONPATH in that case.
+        PYTHONPATH: (python === hermesAgentPythonPath() ? [source] : [bridgePackagesDir(), source]).join(
+          process.platform === 'win32' ? ';' : ':',
+        ),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     })

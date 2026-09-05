@@ -6279,7 +6279,8 @@ def _resolve_acp_repo_root(
 ) -> str:
     """Resolve the ACP session cwd to a real repo checkout.
 
-    Preference: explicit X-Hermes-Repo-Root header (when it exists on disk),
+    Preference: explicit X-Hermes-Repo-Root header (only when it resolves
+    under the managed root — the header is client-controlled),
     then the managed clone at ~/.cloudchat/repos/<owner>/<name> (covers turns
     where the client sent owner/name but no root — previously these fell back
     to the bridge process cwd, so every relative read/search missed and the
@@ -6288,7 +6289,21 @@ def _resolve_acp_repo_root(
     """
     header = (repo_root_header or "").strip()
     if header and os.path.isdir(header):
-        return header
+        # HIGH sec: the header is client-controlled — only honor checkouts
+        # under the managed root (realpath both sides: resolves symlinks such
+        # as /tmp -> /private/tmp on macOS and defeats ".." escapes).
+        # Anything else falls through to the owner/name clone + "" fallbacks.
+        try:
+            _resolved_header = os.path.realpath(header)
+            _managed = os.path.realpath(_MANAGED_REPOS_ROOT)
+            _under_managed = (
+                _resolved_header != _managed
+                and os.path.commonpath([_managed, _resolved_header]) == _managed
+            )
+        except (OSError, ValueError):
+            _under_managed = False
+        if _under_managed:
+            return header
     owner = (repo_owner or "").strip()
     name = (repo_name or "").strip()
     if (
@@ -6328,18 +6343,23 @@ def _build_acp_repo_context_prefix(
     lines = [f"[Repo context: {label}."]
     if root:
         lines.append(f"Local checkout at: {root} (this is your working directory).")
-        # Name the real session tools with exact arg shapes. The server-side
-        # repo prompt teaches `read_repo_file` (a loop/SDK tool that does not
-        # exist in this ACP session); without this mapping the model emits
-        # empty-path `read` calls that render as `read: ?` and fail, and never
-        # discovers file search at all.
-        lines.append(
-            "File tools in this session: `read_file` {path} reads a file; "
-            "`search_files` {pattern, path} searches contents (ripgrep-backed — "
-            "use it instead of grep). If your instructions mention "
-            "`read_repo_file`, that is `read_file` here: always pass a real "
-            "`path` from the list below, never an empty one."
-        )
+    else:
+        # Owner/name and/or tree signal but no resolved checkout: still name
+        # the repo (label, no path) so the model doesn't probe blind.
+        lines.append(f"Working repo: {label} (no local checkout path resolved).")
+    # Name the real session tools with exact arg shapes. The server-side
+    # repo prompt teaches `read_repo_file` (a loop/SDK tool that does not
+    # exist in this ACP session); without this mapping the model emits
+    # empty-path `read` calls that render as `read: ?` and fail, and never
+    # discovers file search at all. Emitted on ANY repo signal, not just when
+    # a checkout path resolved.
+    lines.append(
+        "File tools in this session: `read_file` {path} reads a file; "
+        "`search_files` {pattern, path} searches contents (ripgrep-backed — "
+        "use it instead of grep). If your instructions mention "
+        "`read_repo_file`, that is `read_file` here: always pass a real "
+        "`path` from the list below, never an empty one."
+    )
     if tree:
         shown = tree[:_ACP_REPO_TREE_PREVIEW_LIMIT]
         lines.append(f"Known files ({len(tree)} total{', showing ' + str(len(shown)) if len(tree) > len(shown) else ''}):")
@@ -6494,6 +6514,11 @@ async def _acp_chat_completions_impl(request: Request, body: ChatCompletionReque
         _qput(("tool_end", tool_name, tool_input, tool_output))
         _append_session_chat_chunk(session_id, "assistant", _format_tool_end_text(tool_name, tool_output))
 
+        # Mirror the agent-loop cap: bound what enters the event queue (SSE
+        # tool_activity) and the session log — uncapped ACP output (full file
+        # reads) bloated both.
+        cap = 4000 if tool_name in ("todo", "delegate_task", "process", "terminal") else 500
+        tool_output = (tool_output or "")[:cap]
     def on_reasoning(text: str):
         chunk_size = _get_stream_chunk_size(text)
         for i in range(0, len(text), chunk_size):

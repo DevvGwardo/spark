@@ -24,7 +24,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { useGlobalStyles } from '@/hooks/useGlobalStyles';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { PROVIDERS } from '@/lib/providers';
-import { detectHermesBridge } from '@/lib/detect-hermes';
+import { detectHermesBridge, subscribeHermesBridge } from '@/lib/detect-hermes';
 import { useHermesStore } from '@/stores/hermes-store';
 import { getChatScopeId } from '@/lib/chat-scope';
 import { PanelLeft, GitPullRequest, MoreHorizontal, Circle, Pin, Pencil, Archive, Copy, PanelRight, Plus, FileCode2, MessageSquare, TerminalSquare, Globe, Sparkles, Smartphone } from 'lucide-react';
@@ -221,27 +221,33 @@ export const AppLayout: React.FC = () => {
 
   // Sync Hermes model from ~/.hermes/config.yaml.
   // CLI config is the source of truth — overwrites any previous UI selection.
-  // Runs on mount, on window focus, and on a light interval while the document
-  // is visible. The interval covers the case where `hermes model …` is run in
-  // the embedded HermesPTYPanel — no window focus change fires there, so an
-  // interval is the only way to notice the config change.
+  // Runs on mount, on window focus, and via the shared Hermes health ticker
+  // (subscribeHermesBridge: 15s while reachable+visible, 60s backoff while
+  // unreachable/hidden). The shared ticker covers the case where
+  // `hermes model …` is run in the embedded HermesPTYPanel — no window focus
+  // change fires there, so a poll is the only way to notice the config change.
   useEffect(() => {
     let cancelled = false;
+
+    const applyStatus = (status: Awaited<ReturnType<typeof detectHermesBridge>>) => {
+      if (cancelled || !status?.hermesDefaultModel) return;
+      // Only mirror the CLI default while Agent default is active. An explicit
+      // in-app model pick (followAgentModel=false) must stick.
+      if (!useHermesStore.getState().followAgentModel) return;
+      const store = useSettingsStore.getState();
+      const currentHermesModel = store.providers?.hermes?.model;
+      if (currentHermesModel === status.hermesDefaultModel) return;
+      store.updateProviderConfig('hermes', { model: status.hermesDefaultModel });
+      console.info(
+        `[hermes-sync] model synced from ~/.hermes/config.yaml: ${currentHermesModel ?? '(none)'} → ${status.hermesDefaultModel}`,
+      );
+    };
 
     const syncHermesModel = () => {
       // Only mirror the CLI default while Agent default is active. An explicit
       // in-app model pick (followAgentModel=false) must stick.
       if (!useHermesStore.getState().followAgentModel) return;
-      detectHermesBridge().then((status) => {
-        if (cancelled || !status?.hermesDefaultModel) return;
-        const store = useSettingsStore.getState();
-        const currentHermesModel = store.providers?.hermes?.model;
-        if (currentHermesModel === status.hermesDefaultModel) return;
-        store.updateProviderConfig('hermes', { model: status.hermesDefaultModel });
-        console.info(
-          `[hermes-sync] model synced from ~/.hermes/config.yaml: ${currentHermesModel ?? '(none)'} → ${status.hermesDefaultModel}`,
-        );
-      }).catch(() => {
+      detectHermesBridge().then(applyStatus).catch(() => {
         // Bridge unreachable — keep existing stored model.
       });
     };
@@ -249,16 +255,13 @@ export const AppLayout: React.FC = () => {
     syncHermesModel();
     window.addEventListener('focus', syncHermesModel);
 
-    // 15s poll — only while the tab is visible, so we don't spam /health in
-    // a hidden background window.
-    const interval = window.setInterval(() => {
-      if (document.visibilityState === 'visible') syncHermesModel();
-    }, 15000);
+    // Shared ticker replaces the former per-component 15s setInterval.
+    const unsubscribe = subscribeHermesBridge(applyStatus);
 
     return () => {
       cancelled = true;
       window.removeEventListener('focus', syncHermesModel);
-      window.clearInterval(interval);
+      unsubscribe();
     };
   }, []);
 

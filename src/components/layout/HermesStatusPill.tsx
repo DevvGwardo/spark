@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { detectHermesBridge } from '@/lib/detect-hermes';
+import { subscribeHermesBridge } from '@/lib/detect-hermes';
 import { cn } from '@/lib/utils';
 
 type HermesPillState = 'checking' | 'online' | 'offline';
@@ -17,9 +17,9 @@ const STATE_META: Record<HermesPillState, { dot: string; label: string }> = {
 };
 
 /**
- * Compact header pill surfacing Hermes bridge reachability. Polls
- * detectHermesBridge() on mount + every 15s; clicking when offline lets the
- * parent open the bridge setup flow.
+ * Compact header pill surfacing Hermes bridge reachability. Subscribes to the
+ * shared Hermes health ticker (see subscribeHermesBridge) instead of running
+ * its own interval.
  */
 export const HermesStatusPill: React.FC<HermesStatusPillProps> = ({ onClick, className }) => {
   const [state, setState] = useState<HermesPillState>('checking');
@@ -28,25 +28,14 @@ export const HermesStatusPill: React.FC<HermesStatusPillProps> = ({ onClick, cla
   useEffect(() => {
     mountedRef.current = true;
 
-    const check = () => {
-      detectHermesBridge()
-        .then((status) => {
-          if (!mountedRef.current) return;
-          setState(status?.isReachable ? 'online' : 'offline');
-        })
-        .catch(() => {
-          if (mountedRef.current) setState('offline');
-        });
-    };
-
-    check();
-    const interval = window.setInterval(() => {
-      if (document.visibilityState === 'visible') check();
-    }, 15000);
+    const unsubscribe = subscribeHermesBridge((status) => {
+      if (!mountedRef.current) return;
+      setState(status?.isReachable ? 'online' : 'offline');
+    });
 
     return () => {
       mountedRef.current = false;
-      window.clearInterval(interval);
+      unsubscribe();
     };
   }, []);
 

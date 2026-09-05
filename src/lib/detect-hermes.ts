@@ -47,7 +47,14 @@ export interface HermesBridgeStatus {
 }
 
 /** Short TTL so StatusPill + AppLayout model-sync share one health round-trip. */
-const HEALTH_CACHE_TTL_MS = 5_000;
+export const HEALTH_CACHE_TTL_MS = 5_000;
+
+/** Shared ticker: one 15s poll for all subscribers (was two drifting pollers). */
+export const HERMES_POLL_INTERVAL_MS = 15_000;
+/** Backoff cadence while the bridge is unreachable or the tab is hidden. */
+export const HERMES_POLL_BACKOFF_MS = 60_000;
+/** Consecutive unreachable results before backing off. */
+export const HERMES_POLL_FAILURE_THRESHOLD = 2;
 
 let healthCache: { at: number; profile: string; status: HermesBridgeStatus | null } | null = null;
 let healthInflight: { profile: string; promise: Promise<HermesBridgeStatus | null> } | null = null;
@@ -173,6 +180,16 @@ export async function detectHermesBridge(options?: {
 export function __resetHermesHealthCacheForTests(): void {
   healthCache = null;
   healthInflight = null;
+  consecutiveFailures = 0;
+  if (tickerTimer !== null) {
+    clearTimeout(tickerTimer);
+    tickerTimer = null;
+  }
+  subscribers.clear();
+  if (typeof document !== 'undefined' && visibilityHandler) {
+    document.removeEventListener('visibilitychange', visibilityHandler);
+    visibilityHandler = null;
+  }
 }
 
 /**
@@ -183,4 +200,91 @@ export function __resetHermesHealthCacheForTests(): void {
 export async function hermesHasLocalCredentials(): Promise<boolean> {
   const status = await detectHermesBridge();
   return status !== null && status.hasAnyCreds;
+}
+
+export type HermesBridgeStatusListener = (status: HermesBridgeStatus | null) => void;
+
+const subscribers = new Set<HermesBridgeStatusListener>();
+let tickerTimer: ReturnType<typeof setTimeout> | null = null;
+let consecutiveFailures = 0;
+let visibilityHandler: (() => void) | null = null;
+
+function getPollIntervalMs(): number {
+  if (typeof document !== 'undefined' && document.hidden) return HERMES_POLL_BACKOFF_MS;
+  if (consecutiveFailures >= HERMES_POLL_FAILURE_THRESHOLD) return HERMES_POLL_BACKOFF_MS;
+  return HERMES_POLL_INTERVAL_MS;
+}
+
+function scheduleTicker(): void {
+  if (tickerTimer !== null) clearTimeout(tickerTimer);
+  if (subscribers.size === 0) {
+    tickerTimer = null;
+    return;
+  }
+  tickerTimer = setTimeout(voidTick, getPollIntervalMs());
+}
+
+async function voidTick(): Promise<void> {
+  tickerTimer = null;
+  if (subscribers.size === 0) return;
+  let status: HermesBridgeStatus | null = null;
+  try {
+    status = await detectHermesBridge();
+  } catch {
+    status = null;
+  }
+  consecutiveFailures = status?.isReachable ? 0 : consecutiveFailures + 1;
+  for (const listener of [...subscribers]) {
+    try {
+      listener(status);
+    } catch {
+      // Listener errors must not break the shared ticker.
+    }
+  }
+  scheduleTicker();
+}
+
+function ensureTicker(): void {
+  if (typeof document !== 'undefined' && !visibilityHandler) {
+    visibilityHandler = () => {
+      // Hidden tabs stay on the 60s cadence; returning to visible re-polls
+      // promptly instead of waiting out a backoff delay.
+      if (document.hidden) {
+        scheduleTicker();
+      } else if (consecutiveFailures < HERMES_POLL_FAILURE_THRESHOLD) {
+        void voidTick();
+      } else {
+        scheduleTicker();
+      }
+    };
+    document.addEventListener('visibilitychange', visibilityHandler);
+  }
+  if (tickerTimer === null && subscribers.size > 0) scheduleTicker();
+}
+
+/**
+ * Subscribe to the single shared Hermes health ticker. The ticker honors the
+ * 5s TTL + inflight coalescing in detectHermesBridge (one /health round-trip
+ * per tick no matter how many subscribers), polls every 15s while reachable +
+ * visible, and backs off to 60s after consecutive unreachable results or while
+ * document.hidden. The new subscriber is hydrated immediately via a coalesced
+ * fetch; the returned function unsubscribes (ticker stops with zero subs).
+ */
+export function subscribeHermesBridge(listener: HermesBridgeStatusListener): () => void {
+  subscribers.add(listener);
+  ensureTicker();
+  detectHermesBridge()
+    .then((status) => {
+      if (subscribers.has(listener)) listener(status);
+    })
+    .catch(() => {
+      if (subscribers.has(listener)) listener(null);
+    });
+  return () => {
+    subscribers.delete(listener);
+    if (subscribers.size === 0 && tickerTimer !== null) {
+      clearTimeout(tickerTimer);
+      tickerTimer = null;
+    }
+  };
 }

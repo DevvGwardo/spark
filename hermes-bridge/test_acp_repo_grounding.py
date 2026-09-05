@@ -16,6 +16,7 @@ never used search:
 import asyncio
 import os
 import sys
+import tempfile
 import types
 import unittest
 from unittest import mock
@@ -75,6 +76,19 @@ class AcpRepoPrefixTests(unittest.TestCase):
         self.assertIn("`read_repo_file`", prefix)
         self.assertIn("never an empty one", prefix)
 
+    def test_empty_tree_still_names_tools_with_arg_shapes(self):
+        prefix = bridge_main._build_acp_repo_context_prefix(
+            repo_owner="o",
+            repo_name="n",
+            repo_root="/tmp/owner/n",
+            repo_file_tree=[],
+        )
+        self.assertIn("Local checkout at: /tmp/owner/n", prefix)
+        self.assertIn("`read_file` {path}", prefix)
+        self.assertIn("`search_files` {pattern, path}", prefix)
+        self.assertIn("`read_repo_file`", prefix)
+        self.assertIn("never an empty one", prefix)
+
     def test_owner_name_only_still_no_checkout_line(self):
         prefix = bridge_main._build_acp_repo_context_prefix(
             repo_owner="o", repo_name="n"
@@ -82,12 +96,49 @@ class AcpRepoPrefixTests(unittest.TestCase):
         self.assertIn("o/n", prefix)
         self.assertNotIn("Local checkout at:", prefix)
 
+    def test_owner_name_only_still_names_session_tools(self):
+        # Wave2 pin (preamble-on-any-signal): owner/name-only turns still map
+        # the session tools — otherwise the model emits empty-path `read`
+        # calls (`read: ?`) and never discovers search.
+        prefix = bridge_main._build_acp_repo_context_prefix(
+            repo_owner="o", repo_name="n"
+        )
+        self.assertIn("`read_file` {path}", prefix)
+        self.assertIn("`search_files` {pattern, path}", prefix)
+
+    def test_owner_name_only_with_managed_clone_names_session_tools(self):
+        # Composed behavior that holds today: the impl resolves owner/name to
+        # the managed clone and builds the prefix from the resolved root, so
+        # the preamble names the real session tools.
+        with tempfile.TemporaryDirectory() as tmp:
+            clone = os.path.join(tmp, "o", "n")
+            os.makedirs(clone)
+            real_isdir = os.path.isdir
+            with mock.patch.object(
+                bridge_main, "_MANAGED_REPOS_ROOT", tmp
+            ), mock.patch.object(
+                os.path,
+                "isdir",
+                side_effect=lambda p: True if p == clone else real_isdir(p),
+            ):
+                root = bridge_main._resolve_acp_repo_root("", "o", "n")
+                self.assertEqual(root, clone)
+                prefix = bridge_main._build_acp_repo_context_prefix(
+                    repo_owner="o", repo_name="n", repo_root=root
+                )
+                self.assertIn("`read_file` {path}", prefix)
+                self.assertIn("`search_files` {pattern, path}", prefix)
+
 
 class ResolveAcpRepoRootTests(unittest.TestCase):
-    def test_header_dir_wins(self):
+    def test_header_dir_under_managed_root_wins(self):
+        # The header is client-controlled: only a checkout under the managed
+        # root is honored (Wave2 allowlist). A managed-root header still wins
+        # over the owner/name clone lookup.
+        header = os.path.join(bridge_main._MANAGED_REPOS_ROOT, "o", "n")
         with mock.patch.object(os.path, "isdir", return_value=True):
             self.assertEqual(
-                bridge_main._resolve_acp_repo_root("/hdr", "o", "n"), "/hdr"
+                bridge_main._resolve_acp_repo_root(header, "o", "n"), header
             )
 
     def test_header_file_falls_through_to_clone(self):
@@ -129,6 +180,29 @@ class ResolveAcpRepoRootTests(unittest.TestCase):
             self.assertEqual(
                 bridge_main._resolve_acp_repo_root("", "o", "n"), ""
             )
+
+    def test_escape_header_outside_managed_root_rejected(self):
+        # Wave2 allowlist pin: a header pointing outside the managed repos
+        # root must NOT become the session cwd (stale/foreign absolute paths
+        # would run reads/searches against the wrong tree) — it falls through
+        # to the owner/name clone lookup.
+        with mock.patch.object(os.path, "isdir", return_value=True):
+            self.assertNotEqual(
+                bridge_main._resolve_acp_repo_root("/etc", "o", "n"), "/etc"
+            )
+
+    def test_traversal_owner_never_checks_out(self):
+        # "../etc" as a segment must never resolve (nor touch the fs): with a
+        # hostile owner there is no checkout, even when headers are present
+        # for other fields.
+        with mock.patch.object(os.path, "isdir", return_value=True) as m:
+            self.assertEqual(
+                bridge_main._resolve_acp_repo_root("", "../etc", "n"), ""
+            )
+            self.assertEqual(
+                bridge_main._resolve_acp_repo_root("", "o", "../etc"), ""
+            )
+            m.assert_not_called()
 
 
 class SameDirTests(unittest.TestCase):

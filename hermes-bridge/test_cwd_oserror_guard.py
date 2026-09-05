@@ -6,6 +6,7 @@ OSError). Every chat request used to 500. The guard falls back to the home
 directory so requests keep working. These tests pin that behavior.
 """
 import asyncio
+import json
 import sys
 import types
 from unittest.mock import patch
@@ -60,11 +61,12 @@ def test_getcwd_oserror_falls_back_to_home():
 
 
 def test_repo_root_header_wins_over_broken_cwd(tmp_path):
-    """When a repo-root header points at a REAL directory, it is used as cwd
-    even if os.getcwd() is broken — and it is NOT overwritten by the home
-    fallback. (A header pointing at a nonexistent path is ignored and falls
-    through to the managed-clone lookup, so a stale client path can never
-    become a dead cwd — see test_missing_header_dir_falls_through.)"""
+    """When a repo-root header points at a REAL directory under the managed
+    repos root, it is used as cwd even if os.getcwd() is broken — and it is
+    NOT overwritten by the home fallback. (Headers outside the managed root
+    are rejected as client-controlled and fall through to the managed-clone
+    lookup, so a stale client path can never become a dead cwd — see
+    test_missing_header_dir_falls_through.)"""
     fake = _FakeAcpTransport()
 
     body = main.ChatCompletionRequest.model_validate({
@@ -72,9 +74,11 @@ def test_repo_root_header_wins_over_broken_cwd(tmp_path):
         "messages": [{"role": "user", "content": "test"}],
         "stream": True,
     })
+    checkout = tmp_path / "o" / "n"
+    checkout.mkdir(parents=True)
     request = _FakeRequest({
         "authorization": "Bearer test",
-        "x-hermes-repo-root": str(tmp_path),
+        "x-hermes-repo-root": str(checkout),
         "x-hermes-execution-mode": "acp",
     })
 
@@ -83,11 +87,12 @@ def test_repo_root_header_wins_over_broken_cwd(tmp_path):
         raise FileNotFoundError(errno.ENOENT, "cwd does not exist")
 
     with patch.dict(sys.modules, {"acp_transport": fake.module()}), \
+         patch.object(main, "_MANAGED_REPOS_ROOT", str(tmp_path)), \
          patch.object(main.os, "getcwd", side_effect=_boom):
         response, _payload = asyncio.run(_invoke_chat_and_read_stream(request, body))
 
     assert response.status_code == 200
-    assert _FakeAcpTransport.last_kwargs["cwd"] == str(tmp_path)
+    assert _FakeAcpTransport.last_kwargs["cwd"] == str(checkout)
 
 
 def test_missing_header_dir_falls_through_to_home(tmp_path):
@@ -217,3 +222,57 @@ def test_prefix_builder_ignores_non_string_tree_entries():
     )
     assert "- a.ts" in prefix
     assert "None" not in prefix
+
+
+# ── ACP tool_end output cap (Wave2: mirror agent-loop limits on SSE) ─────────
+# The agent-loop path caps tool_end payloads (500 chars default; 4000 for
+# todo/delegate_task/process/terminal — main.py on_tool_end). The ACP path
+# must apply the same bound before forwarding tool output to SSE
+# tool_activity events, or one large read ships the whole file to the client.
+
+def test_acp_tool_end_chat_content_stays_bounded():
+    """The SSE chat-content half never embeds raw output (summary note only)."""
+    note = main._format_tool_end_text("read_file", "x" * 100_000)
+    assert len(note) < 500
+    assert "x" * 1000 not in note
+
+
+def test_acp_tool_end_sse_output_mirrors_agent_loop_cap():
+    """A 100KB ACP tool result must reach SSE tool_activity capped at the
+    agent-loop default (500 chars; 4000 for todo/delegate_task/process/
+    terminal)."""
+    huge = "y" * 100_000
+
+    class _HugeOutputTransport(_FakeAcpTransport):
+        def _run_prompt_blocking(self, **kwargs):
+            emit = kwargs.get("emit")
+            if emit:
+                emit("tool_end", "read_file", '{"path": "big.txt"}', huge)
+                emit("done", {"stop": True})
+
+    request = _FakeRequest({
+        "authorization": "Bearer test", "x-hermes-execution-mode": "acp",
+    })
+    with patch.dict(sys.modules, {"acp_transport": _HugeOutputTransport().module()}):
+        response, payload = asyncio.run(
+            _invoke_chat_and_read_stream(request, _acp_body())
+        )
+    assert response.status_code == 200
+    outputs = []
+    for line in payload.decode().splitlines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        try:
+            data = json.loads(line[5:])
+        except (ValueError, TypeError):
+            continue
+        ta = ((data.get("choices") or [{}])[0].get("delta") or {}).get("tool_activity")
+        if ta and ta.get("status") == "completed":
+            outputs.append(ta.get("output") or "")
+    assert outputs, "expected a completed tool_activity event in the SSE stream"
+    for out in outputs:
+        assert len(out) <= 500, (
+            f"ACP tool_activity output uncapped ({len(out)} chars; "
+            "agent-loop caps at 500)"
+        )
