@@ -43,6 +43,7 @@ import {
 import { getContextUsage } from '@/lib/tokens';
 import type { QueuedMessage } from '@/lib/chat-queue';
 import type { ToolActivityEvent } from './AgentActivity';
+import { getActiveRunningTool, getRunningToolLabel, normalizeToolName } from '@/lib/tool-activity';
 import type { ComputerUseDockState } from '@/lib/computer-use-dock';
 import { useActivityStore } from '@/stores/activity-store';
 import { useSettingsStore } from '@/stores/settings-store';
@@ -59,7 +60,7 @@ import {
 } from '@/lib/approval-policy';
 
 interface ChatPartLike {
-  type?: 'text' | 'reasoning' | 'tool-invocation' | 'step-start' | 'source' | 'file';
+  type?: 'text' | 'reasoning' | 'tool-invocation' | 'tool_approval' | 'step-start' | 'source' | 'file';
   text?: string;
   reasoning?: string;
   toolInvocation?: ProposalToolInvocationLike;
@@ -192,8 +193,10 @@ function countUniqueToolInvocations(invocations: ProposalToolInvocationLike[] = 
 function countUniqueToolActivity(toolActivity: ToolActivityEvent[] = []) {
   const keys = new Set<string>();
 
-  toolActivity.forEach((event, index) => {
-    keys.add(`${event.tool}:${event.input}:${index}`);
+  toolActivity.forEach((event) => {
+    // Running + completed rows of one call share tool+input — counting with
+    // the positional index doubled every call. Dedup on normalized content.
+    keys.add(`${normalizeToolName(event.tool)}:${event.input}`);
   });
 
   return keys.size;
@@ -645,6 +648,16 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     if (toolActivityMap.current) ordered.push(...toolActivityMap.current);
     return ordered;
   }, [toolActivityMap, messages]);
+
+  // Codex-style fluent status: the live verb of the currently-running tool
+  // ("Reading src/foo.ts") for the composer's streaming bar. Falls back to
+  // the server agent label, then generic "Working".
+  const currentStreamingTool = useMemo(() => {
+    if (!isStreaming) return undefined;
+    const active = getActiveRunningTool(activeToolActivity)
+      ?? getActiveRunningTool(toolActivityMap?.current ?? []);
+    return active ? getRunningToolLabel(active) : undefined;
+  }, [activeToolActivity, isStreaming, toolActivityMap]);
 
   // Start time of this conversation's active run. Prefers the server's start
   // time (background runs poll); falls back to the locally persisted stream
@@ -1190,6 +1203,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               activeProvider={activeProvider}
               activeModel={activeModel}
               agentStatusLabel={agentStatus?.label}
+              currentTool={currentStreamingTool}
               streamStartedAt={streamStartedAt}
               queuedMessages={queuedMessages}
               onRemoveQueuedMessage={handleRemoveQueuedMessage}
@@ -1292,6 +1306,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           activeProvider={activeProvider}
           activeModel={activeModel}
           agentStatusLabel={agentStatus?.label}
+          currentTool={currentStreamingTool}
           streamStartedAt={streamStartedAt}
           queuedMessages={queuedMessages}
           onRemoveQueuedMessage={handleRemoveQueuedMessage}

@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils';
 import { AgentActivity, type ToolActivityEvent } from './AgentActivity';
 import { extractPseudoToolInvocations, extractTextFileEdits, getPseudoToolSourceText, stripPseudoToolInvocations } from '@/lib/pseudo-tool-calls';
 import { getLocalImageTarget } from '@/lib/local-images';
-import { getToolInvocationKey, parseToolActivityInput } from '@/lib/tool-activity';
+import { getToolInvocationKey, getToolPathArg, parseToolActivityInput } from '@/lib/tool-activity';
 import type { ToolCallRecords } from '@/stores/hermes-store';
 import { formatToolDuration, splitToolOutputHeadTail } from '@/hooks/useChat';
 import '@shoelace-style/shoelace/dist/components/details/details.js';
@@ -403,12 +403,41 @@ function mergeToolInvocations(current: ToolInvocation, incoming: ToolInvocation)
   const preferred = incomingPriority >= currentPriority ? incoming : current;
   const fallback = preferred === incoming ? current : incoming;
 
+  // A `result` part with empty args must not clobber the `call` part's full
+  // args — keep whichever side actually carries keys.
+  const preferredHasArgs = !!preferred.args && Object.keys(preferred.args).length > 0;
+  const fallbackHasArgs = !!fallback.args && Object.keys(fallback.args).length > 0;
   return {
     ...fallback,
     ...preferred,
-    args: preferred.args ?? fallback.args,
+    args: preferredHasArgs ? preferred.args : fallbackHasArgs ? fallback.args : preferred.args ?? fallback.args,
     result: preferred.result ?? fallback.result,
   };
+}
+
+/** Merge SDK-streamed invocations with activity-derived ones. SDK parts carry
+ *  real call ids; activity rows carry results. Dedup by normalized key and
+ *  keep the result-bearing side so tool outputs actually render. */
+function mergeSdkAndActivityTools(
+  sdkTools: ToolInvocation[],
+  activityTools: ToolInvocation[],
+): ToolInvocation[] {
+  if (sdkTools.length === 0) return activityTools;
+  if (activityTools.length === 0) return sdkTools;
+  const merged: ToolInvocation[] = [...sdkTools];
+  const indexByKey = new Map<string, number>();
+  sdkTools.forEach((inv, i) => indexByKey.set(getToolInvocationKey(inv, i), i));
+  activityTools.forEach((inv, i) => {
+    const key = getToolInvocationKey(inv, sdkTools.length + i);
+    const existing = indexByKey.get(key);
+    if (existing === undefined) {
+      indexByKey.set(key, merged.length);
+      merged.push(inv);
+      return;
+    }
+    merged[existing] = mergeToolInvocations(merged[existing], inv);
+  });
+  return merged;
 }
 
 function dedupeAssistantParts(parts: MessagePart[]): MessagePart[] {
@@ -482,6 +511,21 @@ const TOOL_LABELS: Record<string, { label: string; icon: React.ElementType }> = 
   batch_edit_repo_files: { label: 'Editing files', icon: FileCode },
   web_search: { label: 'Searching web', icon: FileSearch },
   search: { label: 'Searching', icon: FileSearch },
+  search_files: { label: 'Searching files', icon: FileSearch },
+  read: { label: 'Reading file', icon: FileSearch },
+  file: { label: 'Reading file', icon: FileSearch },
+  shell: { label: 'Running command', icon: Wrench },
+  code: { label: 'Running code', icon: Wrench },
+  computer: { label: 'Computer use', icon: Wrench },
+  computer_use: { label: 'Computer use', icon: Wrench },
+  'moa.reference': { label: 'Consulting advisor', icon: FileSearch },
+  'moa.aggregating': { label: 'Synthesizing', icon: FileSearch },
+  'lsp.diagnostic': { label: 'Checking diagnostics', icon: FileSearch },
+  git_log: { label: 'Viewing commit history', icon: FileSearch },
+  git_show: { label: 'Showing commit', icon: FileSearch },
+  git_diff: { label: 'Comparing refs', icon: FileSearch },
+  list_user_repos: { label: 'Listing repositories', icon: FileSearch },
+  patch: { label: 'Editing file', icon: FileCode },
   browse_url: { label: 'Reading webpage', icon: FileSearch },
   browser: { label: 'Browsing', icon: FileSearch },
   run_command: { label: 'Running command', icon: Wrench },
@@ -526,29 +570,17 @@ function getFileAction(toolName: string, fallback?: string): 'create' | 'edit' |
 }
 
 function getToolTarget(invocation: ToolInvocation): string | null {
-  const path = typeof invocation.args?.path === 'string' ? invocation.args.path : null;
-  if (path) {
-    return path;
-  }
-
-  if (typeof invocation.args?.filename === 'string') {
-    return invocation.args.filename;
-  }
-
-  if (typeof invocation.args?.query === 'string') {
-    return invocation.args.query;
-  }
-
-  if (typeof invocation.args?.url === 'string') {
-    return invocation.args.url;
-  }
-
-  if (typeof invocation.args?.command === 'string') {
-    return invocation.args.command;
+  const target = getToolPathArg(invocation.args as Record<string, unknown> | undefined);
+  if (target) {
+    return target;
   }
 
   if (typeof invocation.args?.input === 'string') {
     return invocation.args.input;
+  }
+
+  if (typeof invocation.args?.code === 'string') {
+    return (invocation.args.code as string).split('\n')[0]?.slice(0, 80) || null;
   }
 
   return null;
@@ -579,8 +611,41 @@ function getToolDisplayLabel(
     return `Editing ${affectedCount} files`;
   }
 
-  return (TOOL_LABELS[toolName] || { label: toolName }).label;
+  if (TOOL_LABELS[toolName]) {
+    return TOOL_LABELS[toolName].label;
+  }
+  // hermes titles embed the target ("read: /abs/path", "search: foo") and
+  // the bridge forwards the title as the tool name — map the verb head so
+  // cards read "Reading file" instead of the raw title.
+  const head = toolName.split(':')[0].trim().toLowerCase();
+  const headLabel = TOOL_HEAD_LABELS[head];
+  if (headLabel) {
+    return headLabel;
+  }
+
+  return toolName;
 }
+
+// Verb heads for hermes titled tool names ("read: /path" → "Reading file").
+// Keyed by lowercase head; TITLE form only (exact ids live in TOOL_LABELS).
+const TOOL_HEAD_LABELS: Record<string, string> = {
+  read: 'Reading file',
+  file: 'Reading file',
+  search: 'Searching',
+  search_files: 'Searching files',
+  web_search: 'Searching web',
+  terminal: 'Running command',
+  shell: 'Running command',
+  run_command: 'Running command',
+  execute_python: 'Running Python',
+  code: 'Running code',
+  write: 'Writing file',
+  patch: 'Editing file',
+  edit: 'Editing file',
+  browse: 'Reading page',
+  browser: 'Browsing',
+  computer: 'Computer use',
+};
 
 function FileChangeMetaBadge({
   filePath,
@@ -882,29 +947,46 @@ function ToolInvocationDisplay({
   onRetryTool?: (toolName: string, callId?: string) => void;
 }) {
   const scopeId = useChatScopeId();
-  const [expanded, setExpanded] = useState(false);
+  const [userExpanded, setUserExpanded] = useState(false);
   const [outputExpanded, setOutputExpanded] = useState(false);
-  const toolInfo = TOOL_LABELS[invocation.toolName] || { label: invocation.toolName, icon: Wrench };
+  // hermes titles ("read: /path") arrive as the tool name — fall back to the
+  // verb head for label + icon so cards don't render the raw title.
+  const toolHead = invocation.toolName.split(':')[0].trim().toLowerCase();
+  const toolInfo = TOOL_LABELS[invocation.toolName] || TOOL_LABELS[toolHead] || { label: invocation.toolName, icon: Wrench };
   const Icon = toolInfo.icon;
   const isComplete = invocation.state === 'result';
   const isInProgress = invocation.state === 'call' || invocation.state === 'partial-call';
+  // Codex-style fluency: a running tool auto-expands its live body (glimmer
+  // + streaming output) without requiring a click; completed tools settle
+  // back to a quiet one-line row.
+  const expanded = userExpanded || isInProgress;
   const errorMessage = getToolErrorMessage(invocation.result);
   const hasError = !!errorMessage;
   // Structured execution enrichment: prefer the live tool-call record (keyed
   // by the SDK call id — matches for server-executed tools), else fall back
-  // to fields embedded in the result object.
+  // to fields embedded in the result object. Synthesized activity rows carry
+  // fake `activity-<msg>-<idx>` ids, so also try a tool+target match against
+  // the records map — otherwise ACP output/exitCode never attaches.
   const record = invocation.toolCallId ? toolCallRecords?.[invocation.toolCallId] : undefined;
-  const exitCode = record?.exitCode !== undefined && record?.exitCode !== null
-    ? record.exitCode
+  const fallbackRecord = !record && toolCallRecords
+    ? Object.values(toolCallRecords).find((r) => r.name === invocation.toolName)
+    : undefined;
+  const activeRecord = record ?? fallbackRecord;
+  const exitCode = activeRecord?.exitCode !== undefined && activeRecord?.exitCode !== null
+    ? activeRecord.exitCode
     : extractExitCode(invocation.result);
-  const durationMs = record?.durationMs !== undefined && record?.durationMs !== null
-    ? record.durationMs
+  const durationMs = activeRecord?.durationMs !== undefined && activeRecord?.durationMs !== null
+    ? activeRecord.durationMs
     : extractDurationMs(invocation.result);
-  const isFailed = record?.status === 'failed' || hasError || (exitCode !== null && exitCode !== 0);
+  const isFailed = activeRecord?.status === 'failed' || hasError || (exitCode !== null && exitCode !== 0);
+  // Surface streamed delta output when the result carries none: tool_call_delta
+  // chunks accumulate into the record but previously had no render consumer.
+  const recordOutput = activeRecord?.output?.trim() ? activeRecord.output.trim() : null;
   // Pseudo-synthesized rows (parsed from text, not real executions) keep the
   // legacy "done" tag — the lifecycle verbs are for actual tool calls.
   const isSynthesizedPseudo = (invocation.result as { synthesized?: unknown } | null)?.synthesized === true;
-  const outputMessage: string | null = getToolOutputMessage(invocation.result);
+  const resultOutputMessage: string | null = getToolOutputMessage(invocation.result);
+  const outputMessage: string | null = resultOutputMessage ?? recordOutput;
   const hasOutput = isComplete && !hasError && !!outputMessage && outputMessage !== '(no output)';
   const renderOutputAsMarkdown = !!outputMessage && shouldRenderToolOutputAsMarkdown(outputMessage);
   const writtenContent: string | null = typeof invocation.args?.content === 'string' ? invocation.args.content : null;
@@ -920,14 +1002,15 @@ function ToolInvocationDisplay({
         )
       )
     : null;
-  const progressLabel = invocation.toolName === 'read_repo_file' || invocation.toolName === 'read_file' ? 'Reading...'
-    : invocation.toolName === 'run_command' || invocation.toolName === 'terminal' ? 'Running...'
-    : invocation.toolName === 'execute_python' ? 'Executing...'
-    : invocation.toolName === 'write_file' ? 'Writing...'
-    : 'In progress';
+  const progressLabel = ['read_repo_file', 'read_file', 'read', 'file'].includes(toolHead) ? 'Reading'
+    : ['run_command', 'terminal', 'shell'].includes(toolHead) ? 'Running'
+    : ['execute_python', 'code_execution', 'code'].includes(toolHead) ? 'Executing'
+    : ['write_file', 'write', 'patch'].includes(toolHead) ? 'Writing'
+    : ['search_files', 'search', 'web_search'].includes(toolHead) ? 'Searching'
+    : 'Working';
 
-  // Extract file info from args
-  const filePath = invocation.args?.path as string | undefined;
+  // Extract file info from args (alias-aware: ACP uses file_path/file/pattern)
+  const filePath = getToolPathArg(invocation.args as Record<string, unknown> | undefined);
   const toolTarget = getToolTarget(invocation);
   const artifactFilename = invocation.args?.filename as string | undefined;
   const batchChangesRaw = invocation.args?.changes;
@@ -1046,17 +1129,19 @@ function ToolInvocationDisplay({
   }
 
   return (
-    <div className="rounded-md border border-border/50 my-1 overflow-hidden">
+    <div className={cn('rounded-md border my-1 overflow-hidden transition-colors duration-150', isInProgress ? 'border-border/60 bg-muted/10 codex-tool-live' : 'border-border/50')}>
       {/* Accordion header — always visible, click to expand. Codex-style:
-          one quiet neutral line, color only for failure states. */}
+          one quiet neutral line, color only for failure states. Running rows
+          stay expanded live so streaming reads/commands are visible. */}
       <button
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => setUserExpanded((v) => !v)}
         aria-expanded={expanded}
-        className="flex items-center gap-2 w-full px-3 py-1.5 text-left hover:bg-muted/40 transition-colors"
+        aria-live={isInProgress ? 'polite' : undefined}
+        className="flex items-center gap-2 w-full px-3 py-1.5 text-left hover:bg-muted/40 transition-colors duration-150"
       >
         <ChevronDown
           className={cn(
-            'h-3.5 w-3.5 text-muted-foreground/60 transition-transform duration-200 flex-shrink-0',
+            'h-3.5 w-3.5 text-muted-foreground/60 transition-transform duration-150 flex-shrink-0',
             expanded ? 'rotate-0' : '-rotate-90'
           )}
         />
@@ -1069,12 +1154,12 @@ function ToolInvocationDisplay({
         ) : (
           <Icon className="h-3.5 w-3.5 text-muted-foreground/60 shrink-0" />
         )}
-        <span className="text-[11px] font-medium text-muted-foreground truncate min-w-0">
+        <span className={cn('text-[11px] font-medium truncate min-w-0', isInProgress ? 'text-foreground/90 glimmer-text' : 'text-muted-foreground')}>
           {displayLabel}
         </span>
         {toolTargetLabel && (
           <code
-            className="text-[11px] text-muted-foreground/70 bg-muted/40 px-1.5 py-0.5 rounded font-mono truncate min-w-0 max-w-[160px] sm:max-w-[300px]"
+            className="text-[11px] text-muted-foreground/70 bg-muted/40 px-1.5 py-0.5 rounded font-mono truncate min-w-0 max-w-[220px] sm:max-w-[420px]"
             title={toolTargetLabel}
           >
             {toolTargetLabel}
@@ -1087,12 +1172,12 @@ function ToolInvocationDisplay({
           <span className="text-[11px] text-foreground/60">({affectedPaths.length} files)</span>
         )}
         {isInProgress && (
-          <span className="ml-auto inline-flex items-center gap-1.5 flex-shrink-0 whitespace-nowrap text-[10px] font-medium text-primary/70">
-            <span className="relative flex h-1.5 w-1.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary/50" />
+          <span className="ml-auto inline-flex items-center gap-1.5 flex-shrink-0 whitespace-nowrap text-[10px] font-medium text-muted-foreground">
+            <span className="relative flex h-1.5 w-1.5" aria-hidden="true">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary/50 motion-reduce:animate-none" />
               <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary/80" />
             </span>
-            {progressLabel}
+            <span className="glimmer-text">{progressLabel}</span>
           </span>
         )}
         {(isFileModifyingTool && focusedFilePath) && (
@@ -1141,17 +1226,26 @@ function ToolInvocationDisplay({
       )}
 
       {/* Accordion body — slides open. grid-rows 0fr/1fr keeps the animation
-          without a fixed max-height, so long batch diffs are never clipped. */}
+          under 200ms without a fixed max-height, so long batch diffs are
+          never clipped. Running tools stay open live (Codex-style). */}
       <div
         className={cn(
-          'grid transition-[grid-template-rows,opacity] duration-200 ease-in-out',
+          'grid transition-[grid-template-rows,opacity] duration-150 ease-out',
           expanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
         )}
       >
         <div className="overflow-hidden min-h-0">
           <div className="px-3 pb-2 pt-0.5 space-y-1">
-          {(isInProgress || isLatest) && (
-            <div className="mt-1">
+          {isInProgress && (
+            <div className="mt-1" aria-hidden="true">
+              <div className="chat-tool-glimmer__track">
+                <div className="chat-tool-glimmer__bar chat-tool-glimmer__bar--long" />
+                <div className="chat-tool-glimmer__bar chat-tool-glimmer__bar--short" />
+              </div>
+            </div>
+          )}
+          {!isInProgress && isLatest && (
+            <div className="mt-1" aria-hidden="true">
               <div className="chat-tool-glimmer__track">
                 <div className="chat-tool-glimmer__bar chat-tool-glimmer__bar--long" />
                 <div className="chat-tool-glimmer__bar chat-tool-glimmer__bar--short" />
@@ -1445,14 +1539,17 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function M
         p.type === 'tool-invocation' && !!p.toolInvocation)
       .map((p) => p.toolInvocation);
 
-    // Determine which tool invocations to interleave (priority order)
-    const fallbackTools = pseudoToolInvocations.length > 0
+    // Determine which tool invocations to interleave (priority order).
+    // Hermes repo turns stream results as `tool_activity` while the SDK parts
+    // carry the call without the result — preferring one source discards the
+    // other. Merge SDK + activity sources, preferring entries that carry a
+    // result and preserving args from whichever side has them.
+    const sdkTools = pseudoToolInvocations.length > 0
       ? pseudoToolInvocations
       : (toolInvocations && toolInvocations.length > 0)
         ? toolInvocations
-        : partsToolInvocations.length > 0
-          ? partsToolInvocations
-          : synthesizedToolInvocations;
+        : partsToolInvocations;
+    const fallbackTools = mergeSdkAndActivityTools(sdkTools, synthesizedToolInvocations);
 
     // Hermes tool interleaving — two strategies, tried in priority order:
     //

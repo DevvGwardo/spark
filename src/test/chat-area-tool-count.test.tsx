@@ -238,6 +238,46 @@ describe('ChatArea streaming tool count', () => {
               {
                 tool: 'read_repo_file',
                 status: 'completed',
+                input: '{"path":"src/other.ts"}',
+                output: 'export const other = true;',
+              },
+            ],
+          }}
+        />
+      </PanelProvider>,
+    );
+
+    expect(screen.getByTestId('chat-input')).toHaveAttribute('data-tool-count', '2');
+  });
+
+  it('dedups running + completed rows of the same call into one tool', () => {
+    render(
+      <PanelProvider value="panel-1">
+        <ChatArea
+          conversationId="conv-1"
+          messages={[]}
+          input=""
+          setInput={() => {}}
+          handleSend={() => {}}
+          handleStop={() => {}}
+          handleRegenerate={() => {}}
+          isStreaming
+          error={null}
+          apiKeyModalOpen={false}
+          setApiKeyModalOpen={() => {}}
+          activeProvider="hermes"
+          activeModel="meta-llama/llama-4-maverick"
+          toolActivityMap={{
+            current: [
+              {
+                tool: 'read_repo_file',
+                status: 'running',
+                input: '{"path":"src/app.ts"}',
+                output: null,
+              },
+              {
+                tool: 'read_repo_file',
+                status: 'completed',
                 input: '{"path":"src/app.ts"}',
                 output: 'export const app = true;',
               },
@@ -247,7 +287,7 @@ describe('ChatArea streaming tool count', () => {
       </PanelProvider>,
     );
 
-    expect(screen.getByTestId('chat-input')).toHaveAttribute('data-tool-count', '2');
+    expect(screen.getByTestId('chat-input')).toHaveAttribute('data-tool-count', '1');
   });
 
   it('prefers current Hermes tool activity over stale prior assistant messages', () => {

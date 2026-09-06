@@ -1,6 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Search, Globe, Terminal, Eye, FileText, Code, ChevronDown, ChevronRight, Check, Zap, Layers, GitMerge, AlertTriangle, X, RotateCcw } from 'lucide-react';
 import { formatToolDuration, splitToolOutputHeadTail } from '@/hooks/useChat';
+import {
+  getActiveRunningTool,
+  getRunningToolLabel,
+} from '@/lib/tool-activity';
 
 export interface ToolActivityEvent {
   tool: string;
@@ -21,6 +25,17 @@ export interface ToolActivityEvent {
 const TOOL_ICONS: Record<string, typeof Search> = {
   web_search: Search,
   search: Search,
+  search_files: Search,
+  read: Search,
+  read_file: Search,
+  read_repo_file: Search,
+  run_command: Terminal,
+  edit_repo_file: FileText,
+  create_repo_file: FileText,
+  delete_repo_file: FileText,
+  batch_edit_repo_files: FileText,
+  write_file: FileText,
+  patch: FileText,
   browser: Globe,
   browse: Globe,
   terminal: Terminal,
@@ -54,7 +69,7 @@ function parseJsonSafe(input: string): Record<string, unknown> | null {
   }
 }
 
-/** Extract a short label from tool input JSON */
+/** Extract a short label from tool input JSON (alias-aware) */
 function extractLabel(tool: string, input: string): string {
   if (tool === 'moa.reference') {
     const meta = parseJsonSafe(input);
@@ -67,11 +82,18 @@ function extractLabel(tool: string, input: string): string {
     return 'Synthesizing';
   }
   try {
-    const parsed = JSON.parse(input.trim());
-    if (parsed.path) return parsed.path.split('/').slice(-2).join('/');
-    if (parsed.filename) return parsed.filename;
-    if (parsed.query) return parsed.query.slice(0, 50);
-    if (parsed.url) return parsed.url.slice(0, 60);
+    const parsed = JSON.parse(input.trim()) as Record<string, unknown>;
+    const get = (k: string): string | null => {
+      const v = parsed[k];
+      return typeof v === 'string' && v.trim() ? v : null;
+    };
+    const path = get('path') ?? get('file_path') ?? get('filePath') ?? get('filepath') ?? get('filename') ?? get('file') ?? get('target') ?? get('targetPath');
+    if (path) return path.split('/').slice(-2).join('/');
+    const query = get('pattern') ?? get('query');
+    if (query) return query.slice(0, 50);
+    if (parsed.url && typeof parsed.url === 'string') return parsed.url.slice(0, 60);
+    if (parsed.command && typeof parsed.command === 'string') return parsed.command.slice(0, 80);
+    if (parsed.code && typeof parsed.code === 'string') return parsed.code.split('\n')[0]?.slice(0, 80) ?? '';
   } catch { /* ignore */ }
   return input.slice(0, 60) + (input.length > 60 ? '...' : '');
 }
@@ -294,10 +316,6 @@ export function AgentActivity({
    *  stored args). Optional so legacy consumers keep working unchanged. */
   onRetryTool?: (toolName: string) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
-
-  if (events.length === 0) return null;
-
   const completedCount = events.filter((e) => e.status === 'completed').length;
   const runningCount = events.filter((e) => e.status === 'running').length;
   const failedCount = events.filter((e) => isFailedEvent(e)).length;
@@ -305,30 +323,53 @@ export function AgentActivity({
   const lspCount = events.filter((e) => e.tool === 'lsp.diagnostic').length;
   const hasMoa = moaAdvisorCount > 0 || events.some((e) => e.tool === 'moa.aggregating');
   const hasLsp = lspCount > 0;
+  const activeRunning = getActiveRunningTool(events);
+
+  // Codex-style fluency: the live group auto-expands while tools stream so
+  // running calls are visible without a click, then settles back to the
+  // user's toggle once the stream finishes.
+  const [userExpanded, setUserExpanded] = useState(false);
+  const [autoExpanded, setAutoExpanded] = useState(runningCount > 0);
+  useEffect(() => {
+    if (runningCount > 0) setAutoExpanded(true);
+    else setAutoExpanded(false);
+  }, [runningCount]);
+  const expanded = userExpanded || autoExpanded;
+
+  if (events.length === 0) return null;
 
   let headerLabel: string;
-  if (hasMoa) {
+  if (activeRunning && runningCount === 1) {
+    // Fluent single-tool state: "Reading src/foo.ts" beats "1 running".
+    headerLabel = hasMoa || hasLsp
+      ? getRunningToolLabel(activeRunning)
+      : getRunningToolLabel(activeRunning);
+  } else if (hasMoa) {
     if (runningCount > 0) {
-      headerLabel = `MoA · ${runningCount} running`;
+      headerLabel = activeRunning
+        ? getRunningToolLabel(activeRunning)
+        : `MoA · ${runningCount} running`;
     } else if (moaAdvisorCount > 0) {
       headerLabel = `MoA · ${moaAdvisorCount} advisor${moaAdvisorCount === 1 ? '' : 's'}`;
     } else {
       headerLabel = 'MoA · synthesizing';
     }
-  } else if (hasLsp) {
+  } else if (hasLsp && runningCount === 0) {
     headerLabel = `LSP · ${lspCount} diagnostic${lspCount === 1 ? '' : 's'}`;
   } else if (runningCount > 0) {
-    headerLabel = `${runningCount} running`;
+    headerLabel = activeRunning
+      ? `${getRunningToolLabel(activeRunning)}${runningCount > 1 ? ` · +${runningCount - 1} more` : ''}`
+      : `${runningCount} running`;
   } else {
     headerLabel = `${completedCount} completed${failedCount > 0 ? ` · ${failedCount} failed` : ''}`;
   }
 
   return (
-    <div className="mt-2 rounded-lg border border-border/50 bg-muted/20 overflow-hidden">
+    <div className={`mt-2 rounded-lg border overflow-hidden transition-colors duration-150 ${runningCount > 0 ? 'border-border/60 bg-muted/20 codex-tool-live' : 'border-border/50 bg-muted/20'}`}>
       <button
-        onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-2 w-full px-3 py-2 text-left hover:bg-muted/30 transition-colors duration-75"
-      >
+        onClick={() => setUserExpanded((v) => !v)}
+        aria-expanded={expanded}
+        className="flex items-center gap-2 w-full px-3 py-2 text-left hover:bg-muted/30 transition-colors duration-150">
         {hasMoa ? (
           <Layers className="w-3.5 h-3.5 text-primary/80 shrink-0" />
         ) : hasLsp ? (
@@ -336,7 +377,11 @@ export function AgentActivity({
         ) : (
           <Zap className="w-3.5 h-3.5 text-primary/80 shrink-0" />
         )}
-        <span className="text-xs text-muted-foreground font-medium tracking-tight">
+        <span
+          aria-live={runningCount > 0 ? 'polite' : undefined}
+          className={`text-xs font-medium tracking-tight truncate min-w-0 ${runningCount > 0 ? 'text-foreground/90 glimmer-text' : 'text-muted-foreground'}`}
+          title={headerLabel}
+        >
           {headerLabel}
         </span>
         <div className="flex items-center gap-1 ml-1">

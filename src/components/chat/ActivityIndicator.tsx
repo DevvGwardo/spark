@@ -3,7 +3,7 @@ import { useChatScopeId } from '@/hooks/use-panel-context';
 import { useChangesetStore, type FileChange } from '@/stores/changeset-store';
 import { useHermesStore } from '@/stores/hermes-store';
 import type { ToolActivityEvent } from './AgentActivity';
-import { parseToolActivityInput } from '@/lib/tool-activity';
+import { getToolPathArg, normalizeToolName, parseToolActivityInput } from '@/lib/tool-activity';
 import { Terminal, FileCode, GitBranch, Search, Pencil, Brain, FileText, Repeat, Gavel } from 'lucide-react';
 
 type Activity = 'thinking' | 'reading' | 'editing' | 'planning' | 'writing';
@@ -44,9 +44,11 @@ function deriveActivity(messages: ActivityIndicatorProps['messages'], toolActivi
     // full advisor cards render in AgentActivity.
     if (name === 'moa.reference' || name === 'moa.aggregating') return 'thinking';
     if (name === 'computer_use' || name === 'computer') return 'thinking';
-    if (name === 'read_repo_file') return 'reading';
+    // normalizeToolName strips hermes title prefixes ("read: /path").
+    const family = normalizeToolName(name);
+    if (family === 'read_file' || family === 'search_files' || family === 'web_search') return 'reading';
+    if (family === 'edit') return 'editing';
     if (name === 'propose_changes') return 'planning';
-    if (['edit_repo_file', 'create_repo_file', 'delete_repo_file', 'batch_edit_repo_files'].includes(name)) return 'editing';
     if (['create_html_file', 'create_css_file', 'create_js_file', 'create_react_component'].includes(name)) return 'writing';
   }
 
@@ -59,9 +61,10 @@ function deriveActivity(messages: ActivityIndicatorProps['messages'], toolActivi
     if (toolInvocations.length === 0) break;
     const last = toolInvocations[toolInvocations.length - 1];
     const name = last?.toolName || '';
-    if (name === 'read_repo_file') return 'reading';
+    const family = normalizeToolName(name);
+    if (family === 'read_file' || family === 'search_files' || family === 'web_search') return 'reading';
+    if (family === 'edit') return 'editing';
     if (name === 'propose_changes') return 'planning';
-    if (['edit_repo_file', 'create_repo_file', 'delete_repo_file', 'batch_edit_repo_files'].includes(name)) return 'editing';
     if (['create_html_file', 'create_css_file', 'create_js_file', 'create_react_component'].includes(name)) return 'writing';
     break;
   }
@@ -77,18 +80,14 @@ function extractActiveFiles(toolActivity?: ToolActivityEvent[]): string[] {
 
   for (const event of events) {
     const parsed = parseToolActivityInput(event.input);
-    if (parsed.path && typeof parsed.path === 'string') {
-      files.push(parsed.path);
-    }
+    const target = getToolPathArg(parsed as Record<string, unknown>);
+    if (target) files.push(target);
     if (Array.isArray(parsed.changes)) {
       for (const change of parsed.changes) {
         if (change && typeof change === 'object' && 'path' in change && typeof (change as Record<string, unknown>).path === 'string') {
           files.push((change as Record<string, unknown>).path as string);
         }
       }
-    }
-    if (parsed.filename && typeof parsed.filename === 'string') {
-      files.push(parsed.filename);
     }
   }
   return [...new Set(files)];
@@ -99,6 +98,11 @@ function shortenPath(path: string): string {
   const parts = path.split('/');
   if (parts.length <= 2) return path;
   return parts.slice(-2).join('/');
+}
+
+/** Compact live path for the fluent status line (last 2 segments). */
+function shortenLivePath(path: string): string {
+  return shortenPath(path);
 }
 
 function FileChip({ path, status }: { path: string; status: 'active' | 'done' }) {
@@ -159,27 +163,33 @@ export const ActivityIndicator: React.FC<ActivityIndicatorProps> = ({ isStreamin
 
   const config = ACTIVITY_CONFIG[activity];
   const Icon = config.Icon;
-  const label = loopActive
+  // Codex-style fluency: when a single file is live, name it inline
+  // ("Reading server/routes/chat.ts") instead of a generic plural.
+  const singleLiveFile = allFiles.length === 1 ? shortenLivePath(allFiles[0]) : null;
+  const baseLabel = loopActive
     ? loopPhase === 'judge'
       ? `Judging iteration ${loopIteration}/${loopMax}`
       : `Loop ${loopIteration}/${loopMax}`
     : statusLabel || config.label;
+  const label = !loopActive && !statusLabel && singleLiveFile
+    ? `${config.label.replace(/s$/, '')} ${singleLiveFile}`
+    : baseLabel;
   const LoopIcon = loopPhase === 'judge' ? Gavel : Repeat;
 
   return (
-    <div className="flex flex-col items-center gap-1.5 py-2 animate-in fade-in duration-200">
-      {/* Status line */}
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <span className="relative flex h-2 w-2">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60 opacity-75" />
+    <div className="flex flex-col items-center gap-1.5 py-2 animate-in fade-in duration-150" aria-live="polite">
+      {/* Status line — Codex-style fluent verb, shimmering while live */}
+      <div className="flex items-center gap-2 text-xs text-muted-foreground min-w-0 max-w-full">
+        <span className="relative flex h-2 w-2 shrink-0" aria-hidden="true">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60 opacity-75 motion-reduce:animate-none" />
           <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
         </span>
         {loopActive ? (
-          <LoopIcon className={`h-3 w-3 ${loopPhase === 'judge' ? 'text-amber-400' : 'text-emerald-400'}`} />
+          <LoopIcon className={`h-3 w-3 shrink-0 ${loopPhase === 'judge' ? 'text-amber-400' : 'text-emerald-400'}`} />
         ) : (
-          <Icon className="h-3 w-3 opacity-70" />
+          <Icon className="h-3 w-3 opacity-70 shrink-0" />
         )}
-        <span className="font-medium tracking-tight">{label}</span>
+        <span className="font-medium tracking-tight truncate glimmer-text" title={label}>{label}</span>
         {allFiles.length > 0 && (
           <span className="text-muted-foreground/50 font-mono text-[10px]">
             {allFiles.length} {allFiles.length === 1 ? 'file' : 'files'}

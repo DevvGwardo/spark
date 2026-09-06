@@ -30,6 +30,7 @@ import {
   isRepoWriteMessage,
 } from '@/lib/repo-intent';
 import type { ToolActivityEvent } from '@/components/chat/AgentActivity';
+import { normalizeToolName } from '@/lib/tool-activity';
 import {
   INITIAL_COMPUTER_USE_DOCK_STATE,
   isComputerUseFrameData,
@@ -373,7 +374,10 @@ function parsePlanSteps(payload: unknown): PlanStepLike[] | null {
 }
 
 /** Find a tool invocation's stored args in the message buffer (SDK parts or
- *  persisted toolInvocations), preferring an exact call_id match. */
+ *  persisted toolInvocations), preferring an exact call_id match. Continues
+ *  past exact hits that carry no args (result-only parts) so retries don't
+ *  re-send empty args; the by-name fallback prefers the most recent call
+ *  with non-empty args to avoid stale-file retries. */
 function findToolInvocationArgs(
   msgs: AIMessage[],
   callId: string | undefined,
@@ -391,15 +395,22 @@ function findToolInvocationArgs(
         .map((part) => part.toolInvocation as { toolCallId?: string; toolName?: string; args?: Record<string, unknown> }) : []),
       ...(Array.isArray(message.toolInvocations) ? message.toolInvocations : []),
     ];
-    const exact = hasCallId
-      ? invocations.find((inv) => inv?.toolCallId === callId)
-      : undefined;
-    const byName = exact
-      ? undefined
-      : invocations.find((inv) => inv?.toolName === toolName && typeof inv?.args === 'object');
-    const match = exact ?? byName;
-    if (match && typeof match.args === 'object' && match.args) {
-      return { args: match.args as Record<string, unknown> };
+    if (hasCallId) {
+      // Scan newest-first so a result-only part with the same id doesn't
+      // shadow the call part that holds the args.
+      for (let j = invocations.length - 1; j >= 0; j -= 1) {
+        const inv = invocations[j];
+        if (inv?.toolCallId === callId && typeof inv?.args === 'object' && inv.args && Object.keys(inv.args).length > 0) {
+          return { args: inv.args as Record<string, unknown> };
+        }
+      }
+      continue;
+    }
+    for (let j = invocations.length - 1; j >= 0; j -= 1) {
+      const inv = invocations[j];
+      if (inv?.toolName === toolName && typeof inv?.args === 'object' && inv.args && Object.keys(inv.args).length > 0) {
+        return { args: inv.args as Record<string, unknown> };
+      }
     }
   }
   return null;
@@ -417,8 +428,15 @@ function getPersistedToolInvocationKey(invocation: Record<string, unknown>, fall
   const args = invocation.args && typeof invocation.args === 'object'
     ? invocation.args as Record<string, unknown>
     : {};
-  const path = typeof args.path === 'string' ? args.path : '';
-  const filename = typeof args.filename === 'string' ? args.filename : '';
+  const readArg = (keys: string[]): string => {
+    for (const k of keys) {
+      const v = args[k];
+      if (typeof v === 'string' && v.trim()) return v.trim();
+    }
+    return '';
+  };
+  const path = readArg(['path', 'file_path', 'filePath', 'filepath', 'filename', 'file', 'target', 'targetPath'])
+    || readArg(['pattern', 'query', 'url', 'command']);
   const batchPaths = Array.isArray(args.changes)
     ? args.changes
         .map((change) =>
@@ -429,8 +447,8 @@ function getPersistedToolInvocationKey(invocation: Record<string, unknown>, fall
         .join('|')
     : '';
 
-  if (toolName && (path || filename || batchPaths)) {
-    return `${toolName}:${path}:${filename}:${batchPaths}`;
+  if (toolName && (path || batchPaths)) {
+    return `${toolName}:${path}:${batchPaths}`;
   }
 
   const toolCallId = typeof invocation.toolCallId === 'string' ? invocation.toolCallId : '';
@@ -458,7 +476,14 @@ function mergePersistedToolInvocation(
   return {
     ...fallback,
     ...preferred,
-    args: preferred.args ?? fallback.args,
+    // A result part with empty args must not clobber the call part's args.
+    args: (() => {
+      const pHas = !!preferred.args && typeof preferred.args === 'object' && Object.keys(preferred.args as object).length > 0;
+      const fHas = !!fallback.args && typeof fallback.args === 'object' && Object.keys(fallback.args as object).length > 0;
+      if (pHas) return preferred.args;
+      if (fHas) return fallback.args;
+      return preferred.args ?? fallback.args;
+    })(),
     result: preferred.result ?? fallback.result,
   };
 }
@@ -1217,13 +1242,19 @@ When the user asks you to make changes:
     const updateToolActivity = (activity: ToolActivityEvent) => {
       const msgId = 'current';
       const prev = [...(toolActivityRef.current[msgId] || [])];
+      // Match across ACP-title vs SDK namespaces (read vs read_file, and
+      // hermes titles like "read: /path"): the agent-loop bridge also sends
+      // tool_end with input:"", which must bind to the most recent running
+      // row of the same family — not any row, and never a sibling of a
+      // different family.
+      const familyOf = (tool: string): string => normalizeToolName(tool);
 
       const existingIdx = activity.status === 'completed'
         ? prev.findLastIndex(
             (e) =>
-              e.tool === activity.tool &&
+              familyOf(e.tool) === familyOf(activity.tool) &&
               e.status === 'running' &&
-              (!activity.input || e.input === activity.input),
+              (!activity.input || !e.input || e.input === activity.input),
           )
         : prev.findIndex(
             (e) => e.tool === activity.tool && e.input === activity.input && e.status === 'running',
@@ -1363,7 +1394,10 @@ When the user asks you to make changes:
     const enrichToolActivityFromRecord = (end: ToolCallEndEvent) => {
       const msgId = 'current';
       const prev = [...(toolActivityRef.current[msgId] || [])];
-      const idx = prev.findLastIndex((e) => e.tool === end.name && e.status === 'running');
+      // Same family matching as updateToolActivity: structured end events
+      // carry the ACP title namespace while activity rows may use SDK names.
+      const familyOf = (tool: string): string => normalizeToolName(tool);
+      const idx = prev.findLastIndex((e) => familyOf(e.tool) === familyOf(end.name) && e.status === 'running');
       if (idx < 0) {
         return;
       }
