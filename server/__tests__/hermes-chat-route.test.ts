@@ -559,7 +559,7 @@ describe('Hermes chat route', () => {
 
       expect(response.status).toBe(503)
       await expect(response.json()).resolves.toEqual({
-        error: 'Hermes bridge is not reachable at http://localhost:3002/v1. Start hermes-bridge/main.py and try again.',
+        error: 'Hermes bridge is not reachable at http://127.0.0.1:3002/v1. Start hermes-bridge/main.py and try again.',
       })
     } finally {
       await server.close()
@@ -1033,6 +1033,61 @@ describe('Hermes chat route', () => {
     } finally {
       await server.close()
       vi.unstubAllGlobals()
+    }
+  })
+
+  it('mints and returns a conversation id for anonymous chats', async () => {
+    const server = await createTestServer()
+
+    try {
+      const response = await actualFetch(`${server.url}/functions/v1/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          provider: 'openai',
+          model: 'gpt-4o-mini',
+          api_key: 'sk-test',
+          messages: [
+            { role: 'user', content: 'hello' },
+          ],
+        }),
+      })
+
+      await response.text()
+      // No conversation_id sent → server mints one (no shared 'default'
+      // bucket) and returns it for adoption on subsequent turns.
+      expect(response.headers.get('x-hermes-conversation-id')).toMatch(/^cloudchat-/)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('does not mint a conversation id when the client provides one', async () => {
+    const server = await createTestServer()
+
+    try {
+      const response = await actualFetch(`${server.url}/functions/v1/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          provider: 'openai',
+          model: 'gpt-4o-mini',
+          api_key: 'sk-test',
+          conversation_id: 'client-conv-123',
+          messages: [
+            { role: 'user', content: 'hello' },
+          ],
+        }),
+      })
+
+      await response.text()
+      expect(response.headers.get('x-hermes-conversation-id')).toBeNull()
+    } finally {
+      await server.close()
     }
   })
 

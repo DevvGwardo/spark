@@ -33,6 +33,7 @@ import {
   cancelHermesRun,
   getActiveHermesRuns,
   getHermesRunPartialText,
+  bridgeRepoRootHeaders,
 } from '../lib/hermes';
 import { buildLocalExecutionTools, parseAgentToolsets, getLocalToolsSystemPromptFragment, type ToolExecutionInfo } from '../local-tools';
 import { MAX_AGENT_STEPS } from '../config';
@@ -318,7 +319,9 @@ export function registerChatRoute(app: Express) {
 // bridge's /v1/approvals/{id} contract so the client can use one flow for
 // both ACP approvals (bridge) and streamText-path tool approvals (server).
 // Bridge root + auth for ACP approval forwarding (mirrors hermes-admin.ts).
-const HERMES_BRIDGE_ROOT = (process.env.HERMES_BRIDGE_URL || 'http://localhost:3002').replace(/\/v1\/?$/, '');
+// 127.0.0.1 (not localhost): the bridge binds IPv4 loopback, and on
+// IPv6-first resolvers `localhost` can resolve to ::1 → ECONNREFUSED.
+const HERMES_BRIDGE_ROOT = (process.env.HERMES_BRIDGE_URL || 'http://127.0.0.1:3002').replace(/\/v1\/?$/, '');
 function hermesBridgeTokenHeader(): Record<string, string> {
   const token = (process.env.HERMES_BRIDGE_TOKEN || '').trim();
   return token ? { 'X-Hermes-Bridge-Token': token } : {};
@@ -350,18 +353,33 @@ app.post('/api/hermes/approvals/:id', async (req, res) => {
         ? 'allow_session'
         : 'deny';
     try {
-      const upstream = await fetch(`${HERMES_BRIDGE_ROOT}/v1/approvals/${encodeURIComponent(id)}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(hermesBridgeTokenHeader()),
-        },
-        body: JSON.stringify({ option_id: optionId }),
-      });
-      const payload = await upstream.json().catch(() => ({}));
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      let upstream: Response;
+      try {
+        upstream = await fetch(`${HERMES_BRIDGE_ROOT}/v1/approvals/${encodeURIComponent(id)}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(hermesBridgeTokenHeader()),
+          },
+          body: JSON.stringify({ option_id: optionId, ...(reason ? { reason } : {}) }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
+      const rawText = await upstream.text().catch(() => '');
+      let payload: { error?: { message?: string }; [k: string]: unknown } = {};
+      try {
+        payload = rawText ? JSON.parse(rawText) as typeof payload : {};
+      } catch {
+        payload = {};
+      }
       if (!upstream.ok) {
+        const message = payload?.error?.message || rawText.trim().slice(0, 500) || `Bridge returned ${upstream.status}`;
         return sendJson(res, upstream.status, {
-          error: payload?.error?.message || `Bridge returned ${upstream.status}`,
+          error: message,
         });
       }
       logger.info(`[approvals] Forwarded ACP approval ${id} to bridge decision=${decision}`);
@@ -415,6 +433,9 @@ app.post('/functions/v1/chat', async (req, res) => {
   }
 
   let requestTimeout: ReturnType<typeof setTimeout> | null = null;
+  // Set when the 5-minute watchdog (not the client) aborts the stream, so
+  // the catch below can tell a timeout truncation apart from a clean abort.
+  let requestTimedOut = false;
   const abortController = new AbortController();
   const disconnect = bindClientDisconnect(req, res, () => {
     abortController.abort();
@@ -460,10 +481,23 @@ app.post('/functions/v1/chat', async (req, res) => {
     // The client only sends this after the user approved a repo proposal, so
     // the repo edits in this turn are sanctioned.
     const continuingApprovedProposal = rawContinuingApprovedProposal === true;
-    const conversationKey =
+    // Stable identity for approval buckets, OpenClaw sessions, and hermes
+    // runs. Anonymous turns (no conversation_id) used to share one 'default'
+    // bucket — two tabs shared approval rules and leaked state — and OpenClaw
+    // minted a random session per request, killing continuity. Mint one id
+    // per anonymous request and return it so the client can adopt it.
+    const effectiveConversationId =
       typeof conversation_id === 'string' && conversation_id.trim().length > 0
         ? conversation_id.trim()
-        : 'default';
+        : `cloudchat-${(() => {
+            const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+            if (c?.randomUUID) return c.randomUUID();
+            return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+          })()}`;
+    if (effectiveConversationId !== conversation_id) {
+      res.setHeader('X-Hermes-Conversation-Id', effectiveConversationId);
+    }
+    const conversationKey = effectiveConversationId;
     if (autoApprove) {
       approvalPolicyStore.setAutoApprove(conversationKey, true);
     }
@@ -698,9 +732,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
 
       const result = await runOpenClawTurn({
         message: latestUserMessage,
-        sessionId: typeof conversation_id === 'string' && conversation_id
-          ? conversation_id
-          : `cloudchat-${crypto.randomUUID()}`,
+        sessionId: effectiveConversationId,
         model: typeof model === 'string' ? model : undefined,
         systemPrompt: effectiveSystemPrompt,
         cwd: resolvedLocalRepoPath ?? undefined,
@@ -999,7 +1031,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
         repoFileTree: shouldForwardHermesRepoContext ? sanitizeFileTree(repo_file_tree) : undefined,
         customTools: Array.isArray(custom_tools) ? custom_tools : undefined,
         activeProfile: activeHermesProfile ?? undefined,
-        conversationId: typeof conversation_id === 'string' ? conversation_id : undefined,
+        conversationId: effectiveConversationId,
         // Real system role on every iteration — the normalized (fake-user)
         // copy only leads iteration 1, so follow-up turns and the judge
         // would otherwise run with no system prompt at all.
@@ -1021,12 +1053,19 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
         topP: top_p,
         maxTokens: max_tokens,
         hermesToolsets: hermes_toolsets,
+        hermesProvider: hermes_provider,
+        repoEditIntent: !!repo_edit_intent,
         activeRepo: shouldForwardHermesRepoContext ? activeRepo : undefined,
         githubPAT: shouldForwardHermesRepoContext ? githubPAT : undefined,
+        hermesWorktree: !!resolvedLocalRepoPath,
+        repoRoot: resolvedLocalRepoPath ?? undefined,
+        hermesMiniMaxKey: hermes_minimax_key,
+        reasoningEffort: typeof reasoning_effort === 'string' ? reasoning_effort : undefined,
+        planMode,
         repoFileTree: shouldForwardHermesRepoContext ? sanitizeFileTree(repo_file_tree) : undefined,
         customTools: Array.isArray(custom_tools) ? custom_tools : undefined,
         activeProfile: activeHermesProfile ?? undefined,
-        conversationId: typeof conversation_id === 'string' ? conversation_id : undefined,
+        conversationId: effectiveConversationId,
       });
       return;
     }
@@ -1057,7 +1096,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
         repoFileTree: shouldForwardHermesRepoContext ? sanitizeFileTree(repo_file_tree) : undefined,
         customTools: Array.isArray(custom_tools) ? custom_tools : undefined,
         activeProfile: activeHermesProfile ?? undefined,
-        conversationId: typeof conversation_id === 'string' ? conversation_id : undefined,
+        conversationId: effectiveConversationId,
         reasoningEffort: typeof reasoning_effort === 'string' ? reasoning_effort : undefined,
         hermesUseRuns,
         executionMode: hermesExecutionMode,
@@ -1103,7 +1142,9 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
               ...(activeHermesProfile ? { 'X-Hermes-Profile': activeHermesProfile } : {}),
               // Always send repo owner/name when a repo is active so the
               // hermes-bridge can provide proper error messages even without a PAT.
-              ...(hermesExecutionMode === 'agent-loop' && activeRepo
+              // Both agent-loop AND acp need checkout context (acp most of all —
+              // it spawns its session cwd from these headers).
+              ...((hermesExecutionMode === 'agent-loop' || hermesExecutionMode === 'acp') && activeRepo
                 ? {
                     'X-Hermes-Repo-Owner': activeRepo.owner,
                     'X-Hermes-Repo-Name': activeRepo.name,
@@ -1113,9 +1154,12 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
               // SECURITY: X-Hermes-Github-PAT is forwarded to the Hermes bridge.
               // The bridge must treat this header as sensitive — never log it,
               // and clear it from memory immediately after use.
-              ...(hermesExecutionMode === 'agent-loop' && activeRepo && githubPAT ? {
+              ...((hermesExecutionMode === 'agent-loop' || hermesExecutionMode === 'acp') && activeRepo && githubPAT ? {
                 'X-Hermes-Github-PAT': githubPAT,
               } : {}),
+              ...(resolvedLocalRepoPath ? { 'X-Hermes-Worktree': '1' } : {}),
+              ...bridgeRepoRootHeaders(resolvedLocalRepoPath ?? undefined),
+              ...{ 'X-Hermes-Conversation-Id': effectiveConversationId },
             }
           : undefined,
       });
@@ -1138,6 +1182,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
     requestTimeout = setTimeout(() => {
       if (!disconnect.isDisconnected()) {
         logger.warn('[chat] Request timeout — aborting after 5 minutes');
+        requestTimedOut = true;
         abortController.abort();
       }
     }, 5 * 60 * 1000);
@@ -1217,6 +1262,13 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
       getErrorMessage: (error: unknown) => {
         const msg = error instanceof Error ? error.message : String(error);
         logger.error(`[chat] Stream error: ${msg}`);
+        // Post-headers failures previously vanished: the stream just ended
+        // and the in-flight tool call never got a result. Emit an error part
+        // so the client renders the failure instead of a hung tool card.
+        emitToolEvent({
+          type: 'error',
+          message: requestTimedOut ? `Request timed out after 5 minutes: ${msg}` : msg,
+        });
         closeStreamData();
         return msg;
       },
@@ -1227,6 +1279,11 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
     }
 
     if ((disconnect.isDisconnected() || abortController.signal.aborted) && isAbortLikeError(err)) {
+      // Timeouts abort the signal too — log them distinctly instead of
+      // masquerading as a clean client abort.
+      if (requestTimedOut && !disconnect.isDisconnected()) {
+        logger.warn('[chat] Request timed out after 5 minutes (stream truncated, error part emitted)');
+      }
       return;
     }
 

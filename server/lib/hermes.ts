@@ -30,12 +30,44 @@ const activeAgentRuns = new Map<string, {
   useRuns?: boolean;
 }>();
 
-const HERMES_BRIDGE_ROOT = (process.env.HERMES_BRIDGE_URL || 'http://localhost:3002').replace(/\/v1\/?$/, '');
+const HERMES_BRIDGE_ROOT = (process.env.HERMES_BRIDGE_URL || 'http://127.0.0.1:3002').replace(/\/v1\/?$/, '');
 
 /** Usable Hermes bridge auth + provider pin headers.
  * Never send empty/placeholder Authorization — it confuses OpenRouter key
  * detection and can block CLI custom base_url demotion. Never pin openrouter
  * without a usable client key (stale picker defaults). */
+function hermesBridgeTokenHeader(): Record<string, string> {
+  const token = (process.env.HERMES_BRIDGE_TOKEN || '').trim();
+  return token ? { 'X-Hermes-Bridge-Token': token } : {};
+}
+
+/** True when the bridge URL is loopback. A server-local checkout path
+ * (X-Hermes-Repo-Root) is meaningless to a remote bridge host — sending it
+ * only produces confusing "missing checkout" errors there. */
+function hermesBridgeIsLoopback(): boolean {
+  try {
+    const host = new URL(OPENAI_COMPATIBLE.hermes).hostname.toLowerCase();
+    return host === 'localhost' || host === '::1' || host === '0:0:0:0:0:0:0:1' || host === '127.0.0.1' || host.startsWith('127.');
+  } catch {
+    return true;
+  }
+}
+
+const remoteRepoRootWarned = new Set<string>();
+/** Repo-root header entries: omitted (with a warn-once log) for remote
+ * bridges, where a :3001-local path cannot resolve. Owner/name/PAT still
+ * flow so the remote bridge can use its own managed clone. Exported for the
+ * streamText fallback path in routes/chat.ts. */
+export function bridgeRepoRootHeaders(repoRoot?: string | null): Record<string, string> {
+  if (!repoRoot) return {};
+  if (hermesBridgeIsLoopback()) return { 'X-Hermes-Repo-Root': repoRoot };
+  if (!remoteRepoRootWarned.has(repoRoot)) {
+    remoteRepoRootWarned.add(repoRoot);
+    logger.warn(`[chat] Bridge is remote (${OPENAI_COMPATIBLE.hermes}) — omitting server-local X-Hermes-Repo-Root; relying on repo owner/name`);
+  }
+  return {};
+}
+
 function hermesBridgeAuthHeaders(
   apiKey: string | undefined | null,
   hermesProvider?: string | null,
@@ -53,6 +85,7 @@ function hermesBridgeAuthHeaders(
   return {
     ...(hermesAuthUsable ? { Authorization: `Bearer ${hermesAuthKey}` } : {}),
     ...(hermesProviderPin ? { 'X-Hermes-Provider': hermesProviderPin } : {}),
+    ...hermesBridgeTokenHeader(),
   };
 }
 
@@ -60,7 +93,7 @@ async function stopHermesGatewayRun(conversationId: string): Promise<void> {
   try {
     await fetch(`${HERMES_BRIDGE_ROOT}/v1/runs/cancel`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...hermesBridgeTokenHeader() },
       body: JSON.stringify({ conversation_id: conversationId }),
     });
   } catch (error) {
@@ -703,7 +736,7 @@ export async function proxyHermesAgentLoopToDataStream(input: {
           : {}),
         ...(input.githubPAT ? { 'X-Hermes-Github-PAT': input.githubPAT } : {}),
         ...(input.hermesWorktree ? { 'X-Hermes-Worktree': '1' } : {}),
-        ...(input.repoRoot ? { 'X-Hermes-Repo-Root': input.repoRoot } : {}),
+        ...bridgeRepoRootHeaders(input.repoRoot),
         ...(input.hermesMiniMaxKey ? { 'X-Hermes-Minimax-Key': input.hermesMiniMaxKey } : {}),
         ...(input.conversationId ? { 'X-Hermes-Conversation-Id': input.conversationId } : {}),
       },
@@ -1012,6 +1045,27 @@ export async function proxyHermesLoopToDataStream(input: {
     abortController.abort();
   });
 
+  // Register loop runs so UI Stop (cancelHermesRun) can abort them — like
+  // agent-loop runs. A superseding run for the same conversation aborts the
+  // prior one. Unregistered on every exit path below.
+  if (input.conversationId) {
+    const prior = activeAgentRuns.get(input.conversationId);
+    if (prior) {
+      prior.controller.abort();
+    }
+    activeAgentRuns.set(input.conversationId, {
+      controller: abortController,
+      startedAt: Date.now(),
+      text: '',
+      useRuns: false,
+    });
+  }
+  const unregisterLoopRun = () => {
+    if (input.conversationId && activeAgentRuns.get(input.conversationId)?.controller === abortController) {
+      activeAgentRuns.delete(input.conversationId);
+    }
+  };
+
   const lastUserMessage = [...(input.messages as Array<{ role?: string; content?: unknown }>)]
     .reverse()
     .find((m) => m?.role === 'user');
@@ -1041,7 +1095,7 @@ export async function proxyHermesLoopToDataStream(input: {
 
   try {
     for (let iteration = 1; iteration <= maxIterations; iteration++) {
-      if (abortController.signal.aborted) return;
+      if (abortController.signal.aborted) { unregisterLoopRun(); return; }
       if (deadline && Date.now() >= deadline) {
         stopReason = 'time-budget';
         break;
@@ -1071,7 +1125,7 @@ export async function proxyHermesLoopToDataStream(input: {
             : {}),
           ...(input.githubPAT ? { 'X-Hermes-Github-PAT': input.githubPAT } : {}),
           ...(input.hermesWorktree ? { 'X-Hermes-Worktree': '1' } : {}),
-          ...(input.repoRoot ? { 'X-Hermes-Repo-Root': input.repoRoot } : {}),
+          ...bridgeRepoRootHeaders(input.repoRoot),
           ...(input.hermesMiniMaxKey ? { 'X-Hermes-Minimax-Key': input.hermesMiniMaxKey } : {}),
           ...(input.conversationId ? { 'X-Hermes-Conversation-Id': input.conversationId } : {}),
         },
@@ -1115,7 +1169,7 @@ export async function proxyHermesLoopToDataStream(input: {
       logger.info(
         `[chat] Hermes loop iteration ${iteration} agent pass finished in ${Date.now() - startedAt}ms. chars=${iterationText.length}`,
       );
-      if (abortController.signal.aborted || input.res.writableEnded) return;
+      if (abortController.signal.aborted || input.res.writableEnded) { unregisterLoopRun(); return; }
 
       await emitLoopStatus({ phase: 'judge', iteration, maxIterations });
       const verdict = await judgeLoopIteration({
@@ -1165,6 +1219,7 @@ export async function proxyHermesLoopToDataStream(input: {
     }
   } catch (error) {
     if (disconnect.isDisconnected() && isAbortLikeError(error)) {
+      unregisterLoopRun();
       return;
     }
     finalPhase = 'error';
@@ -1174,8 +1229,10 @@ export async function proxyHermesLoopToDataStream(input: {
       await writePart(formatDataStreamPart('error', `Loop mode stopped: ${stopReason}`));
     }
   }
+  unregisterLoopRun();
 
   if (input.res.writableEnded || disconnect.isDisconnected()) {
+    unregisterLoopRun();
     return;
   }
 
@@ -1192,6 +1249,7 @@ export async function proxyHermesLoopToDataStream(input: {
     finishReason: 'stop',
     usage: { promptTokens: 0, completionTokens: 0 },
   }));
+  unregisterLoopRun();
   input.res.end();
 }
 
@@ -1205,6 +1263,13 @@ export async function proxyHermesSwarmToDataStream(input: {
   topP?: number;
   maxTokens?: number;
   hermesToolsets?: string | null;
+  hermesProvider?: string | null;
+  repoEditIntent?: boolean;
+  hermesWorktree?: boolean;
+  repoRoot?: string;
+  hermesMiniMaxKey?: string;
+  reasoningEffort?: string;
+  planMode?: boolean;
   activeRepo?: { owner?: string; name?: string } | null;
   githubPAT?: string;
   repoFileTree?: string[];
@@ -1224,6 +1289,26 @@ export async function proxyHermesSwarmToDataStream(input: {
     abortController.abort();
   });
 
+  // Register swarm runs so UI Stop (cancelHermesRun) can abort them — like
+  // agent-loop runs. Unregistered in the finally below.
+  if (input.conversationId) {
+    const prior = activeAgentRuns.get(input.conversationId);
+    if (prior) {
+      prior.controller.abort();
+    }
+    activeAgentRuns.set(input.conversationId, {
+      controller: abortController,
+      startedAt: Date.now(),
+      text: '',
+      useRuns: false,
+    });
+  }
+  const unregisterSwarmRun = () => {
+    if (input.conversationId && activeAgentRuns.get(input.conversationId)?.controller === abortController) {
+      activeAgentRuns.delete(input.conversationId);
+    }
+  };
+
   let bridgeResponse: Response;
   try {
     logger.info(
@@ -1233,7 +1318,7 @@ export async function proxyHermesSwarmToDataStream(input: {
       method: 'POST',
       headers: {
         // Same empty-key hygiene as agent-loop (no placeholder Bearer).
-        ...hermesBridgeAuthHeaders(input.apiKey),
+        ...hermesBridgeAuthHeaders(input.apiKey, input.hermesProvider),
         'Content-Type': 'application/json',
         ...(input.hermesToolsets ? { 'X-Hermes-Toolsets': input.hermesToolsets } : {}),
         'X-Hermes-Execution-Mode': 'swarm',
@@ -1242,9 +1327,13 @@ export async function proxyHermesSwarmToDataStream(input: {
           ? {
               'X-Hermes-Repo-Owner': input.activeRepo.owner,
               'X-Hermes-Repo-Name': input.activeRepo.name,
+              'X-Hermes-Repo-Edit-Intent': input.repoEditIntent ? '1' : '0',
             }
           : {}),
         ...(input.githubPAT ? { 'X-Hermes-Github-PAT': input.githubPAT } : {}),
+        ...(input.hermesWorktree ? { 'X-Hermes-Worktree': '1' } : {}),
+        ...bridgeRepoRootHeaders(input.repoRoot),
+        ...(input.hermesMiniMaxKey ? { 'X-Hermes-Minimax-Key': input.hermesMiniMaxKey } : {}),
         ...(input.conversationId ? { 'X-Hermes-Conversation-Id': input.conversationId } : {}),
       },
       body: JSON.stringify({
@@ -1254,13 +1343,19 @@ export async function proxyHermesSwarmToDataStream(input: {
         top_p: input.topP ?? 0.9,
         max_tokens: input.maxTokens ?? 32768,
         stream: true,
+        ...(input.planMode ? { plan_mode: true } : {}),
         ...(input.repoFileTree && input.repoFileTree.length > 0
           ? { repo_file_tree: input.repoFileTree }
           : {}),
         ...(input.customTools && input.customTools.length > 0
-          ? { custom_tools: input.customTools }
+          ? {
+              custom_tools: input.planMode
+                ? filterReadOnlyCustomTools(input.customTools)
+                : input.customTools,
+            }
           : {}),
         ...(input.conversationId ? { conversation_id: input.conversationId } : {}),
+        ...(input.reasoningEffort ? { reasoning_effort: input.reasoningEffort } : {}),
       }),
       signal: abortController.signal,
     }, abortController.signal);
@@ -1268,6 +1363,7 @@ export async function proxyHermesSwarmToDataStream(input: {
       `[chat] Hermes swarm bridge headers received in ${Date.now() - startedAt}ms. status=${bridgeResponse.status}`,
     );
   } catch (error) {
+    unregisterSwarmRun();
     if (disconnect.isDisconnected() && isAbortLikeError(error)) {
       return;
     }
@@ -1278,6 +1374,7 @@ export async function proxyHermesSwarmToDataStream(input: {
   }
 
   if (!bridgeResponse.ok) {
+    unregisterSwarmRun();
     const errorText = await bridgeResponse.text().catch(() => '');
     throw createUpstreamHttpError(
       errorText || `Hermes bridge swarm error (${bridgeResponse.status})`,
@@ -1286,25 +1383,29 @@ export async function proxyHermesSwarmToDataStream(input: {
     );
   }
 
-  await proxySseToDataStream({
-    req: input.req,
-    res: input.res,
-    upstreamResponse: bridgeResponse,
-    corsHeaders: buildCorsHeaders(input.req.headers.origin),
-    normalizePayload: normalizeHermesAgentLoopPayload,
-    modelName: input.model,
-    onFirstEvent: (kind) => {
-      if (firstEventLogged) {
-        return;
-      }
-      firstEventLogged = true;
-      logger.info(
-        `[chat] Hermes swarm first ${kind} event emitted in ${Date.now() - startedAt}ms. model=${input.model}`,
-      );
-    },
-    emptyTextFallback:
-      'Hermes swarm returned an empty response. Check hermes-bridge logs.',
-  });
+  try {
+    await proxySseToDataStream({
+      req: input.req,
+      res: input.res,
+      upstreamResponse: bridgeResponse,
+      corsHeaders: buildCorsHeaders(input.req.headers.origin),
+      normalizePayload: normalizeHermesAgentLoopPayload,
+      modelName: input.model,
+      onFirstEvent: (kind) => {
+        if (firstEventLogged) {
+          return;
+        }
+        firstEventLogged = true;
+        logger.info(
+          `[chat] Hermes swarm first ${kind} event emitted in ${Date.now() - startedAt}ms. model=${input.model}`,
+        );
+      },
+      emptyTextFallback:
+        'Hermes swarm returned an empty response. Check hermes-bridge logs.',
+    });
+  } finally {
+    unregisterSwarmRun();
+  }
 }
 
 // ─── SSE Resume (Feature 8) ──────────────────────────────────────────────────

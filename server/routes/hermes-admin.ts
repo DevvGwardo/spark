@@ -8,7 +8,7 @@ import { getProfileFromRequest } from '../lib/hermes-profiles';
 // Admin/health endpoints live at the bridge root, not under /v1 (which only
 // serves OpenAI-compatible chat). Strip a trailing /v1 so these proxies work
 // whether HERMES_BRIDGE_URL is configured with or without it.
-const HERMES_BRIDGE_URL = (process.env.HERMES_BRIDGE_URL || 'http://localhost:3002').replace(/\/v1\/?$/, '');
+const HERMES_BRIDGE_URL = (process.env.HERMES_BRIDGE_URL || 'http://127.0.0.1:3002').replace(/\/v1\/?$/, '');
 
 /** Paths that mutate Hermes home / run installers — local UI + tunnel only. */
 const DESTRUCTIVE_HERMES_OPS = new Set([

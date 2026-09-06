@@ -17,8 +17,6 @@ import { describe, expect, it } from 'vitest'
 
 type ParseFn = (raw: string) => unknown
 type CaptureResult = { kind: 'capture'; text: string }
-type ChatResult = { kind: 'chat'; id: string }
-type SkillResult = { kind: 'skill'; name: string }
 type OAuthResult = { kind: 'oauth'; code?: string; state?: string }
 
 // ─── Contract probe (runtime; backend may land before/after this file) ───────

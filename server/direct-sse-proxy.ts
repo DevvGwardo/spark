@@ -189,7 +189,16 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
     try {
       normalized = input.normalizePayload(payload);
     } catch (err) {
-      logger.error(`[sse-proxy] Failed to normalize payload: ${err instanceof Error ? err.message : err}`);
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error(`[sse-proxy] Failed to normalize payload: ${message}`);
+      // Don't swallow upstream errors mid-stream — the client would see a
+      // stream that ends "successfully" with a hung tool call. Surface it.
+      if (canWrite()) {
+        await writeDataStreamChunk(
+          input.res,
+          formatDataStreamPart('error', `Upstream error: ${message.slice(0, 500)}`),
+        );
+      }
       return;
     }
     if (!normalized) {
@@ -328,11 +337,18 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
     // Surface activity-timeout errors to the client before re-throwing.
     if (error instanceof Error && error.message === 'Upstream activity timeout') {
       try {
-        await writeDataStreamChunk(
-          input.res,
-          formatDataStreamPart('error', 'Upstream provider stopped sending data (activity timeout).'),
-        );
-        input.res.end();
+        if (canWrite()) {
+          await writeDataStreamChunk(
+            input.res,
+            formatDataStreamPart('error', 'Upstream provider stopped sending data (activity timeout).'),
+          );
+        }
+        // Only end responses we own — loop mode pipelines multiple upstream
+        // streams into one shared response (manageResponse: false) and an
+        // end here permanently kills the whole loop stream.
+        if (manageResponse && !input.res.writableEnded) {
+          input.res.end();
+        }
       } catch {
         // Response may already be closed.
       }
@@ -363,15 +379,20 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
   if (toolCallAccumulator.size > 0 && canWrite()) {
     for (const call of toolCallAccumulator.values()) {
       let args: Record<string, unknown> = {};
+      let argsError: string | null = null;
       try {
         const parsed = JSON.parse(call.argsBuffer || '{}');
         if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
           args = parsed as Record<string, unknown>;
         }
       } catch {
-        // Unparsable args — forward an empty object; the client renders the
-        // streaming deltas it already received.
-        args = {};
+        // Don't forward empty args silently — the client would render/execute
+        // a tool call with no arguments while the real args are lost. Emit an
+        // error part naming the call plus the raw buffer excerpt for debugging.
+        argsError = `Tool "${call.name}" sent unparsable arguments (${call.argsBuffer.length} chars). Raw excerpt: ${call.argsBuffer.slice(0, 200)}`;
+      }
+      if (argsError) {
+        await writeDataStreamChunk(input.res, formatDataStreamPart('error', argsError));
       }
       await writeDataStreamChunk(
         input.res,

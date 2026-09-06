@@ -31,7 +31,9 @@ async function readStream(stream: ReadableStream<Uint8Array>) {
 
 describe('provider-config', () => {
   it('keeps Hermes pointed at the local bridge default port', () => {
-    expect(OPENAI_COMPATIBLE.hermes).toBe(process.env.HERMES_BRIDGE_URL || 'http://localhost:3002/v1')
+    // IPv4 loopback (not localhost): the bridge binds 127.0.0.1 and
+    // IPv6-first resolvers can map localhost to ::1 → ECONNREFUSED.
+    expect(OPENAI_COMPATIBLE.hermes).toBe(process.env.HERMES_BRIDGE_URL || 'http://127.0.0.1:3002/v1')
     expect(MODEL_DISCOVERY_URLS.hermes).toBe(OPENAI_COMPATIBLE.hermes)
   })
 

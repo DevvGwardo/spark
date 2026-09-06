@@ -202,7 +202,7 @@ export const OPENAI_COMPATIBLE: Record<string, string> = {
   openrouter: 'https://openrouter.ai/api/v1',
   sambanova: 'https://api.sambanova.ai/v1',
   'z-ai': 'https://open.bigmodel.cn/api/paas/v4',
-  hermes: process.env.HERMES_BRIDGE_URL || 'http://localhost:3002/v1',
+  hermes: process.env.HERMES_BRIDGE_URL || 'http://127.0.0.1:3002/v1',
 };
 
 export const ANTHROPIC_COMPATIBLE: Record<string, string> = {

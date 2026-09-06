@@ -63,7 +63,7 @@ interface CardLike {
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-const HERMES_BRIDGE_BASE = process.env.HERMES_BRIDGE_URL || 'http://localhost:3002/v1';
+const HERMES_BRIDGE_BASE = process.env.HERMES_BRIDGE_URL || 'http://127.0.0.1:3002/v1';
 
 const PLANNER_SYSTEM_PROMPT = `You are a task decomposition planner for a multi-agent team.
 Given a task description, break it down into 2-4 well-defined subtasks that can be worked on independently.
