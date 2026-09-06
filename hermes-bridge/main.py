@@ -28,6 +28,7 @@ from bridge_events import (
 )
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from mcp_local_extensions import local_extension_tools
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 
@@ -4371,6 +4372,11 @@ def _single_message_sse(model: str, text: str) -> StreamingResponse:
 # Friendly display names for tool activity in the chat stream
 _TOOL_DISPLAY_NAMES: dict[str, str] = {
     "web_search": "Searching the web",
+    "search": "Searching",
+    "search_files": "Searching files",
+    "read": "Reading file",
+    "shell": "Running command",
+    "terminal": "Running command",
     "browse_url": "Reading webpage",
     "run_command": "Running command",
     "read_file": "Reading file",
@@ -4446,8 +4452,9 @@ def _format_tool_start_text(tool_name: str, tool_input: str) -> str:
         args = {}
 
     if tool_name in ("read_repo_file", "edit_repo_file", "create_repo_file",
-                      "delete_repo_file", "read_file", "write_file"):
-        path = args.get("path", "")
+                      "delete_repo_file", "read_file", "write_file",
+                      "read", "file"):
+        path = args.get("path", "") or args.get("file_path", "") or args.get("pattern", "")
         if path:
             summary = f"`{path}`"
     elif tool_name == "batch_edit_repo_files":
@@ -4461,11 +4468,15 @@ def _format_tool_start_text(tool_name: str, tool_input: str) -> str:
         query = args.get("query", "")
         if query:
             summary = f'"{query}"'
+    elif tool_name in ("search", "search_files"):
+        pattern = args.get("pattern", "") or args.get("query", "") or args.get("path", "")
+        if pattern:
+            summary = f'"{pattern}"'
     elif tool_name == "browse_url":
         url = args.get("url", "")
         if url:
             summary = f"`{url[:80]}{'…' if len(url) > 80 else ''}`"
-    elif tool_name == "run_command":
+    elif tool_name in ("run_command", "terminal", "shell"):
         cmd = args.get("command", "")
         if cmd:
             summary = f"`{cmd[:80]}{'…' if len(cmd) > 80 else ''}`"
@@ -5724,6 +5735,8 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
             )
             if custom_tools:
                 print(f"[hermes-bridge] Received {len(custom_tools)} custom MCP tool(s)", flush=True)
+            # Local .mcpb extensions appear as Hermes tools (fail-soft; user tools first).
+            custom_tools = custom_tools + local_extension_tools()
             # Reasoning effort from the CloudChat Effort slider (Faster ↔ Smarter)
             reasoning_effort_raw = (body.model_extra or {}).get("reasoning_effort")
             reasoning_effort = (
@@ -6202,21 +6215,26 @@ async def _acp_reaper_loop() -> None:
 async def acp_approval_route(approval_id: str, body: dict = None):
     """Resolve a pending ACP permission request with the user's decision.
 
-    Body: ``{"option_id": "allow_once" | "allow_session" | "allow_always" | "deny"}``
+    Body: ``{"option_id": "allow_once" | "allow_session" | "allow_always" | "deny", "reason": optional}``
     Mirrors the UI's once/session/always scopes; the hermes ACP adapter maps
-    these onto its own approval semantics.
+    these onto its own approval semantics. ``reason`` (denial rationale) is
+    logged for audit — the ACP outcome channel carries no free text.
     """
     try:
         import acp_transport
 
         option_id = ""
+        reason = ""
         if isinstance(body, dict):
             option_id = str(body.get("option_id") or "").strip()
+            reason = str(body.get("reason") or "").strip()[:500]
         if not option_id:
             return JSONResponse(status_code=400, content={"error": {"message": "option_id is required"}})
         delivered = await acp_transport.resolve_approval(approval_id, option_id)
         if not delivered:
-            return JSONResponse(status_code=404, content={"error": {"message": f"Unknown or expired approval: {approval_id}"}})
+            return JSONResponse(status_code=404, content={"error": {"message": f"Unknown or expired approval: {approval_id} (it may have timed out after the approval window)"}})
+        if reason:
+            print(f"[hermes-bridge] ACP approval {approval_id} resolved {option_id}: {reason}", flush=True)
         return {"ok": True, "approval_id": approval_id, "option_id": option_id}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": {"message": str(e)}})
@@ -6316,6 +6334,32 @@ def _resolve_acp_repo_root(
         if os.path.isdir(candidate):
             return candidate
     return ""
+
+
+def _cwd_missing_warning(
+    *,
+    resolved_repo_root: str = "",
+    repo_owner: str = "",
+    repo_name: str = "",
+    repo_root_header: str = "",
+    repo_file_tree: Optional[list] = None,
+) -> Optional[str]:
+    """Transcript warning when a repo turn has no checkout.
+
+    Returns the markdown warning when the turn carries repo signal (owner /
+    name, explicit root header, or file tree) but nothing resolved to a real
+    checkout — the session would otherwise run in an unrelated cwd and fail
+    every relative read silently. None for clean or non-repo turns.
+    """
+    tree = [p for p in (repo_file_tree or []) if isinstance(p, str) and p.strip()]
+    if resolved_repo_root or not ((repo_owner or "").strip() or (repo_name or "").strip() or (repo_root_header or "").strip() or tree):
+        return None
+    label = f"{(repo_owner or '').strip()}/{(repo_name or '').strip()}".strip("/")
+    return (
+        "\n\n> ⚠️ **No local checkout found**"
+        f"{f' for `{label}`' if label else ''} — running without repo context, "
+        "so file reads may fail. Attach the repo or check the managed clones.\n\n"
+    )
 
 
 def _build_acp_repo_context_prefix(
@@ -6428,9 +6472,25 @@ async def _acp_chat_completions_impl(request: Request, body: ChatCompletionReque
         cwd = resolved_repo_root or os.getcwd()
     except OSError:
         cwd = resolved_repo_root or os.path.expanduser("~")
+    # Loud failure instead of blind probing: when the turn carries repo
+    # signal (owner/name, explicit root, or file tree) but nothing resolved
+    # to a checkout, the session runs in an unrelated cwd and every relative
+    # read/search misses. Warn visibly in the transcript (emitted in
+    # event_stream below, before any agent output).
+    repo_file_tree_raw = (body.model_extra or {}).get("repo_file_tree")
+    _repo_tree = [p for p in (repo_file_tree_raw or []) if isinstance(p, str) and p.strip()] if isinstance(repo_file_tree_raw, list) else []
+    cwd_warning = _cwd_missing_warning(
+        resolved_repo_root=resolved_repo_root,
+        repo_owner=repo_owner,
+        repo_name=repo_name,
+        repo_root_header=repo_root_header,
+        repo_file_tree=_repo_tree,
+    )
     # Plan mode: passed to hermes-acp as an env hint + prompt suffix (the real
     # agent owns its tool registration; this is best-effort enforcement).
     plan_mode = bool((body.model_extra or {}).get("plan_mode"))
+    edit_mode_raw = (body.model_extra or {}).get("edit_mode")
+    edit_mode = edit_mode_raw if isinstance(edit_mode_raw, str) else None
 
     request_messages = _normalize_chat_messages(body.messages, model=body.model, strip_images=True)
     last_user_idx = None
@@ -6447,7 +6507,6 @@ async def _acp_chat_completions_impl(request: Request, body: ChatCompletionReque
     # the hermes-acp session server-side), so repo signals that the server
     # sent as headers/body must be inlined here — otherwise the model starts
     # repo turns with no checkout path and no file list.
-    repo_file_tree_raw = (body.model_extra or {}).get("repo_file_tree")
     repo_context_prefix = _build_acp_repo_context_prefix(
         repo_owner=repo_owner,
         repo_name=repo_name,
@@ -6455,7 +6514,7 @@ async def _acp_chat_completions_impl(request: Request, body: ChatCompletionReque
         # checkout the session actually runs in. Non-repo turns still get ""
         # (no owner/name/root/tree), so they stay byte-identical to before.
         repo_root=resolved_repo_root,
-        repo_file_tree=repo_file_tree_raw if isinstance(repo_file_tree_raw, list) else None,
+        repo_file_tree=_repo_tree or None,
     )
     if repo_context_prefix and user_message.strip():
         user_message = f"{repo_context_prefix}\n\n{user_message}"
@@ -6511,14 +6570,14 @@ async def _acp_chat_completions_impl(request: Request, body: ChatCompletionReque
         _append_session_chat_chunk(session_id, "assistant", _format_tool_start_text(tool_name, tool_input))
 
     def on_tool_end(tool_name: str, tool_input: str, tool_output: str):
-        _qput(("tool_end", tool_name, tool_input, tool_output))
-        _append_session_chat_chunk(session_id, "assistant", _format_tool_end_text(tool_name, tool_output))
-
         # Mirror the agent-loop cap: bound what enters the event queue (SSE
         # tool_activity) and the session log — uncapped ACP output (full file
         # reads) bloated both.
         cap = 4000 if tool_name in ("todo", "delegate_task", "process", "terminal") else 500
         tool_output = (tool_output or "")[:cap]
+        _qput(("tool_end", tool_name, tool_input, tool_output))
+        _append_session_chat_chunk(session_id, "assistant", _format_tool_end_text(tool_name, tool_output))
+
     def on_reasoning(text: str):
         chunk_size = _get_stream_chunk_size(text)
         for i in range(0, len(text), chunk_size):
@@ -6562,6 +6621,7 @@ async def _acp_chat_completions_impl(request: Request, body: ChatCompletionReque
                 provider=provider,
                 model=body.model,
                 plan_mode=plan_mode,
+                edit_mode=edit_mode,
             )
             print(f"[hermes-bridge] ACP conversation completed. conversation={workspace_id}", flush=True)
             _finalize_session(True)
@@ -6585,6 +6645,9 @@ async def _acp_chat_completions_impl(request: Request, body: ChatCompletionReque
                 started_at=started_at,
             ),
         }))
+        if cwd_warning:
+            _append_session_chat_chunk(session_id, "assistant", cwd_warning)
+            yield sse_chunk(make_delta_chunk(chunk_id, body.model, {"content": cwd_warning}))
 
         agent_task = asyncio.ensure_future(asyncio.to_thread(_run_acp_sync))
         event_count = 0
@@ -6700,7 +6763,9 @@ async def swarm_endpoint(request: Request, body: SwarmRequest):
     workspace_id = _resolve_workspace_id(request, body)
 
     extra = body.model_extra or {}
-    custom_tools = [t for t in extra.get("custom_tools", []) if isinstance(t, dict)]
+    custom_tools = [t for t in extra.get("custom_tools") or [] if isinstance(t, dict)]
+    # Local .mcpb extensions appear as Hermes tools (fail-soft; user tools first).
+    custom_tools = custom_tools + local_extension_tools()
     repo_file_tree_raw = extra.get("repo_file_tree", [])
     repo_file_tree = [p for p in repo_file_tree_raw if isinstance(p, str) and p.strip()] if isinstance(repo_file_tree_raw, list) else []
 

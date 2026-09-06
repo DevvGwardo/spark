@@ -88,6 +88,28 @@ def _block_text(block: Any) -> str:
     """Extract text from an ACP content block (any nesting level)."""
     if block is None:
         return ""
+    # Plain strings (markdown plans, terminal output) carry text directly.
+    if isinstance(block, str):
+        return block
+    # Dict-shaped blocks (raw JSON content) — pull known text keys.
+    if isinstance(block, dict):
+        for key in ("text", "output", "content", "message", "error"):
+            value = block.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+        # Edit diffs: surface old/new excerpts so approvals show the change.
+        if block.get("type") == "diff" or "old_string" in block or "new_string" in block:
+            parts = []
+            for key in ("path", "old_string", "new_string", "diff"):
+                value = block.get(key)
+                if isinstance(value, str) and value.strip():
+                    parts.append(value.strip()[:2000])
+            if parts:
+                return "\n".join(parts)
+        inner = block.get("content")
+        if inner is not None:
+            return _block_text(inner)
+        return ""
     # A bare list at any level (e.g. ``update.content`` itself) is a container
     # of blocks — flatten it before looking at ``type``/``content`` attributes.
     if isinstance(block, (list, tuple)):
@@ -97,10 +119,33 @@ def _block_text(block: Any) -> str:
     btype = getattr(block, "type", None)
     if btype == "text":
         return str(getattr(block, "text", "") or "")
+    if btype == "diff":
+        # Edit approvals send the change as a diff block with no text child —
+        # surface path + old/new excerpts instead of an empty string.
+        parts = []
+        for attr in ("path", "old_string", "new_string", "diff"):
+            value = getattr(block, attr, None)
+            if isinstance(value, str) and value.strip():
+                parts.append(value.strip()[:2000])
+        if parts:
+            return "\n".join(parts)
+    if btype in ("resource", "terminal"):
+        # Search hits and terminal output arrive as resource/terminal blocks;
+        # previously these fell through to "" so searches "returned nothing".
+        for attr in ("text", "output", "content", "uri", "path"):
+            value = getattr(block, attr, None)
+            if isinstance(value, str) and value.strip():
+                return value
+            if value is not None and not isinstance(value, str):
+                nested = _block_text(value)
+                if nested:
+                    return nested
     inner = getattr(block, "content", None)
     if isinstance(inner, (list, tuple)):
         parts = [_block_text(b) for b in inner]
         return "\n".join(p for p in parts if p)
+    if isinstance(inner, str) and inner.strip():
+        return inner
     if inner is not None and not isinstance(inner, str):
         return _block_text(inner)
     return ""
@@ -153,6 +198,14 @@ def _tool_input_for_display(update: Any) -> str:
             line = getattr(first, "line", None)
             if isinstance(line, int) and line > 0:
                 payload["line"] = line
+            # search_files starts carry the query in the title
+            # ("search: {pattern}") while locations only hold the path —
+            # without this the pattern is lost and search renders as `?`.
+            title = str(getattr(update, "title", "") or "")
+            if title.lower().startswith("search:"):
+                pattern = title.split(":", 1)[1].strip()
+                if pattern:
+                    payload["pattern"] = pattern[:200]
             try:
                 return json.dumps(payload, ensure_ascii=False)
             except (TypeError, ValueError):
@@ -216,10 +269,15 @@ class BridgeAcpClient:
 
         approval_id = f"acp-{uuid.uuid4().hex[:16]}"
         options_clean = [
-            {"option_id": str(getattr(o, "option_id", "")), "name": str(getattr(o, "name", "") or getattr(o, "option_id", ""))}
+            {
+                "option_id": str(getattr(o, "option_id", "")),
+                "name": str(getattr(o, "name", "") or getattr(o, "option_id", "")),
+                "kind": str(getattr(o, "kind", "") or ""),
+            }
             for o in (options or [])
             if getattr(o, "option_id", None)
         ]
+        offered_ids = {o["option_id"] for o in options_clean if o["option_id"]}
         title = str(getattr(tool_call, "title", "") or "tool")
         detail = _tool_input_for_display(tool_call) or title
 
@@ -244,12 +302,20 @@ class BridgeAcpClient:
         try:
             decision = await asyncio.wait_for(future, timeout=APPROVAL_TIMEOUT_SECONDS)
         except asyncio.TimeoutError:
-            decision = {"option_id": "deny"}
+            # Distinct from an explicit deny so the agent/UI can surface
+            # "approval timed out" instead of a misleading rejection. The
+            # reference adapter returns "timeout" here (not "deny").
+            decision = {"option_id": "timed_out"}
         finally:
             self._approvals.pop(approval_id, None)
 
         option_id = str(decision.get("option_id") or "deny")
-        if option_id in ("deny", "deny_always") or option_id == "":
+        if option_id in ("deny", "deny_always", "timed_out") or option_id == "":
+            return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
+        if option_id not in offered_ids:
+            # Stale or forged option ids must not auto-allow — the reference
+            # adapter denies anything outside the offered set.
+            logger.warning("acp approval %s: unknown option_id %r (offered=%r) — denying", approval_id, option_id, sorted(offered_ids))
             return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
         return RequestPermissionResponse(outcome=AllowedOutcome(outcome="selected", option_id=option_id))
 
@@ -426,7 +492,7 @@ def _env_float(name: str, default: float) -> float:
     return value
 
 
-APPROVAL_TIMEOUT_SECONDS = _env_float("HERMES_ACP_APPROVAL_TIMEOUT", 3600)
+APPROVAL_TIMEOUT_SECONDS = _env_float("HERMES_ACP_APPROVAL_TIMEOUT", 60)
 IDLE_TIMEOUT_SECONDS = _env_float("HERMES_ACP_IDLE_TIMEOUT", 1800)
 PROMPT_TIMEOUT_SECONDS = _env_float("HERMES_ACP_PROMPT_TIMEOUT", 3600)
 
@@ -434,6 +500,25 @@ PROMPT_TIMEOUT_SECONDS = _env_float("HERMES_ACP_PROMPT_TIMEOUT", 3600)
 # before giving up, and the base backoff between attempts (doubles each time).
 ACP_SPAWN_MAX_ATTEMPTS = max(1, int(os.environ.get("HERMES_ACP_SPAWN_MAX_ATTEMPTS", "3")))
 ACP_SPAWN_BACKOFF_BASE_MS = max(0, int(os.environ.get("HERMES_ACP_SPAWN_BACKOFF_BASE_MS", "250")))
+
+# Edit-approval modes mirrored from hermes-agent's ACP adapter
+# (default=ask every edit, accept_edits=auto-allow workspace+/tmp edits,
+# dont_ask=auto-allow all but sensitive paths). Selected via
+# HERMES_ACP_EDIT_MODE or the per-request `edit_mode` body field; unknown
+# values fall back to "default" instead of failing the spawn.
+ACP_EDIT_MODES = frozenset({"default", "accept_edits", "dont_ask"})
+
+
+def _resolve_edit_mode(raw: Optional[str] = None) -> str:
+    """Resolve the ACP edit-approval mode: explicit value wins, else the
+    HERMES_ACP_EDIT_MODE env, else "default". Unknown values warn + fall back
+    (a typo must not break chat or silently escalate approvals)."""
+    candidate = (raw or "").strip() or os.environ.get("HERMES_ACP_EDIT_MODE", "").strip() or "default"
+    if candidate not in ACP_EDIT_MODES:
+        logger.warning("ignoring unknown ACP edit mode %r (using default)", raw if raw else candidate)
+        return "default"
+    return candidate
+
 
 # Client-controlled conversation ids must be scrubbed before they end up in a
 # filename (they can carry path separators / traversal sequences).
@@ -492,6 +577,20 @@ def _same_dir(a: str, b: str) -> bool:
         return (a or "") == (b or "")
 
 
+def _session_key(conversation_id: str, cwd: str) -> str:
+    """Registry key: conversation + normalized cwd.
+
+    One live hermes-acp session exists per (conversation, checkout) — a repo
+    switch spawns a second session instead of evicting the first, so neither
+    side loses its server-side history. The idle reaper bounds total handles.
+    """
+    try:
+        norm = os.path.normcase(os.path.realpath(cwd or "."))
+    except OSError:
+        norm = cwd or "."
+    return f"{conversation_id}\0{norm}"
+
+
 async def ensure_session(
     *,
     loop: asyncio.AbstractEventLoop,
@@ -501,8 +600,14 @@ async def ensure_session(
     provider: Optional[str] = None,
     model: Optional[str] = None,
     plan_mode: bool = False,
+    edit_mode: str = "default",
 ) -> _AcpHandle:
-    """Return a live ACP session for this conversation, spawning hermes-acp on first use.
+    """Return a live ACP session for this conversation + checkout, spawning hermes-acp on first use.
+
+    Sessions are keyed per (conversation, cwd): switching repos keeps both
+    sessions alive with their own server-side history instead of tearing one
+    down (a reused session rooted at the old checkout used to fail every
+    relative read). Idle handles are reaped after IDLE_TIMEOUT_SECONDS.
 
     Spawns are retried with backoff (each retry surfaces a ``stream_retry``
     SSE event); a respawn over a dead process also emits one ``stream_retry``
@@ -513,31 +618,16 @@ async def ensure_session(
     import acp
     from acp.schema import ClientCapabilities, Implementation
 
+    key = _session_key(conversation_id, cwd)
     async with _sessions_lock:
-        handle = _sessions.get(conversation_id)
+        handle = _sessions.get(key)
         if handle is not None and handle.proc.returncode is None:
-            if _same_dir(handle.cwd, cwd):
-                handle.touch()
-                return handle
-            # The conversation moved to a different checkout (repo switch) —
-            # a reused session would resolve relative reads/searches against
-            # the old cwd and fail every one. Tear down and respawn there.
-            _sessions.pop(conversation_id, None)
-            loop.create_task(_close_handle_quietly(handle))
-            handle = None
-            emit(
-                "stream_retry",
-                stream_retry_event(
-                    attempt=1,
-                    max_attempts=ACP_SPAWN_MAX_ATTEMPTS,
-                    reason="acp-transport-cwd-switch",
-                    delay_ms=0,
-                ),
-            )
+            handle.touch()
+            return handle
         if handle is not None:
             # The previous hermes-acp process died — drop the handle and
             # release its stderr log fd in the background before respawning.
-            _sessions.pop(conversation_id, None)
+            _sessions.pop(key, None)
             loop.create_task(_close_handle_quietly(handle))
             emit(
                 "stream_retry",
@@ -570,9 +660,10 @@ async def ensure_session(
                     provider=provider,
                     model=model,
                     plan_mode=plan_mode,
+                    edit_mode=edit_mode,
                     spawn_env=spawn_env,
                 )
-                _sessions[conversation_id] = handle
+                _sessions[key] = handle
                 logger.info(
                     "acp session %s ready for conversation %s (cwd=%s)",
                     handle.session_id,
@@ -611,6 +702,7 @@ async def _spawn_session(
     provider: Optional[str],
     model: Optional[str],
     plan_mode: bool,
+    edit_mode: str = "default",
     spawn_env: Optional[dict],
 ) -> _AcpHandle:
     """Spawn hermes-acp and initialize a session (single attempt; raises on failure)."""
@@ -621,12 +713,15 @@ async def _spawn_session(
     # Drain stderr to a per-conversation log file so a chatty agent can
     # never deadlock the stdio pipe, and failures are debuggable. The
     # conversation id is client-controlled — sanitize it before it goes
-    # into a filename.
+    # into a filename. Sessions are per (conversation, cwd), so mix the cwd
+    # into the name — otherwise two checkouts share one log file.
+    import hashlib
     import tempfile
 
+    cwd_tag = hashlib.md5(os.path.realpath(cwd or ".").encode()).hexdigest()[:8]
     stderr_path = os.path.join(
         tempfile.gettempdir(),
-        f"hermes-acp-{_safe_conversation_id(conversation_id)}.log",
+        f"hermes-acp-{_safe_conversation_id(conversation_id)}-{cwd_tag}.log",
     )
     stderr_file = None
     proc = None
@@ -673,6 +768,14 @@ async def _spawn_session(
                 await conn.set_session_model(model_id, session_id)
             except Exception as exc:
                 logger.warning("acp set_session_model(%s) failed: %s", model_id, exc)
+
+        if edit_mode and edit_mode != "default":
+            # hermes owns the policy; the bridge only selects the mode.
+            # Fail-soft: an unknown/rejected mode must not kill the spawn.
+            try:
+                await conn.set_session_mode(session_id, edit_mode)
+            except Exception as exc:
+                logger.warning("acp set_session_mode(%s) failed: %s", edit_mode, exc)
     except BaseException:
         # Setup failed partway — never leave an orphaned hermes-acp or a
         # leaked stderr log fd behind. Kill + reap, close the log, re-raise.
@@ -725,12 +828,14 @@ def run_prompt_blocking(
     model: Optional[str] = None,
     timeout: Optional[float] = None,
     plan_mode: bool = False,
+    edit_mode: Optional[str] = None,
 ) -> None:
     """Blocking bridge used from the worker thread (mirrors the agent-loop transport)."""
     import acp
     import inspect
 
     prompt_timeout = timeout or PROMPT_TIMEOUT_SECONDS
+    resolved_edit_mode = _resolve_edit_mode(edit_mode)
 
     async def _impl() -> None:
         handle = await ensure_session(
@@ -741,6 +846,7 @@ def run_prompt_blocking(
             provider=provider,
             model=model,
             plan_mode=plan_mode,
+            edit_mode=resolved_edit_mode,
         )
         # Mark the handle busy for the whole turn so the idle reaper never
         # SIGKILLs a session mid-prompt (a long stream can legitimately
@@ -776,7 +882,7 @@ def run_prompt_blocking(
             # down so stale notifications from this turn are dropped instead
             # of being repointed into the next request on this conversation.
             async with _sessions_lock:
-                _sessions.pop(conversation_id, None)
+                _sessions.pop(_session_key(conversation_id, cwd), None)
             await handle.close()
             raise TimeoutError(f"hermes-acp prompt timed out after {prompt_timeout:.0f}s") from None
         finally:

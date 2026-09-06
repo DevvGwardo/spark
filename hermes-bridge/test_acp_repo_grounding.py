@@ -240,7 +240,7 @@ class EnsureSessionCwdTests(_AcpStubMixin, unittest.TestCase):
 
     def test_same_cwd_reuses_without_spawning(self):
         handle = _make_live_handle("/repo/a")
-        at._sessions["c1"] = handle
+        at._sessions[at._session_key("c1", "/repo/a")] = handle
         emitted = []
         # _acp_command must NOT be reached on the reuse path.
         with mock.patch.object(
@@ -257,9 +257,12 @@ class EnsureSessionCwdTests(_AcpStubMixin, unittest.TestCase):
         self.assertIs(got, handle)
         self.assertEqual(emitted, [])
 
-    def test_changed_cwd_evicts_and_signals_retry(self):
+    def test_changed_cwd_keeps_old_session_and_spawns_new(self):
+        # Per-(conversation, cwd) sessions: a repo switch must NOT evict the
+        # first session (that wiped its server-side history). The old handle
+        # stays live under its own key; the new checkout spawns separately.
         handle = _make_live_handle("/repo/a")
-        at._sessions["c1"] = handle
+        at._sessions[at._session_key("c1", "/repo/a")] = handle
         emitted = []
 
         async def _noop_close(h):
@@ -277,10 +280,41 @@ class EnsureSessionCwdTests(_AcpStubMixin, unittest.TestCase):
                         emit=lambda *a: emitted.append(a),
                     )
                 )
-        self.assertNotIn("c1", at._sessions)
+        self.assertIs(at._sessions.get(at._session_key("c1", "/repo/a")), handle)
         retries = [p for (name, p) in emitted if name == "stream_retry"]
-        self.assertEqual(len(retries), 1)
-        self.assertEqual(retries[0]["reason"], "acp-transport-cwd-switch")
+        self.assertEqual(
+            [r["reason"] for r in retries],
+            [],
+            "no cwd-switch eviction/retry anymore — both sessions coexist",
+        )
+
+    def test_session_keys_distinguish_cwds(self):
+        self.assertNotEqual(at._session_key("c1", "/repo/a"), at._session_key("c1", "/repo/b"))
+        self.assertEqual(at._session_key("c1", "/repo/a"), at._session_key("c1", "/repo/a"))
+        self.assertNotEqual(at._session_key("c1", "/repo/a"), at._session_key("c2", "/repo/a"))
+
+
+class ResolveEditModeTests(unittest.TestCase):
+    def test_default_without_env_or_value(self):
+        with mock.patch.dict("os.environ", {}, clear=False):
+            import os
+
+            os.environ.pop("HERMES_ACP_EDIT_MODE", None)
+            self.assertEqual(at._resolve_edit_mode(), "default")
+            self.assertEqual(at._resolve_edit_mode(None), "default")
+
+    def test_explicit_value_wins(self):
+        self.assertEqual(at._resolve_edit_mode("accept_edits"), "accept_edits")
+        self.assertEqual(at._resolve_edit_mode("dont_ask"), "dont_ask")
+
+    def test_env_value_used_when_no_explicit(self):
+        with mock.patch.dict("os.environ", {"HERMES_ACP_EDIT_MODE": "accept_edits"}):
+            self.assertEqual(at._resolve_edit_mode(), "accept_edits")
+
+    def test_unknown_falls_back_to_default(self):
+        with mock.patch.dict("os.environ", {"HERMES_ACP_EDIT_MODE": "bogus"}):
+            self.assertEqual(at._resolve_edit_mode(), "default")
+        self.assertEqual(at._resolve_edit_mode("bogus"), "default")
 
 
 if __name__ == "__main__":

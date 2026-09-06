@@ -295,6 +295,143 @@ class ToolInputFromLocationsTests(unittest.TestCase):
             json.loads(at._tool_input_for_display(update)), {"command": "ls"}
         )
 
+    def test_search_title_pattern_preserved_from_locations(self):
+        # search_files starts carry the query in the title while locations
+        # only hold the path — the pattern must survive or search renders ?.
+        update = SimpleNamespace(
+            raw_input=None,
+            content=None,
+            title="search: useState",
+            locations=[SimpleNamespace(path="src", line=None)],
+        )
+        parsed = json.loads(at._tool_input_for_display(update))
+        self.assertEqual(parsed["path"], "src")
+        self.assertEqual(parsed["pattern"], "useState")
+
+
+class BlockTextTests(unittest.TestCase):
+    """Non-text ACP blocks must not silently vanish (search "returned
+    nothing" because resource/terminal payloads fell through to "")."""
+
+    def test_plain_string_passthrough(self):
+        self.assertEqual(at._block_text("hello"), "hello")
+
+    def test_dict_text_key(self):
+        self.assertEqual(at._block_text({"text": "hi"}), "hi")
+
+    def test_diff_block_surfaces_paths(self):
+        block = SimpleNamespace(
+            type="diff", path="src/a.ts", old_string="x", new_string="y"
+        )
+        text = at._block_text(block)
+        self.assertIn("src/a.ts", text)
+        self.assertIn("x", text)
+
+    def test_terminal_block_surfaces_output(self):
+        block = SimpleNamespace(type="terminal", output="ok\n")
+        self.assertEqual(at._block_text(block), "ok\n")
+
+    def test_resource_block_surfaces_text(self):
+        block = SimpleNamespace(type="resource", text="hit: foo.ts:3")
+        self.assertEqual(at._block_text(block), "hit: foo.ts:3")
+
+
+class ApprovalValidationTests(unittest.TestCase):
+    """Unknown option ids must deny (reference parity); timeouts stay
+    distinct from explicit denies so the UI can label them honestly.
+
+    Hermetic: stubs ``acp.schema`` in sys.modules so these tests don't
+    depend on the real SDK import (other suites pollute pydantic/acp)."""
+
+    def _client(self):
+        return at.BridgeAcpClient(emit=lambda *a: None, approvals={}, cwd="/tmp")
+
+    def _stub_acp_schema(self):
+        import sys
+        import types
+
+        class DeniedOutcome:
+            def __init__(self, outcome="cancelled"):
+                self.outcome = outcome
+
+        class AllowedOutcome:
+            def __init__(self, outcome="selected", option_id=""):
+                self.outcome = outcome
+                self.option_id = option_id
+
+        class RequestPermissionResponse:
+            def __init__(self, outcome=None):
+                self.outcome = outcome
+
+        schema = types.ModuleType("acp.schema")
+        schema.DeniedOutcome = DeniedOutcome
+        schema.AllowedOutcome = AllowedOutcome
+        schema.RequestPermissionResponse = RequestPermissionResponse
+        pkg = types.ModuleType("acp")
+        pkg.schema = schema
+        saved = {k: sys.modules.get(k) for k in ("acp", "acp.schema")}
+        sys.modules["acp"] = pkg
+        sys.modules["acp.schema"] = schema
+        return saved, DeniedOutcome, AllowedOutcome
+
+    def _restore_acp_schema(self, saved):
+        import sys
+
+        for key, mod in saved.items():
+            if mod is None:
+                sys.modules.pop(key, None)
+            else:
+                sys.modules[key] = mod
+
+    def _run_permission(self, options, tool_call, decision=None, timeout_flag=False):
+        saved, DeniedOutcome, AllowedOutcome = self._stub_acp_schema()
+        try:
+            client = self._client()
+
+            async def run():
+                async def fake_wait_for(fut, timeout=None, **kwargs):
+                    if timeout_flag:
+                        raise asyncio.TimeoutError()
+                    return decision
+
+                with mock.patch.object(asyncio, "wait_for", side_effect=fake_wait_for):
+                    return await client.request_permission(options, "sess", tool_call)
+
+            return asyncio.run(run())
+        finally:
+            self._restore_acp_schema(saved)
+
+    def test_unknown_option_id_denies(self):
+        from types import SimpleNamespace as NS
+
+        resp = self._run_permission(
+            [NS(option_id="allow_once", name="Allow")],
+            NS(title="terminal", kind="execute"),
+            decision={"option_id": "allow_always"},
+        )
+        self.assertEqual(type(resp.outcome).__name__, "DeniedOutcome")
+
+    def test_timeout_maps_to_denied_cancelled(self):
+        from types import SimpleNamespace as NS
+
+        resp = self._run_permission(
+            [NS(option_id="allow_once", name="Allow")],
+            NS(title="terminal", kind="execute"),
+            timeout_flag=True,
+        )
+        self.assertEqual(type(resp.outcome).__name__, "DeniedOutcome")
+        self.assertEqual(resp.outcome.outcome, "cancelled")
+
+    def test_offered_option_id_allows(self):
+        from types import SimpleNamespace as NS
+
+        resp = self._run_permission(
+            [NS(option_id="allow_once", name="Allow")],
+            NS(title="terminal", kind="execute"),
+            decision={"option_id": "allow_once"},
+        )
+        self.assertEqual(type(resp.outcome).__name__, "AllowedOutcome")
+
 
 if __name__ == "__main__":
     unittest.main()

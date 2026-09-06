@@ -276,3 +276,30 @@ def test_acp_tool_end_sse_output_mirrors_agent_loop_cap():
             f"ACP tool_activity output uncapped ({len(out)} chars; "
             "agent-loop caps at 500)"
         )
+
+
+# ── Missing-checkout warning (B3: loud failure, not blind probing) ───────────
+# A repo turn with no resolvable checkout must warn visibly instead of running
+# in an unrelated cwd where every relative read misses.
+
+def test_cwd_warning_fires_on_unresolved_repo_signal():
+    warning = main._cwd_missing_warning(
+        resolved_repo_root="",
+        repo_owner="DevvGwardo",
+        repo_name="grok-glm-flash",
+    )
+    assert warning is not None
+    assert "No local checkout found" in warning
+    assert "DevvGwardo/grok-glm-flash" in warning
+
+
+def test_cwd_warning_quiet_when_resolved_or_non_repo():
+    assert main._cwd_missing_warning(resolved_repo_root="/repo/a", repo_owner="o", repo_name="n") is None
+    assert main._cwd_missing_warning() is None
+    assert main._cwd_missing_warning(repo_owner="", repo_name="") is None
+
+
+def test_cwd_warning_fires_on_tree_only_signal():
+    warning = main._cwd_missing_warning(repo_file_tree=["src/a.ts"])
+    assert warning is not None
+    assert "No local checkout found" in warning
