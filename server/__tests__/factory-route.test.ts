@@ -1,12 +1,15 @@
 // @vitest-environment node
 import type { AddressInfo } from 'net'
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-// Factory routes persist jobs + enqueue agent tasks on disk. Point both at a
-// fresh tmp dir per test so we never touch the real ~/.cache or ~/.agent-tasks.
+// Factory routes persist jobs + enqueue agent tasks on disk. Point all
+// host-dependent paths (jobs dir, agent-tasks log, factory checkout,
+// kanban DB) at a fresh tmp dir per test so we never touch the real
+// ~/.cache, ~/.agent-tasks, ~/software-factory, or ~/.hermes/kanban.db.
 let tmpDir: string
 let jobsFile: string
 let tasksLog: string
@@ -47,6 +50,24 @@ describe('factory routes', () => {
     tasksLog = join(tmpDir, 'tasks.jsonl')
     process.env.FACTORY_JOBS_DIR = tmpDir
     process.env.AGENT_TASKS_DIR = tmpDir
+    // fake factory checkout: <tmp>/factory/package.json
+    const factoryDir = join(tmpDir, 'factory')
+    mkdirSync(factoryDir, { recursive: true })
+    writeFileSync(join(factoryDir, 'package.json'), JSON.stringify({ name: 'factory' }))
+    process.env.FACTORY_DIR = factoryDir
+    // seed a tiny kanban DB with one task per lane
+    const kanbanDb = join(tmpDir, 'kanban.db')
+    const db = new DatabaseSync(kanbanDb)
+    try {
+      db.exec('CREATE TABLE tasks (id TEXT PRIMARY KEY, status TEXT NOT NULL)')
+      const insert = db.prepare('INSERT INTO tasks (id, status) VALUES (?, ?)')
+      insert.run('t1', 'todo')
+      insert.run('t2', 'doing')
+      insert.run('t3', 'done')
+    } finally {
+      db.close()
+    }
+    process.env.KANBAN_DB = kanbanDb
     server = await createTestServer()
   })
 
@@ -54,6 +75,8 @@ describe('factory routes', () => {
     await server.close()
     delete process.env.FACTORY_JOBS_DIR
     delete process.env.AGENT_TASKS_DIR
+    delete process.env.FACTORY_DIR
+    delete process.env.KANBAN_DB
     rmSync(tmpDir, { recursive: true, force: true })
   })
 
@@ -64,6 +87,14 @@ describe('factory routes', () => {
     expect(body.ok).toBe(true)
     expect(body.factory).toBe('installed')
     expect(body.queue).toBe(0)
+  })
+
+  it('status reports factory missing when the checkout is absent', async () => {
+    rmSync(process.env.FACTORY_DIR as string, { recursive: true, force: true })
+    const res = await fetch(`${server.url}/api/factory/status`)
+    const body = (await res.json()) as { ok: boolean; factory: string; queue: number }
+    expect(res.ok).toBe(true)
+    expect(body.factory).toBe('missing')
   })
 
   it('dispatch creates a job, persists it, and enqueues an agent task', async () => {
@@ -83,10 +114,13 @@ describe('factory routes', () => {
     expect(body.job.task).toBe('build the thing')
     expect(body.job.stage).toBe('queued')
 
-    // job persisted to disk (issue #1: jobs Map is no longer in-memory only)
+    // job persisted to disk (issue #1: jobs Map is no longer in-memory only),
+    // and the on-disk stage matches the post-enqueue stage (not stale `intake`)
     expect(existsSync(jobsFile)).toBe(true)
-    const persisted = JSON.parse(readFileSync(jobsFile, 'utf8')) as { jobId: string }[]
-    expect(persisted.some(j => j.jobId === body.job.jobId)).toBe(true)
+    const persisted = JSON.parse(readFileSync(jobsFile, 'utf8')) as { jobId: string; stage: string }[]
+    const persistedJob = persisted.find(j => j.jobId === body.job.jobId)
+    expect(persistedJob).toBeDefined()
+    expect(persistedJob?.stage).toBe('queued')
 
     // agent task enqueued as a `create` event the task-worker actually reads
     // (issue #3: schema mirrors ~/.agent-tasks/bin/task cmd_add)
@@ -135,7 +169,13 @@ describe('factory routes', () => {
       total: number
     }
     expect(body.ok).toBe(true)
-    expect(body.total).toBeGreaterThan(0)
-    expect(Object.keys(body.lanes).length).toBeGreaterThan(0)
+    expect(body.total).toBe(3)
+    expect(body.lanes).toEqual({ todo: 1, doing: 1, done: 1 })
+  })
+
+  it('kanban/sync 404s when the kanban DB is absent', async () => {
+    rmSync(process.env.KANBAN_DB as string, { force: true })
+    const res = await fetch(`${server.url}/api/factory/kanban/sync`, { method: 'POST' })
+    expect(res.status).toBe(404)
   })
 })

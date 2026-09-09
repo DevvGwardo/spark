@@ -12,7 +12,16 @@ type Job = { jobId:string; stage:string; task:string; workdir:string; createdAt:
 
 // 1. Jobs persist to disk so a server restart doesn't lose queue state.
 //    Override with FACTORY_JOBS_DIR (tests point this at a tmp dir).
-//    Resolved lazily so env overrides apply without re-importing the module.
+//    All host paths resolved lazily so env overrides apply without re-importing:
+//    FACTORY_DIR (default ~/software-factory), KANBAN_DB (default
+//    ~/.hermes/kanban.db). Tests point both at a tmp dir so CI never touches
+//    host state.
+function factoryDir(): string {
+  return process.env.FACTORY_DIR || join(homedir(), 'software-factory');
+}
+function kanbanDbPath(): string {
+  return process.env.KANBAN_DB || join(homedir(), '.hermes', 'kanban.db');
+}
 function jobsFile(): string {
   const dir = process.env.FACTORY_JOBS_DIR || join(homedir(), '.cache', 'factory-jobs');
   return join(dir, 'jobs.json');
@@ -21,7 +30,10 @@ function jobsFile(): string {
 function loadJobs(): Map<string, Job> {
   try {
     const raw = JSON.parse(readFileSync(jobsFile(), 'utf8')) as Job[];
-    return new Map(raw.map(j => [j.jobId, j]));
+    // Drop stale `intake` jobs: they predate the post-enqueue persist fix or
+    // the process died mid-dispatch, and no worker will ever pick them up —
+    // reviving them would show phantom jobs stuck forever.
+    return new Map(raw.filter(j => j.stage !== 'intake').map(j => [j.jobId, j]));
   } catch {
     return new Map();
   }
@@ -82,7 +94,7 @@ export function resetFactoryJobsForTest() {
 export function registerFactoryRoutes(app: Express){
   // status: queue length + uptime + factory presence
   app.get('/api/factory/status', (_req: Request, res: Response)=>{
-    const factoryOk = existsSync(join(homedir(),'software-factory/package.json'));
+    const factoryOk = existsSync(join(factoryDir(), 'package.json'));
     const harnessOk = existsSync(join(homedir(),'spark-harness/index.js'));
     res.json({ ok:true, factory: factoryOk ? 'installed' : 'missing', harness: harnessOk ? 'present' : 'missing', queue: jobs.size, jobs: [...jobs.values()] });
   });
@@ -98,18 +110,20 @@ export function registerFactoryRoutes(app: Express){
     if(!task || !String(task).trim()) return res.status(400).json({ error:'task required' });
     const id=nextJobId(); const now=new Date().toISOString();
     const job: Job={ jobId:id, stage:'intake', task: String(task), workdir: workdir||process.cwd(), createdAt:now, updatedAt:now };
-    jobs.set(id, job);
-    persistJobs();
     // also enqueue to ~/.agent-tasks so the hermes-local task-worker picks it up
     const enqueued = enqueueAgentTask(id, String(task), job.workdir);
-    if (enqueued) job.stage = 'queued';
+    if (enqueued) { job.stage = 'queued'; job.updatedAt = new Date().toISOString(); }
+    // persist after the enqueue decision so the on-disk stage matches memory
+    // (both the queued and the failed-enqueue paths are recorded).
+    jobs.set(id, job);
+    persistJobs();
     // brain KV mirror (file fallback — see brainMirrorSet above)
     brainMirrorSet(`factory/job/${id}`, job);
     res.json({ ok:true, job, enqueued });
   });
   // 5. kanban/sync is real now: read the shared Hermes kanban DB and report lane counts
   app.post('/api/factory/kanban/sync', (_req: Request, res: Response)=>{
-    const kanbanDb=join(homedir(),'.hermes/kanban.db');
+    const kanbanDb = kanbanDbPath();
     if(!existsSync(kanbanDb)) return res.status(404).json({ ok:false, error:'kanban db not found', kanban: kanbanDb });
     let db: DatabaseSync | null = null;
     try {
