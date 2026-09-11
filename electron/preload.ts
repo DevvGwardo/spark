@@ -99,6 +99,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('new-chat', handler)
     return () => { ipcRenderer.removeListener('new-chat', handler) }
   },
+  mcpWorker: {
+    status: () => ipcRenderer.invoke('mcp-worker:status'),
+    spawn: (req: { serverId: string; command: string; args?: string[]; cwd?: string; env?: Record<string, string> }) =>
+      ipcRenderer.invoke('mcp-worker:spawn', req),
+  },
   bridge: {
     status: () => ipcRenderer.invoke('bridge:status'),
     start: () => ipcRenderer.invoke('bridge:start'),
@@ -109,5 +114,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('bridge:install-progress', handler)
       return () => { ipcRenderer.removeListener('bridge:install-progress', handler) }
     },
+  },
+  quick: {
+    submit: (text: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('quick:submit', text),
+  },
+  quickOnCapture: (callback: (text: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, text: string) => callback(text)
+    ipcRenderer.on('quick:capture', handler)
+    return () => { ipcRenderer.removeListener('quick:capture', handler) }
+  },
+  deepLinkOnNavigate: (callback: (target: { kind: string; id?: string; name?: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, target: { kind: string; id?: string; name?: string }) => callback(target)
+    ipcRenderer.on('deep-link:navigate', handler)
+    return () => { ipcRenderer.removeListener('deep-link:navigate', handler) }
   },
 })

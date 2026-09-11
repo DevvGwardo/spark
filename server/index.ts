@@ -32,6 +32,8 @@ import { registerRemoteRevivalRoutes } from './routes/remote-revival';
 import { registerBridgeRoutes } from './routes/bridge';
 import { registerWorkspaceRoutes } from './routes/workspace';
 import { registerFactoryRoutes } from './routes/factory';
+import { registerMcpWorkersRoute } from './routes/mcp-workers.route';
+import { registerMcpExtensionsRoute } from './routes/mcp-extensions.route';
 import { startManagedBridge, stopManagedBridge } from './lib/bridge-manager';
 import { taskOrchestrator } from './task-orchestrator';
 import { shutdownTeamCoordinator } from './team-coordinator';
@@ -264,6 +266,8 @@ export function createApp(opts?: { serveFrontend?: boolean }) {
   registerBridgeRoutes(app);
   registerWorkspaceRoutes(app);
   registerFactoryRoutes(app);
+  registerMcpWorkersRoute(app);
+  registerMcpExtensionsRoute(app);
 
   // Workspace search lives in registerWorkspaceRoutes (hardened root checks).
   // ─── Health check ──────────────────────────────────────────────────────────

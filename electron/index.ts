@@ -14,8 +14,12 @@ import {
   installHermesAgent,
 } from './bridge'
 import { startOpenRouterOAuth } from './oauth-openrouter'
+import { parseSparkUrl } from './deep-links'
+import { McpWorkerManager } from './mcp-worker-manager'
+import { validateSpawnCommand, validateWorkerCwd, filterWorkerEnv, checkSpawnRateLimit } from '../server/lib/mcp-worker-policy'
 
 let mainWindow: BrowserWindow | null = null
+let quickWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let apiPort: number = 3001
 let dockBounceId: number | null = null
@@ -123,7 +127,12 @@ function isTrustedRendererUrl(url: string): boolean {
  * arbitrary remote sites) is rejected.
  */
 function isTrustedSender(event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent): boolean {
-  if (!mainWindow || event.sender !== mainWindow.webContents) {
+  // Phase 4: the quick-capture window loads the same renderer bundle (?quick=1)
+  // and is equally trusted. The mini BrowserView (arbitrary remote sites) stays
+  // untrusted.
+  const fromMain = !!mainWindow && event.sender === mainWindow.webContents
+  const fromQuick = !!quickWindow && !quickWindow.isDestroyed() && event.sender === quickWindow.webContents
+  if (!fromMain && !fromQuick) {
     return false
   }
   const frameUrl = event.senderFrame?.url
@@ -137,6 +146,11 @@ function assertTrustedSender(event: Electron.IpcMainInvokeEvent | Electron.IpcMa
   if (!isTrustedSender(event)) {
     throw new Error('Untrusted IPC sender')
   }
+}
+
+function trustedHandle(channel: string, handler: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => unknown): void {
+  // eslint-disable-next-line no-restricted-syntax -- trustedHandle IS the sanctioned wrapper; all other call sites are banned
+  ipcMain.handle(channel, (event, ...args) => { assertTrustedSender(event); return handler(event, ...args); })
 }
 
 function assetTextResponse(status: number, body: string) {
@@ -243,8 +257,7 @@ function registerLocalAssetProtocol() {
   })
 }
 
-ipcMain.handle('cloudchat:snapshotLocalImage', async (event, inputPath: string) => {
-  assertTrustedSender(event)
+trustedHandle('cloudchat:snapshotLocalImage', async (_event, inputPath: string) => {
   if (typeof inputPath !== 'string') {
     throw new Error('Invalid image path')
   }
@@ -312,8 +325,12 @@ function registerCspHeaders() {
       callback({ responseHeaders: details.responseHeaders })
       return
     }
-    // Also skip for any non-main-window webContents (safety net)
-    if (!mainWindow || details.webContentsId !== mainWindow.webContents.id) {
+    // Also skip for any non-main-window webContents (safety net).
+    // Phase 4: the quick-capture window shares the session and loads the same
+    // renderer bundle, so it receives the same CSP injection as the main window.
+    const isQuickTarget =
+      !!quickWindow && !quickWindow.isDestroyed() && details.webContentsId === quickWindow.webContents.id
+    if ((!mainWindow || details.webContentsId !== mainWindow.webContents.id) && !isQuickTarget) {
       callback({ responseHeaders: details.responseHeaders })
       return
     }
@@ -557,6 +574,153 @@ async function focusMainWindow() {
   clearAttentionRequest()
 }
 
+// ── Quick-capture window + spark:// deep links (Phase 4) ──────────────────
+// The quick window loads the SAME renderer bundle with `?quick=1` (the
+// renderer gates on that flag in main.tsx — no vite config change). It shares
+// the session, preload, and sandbox shape with the main window.
+
+function quickWebPreferences(preloadPath: string): Electron.WebPreferences {
+  return {
+    preload: preloadPath,
+    nodeIntegration: false,
+    contextIsolation: true,
+    backgroundThrottling: false,
+    sandbox: true,
+    additionalArguments: [
+      `--electron-api-port=${apiPort}`,
+      `--cloudchat-snapshot-dir=${getSnapshotDir()}`,
+      `--electron-home-dir=${homedir()}`,
+    ],
+  }
+}
+
+async function createQuickWindow(): Promise<BrowserWindow | null> {
+  if (quickWindow && !quickWindow.isDestroyed()) {
+    return quickWindow
+  }
+
+  const preloadPath = await resolvePreloadPath()
+
+  quickWindow = new BrowserWindow({
+    width: 560,
+    height: 150,
+    center: true,
+    frame: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    show: false,
+    title: 'Spark Quick Capture',
+    backgroundColor: '#1a1a1a',
+    webPreferences: quickWebPreferences(preloadPath),
+  })
+
+  // Same navigation lockdown as the main window: only the app's own renderer
+  // may load here; external links open in the system browser.
+  quickWindow.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      const parsed = new URL(url)
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+        shell.openExternal(url)
+      }
+    } catch {
+      // Malformed URL — denied below.
+    }
+    return { action: 'deny' }
+  })
+  quickWindow.webContents.on('will-navigate', (event, url) => {
+    if (!isTrustedRendererUrl(url)) {
+      event.preventDefault()
+      try {
+        const parsed = new URL(url)
+        if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+          shell.openExternal(url)
+        }
+      } catch {
+        // Malformed URL — already prevented.
+      }
+    }
+  })
+
+  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+    const rendererUrl = new URL(process.env['ELECTRON_RENDERER_URL'])
+    rendererUrl.searchParams.set('apiPort', String(apiPort))
+    rendererUrl.searchParams.set('quick', '1')
+    await quickWindow.loadURL(rendererUrl.toString())
+  } else {
+    await quickWindow.loadFile(join(__dirname, '../renderer/index.html'), {
+      query: {
+        apiPort: String(apiPort),
+        quick: '1',
+      },
+    })
+  }
+
+  quickWindow.on('closed', () => {
+    quickWindow = null
+  })
+
+  return quickWindow
+}
+
+async function toggleQuickWindow() {
+  if (quickWindow && !quickWindow.isDestroyed() && quickWindow.isVisible()) {
+    quickWindow.hide()
+    return
+  }
+  const win = await createQuickWindow()
+  if (!win || win.isDestroyed()) {
+    return
+  }
+  if (!win.isVisible()) {
+    win.show()
+  }
+  win.focus()
+}
+
+// Route an incoming spark:// URL: ensure the main window exists, then forward
+// to the renderer. OAuth is forward-only — the working localhost OAuth flow is
+// untouched.
+async function handleSparkUrl(raw: string) {
+  const parsed = parseSparkUrl(raw)
+  if (!parsed) {
+    console.warn('[deep-link] ignoring invalid spark:// URL')
+    return
+  }
+  await focusMainWindow()
+  if (!mainWindow) {
+    return
+  }
+  switch (parsed.kind) {
+    case 'capture':
+      mainWindow.webContents.send('quick:capture', parsed.text)
+      break
+    case 'chat':
+      mainWindow.webContents.send('deep-link:navigate', { kind: 'chat', id: parsed.id })
+      break
+    case 'skill':
+      mainWindow.webContents.send('deep-link:navigate', { kind: 'skill', name: parsed.name })
+      break
+    case 'oauth':
+      mainWindow.webContents.send('deep-link:navigate', { kind: 'oauth' })
+      break
+  }
+}
+
+trustedHandle('quick:submit', async (_event, text: string) => {
+  const clamped = typeof text === 'string' ? text.slice(0, 4000) : ''
+  await focusMainWindow()
+  if (clamped && mainWindow) {
+    mainWindow.webContents.send('quick:capture', clamped)
+  }
+  if (quickWindow && !quickWindow.isDestroyed()) {
+    quickWindow.hide()
+  }
+  return { ok: true as const }
+})
+
 function notifyAttentionRequest(payload: AttentionRequestPayload = {}) {
   if (!mainWindow) {
     return
@@ -590,49 +754,113 @@ function notifyAttentionRequest(payload: AttentionRequestPayload = {}) {
   notification.show()
 }
 
-ipcMain.handle('app:notify-attention', (event, payload?: AttentionRequestPayload) => {
-  assertTrustedSender(event)
+trustedHandle('app:notify-attention', (_event, payload?: AttentionRequestPayload) => {
   notifyAttentionRequest(payload)
 })
 
-ipcMain.handle('app:clear-attention', (event) => {
-  assertTrustedSender(event)
+trustedHandle('app:clear-attention', () => {
   clearAttentionRequest()
 })
 
-ipcMain.handle('app:get-version', (event) => {
-  assertTrustedSender(event)
+trustedHandle('app:get-version', () => {
   return app.getVersion()
 })
 
 // ── Hermes Bridge & first-run setup ────────────────────────────────────────
-ipcMain.handle('bridge:status', (event) => {
-  assertTrustedSender(event)
+trustedHandle('bridge:status', () => {
   return getBridgeSetupStatus()
 })
-ipcMain.handle('bridge:start', (event) => {
-  assertTrustedSender(event)
+trustedHandle('bridge:start', () => {
   return startBridge()
 })
-ipcMain.handle('bridge:install-deps', async (event) => {
-  assertTrustedSender(event)
+trustedHandle('bridge:install-deps', async (event) => {
   const send = (line: string) =>
     event.sender.send('bridge:install-progress', line)
   return installBridgeDeps(send)
 })
-ipcMain.handle('bridge:install-hermes-agent', async (event) => {
-  assertTrustedSender(event)
+trustedHandle('bridge:install-hermes-agent', async (event) => {
   const send = (line: string) =>
     event.sender.send('bridge:install-progress', line)
   return installHermesAgent(send)
 })
-ipcMain.handle('openrouter:oauth', (event) => {
-  assertTrustedSender(event)
+trustedHandle('openrouter:oauth', () => {
   return startOpenRouterOAuth()
 })
 
-ipcMain.handle('file:save-dialog', async (event, payload: { defaultFilename?: string; content?: string }) => {
-  assertTrustedSender(event)
+// ── MCP worker pool (isolated server children) ──────────────────────────
+// All handlers go through trustedHandle (deny-by-default sender gate).
+const mcpWorkerManager = new McpWorkerManager()
+
+trustedHandle('mcp-worker:spawn', async (_event, payload: { serverId?: unknown; command?: unknown; args?: unknown; cwd?: unknown; env?: unknown }) => {
+  const serverId = payload?.serverId
+  const command = payload?.command
+  if (typeof serverId !== 'string' || serverId.length === 0) {
+    throw new Error('Invalid serverId')
+  }
+  if (!checkSpawnRateLimit(serverId)) {
+    throw new Error('Spawn rate limited')
+  }
+  if (typeof command !== 'string' || !validateSpawnCommand(command)) {
+    throw new Error('Rejected spawn command')
+  }
+  const args = payload?.args
+  const cwd = payload?.cwd
+  const env = payload?.env
+  if (args !== undefined && (!Array.isArray(args) || !args.every((a) => typeof a === 'string'))) {
+    throw new Error('Invalid args')
+  }
+  if (cwd !== undefined && (typeof cwd !== 'string' || !validateWorkerCwd(cwd))) {
+    throw new Error('Rejected worker cwd')
+  }
+  if (typeof cwd === 'string') {
+    // resolve() does not resolve symlinks: a ~/safe/link → /outside escape
+    // would pass validateWorkerCwd. Canonicalize first (fail closed).
+    try {
+      if (!validateWorkerCwd(realpathSync(cwd))) {
+        throw new Error('Rejected worker cwd')
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message === 'Rejected worker cwd') throw err
+      throw new Error('Rejected worker cwd')
+    }
+  }
+  let safeEnv: Record<string, string> | undefined
+  if (env !== undefined) {
+    if (typeof env !== 'object' || env === null || Array.isArray(env)) {
+      throw new Error('Invalid env')
+    }
+    for (const value of Object.values(env as Record<string, unknown>)) {
+      if (typeof value !== 'string') {
+        throw new Error('Invalid env')
+      }
+    }
+    // Allowlist gate: unlisted keys (LD_PRELOAD, NODE_OPTIONS, …) are dropped.
+    safeEnv = filterWorkerEnv(env as Record<string, string>)
+  }
+  return mcpWorkerManager.add({
+    serverId,
+    options: {
+      command,
+      ...(args !== undefined ? { args } : {}),
+      ...(cwd !== undefined ? { cwd } : {}),
+      ...(safeEnv !== undefined ? { env: safeEnv } : {}),
+    },
+  })
+})
+
+trustedHandle('mcp-worker:status', () => {
+  return mcpWorkerManager.status()
+})
+
+trustedHandle('mcp-worker:stop', async (_event, serverId: unknown) => {
+  if (typeof serverId !== 'string' || serverId.length === 0) {
+    throw new Error('Invalid serverId')
+  }
+  await mcpWorkerManager.remove(serverId)
+  return { stopped: true }
+})
+
+trustedHandle('file:save-dialog', async (_event, payload: { defaultFilename?: string; content?: string }) => {
   const defaultFilename = typeof payload?.defaultFilename === 'string' ? payload.defaultFilename : 'export.txt'
   const content = typeof payload?.content === 'string' ? payload.content : ''
   const parent = BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined
@@ -648,8 +876,7 @@ ipcMain.handle('file:save-dialog', async (event, payload: { defaultFilename?: st
   }
 })
 
-ipcMain.handle('shell:open-external', async (event, url: string) => {
-  assertTrustedSender(event)
+trustedHandle('shell:open-external', async (_event, url: string) => {
   if (typeof url !== 'string') return false
   let parsed: URL
   try {
@@ -740,8 +967,7 @@ function attachMiniBrowserListeners(view: BrowserView) {
   })
 }
 
-ipcMain.handle('browser:create', (event, url?: string) => {
-  assertTrustedSender(event)
+trustedHandle('browser:create', (_event, url?: string) => {
   if (!mainWindow) return false
   const initialUrl = url || 'about:blank'
   if (!isAllowedBrowserUrl(initialUrl, true)) {
@@ -799,8 +1025,7 @@ ipcMain.handle('browser:create', (event, url?: string) => {
   return true
 })
 
-ipcMain.handle('browser:navigate', (event, url: string) => {
-  assertTrustedSender(event)
+trustedHandle('browser:navigate', (_event, url: string) => {
   if (!isAllowedBrowserUrl(url)) {
     console.warn('Blocked navigation to non-http URL:', url)
     return
@@ -810,32 +1035,27 @@ ipcMain.handle('browser:navigate', (event, url: string) => {
   })
 })
 
-ipcMain.handle('browser:go-back', (event) => {
-  assertTrustedSender(event)
+trustedHandle('browser:go-back', () => {
   if (miniBrowserView?.webContents.canGoBack()) {
     miniBrowserView.webContents.goBack()
   }
 })
 
-ipcMain.handle('browser:go-forward', (event) => {
-  assertTrustedSender(event)
+trustedHandle('browser:go-forward', () => {
   if (miniBrowserView?.webContents.canGoForward()) {
     miniBrowserView.webContents.goForward()
   }
 })
 
-ipcMain.handle('browser:reload', (event) => {
-  assertTrustedSender(event)
+trustedHandle('browser:reload', () => {
   miniBrowserView?.webContents.reload()
 })
 
-ipcMain.handle('browser:get-url', (event) => {
-  assertTrustedSender(event)
+trustedHandle('browser:get-url', () => {
   return miniBrowserView?.webContents.getURL() ?? null
 })
 
-ipcMain.handle('browser:close', (event) => {
-  assertTrustedSender(event)
+trustedHandle('browser:close', () => {
   if (miniBrowserView && mainWindow) {
     mainWindow.removeBrowserView(miniBrowserView)
     miniBrowserView.webContents.close()
@@ -844,8 +1064,7 @@ ipcMain.handle('browser:close', (event) => {
   }
 })
 
-ipcMain.handle('browser:resize', (event, bounds: { x: number; y: number; width: number; height: number }) => {
-  assertTrustedSender(event)
+trustedHandle('browser:resize', (_event, bounds: { x: number; y: number; width: number; height: number }) => {
   if (!miniBrowserView || !mainWindow) return;
   const winBounds = mainWindow.getContentBounds();
   // BrowserView y must account for the 36px toolbar — never let it overlap the URL bar.
@@ -870,15 +1089,13 @@ ipcMain.handle('browser:resize', (event, bounds: { x: number; y: number; width: 
   miniBrowserView.setBounds(clamped);
 })
 
-ipcMain.handle('browser:show', (event) => {
-  assertTrustedSender(event)
+trustedHandle('browser:show', () => {
   if (miniBrowserView && mainWindow) {
     mainWindow.addBrowserView(miniBrowserView)
   }
 })
 
-ipcMain.handle('browser:hide', (event) => {
-  assertTrustedSender(event)
+trustedHandle('browser:hide', () => {
   if (miniBrowserView && mainWindow) {
     mainWindow.removeBrowserView(miniBrowserView)
   }
@@ -899,8 +1116,7 @@ async function getPty() {
   return ptyModule
 }
 
-ipcMain.handle('terminal:spawn', async (event, options?: { cwd?: string; command?: string }) => {
-  assertTrustedSender(event)
+trustedHandle('terminal:spawn', async (_event, options?: { cwd?: string; command?: string }) => {
   const pty = await getPty()
   const id = `term-${++terminalIdCounter}`
   const shellPath = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/zsh'
@@ -1007,15 +1223,40 @@ function setupDockMenu() {
 }
 
 function registerGlobalShortcut() {
+  // Phase 4: Cmd/Ctrl+Shift+Space toggles the quick-capture window. This
+  // REPLACES the previous main-window show/hide toggle on this shortcut —
+  // the tray icon ("Show Spark") and macOS dock/activate path keep main-window
+  // access via focusMainWindow().
   globalShortcut.register('CommandOrControl+Shift+Space', () => {
-    if (mainWindow) {
-      if (mainWindow.isVisible()) {
-        mainWindow.hide()
-      } else {
-        mainWindow.show()
-        mainWindow.focus()
-      }
+    void toggleQuickWindow()
+  })
+}
+
+// ── spark:// protocol + single-instance (Phase 4) ─────────────────────────
+// Requested at module scope (before ready) so a second launch forwards its
+// URL to the primary instance instead of opening a duplicate window.
+let gotSingleInstanceLock = true
+try {
+  gotSingleInstanceLock = app.requestSingleInstanceLock()
+} catch (err) {
+  console.warn('[deep-link] requestSingleInstanceLock failed:', err)
+}
+if (!gotSingleInstanceLock) {
+  app.quit()
+} else {
+  // Windows/Linux deliver deep links as argv on a second launch.
+  app.on('second-instance', (_event, argv) => {
+    const url = argv.find((arg) => typeof arg === 'string' && arg.startsWith('spark://'))
+    if (url) {
+      void handleSparkUrl(url)
+    } else if (mainWindow) {
+      void focusMainWindow()
     }
+  })
+  // macOS delivers deep links via open-url (also when already running).
+  app.on('open-url', (event, url) => {
+    event.preventDefault()
+    void handleSparkUrl(url)
   })
 }
 
@@ -1033,6 +1274,17 @@ app.whenReady().then(async () => {
   // Register the CSP header injection once — createWindow() can run multiple
   // times on macOS, and a per-window registration would stack listeners.
   registerCspHeaders()
+
+  // Claim spark:// links (dev too — warn instead of failing silently if the
+  // OS refuses, since dev runs typically aren't the registered handler).
+  try {
+    const registered = app.setAsDefaultProtocolClient('spark')
+    if (!registered) {
+      console.warn('[deep-link] setAsDefaultProtocolClient returned false — spark:// links may not open this build (expected in dev)')
+    }
+  } catch (err) {
+    console.warn('[deep-link] setAsDefaultProtocolClient failed:', err)
+  }
 
   // Create the window first so the UI paints immediately — startBridge() can
   // block for up to 30s waiting for the bridge to become healthy.
@@ -1115,6 +1367,12 @@ app.on('will-quit', () => {
 // Cleanup preview-manager child processes on quit
 app.on('before-quit', () => {
   isQuitting = true
+  // Dispose the quick-capture window (kept independent of the main window
+  // during the session; torn down here with app quit).
+  if (quickWindow && !quickWindow.isDestroyed()) {
+    quickWindow.close()
+  }
+  quickWindow = null
   // Destroy mini browser view
   if (miniBrowserView) {
     if (mainWindow) {
@@ -1134,6 +1392,7 @@ app.on('before-quit', () => {
   } catch (err) {
     console.warn('[electron] stopBridge failed:', err)
   }
+  void mcpWorkerManager.dispose()
   // Notify embedded server stores to close DBs without going through pino.
   try {
     process.emit('SIGTERM', 'SIGTERM')

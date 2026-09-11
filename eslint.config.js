@@ -49,4 +49,19 @@ export default tseslint.config(
       globals: globals.node,
     },
   },
+  {
+    // Electron main process: deny-by-default IPC. Every invoke handler must go
+    // through trustedHandle(channel, handler) from ./index, which gates on the
+    // main window's trusted sender. Bare ipcMain.handle is banned.
+    files: ["electron/**/*.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "CallExpression[callee.object.name='ipcMain'][callee.property.name='handle']",
+          message: "use trustedHandle(channel, handler) from ./index (deny-by-default IPC)",
+        },
+      ],
+    },
+  },
 );

@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "skills": [
+    {
+      "name": "csv-cleanup",
+      "description": "Tidy messy CSV exports: normalize headers, trim whitespace, and flag blank or duplicate rows.",
+      "tier": "standard"
+    },
+    {
+      "name": "meeting-notes",
+      "description": "Turn rough meeting bullets into a structured recap with decisions, owners, and next steps.",
+      "tier": "standard"
+    }
+  ]
+}

@@ -8,6 +8,7 @@ import '@fontsource/geist-sans/700.css';
 import '@fontsource-variable/geist-mono';
 import '@shoelace-style/shoelace/dist/themes/dark.css';
 import App from './App.tsx';
+import { QuickWindow } from './components/quick/QuickWindow';
 import './index.css';
 import { useActivityStore } from './stores/activity-store';
 import { ToastProvider } from './components/ui/toast';
@@ -26,9 +27,19 @@ setBasePath('./shoelace');
 };
 
 createRoot(document.getElementById("root")!).render(
-  <ToastProvider>
-    <ErrorBoundary>
-      <App />
-    </ErrorBoundary>
-  </ToastProvider>
+  // The quick-capture window loads the same bundle with ?quick=1 — it gets a
+  // minimal tree (toast + error boundary only), never the full chat shell.
+  new URLSearchParams(window.location.search).get('quick') === '1' ? (
+    <ToastProvider>
+      <ErrorBoundary>
+        <QuickWindow />
+      </ErrorBoundary>
+    </ToastProvider>
+  ) : (
+    <ToastProvider>
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
+    </ToastProvider>
+  )
 );

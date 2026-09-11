@@ -43,6 +43,7 @@ import { ConversationTreeOverlay } from '@/components/workflow/ConversationTreeO
 import type { Conversation } from '@/lib/db';
 import { exportConversationJson, exportConversationMarkdown, importConversationJson } from '@/lib/db';
 import { toast } from '@/lib/toast';
+import { handleDeepLinkNavigate, handleQuickCapture } from '@/lib/deep-link';
 import { tagColor } from '@/lib/tag-color';
 
 import type { SubTab } from '@/stores/ui-store';
@@ -314,6 +315,17 @@ export const ChatSidebar: React.FC = () => {
     });
     return () => { cleanup?.(); };
   }, [setActiveTab, openConversation]);
+
+  // Phase 4 renderer: quick-capture prefill + deep-link navigation.
+  // Optional-chained so the web build (no electronAPI / backend pending) is unaffected.
+  useEffect(() => {
+    const cleanups: Array<() => void> = [];
+    const capture = window.electronAPI?.quickOnCapture?.((text) => handleQuickCapture(text));
+    if (capture) cleanups.push(capture);
+    const navigate = window.electronAPI?.deepLinkOnNavigate?.((target) => handleDeepLinkNavigate(target));
+    if (navigate) cleanups.push(navigate);
+    return () => { cleanups.forEach((fn) => fn()); };
+  }, []);
 
   const handleRename = async (id: string) => {
     if (editTitle.trim()) await renameConversation(id, editTitle.trim());

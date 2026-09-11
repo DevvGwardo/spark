@@ -1,3 +1,26 @@
+export type McpWorkerState = 'starting' | 'ready' | 'stopped' | 'failed'
+
+export interface McpWorkerStatus {
+  serverId: string
+  state: McpWorkerState
+  pid?: number
+  restarts: number
+}
+
+export interface McpWorkerSpawnRequest {
+  serverId: string
+  command: string
+  args?: string[]
+  cwd?: string
+  env?: Record<string, string>
+}
+
+export interface DeepLinkNavigateTarget {
+  kind: string
+  id?: string
+  name?: string
+}
+
 export interface ElectronAPI {
   versions: {
     electron: string
@@ -41,6 +64,15 @@ export interface ElectronAPI {
     onNavState: (callback: (state: { canGoBack: boolean; canGoForward: boolean }) => void) => () => void
   }
   onNewChat?: (callback: () => void) => () => void
+  quick?: {
+    submit: (text: string) => Promise<{ ok: boolean }>
+  }
+  quickOnCapture?: (callback: (text: string) => void) => () => void
+  deepLinkOnNavigate?: (callback: (target: DeepLinkNavigateTarget) => void) => () => void
+  mcpWorker?: {
+    status: () => Promise<McpWorkerStatus[]>
+    spawn: (req: McpWorkerSpawnRequest) => Promise<McpWorkerStatus>
+  }
   bridge?: {
     status: () => Promise<{
       pythonPath: string | null

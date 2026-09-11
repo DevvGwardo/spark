@@ -72,6 +72,7 @@
     "@ai-sdk/react": "^1",
     "@ai-sdk/togetherai": "^2.0.39",
     "@ai-sdk/xai": "^3.0.67",
+    "@anthropic-ai/mcpb": "^2.1.2",
     "@fontsource-variable/geist-mono": "^5.2.7",
     "@fontsource-variable/inter": "^5.2.8",
     "@fontsource/geist-sans": "^5.2.5",

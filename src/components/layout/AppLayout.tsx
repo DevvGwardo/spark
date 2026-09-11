@@ -35,6 +35,7 @@ import { HermesUpdateButton } from '@/components/chat/HermesUpdateButton';
 import { FeedbackButton } from '@/components/feedback/FeedbackButton';
 import { BridgeSetupModal } from '@/components/setup/BridgeSetupModal';
 import { HermesStatusPill } from '@/components/layout/HermesStatusPill';
+import { McpWorkerPill } from '@/components/layout/McpWorkerPill';
 import { CommandPalette } from '@/components/overlay/CommandPalette';
 import { RemoteAccessModal } from '@/components/remote/RemoteAccessModal';
 import { cn } from '@/lib/utils';
@@ -762,7 +763,8 @@ const headerSecondaryLabel = selectedCronJobId
               <div className="flex-1" />
 
               {/* Hermes bridge status — click when offline to open bridge setup */}
-              <div className="flex items-center mr-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+              <div className="flex items-center mr-2 gap-1.5" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+                <McpWorkerPill />
                 <HermesStatusPill
                   onClick={() => {
                     setBridgeSetupDismissed(false);
