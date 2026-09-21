@@ -99,15 +99,21 @@ export function registerRemoteRevivalRoutes(app: Express) {
   });
 
   // POST /api/remote/ping-bridge
-  app.post('/api/remote/ping-bridge', (_req, res) => {
+  app.post('/api/remote/ping-bridge', (req, res) => {
     const attempts: { attempt: number; online: boolean; error?: string }[] = [];
     let completed = 0;
     const total = 5;
+    let disconnected = false;
+    req.on('close', () => {
+      disconnected = true;
+    });
 
     const doProbe = () => {
+      if (disconnected) return;
       const attempt = completed + 1;
       fetch(HEALTH_URL, { signal: AbortSignal.timeout(5000) })
         .then((resp) => {
+          resp.body?.cancel().catch(() => {});
           attempts.push({ attempt, online: resp.ok });
         })
         .catch((err) => {
@@ -119,7 +125,7 @@ export function registerRemoteRevivalRoutes(app: Express) {
         })
         .finally(() => {
           completed++;
-          if (completed < total) {
+          if (completed < total && !disconnected) {
             setTimeout(doProbe, 6000);
           } else {
             sendJson(res, 200, {

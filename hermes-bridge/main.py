@@ -3267,9 +3267,22 @@ async def _get_agent_models() -> list[dict]:
     return _model_cache
 
 app = FastAPI(title="Hermes Bridge", lifespan=_brain_lifespan)
+
+# Origins the app UI may load from. The renderer talks to the bridge only via the
+# Express proxy (server-side fetch, no Origin header); browsers from any other
+# origin are rejected in the token guard below so webpages cannot drive the
+# bridge's privileged endpoints (chat, approvals, workspace writes) via CSRF.
+_BRIDGE_ALLOWED_ORIGINS = frozenset(
+    {
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
+    }
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=sorted(_BRIDGE_ALLOWED_ORIGINS),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -3284,6 +3297,9 @@ async def bridge_token_guard(request: Request, call_next):
     Authorization for provider API keys. /health and /diag stay exempt so
     ownership probes and health polls work before auth is wired.
     """
+    origin = request.headers.get("origin")
+    if origin is not None and origin not in _BRIDGE_ALLOWED_ORIGINS:
+        return JSONResponse(status_code=403, content={"error": "Forbidden origin"})
     if not HERMES_BRIDGE_TOKEN:
         return await call_next(request)
     if request.url.path in _BRIDGE_AUTH_EXEMPT_PATHS:
@@ -6935,7 +6951,8 @@ def _compute_next_run(schedule: str) -> Optional[str]:
 async def list_cron_jobs(request: Request):
     if _HERMES_CRON_AVAILABLE:
         conversation_id = _cron_query_value(request, "conversation_id")
-        jobs = [_map_hermes_job(job) for job in _hermes_list_jobs(include_disabled=True)]
+        hermes_jobs = await _ops_thread(_hermes_list_jobs, include_disabled=True)
+        jobs = [_map_hermes_job(job) for job in hermes_jobs]
         if conversation_id:
             jobs = [job for job in jobs if job.get("conversation_id") == conversation_id]
         jobs.sort(key=lambda item: item.get("created_at") or "", reverse=True)
@@ -6960,7 +6977,8 @@ async def create_cron_job(request: Request):
 
     if _HERMES_CRON_AVAILABLE:
         origin = _cloudchat_origin_from_body(body)
-        job = _hermes_create_job(
+        job = await _ops_thread(
+            _hermes_create_job,
             prompt=str(prompt),
             schedule=str(schedule),
             name=str(name).strip() or None,
@@ -6990,7 +7008,7 @@ async def create_cron_job(request: Request):
 @app.delete("/cron/{job_id}")
 async def delete_cron_job(job_id: str):
     if _HERMES_CRON_AVAILABLE:
-        if not _hermes_remove_job(job_id):
+        if not await _ops_thread(_hermes_remove_job, job_id):
             return JSONResponse(status_code=404, content={"error": "not found"})
         return JSONResponse(content={"ok": True})
 
@@ -7006,7 +7024,7 @@ async def delete_cron_job(job_id: str):
 @app.post("/cron/{job_id}/pause")
 async def pause_cron_job(job_id: str):
     if _HERMES_CRON_AVAILABLE:
-        updated = _hermes_pause_job(job_id)
+        updated = await _ops_thread(_hermes_pause_job, job_id)
         if not updated:
             return JSONResponse(status_code=404, content={"error": "not found"})
         return JSONResponse(content={"job": _map_hermes_job(updated)})
@@ -7021,7 +7039,7 @@ async def pause_cron_job(job_id: str):
 @app.post("/cron/{job_id}/resume")
 async def resume_cron_job(job_id: str):
     if _HERMES_CRON_AVAILABLE:
-        updated = _hermes_resume_job(job_id)
+        updated = await _ops_thread(_hermes_resume_job, job_id)
         if not updated:
             return JSONResponse(status_code=404, content={"error": "not found"})
         return JSONResponse(content={"job": _map_hermes_job(updated)})
@@ -7097,10 +7115,10 @@ def _run_cron_agent(job: dict, run_record: dict):
 @app.post("/cron/{job_id}/run")
 async def run_cron_job(job_id: str):
     if _HERMES_CRON_AVAILABLE:
-        job = _hermes_get_job(job_id)
+        job = await _ops_thread(_hermes_get_job, job_id)
         if not job:
             return JSONResponse(status_code=404, content={"error": "not found"})
-        updated = _hermes_trigger_job(job_id)
+        updated = await _ops_thread(_hermes_trigger_job, job_id)
         threading.Thread(target=_run_hermes_tick_now, daemon=True).start()
         return JSONResponse(content={
             "ok": True,
@@ -7152,7 +7170,7 @@ async def get_cron_history(job_id: str):
     if not _JOB_ID_RE.match(job_id or ""):
         return JSONResponse(status_code=422, content={"error": "invalid job_id"})
     if _HERMES_CRON_AVAILABLE:
-        if not _hermes_get_job(job_id):
+        if not await _ops_thread(_hermes_get_job, job_id):
             return JSONResponse(status_code=404, content={"error": "not found"})
         return JSONResponse(content={"job_id": job_id, "runs": _build_hermes_run_history(job_id)})
 
@@ -7989,7 +8007,7 @@ async def workspace_skill_detail(request: Request):
 async def workspace_skills_hub(request: Request):
     hermes_home = _resolve_hermes_home(_resolve_profile_name(request))
     try:
-        skills = _list_skills_hub(hermes_home=hermes_home)
+        skills = await _ops_thread(_list_skills_hub, hermes_home=hermes_home)
         return JSONResponse(content={"skills": skills})
     except subprocess.TimeoutExpired:
         return JSONResponse(status_code=504, content={"error": "skills hub request timed out"})
@@ -8001,7 +8019,7 @@ async def workspace_skills_hub(request: Request):
 async def workspace_skill_install(payload: HermesHubSkillInstallRequest, request: Request):
     hermes_home = _resolve_hermes_home(_resolve_profile_name(request))
     try:
-        result = _install_hub_skill(payload.name, hermes_home=hermes_home)
+        result = await _ops_thread(_install_hub_skill, payload.name, hermes_home=hermes_home)
         return JSONResponse(content=result)
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
@@ -8036,16 +8054,20 @@ async def workspace_skill_uninstall(request: Request):
 
     # Use hermes skills uninstall command
     skill_name = skill_path.parent.name
-    try:
+
+    def _uninstall_skill() -> dict:
         command_env = os.environ.copy()
         command_env["HERMES_HOME"] = str(hermes_home)
-        result = subprocess.run(
+        return subprocess.run(
             ["hermes", "skills", "uninstall", skill_name],
             capture_output=True,
             text=True,
             timeout=60,
             env=command_env,
         )
+
+    try:
+        result = await _ops_thread(_uninstall_skill)
         if result.returncode != 0:
             return JSONResponse(
                 status_code=500,
@@ -8148,7 +8170,8 @@ async def messaging_test_platform(platform_id: str):
 async def messaging_restart_gateway(platform_id: str):
     """Restart the gateway for a specific platform."""
     try:
-        result = subprocess.run(
+        result = await _ops_thread(
+            subprocess.run,
             ["hermes", "gateway", "restart", "--platform", platform_id],
             capture_output=True,
             text=True,

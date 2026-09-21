@@ -890,6 +890,10 @@ async function spawnTeamAgent(
     stderr = appendCappedLog(stderr, data.toString(), MAX_AGENT_LOG_BYTES);
   });
 
+  // Drain child stdout — the agent script prints progress to stdout, and an
+  // unread pipe fills at ~64 KB, blocking the child until the team timeout.
+  child.stdout?.resume?.();
+
   // Subtasks whose spawn failed (missing python, etc.). Node emits 'error'
   // followed by 'close', and both handlers would otherwise try to transition
   // the subtask — track so the 'close' handler doesn't overwrite the spawn

@@ -26,6 +26,14 @@ export function buildCorsHeaders(requestOrigin: string | undefined) {
 }
 
 export function sendJson(res: express.Response, status: number, body: unknown) {
+  // Writing to an already-ended response (client disconnect, mid-stream proxy
+  // failure) raises ERR_STREAM_WRITE_AFTER_END with no listener — an uncaught
+  // error that can kill the standalone server.
+  if (res.writableEnded) return;
+  if (res.headersSent) {
+    res.end();
+    return;
+  }
   res.status(status).json(body);
 }
 

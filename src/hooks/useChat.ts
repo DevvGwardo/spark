@@ -1807,6 +1807,9 @@ When the user asks you to make changes:
       if (!convId) return;
       setAgentStatus(null);
       clearStreamRetryIndicator();
+      // The turn is over — any still-parked approval request can no longer be
+      // delivered, so drop its banner instead of leaving dead Approve buttons.
+      useHermesStore.getState().clearPendingAcpApprovals();
 
       // Loop mode: the stream is over — release the toggle's transient
       // phase so it doesn't stay stuck on "done"/"stopped" forever. The
@@ -2413,6 +2416,8 @@ When the user asks you to make changes:
       delete serverToolEventKeysRef.current.current;
       clearStreamRetryIndicator();
       setAgentStatus(null);
+      // Dead stream: parked approval requests can no longer be resolved.
+      useHermesStore.getState().clearPendingAcpApprovals();
       // Loop mode: a failed stream must release the phase too, or the toggle
       // stays stuck mid-loop with no way to tell it's dead.
       {
@@ -2436,6 +2441,8 @@ When the user asks you to make changes:
   // Wrap SDK stop to also abort the in-flight fetch
   const stop = useCallback(() => {
     userStoppedRef.current = true;
+    // Stopping strands any parked approval request for this run.
+    useHermesStore.getState().clearPendingAcpApprovals();
     // Cancel any pending auto-continue so it doesn't fire after stop
     if (autoContinueTimerRef.current) {
       clearTimeout(autoContinueTimerRef.current);

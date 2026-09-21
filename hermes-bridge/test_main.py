@@ -1083,6 +1083,41 @@ class MixtureOfAgentsTests(unittest.TestCase):
 # Passthrough Mode Tests
 # ---------------------------------------------------------------------------
 
+class BridgeOriginGuardTests(unittest.TestCase):
+    """Browsers must not drive the bridge cross-origin (CSRF); Express proxy
+    fetches carry no Origin header and stay allowed."""
+
+    @staticmethod
+    def _run_guard(origin):
+        async def _call_next(request):
+            return "passed-through"
+
+        headers = {} if origin is None else {"origin": origin}
+        request = types.SimpleNamespace(headers=headers)
+        return asyncio.run(main.bridge_token_guard(request, _call_next))
+
+    def test_disallowed_browser_origin_is_rejected(self):
+        with patch.object(main, "HERMES_BRIDGE_TOKEN", ""):
+            resp = self._run_guard("https://evil.example")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_null_origin_is_rejected(self):
+        with patch.object(main, "HERMES_BRIDGE_TOKEN", ""):
+            resp = self._run_guard("null")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_no_origin_header_passes(self):
+        with patch.object(main, "HERMES_BRIDGE_TOKEN", ""):
+            resp = self._run_guard(None)
+        self.assertEqual(resp, "passed-through")
+
+    def test_allowed_app_origins_pass(self):
+        with patch.object(main, "HERMES_BRIDGE_TOKEN", ""):
+            for origin in sorted(main._BRIDGE_ALLOWED_ORIGINS):
+                resp = self._run_guard(origin)
+                self.assertEqual(resp, "passed-through", origin)
+
+
 class HermesBridgeMainTests(unittest.TestCase):
     def test_acp_sse_heartbeat_stays_under_proxy_activity_timeout(self):
         # Express proxy (direct-sse-proxy.ts) kills a silent stream after

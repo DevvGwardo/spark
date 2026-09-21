@@ -52,8 +52,10 @@ function commandPrefix(command: string | undefined, max = 40): string {
  * doesn't own.
  */
 export const AcpApprovalBanner: React.FC = () => {
-  const pending = useHermesStore((state) => state.pendingAcpApproval);
-  const setPendingAcpApproval = useHermesStore((state) => state.setPendingAcpApproval);
+  // Oldest pending request first — one banner at a time; concurrent prompts
+  // queue instead of clobbering each other.
+  const pending = useHermesStore((state) => Object.values(state.pendingAcpApprovals)[0] ?? null);
+  const clearPendingAcpApproval = useHermesStore((state) => state.clearPendingAcpApproval);
   const panelId = usePanelId();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -93,14 +95,21 @@ export const AcpApprovalBanner: React.FC = () => {
           }
         } else {
           // Legacy ACP payloads (options only) — existing bridge flow.
-          const optionId = legacyOptionIdForDecision(decision);
+          // hermes-agent's ACP adapter accepts only allow_once/deny;
+          // session/always option ids are treated as a denial, so clamp
+          // them to "once" (mirrors the server-side clamp).
+          const clampedDecision: LadderDecision =
+            decision === 'approved_for_session' || decision === 'prefix'
+              ? 'approved'
+              : decision;
+          const optionId = legacyOptionIdForDecision(clampedDecision);
           try {
             await postAcpApproval(pending.approval_id, optionId);
           } catch (err) {
             if (!(err instanceof HermesApiError)) {
               throw err;
             }
-            const delivered = await postBridgeAcpApprovalDirect(pending.approval_id, decision);
+            const delivered = await postBridgeAcpApprovalDirect(pending.approval_id, clampedDecision);
             if (!delivered) {
               throw err;
             }
@@ -114,14 +123,14 @@ export const AcpApprovalBanner: React.FC = () => {
           command: pending.command,
           approved,
         });
-        setPendingAcpApproval(null);
+        clearPendingAcpApproval(pending.approval_id);
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to send decision');
       } finally {
         setBusy(false);
       }
     },
-    [panelId, pending, setPendingAcpApproval],
+    [panelId, pending, clearPendingAcpApproval],
   );
 
   if (!pending) {
@@ -135,11 +144,13 @@ export const AcpApprovalBanner: React.FC = () => {
   const decisions = pending.available_decisions ?? [];
   const unified = decisions.length > 0;
   const hasApproved = !unified || decisions.includes('approved');
-  const hasApprovedSession = !unified || decisions.includes('approved_for_session');
+  // Legacy payloads carry no decision list, and hermes-agent only accepts
+  // allow_once/deny — session/always buttons stay hidden in that case.
+  const hasApprovedSession = unified && decisions.includes('approved_for_session');
   const hasDenied = !unified || decisions.includes('denied');
   // "Always for prefix" is only offered when the payload carries a command
   // and the session-scoped decision it maps to is available.
-  const hasPrefix = Boolean(pending.command && hasApprovedSession);
+  const hasPrefix = unified && Boolean(pending.command && hasApprovedSession);
   const prefixLabel = commandPrefix(pending.command);
 
   const buttonClass = (tone: 'default' | 'danger') =>
