@@ -1,34 +1,19 @@
-// ─── Per-model context window lookup ─────────────────────────────────────────
-// Used to enrich the `usage` event emitted at the end of every chat stream:
+// ─── Per-model context window lookup (server) ────────────────────────────────
+// Thin wrapper over the shared canonical table so the server and the browser
+// resolve the SAME window for a given model. Used to enrich the `usage` event
+// emitted at the end of every chat stream:
 // {type:"usage", input_tokens, output_tokens, cached_input_tokens,
 //  context_window, model}.
 //
-// The authoritative table lives in provider-config.ts (CONTEXT_WINDOW_SIZES);
-// this module wraps it with the contract default (128k) for unknown models and
-// providers so the usage event always carries a number.
+// The table itself lives in `shared/model-context.ts` (imported by both the
+// server and `src/lib/tokens.ts`).
 
-import { CONTEXT_WINDOW_SIZES } from './provider-config';
+import { resolveModelContextWindow } from '../shared/model-context';
 
 /** Fallback context window when a model is not in the table. */
-export const DEFAULT_MODEL_CONTEXT_WINDOW = 128_000;
+export { DEFAULT_MODEL_CONTEXT_WINDOW } from '../shared/model-context';
 
-/**
- * Best-effort per-model context window (in tokens).
- *
- * Resolution order:
- *  1. exact model name in CONTEXT_WINDOW_SIZES
- *  2. short name (strip any `provider/` prefix, e.g. `deepseek/deepseek-v3.2`)
- *  3. DEFAULT_MODEL_CONTEXT_WINDOW (128k)
- */
+/** Best-effort per-model context window (in tokens). */
 export function getModelContextWindow(modelName: string): number {
-  if (typeof modelName !== 'string' || modelName.trim().length === 0) {
-    return DEFAULT_MODEL_CONTEXT_WINDOW;
-  }
-
-  if (CONTEXT_WINDOW_SIZES[modelName]) {
-    return CONTEXT_WINDOW_SIZES[modelName];
-  }
-
-  const shortName = modelName.includes('/') ? modelName.split('/').pop()! : modelName;
-  return CONTEXT_WINDOW_SIZES[shortName] ?? DEFAULT_MODEL_CONTEXT_WINDOW;
+  return resolveModelContextWindow(modelName);
 }

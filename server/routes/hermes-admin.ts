@@ -4,11 +4,12 @@ import { logger } from '../lib/logger';
 import type { Express, NextFunction, Request, Response } from 'express';
 import { isSocketLoopback, sendJson } from '../lib/helpers';
 import { getProfileFromRequest } from '../lib/hermes-profiles';
+import { getHermesBridgeRoot } from '../lib/hermes-bridge-url';
 
 // Admin/health endpoints live at the bridge root, not under /v1 (which only
 // serves OpenAI-compatible chat). Strip a trailing /v1 so these proxies work
 // whether HERMES_BRIDGE_URL is configured with or without it.
-const HERMES_BRIDGE_URL = (process.env.HERMES_BRIDGE_URL || 'http://localhost:3002').replace(/\/v1\/?$/, '');
+const HERMES_BRIDGE_URL = getHermesBridgeRoot();
 
 /** Paths that mutate Hermes home / run installers — local UI + tunnel only. */
 const DESTRUCTIVE_HERMES_OPS = new Set([
@@ -104,7 +105,10 @@ function invalidateBridgeReadCache(): void {
 // polls can fire while uvicorn is still booting -> ECONNREFUSED -> 502 spam.
 // Only kicks in on connection errors; happy path adds zero latency.
 const BRIDGE_READY_POLL_INTERVAL_MS = 300;
-const BRIDGE_READY_POLL_TIMEOUT_MS = 8_000;
+// Match electron/bridge.ts waitForOwnedBridge (30s). 8s was shorter than a
+// cold uvicorn + FastAPI lifespan boot, so first-paint /providers and
+// /workspace/commands 502'd while the bridge was still starting.
+const BRIDGE_READY_POLL_TIMEOUT_MS = 30_000;
 
 function isLikelyBridgeConnectionError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
@@ -250,7 +254,7 @@ export function warnIfBridgeMisconfigured(): void {
             `[hermes-admin] HERMES_BRIDGE_URL (${HERMES_BRIDGE_URL}) answers /health but 404s /v1/providers — ` +
             'this looks like the hermes-agent gateway, not the CloudChat bridge. The command palette, model ' +
             'picker, and session admin will fail. Point HERMES_BRIDGE_URL at the CloudChat bridge ' +
-            '(default http://localhost:3002/v1).',
+            '(default http://127.0.0.1:3002).',
           );
         }
       } catch {

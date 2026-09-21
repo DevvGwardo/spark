@@ -3,6 +3,7 @@ import express from 'express';
 import { formatDataStreamPart, type JSONValue } from 'ai';
 import { bindClientDisconnect } from './http-disconnect';
 import { buildUsageEvent } from './lib/usage-events';
+import { STREAM_ACTIVITY_TIMEOUT_MS } from './config';
 
 export type ProxyFinishReason = 'stop' | 'length' | 'tool-calls' | 'unknown';
 
@@ -67,8 +68,9 @@ interface ProxySseToDataStreamInput {
 /** Maximum size for the SSE buffer before forcibly flushing (1 MB). */
 const MAX_BUFFER_SIZE = 1_048_576;
 
-/** If no data arrives from upstream within this window, abort the stream. */
-const STREAM_ACTIVITY_TIMEOUT_MS = 30_000;
+/** If no data arrives from upstream within this window, abort the stream.
+ *  Must stay above hermes-bridge ACP_SSE_HEARTBEAT_SECONDS (default 10s)
+ *  so approval waits / long file writes are not killed as "idle". */
 
 const EMPTY_USAGE: ProxyUsage = {
   promptTokens: 0,

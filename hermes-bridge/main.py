@@ -33,6 +33,24 @@ from pydantic import BaseModel, Field
 
 app: FastAPI = None  # created after brain-lifespan is defined
 
+# SSE comment keepalive for ACP streams. The Express SSE proxy
+# (server/direct-sse-proxy.ts) aborts after STREAM_ACTIVITY_TIMEOUT_MS
+# (default 30s) of zero bytes. File writes and approval waits are silent
+# on the wire, so this MUST stay well under 30s. The agent-loop path
+# already heartbeats ~every 3s (60 idle ticks × 50ms).
+def _acp_sse_heartbeat_seconds() -> float:
+    raw = os.environ.get("HERMES_ACP_SSE_HEARTBEAT_SECONDS", "10").strip()
+    try:
+        value = float(raw)
+    except ValueError:
+        return 10.0
+    if value <= 0:
+        return 10.0
+    return value
+
+
+ACP_SSE_HEARTBEAT_SECONDS = _acp_sse_heartbeat_seconds()
+
 # --- Session tracking for Hermes Chats view ---
 _sessions: dict[str, dict] = {}
 _sessions_lock = threading.Lock()
@@ -6563,10 +6581,11 @@ async def _acp_chat_completions_impl(request: Request, body: ChatCompletionReque
 
         agent_task = asyncio.ensure_future(asyncio.to_thread(_run_acp_sync))
         event_count = 0
-        # Wall-clock keepalive: heartbeat after HEARTBEAT_INTERVAL seconds of
-        # silence, not after N idle poll iterations (~50ms each).
+        # Wall-clock keepalive: heartbeat after ACP_SSE_HEARTBEAT_SECONDS of
+        # silence, not after N idle poll iterations (~50ms each). Must stay
+        # below the Express proxy's 30s activity timeout.
         last_heartbeat = time.monotonic()
-        HEARTBEAT_INTERVAL = 60  # seconds
+        heartbeat_interval = ACP_SSE_HEARTBEAT_SECONDS
         while not done_event.is_set() or not event_queue.empty():
             drained = False
             while not event_queue.empty():
@@ -6628,7 +6647,7 @@ async def _acp_chat_completions_impl(request: Request, body: ChatCompletionReque
 
             if not done_event.is_set():
                 now = time.monotonic()
-                if now - last_heartbeat >= HEARTBEAT_INTERVAL:
+                if now - last_heartbeat >= heartbeat_interval:
                     last_heartbeat = now
                     yield ": heartbeat\n\n"
                 await asyncio.sleep(0.05)

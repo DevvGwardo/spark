@@ -1084,6 +1084,13 @@ class MixtureOfAgentsTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class HermesBridgeMainTests(unittest.TestCase):
+    def test_acp_sse_heartbeat_stays_under_proxy_activity_timeout(self):
+        # Express proxy (direct-sse-proxy.ts) kills a silent stream after
+        # STREAM_ACTIVITY_TIMEOUT_MS (30s). ACP file writes + approval waits
+        # emit no tokens, so the keepalive MUST beat that window.
+        self.assertGreater(main.ACP_SSE_HEARTBEAT_SECONDS, 0)
+        self.assertLess(main.ACP_SSE_HEARTBEAT_SECONDS, 30)
+
     def test_passthrough_mode_forwards_tools_and_streams_chunks_unchanged(self):
         upstream_chunks = [
             b'data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"role":"assistant"}}]}\n\n',

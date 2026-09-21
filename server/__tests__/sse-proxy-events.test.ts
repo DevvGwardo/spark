@@ -2,7 +2,8 @@
 // proxySseToDataStream: trailing `usage` custom field at stream end + tool-call
 // forwarding for the plan-mode direct proxy.
 import { EventEmitter } from 'node:events'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { STREAM_ACTIVITY_TIMEOUT_MS } from '../config'
 import { proxySseToDataStream, type NormalizedProxyEvent } from '../direct-sse-proxy'
 
 interface FakeRes {
@@ -152,5 +153,38 @@ describe('proxySseToDataStream tool-call forwarding', () => {
     expect(output).toContain('9:{"toolCallId":"call_9","toolName":"create_html_file"')
     expect(output).toContain('"filename":"index.html"')
     expect(output).toContain('"content":"<h1>Plan</h1>"')
+  })
+})
+
+describe('proxySseToDataStream activity timeout', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('surfaces an activity-timeout error when upstream sends nothing', async () => {
+    vi.useFakeTimers()
+    const res = createFakeRes()
+    const upstream = new Response(
+      new ReadableStream({
+        start() {
+          // never enqueue — simulates a hung ACP approval / file write
+        },
+      }),
+      { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+    )
+
+    const done = proxySseToDataStream({
+      req: createFakeReq(),
+      res: res as unknown as import('express').Response,
+      upstreamResponse: upstream,
+      corsHeaders: {},
+      normalizePayload: () => ({ text: '' }),
+    })
+
+    await vi.advanceTimersByTimeAsync(STREAM_ACTIVITY_TIMEOUT_MS)
+    await done
+
+    expect(res.chunks.join('')).toContain('Upstream provider stopped sending data (activity timeout).')
+    expect(res.writableEnded).toBe(true)
   })
 })

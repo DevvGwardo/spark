@@ -31,7 +31,8 @@ async function readStream(stream: ReadableStream<Uint8Array>) {
 
 describe('provider-config', () => {
   it('keeps Hermes pointed at the local bridge default port', () => {
-    expect(OPENAI_COMPATIBLE.hermes).toBe(process.env.HERMES_BRIDGE_URL || 'http://localhost:3002/v1')
+    expect(OPENAI_COMPATIBLE.hermes.endsWith('/v1')).toBe(true)
+    expect(OPENAI_COMPATIBLE.hermes).not.toContain('localhost')
     expect(MODEL_DISCOVERY_URLS.hermes).toBe(OPENAI_COMPATIBLE.hermes)
   })
 

@@ -40,6 +40,7 @@ import { ensureProfileExists, getProfileFromRequest } from '../lib/hermes-profil
 import { approvalPolicyStore } from '../approval-engine';
 import { buildUsageEvent } from '../lib/usage-events';
 import { coreToolsToOpenAiFunctions } from '../lib/tool-schema';
+import { getHermesBridgeRoot } from '../lib/hermes-bridge-url';
 
 // ─── /functions/v1/chat ──────────────────────────────────────────────────────
 
@@ -318,7 +319,7 @@ export function registerChatRoute(app: Express) {
 // bridge's /v1/approvals/{id} contract so the client can use one flow for
 // both ACP approvals (bridge) and streamText-path tool approvals (server).
 // Bridge root + auth for ACP approval forwarding (mirrors hermes-admin.ts).
-const HERMES_BRIDGE_ROOT = (process.env.HERMES_BRIDGE_URL || 'http://localhost:3002').replace(/\/v1\/?$/, '');
+const HERMES_BRIDGE_ROOT = getHermesBridgeRoot();
 function hermesBridgeTokenHeader(): Record<string, string> {
   const token = (process.env.HERMES_BRIDGE_TOKEN || '').trim();
   return token ? { 'X-Hermes-Bridge-Token': token } : {};
@@ -1132,6 +1133,10 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
     // as tool call arguments. 16k is enough for meaningful edits without stalling.
     const defaultMaxTokens = activeRepo ? 16384 : 32768;
     const providerOptions = getReasoningProviderOptions(provider, model, reasoning_effort);
+    if (reasoning_effort && !providerOptions && provider !== 'hermes') {
+      // Surface the drop instead of silently ignoring the user's setting.
+      logger.warn(`[chat] reasoning_effort="${reasoning_effort}" ignored — provider=${provider} model=${model} has no reasoning option.`);
+    }
 
     // Per-request timeout: abort if the entire streamText run exceeds 5 minutes.
     // This prevents indefinite hangs when a model step generates extremely slowly.

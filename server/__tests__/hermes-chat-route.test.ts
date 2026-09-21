@@ -559,7 +559,7 @@ describe('Hermes chat route', () => {
 
       expect(response.status).toBe(503)
       await expect(response.json()).resolves.toEqual({
-        error: 'Hermes bridge is not reachable at http://localhost:3002/v1. Start hermes-bridge/main.py and try again.',
+        error: 'Hermes bridge is not reachable at http://127.0.0.1:3002/v1. Start hermes-bridge/main.py and try again.',
       })
     } finally {
       await server.close()

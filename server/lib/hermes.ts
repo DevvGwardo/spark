@@ -4,6 +4,7 @@ import { formatDataStreamPart } from 'ai';
 import {
   OPENAI_COMPATIBLE,
   sanitizeCompatibleSseLine,
+  streamingFetch,
 } from '../provider-config';
 import {
   isAbortLikeError,
@@ -15,6 +16,7 @@ import {
 import { bindClientDisconnect } from '../http-disconnect';
 import { buildCorsHeaders } from './helpers';
 import { getChatStore } from '../chat-store';
+import { getHermesBridgeRoot } from './hermes-bridge-url';
 import { randomUUID } from 'crypto';
 
 // ─── Background Session Continuation ─────────────────────────────────────────
@@ -30,7 +32,7 @@ const activeAgentRuns = new Map<string, {
   useRuns?: boolean;
 }>();
 
-const HERMES_BRIDGE_ROOT = (process.env.HERMES_BRIDGE_URL || 'http://localhost:3002').replace(/\/v1\/?$/, '');
+const HERMES_BRIDGE_ROOT = getHermesBridgeRoot();
 
 /** Usable Hermes bridge auth + provider pin headers.
  * Never send empty/placeholder Authorization — it confuses OpenRouter key
@@ -1525,7 +1527,9 @@ export async function proxyCompatibleProviderToDataStream(input: {
 
   let upstreamResponse: Response;
   try {
-    upstreamResponse = await fetch(getCompatibleProviderChatUrl(input.provider), {
+    // streamingFetch (not global fetch) so long MiniMax/Kimi generations are not
+    // killed by undici's 300s body timeout.
+    upstreamResponse = await streamingFetch(getCompatibleProviderChatUrl(input.provider), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

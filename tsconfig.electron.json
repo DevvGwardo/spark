@@ -15,5 +15,5 @@
     },
     "types": ["node"]
   },
-  "include": ["electron/**/*.ts", "server/**/*.ts", "src/**/*.d.ts", "src/vite-env.d.ts"]
+  "include": ["electron/**/*.ts", "server/**/*.ts", "shared/**/*.ts", "src/**/*.d.ts", "src/vite-env.d.ts"]
 }

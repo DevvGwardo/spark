@@ -215,11 +215,41 @@ class ApprovalRequestTests(unittest.TestCase):
         self.assertIsNone(event["reason"])
         self.assertEqual(
             event["available_decisions"],
-            ["approved", "approved_for_session", "denied", "timed_out", "abort"],
+            ["approved", "denied"],
         )
         # Legacy keys preserved.
         self.assertEqual(event["session_id"], "sess-1")
         self.assertEqual(event["options"], [{"option_id": "allow_once", "name": "Allow once"}])
+
+    def test_available_decisions_include_session_when_offered(self):
+        event = bridge_events.build_approval_request_event(
+            approval_id="acp-term",
+            session_id="sess-1",
+            tool="terminal",
+            kind="execute",
+            summary="terminal",
+            excerpt="ls",
+            options=[
+                {"option_id": "allow_once", "name": "Allow once"},
+                {"option_id": "allow_session", "name": "Allow for session"},
+                {"option_id": "deny", "name": "Deny"},
+            ],
+        )
+        self.assertEqual(
+            event["available_decisions"],
+            ["approved", "approved_for_session", "denied"],
+        )
+
+    def test_clamp_session_to_once_when_edit_only_offers_once(self):
+        offered = {"allow_once", "deny"}
+        self.assertEqual(bridge_events.clamp_acp_option_id("allow_session", offered), "allow_once")
+        self.assertEqual(bridge_events.clamp_acp_option_id("approved_for_session", offered), "allow_once")
+        self.assertEqual(bridge_events.clamp_acp_option_id("approved", offered), "allow_once")
+        self.assertEqual(bridge_events.clamp_acp_option_id("deny", offered), "deny")
+
+    def test_clamp_keeps_session_when_hermes_offered_it(self):
+        offered = {"allow_once", "allow_session", "deny"}
+        self.assertEqual(bridge_events.clamp_acp_option_id("approved_for_session", offered), "allow_session")
 
     def test_extract_approval_command(self):
         tool_call = SimpleNamespace(raw_input={"command": "ls -la", "path": "/tmp"})

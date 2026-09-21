@@ -1286,23 +1286,23 @@ app.whenReady().then(async () => {
     console.warn('[deep-link] setAsDefaultProtocolClient failed:', err)
   }
 
-  // Create the window first so the UI paints immediately — startBridge() can
-  // block for up to 30s waiting for the bridge to become healthy.
-  await createWindow()
-  createTray()
-  setupDockMenu()
-  registerGlobalShortcut()
-
-  // Start the Hermes bridge in the background so /api/hermes/* proxies don't
-  // 502 while ChatInput and the status pill poll on first paint. The renderer
-  // already polls bridge:status.
-  startBridge()
+  // Spawn the Python bridge before the window so first-paint polls of
+  // /api/hermes/providers and /workspace/commands don't 502. Do not await
+  // readiness here — startBridge() can block up to 30s; the Express proxy
+  // retries until uvicorn is healthy.
+  const bridgeReady = startBridge()
+  bridgeReady
     .then((result) => {
       console.log('[bridge] startup result:', result.status, result.message ?? '')
     })
     .catch((err) => {
       console.error('[bridge] startup failed:', err)
     })
+
+  await createWindow()
+  createTray()
+  setupDockMenu()
+  registerGlobalShortcut()
 
   // Auto-updates (skip in dev)
   if (!is.dev) {

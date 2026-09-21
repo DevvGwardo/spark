@@ -83,6 +83,6 @@ describe('context window lookup (prefix table)', () => {
 
   it('getModelContextWindow falls back to prefix resolution', () => {
     expect(getModelContextWindow('gpt-5.9-future')).toBe(128_000);
-    expect(getModelContextWindow('gemini-2.5-pro')).toBe(1_000_000);
+    expect(getModelContextWindow('gemini-2.5-pro')).toBe(2_097_152);
   });
 });

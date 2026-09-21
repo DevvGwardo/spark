@@ -40,8 +40,10 @@ from typing import Any, Callable, Optional
 from bridge_events import (
     PLAN_MODE_PROMPT_SUFFIX,
     build_approval_request_event,
+    clamp_acp_option_id,
     extract_approval_command,
     extract_exit_code,
+    offered_acp_option_ids,
     stream_retry_event,
     tool_call_begin_event,
     tool_call_delta_event,
@@ -215,11 +217,17 @@ class BridgeAcpClient:
         )
 
         approval_id = f"acp-{uuid.uuid4().hex[:16]}"
-        options_clean = [
-            {"option_id": str(getattr(o, "option_id", "")), "name": str(getattr(o, "name", "") or getattr(o, "option_id", ""))}
-            for o in (options or [])
-            if getattr(o, "option_id", None)
-        ]
+        options_clean = []
+        for o in options or []:
+            oid = str(getattr(o, "option_id", None) or (o.get("option_id") if isinstance(o, dict) else "") or "")
+            if not oid:
+                continue
+            name = str(
+                getattr(o, "name", None)
+                or (o.get("name") if isinstance(o, dict) else "")
+                or oid
+            )
+            options_clean.append({"option_id": oid, "name": name})
         title = str(getattr(tool_call, "title", "") or "tool")
         detail = _tool_input_for_display(tool_call) or title
 
@@ -248,7 +256,10 @@ class BridgeAcpClient:
         finally:
             self._approvals.pop(approval_id, None)
 
-        option_id = str(decision.get("option_id") or "deny")
+        option_id = clamp_acp_option_id(
+            decision.get("option_id") if isinstance(decision, dict) else decision,
+            offered_acp_option_ids(options_clean),
+        )
         if option_id in ("deny", "deny_always") or option_id == "":
             return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
         return RequestPermissionResponse(outcome=AllowedOutcome(outcome="selected", option_id=option_id))
@@ -790,10 +801,13 @@ def run_prompt_blocking(
 
 async def resolve_approval(approval_id: str, option_id: str) -> bool:
     """Complete a parked approval future. Returns True when the decision was delivered."""
+    # Normalize UI ladder ids (`approved`) so request_permission can clamp
+    # against the option list hermes actually offered.
+    normalized = clamp_acp_option_id(option_id)
     for handle in list(_sessions.values()):
         future = handle.approvals.get(approval_id)
         if future is not None and not future.done():
-            future.set_result({"option_id": option_id})
+            future.set_result({"option_id": normalized})
             return True
     return False
 

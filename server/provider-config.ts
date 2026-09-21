@@ -7,8 +7,9 @@ import { createMistral } from '@ai-sdk/mistral';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createTogetherAI } from '@ai-sdk/togetherai';
 import { createXai } from '@ai-sdk/xai';
-import type { LanguageModelV1 } from 'ai';
+import type { LanguageModelV1, ProviderMetadata } from 'ai';
 import { Agent } from 'undici';
+import { getHermesBridgeV1 } from './lib/hermes-bridge-url';
 
 type ReasoningEffort = 'low' | 'medium' | 'high';
 
@@ -61,7 +62,9 @@ export const HERMES_TOOL_CAPABLE_MODELS = [
 // extended periods during reasoning or tool execution, which triggers
 // undici's default 300s body timeout (UND_ERR_BODY_TIMEOUT).
 const streamingDispatcher = new Agent({ bodyTimeout: 0, headersTimeout: 0 });
-const streamingFetch: typeof globalThis.fetch = (input, init) =>
+// Exported so provider paths that bypass createProviderFetch (e.g. the direct
+// compatible-provider proxy) can share the same no-body-timeout dispatcher.
+export const streamingFetch: typeof globalThis.fetch = (input, init) =>
   fetch(input, {
     ...init,
     dispatcher: streamingDispatcher,
@@ -202,7 +205,7 @@ export const OPENAI_COMPATIBLE: Record<string, string> = {
   openrouter: 'https://openrouter.ai/api/v1',
   sambanova: 'https://api.sambanova.ai/v1',
   'z-ai': 'https://open.bigmodel.cn/api/paas/v4',
-  hermes: process.env.HERMES_BRIDGE_URL || 'http://localhost:3002/v1',
+  hermes: getHermesBridgeV1(),
 };
 
 export const ANTHROPIC_COMPATIBLE: Record<string, string> = {
@@ -407,6 +410,10 @@ export function createProviderModel(
     const anthropic = createAnthropic({
       baseURL: ANTHROPIC_COMPATIBLE[provider],
       apiKey,
+      headers: getProviderHeaders(provider, options?.origin, options?.extraHeaders),
+      // Same no-body-timeout dispatcher as every other provider path — Anthropic
+      // generations can run well past undici's 300s default body timeout.
+      fetch: createProviderFetch(provider),
     });
     return anthropic(model);
   }
@@ -455,69 +462,39 @@ export function resolveReviewCapableProvider(
   return { provider: activeProvider, model: activeModel, apiKey: activeApiKey };
 }
 
+/** Providers whose AI SDK adapter accepts a reasoning/thinking option via
+ * `providerOptions` (see getReasoningProviderOptions). */
+const REASONING_EFFORT_PROVIDERS = new Set(['openai', 'groq', 'xai', 'google']);
+
 export function supportsReasoningEffort(provider: string, model?: string): boolean {
-  if (provider !== 'openai' || !model) {
-    return false;
+  if (provider === 'openai') {
+    if (!model) return false;
+    const normalizedModel = model.toLowerCase();
+    return normalizedModel.startsWith('gpt-5') || normalizedModel.startsWith('o');
   }
 
-  const normalizedModel = model.toLowerCase();
-  return normalizedModel.startsWith('gpt-5') || normalizedModel.startsWith('o');
+  return REASONING_EFFORT_PROVIDERS.has(provider);
 }
 
-export const CONTEXT_WINDOW_SIZES: Record<string, number> = {
-  'claude-sonnet-4': 200_000,
-  'claude-sonnet-4-20250514': 200_000,
-  'claude-sonnet-4-5-20250929': 200_000,
-  'claude-opus-4': 200_000,
-  'claude-opus-4-7': 200_000,
-  'claude-haiku-4': 200_000,
-  'claude-haiku-4-5': 200_000,
-  'gpt-4.1': 1_047_576,
-  'gpt-4.1-mini': 1_047_576,
-  'gpt-4.1-nano': 1_047_576,
-  'gpt-4o': 128_000,
-  'gpt-4o-mini': 128_000,
-  'gpt-5.4': 400_000,
-  'gpt-5.2': 400_000,
-  'gpt-5-mini': 400_000,
-  'gemini-2.5-flash': 1_048_576,
-  'gemini-2.5-pro': 2_097_152,
-  'gemini-2.5-flash-lite': 1_048_576,
-  'gemini-3.1-flash-lite-preview': 1_048_576,
-  'deepseek/deepseek-v3.2': 128_000,
-  'deepseek/deepseek-chat-v3.1': 128_000,
-  'deepseek-chat': 128_000,
-  'deepseek-reasoner': 64_000,
-  'meta-llama/llama-4-maverick': 128_000,
-  'meta-llama/llama-4-scout': 128_000,
-  'MiniMax-M2.7': 4_000_000,
-  'MiniMax-M2.7-highspeed': 4_000_000,
-  'grok-4-fast-reasoning': 1_000_000,
-  'grok-code-fast-1': 1_000_000,
-  'kimi-k2.6': 128_000,
-  'kimi-k2.5': 128_000,
-  'glm-5.1': 1_000_000,
-  'glm-5': 1_000_000,
-  'mistral-large-latest': 256_000,
-  'mistral-small-latest': 256_000,
-  // Xiaomi MiMo (xiaomimimo.com)
-  'xiaomi/mimo-v2.5-pro': 200_000,
-  'mimo-v2.5-pro': 200_000,
-  'mimo-v2.5': 200_000,
-};
+// Canonical per-model context-window table now lives in a shared module so the
+// server (usage events) and the client (context meter) cannot disagree. The
+// previous server-only `getContextWindow` helper (with a conflicting 200_000
+// fallback and no callers) was removed; use `getModelContextWindow` from
+// ./model-context instead.
+export { MODEL_CONTEXT_WINDOW_SIZES as CONTEXT_WINDOW_SIZES } from '../shared/model-context';
 
-export function getContextWindow(modelName: string): number {
-  if (CONTEXT_WINDOW_SIZES[modelName]) return CONTEXT_WINDOW_SIZES[modelName];
-  const shortName = modelName.includes('/') ? modelName.split('/').pop()! : modelName;
-  return CONTEXT_WINDOW_SIZES[shortName] ?? 200_000;
-}
-
+/**
+ * Maps a requested reasoning effort onto each provider's AI SDK providerOptions
+ * shape. Providers that have no effort control (deepseek, anthropic thinking
+ * budgets, …) return undefined so the caller can surface that the setting was
+ * ignored rather than dropping it silently.
+ */
 export function getReasoningProviderOptions(
   provider: string,
   model: string,
   reasoningEffort?: string,
-) {
-  if (!supportsReasoningEffort(provider, model) || !reasoningEffort) {
+): ProviderMetadata | undefined {
+  if (!reasoningEffort) {
     return undefined;
   }
 
@@ -529,9 +506,19 @@ export function getReasoningProviderOptions(
     return undefined;
   }
 
-  return {
-    openai: {
-      reasoningEffort: reasoningEffort as ReasoningEffort,
-    },
-  };
+  switch (provider) {
+    case 'openai':
+      return supportsReasoningEffort(provider, model)
+        ? { openai: { reasoningEffort: reasoningEffort as ReasoningEffort } }
+        : undefined;
+    case 'groq':
+      return { groq: { reasoningEffort } };
+    case 'xai':
+      // xAI accepts only 'low' | 'high'.
+      return { xai: { reasoningEffort: reasoningEffort === 'low' ? 'low' : 'high' } };
+    case 'google':
+      return { google: { thinkingConfig: { thinkingLevel: reasoningEffort } } };
+    default:
+      return undefined;
+  }
 }
