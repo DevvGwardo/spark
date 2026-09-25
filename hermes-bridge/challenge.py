@@ -138,7 +138,7 @@ def run_test():
     print()
     print("---[5] File I/O issues ---")
     try:
-        print(f"  inventory: {load_inventory("inv.json")}")
+        print(f"  inventory: {load_inventory('inv.json')}")
     except Exception as e:
         print(f"  CRASH: {type(e).__name__}: {e}")
 

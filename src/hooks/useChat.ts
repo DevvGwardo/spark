@@ -2765,7 +2765,7 @@ When the user asks you to make changes:
       const pseudoInvocations = extractPseudoToolInvocations(sourceText);
       const repoEditInvocation = allowPseudoRepoWrites
         ? pseudoInvocations.find((invocation) =>
-            ['batch_edit_repo_files', 'edit_repo_file', 'create_repo_file', 'delete_repo_file'].includes(invocation.toolName),
+            ['batch_edit_repo_files', 'edit_repo_file', 'create_repo_file', 'delete_repo_file', 'write_to_file', 'replace_file_content'].includes(invocation.toolName),
           )
         : undefined;
       const textFileEdits = repoEditInvocation || !allowPseudoRepoWrites ? [] : extractTextFileEdits(sourceText);

@@ -465,9 +465,7 @@ app.post('/functions/v1/chat', async (req, res) => {
       typeof conversation_id === 'string' && conversation_id.trim().length > 0
         ? conversation_id.trim()
         : 'default';
-    if (autoApprove) {
-      approvalPolicyStore.setAutoApprove(conversationKey, true);
-    }
+    approvalPolicyStore.setAutoApprove(conversationKey, autoApprove);
 
     const sanitizeFileTree = (tree: unknown): string[] =>
       Array.isArray(tree)

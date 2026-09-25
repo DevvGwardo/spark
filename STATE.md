@@ -18,4 +18,12 @@
 - A keepalive “fix” that switched ACP from tick-based (~3s) to wall-clock 60s exceeded the 30s proxy idle window and looked like “file write / approval is broken.”
 
 ## Last session
-2026-09-21 · Full-repo audit (typecheck/lint/tests green: 933 JS tests, 710 Python tests pass; 8 lint warnings, 25 npm-audit vulns incl. 2 high, many deps major-outdated). Top verified findings: (1) bridge blocks event loop with subprocess.run in async endpoints (kills SSE heartbeats bridge-wide); (2) bridge CORS `*` + loopback token exemption = any webpage can call privileged endpoints; (3) Express `sendJson` lacks headersSent guard → write-after-end crash on mid-stream proxy failures; (4) team-agent child stdout never consumed → 64KB pipe deadlock; (5) legacy AcpApprovalBanner still maps session/always→allow_session/allow_always (same bug class as last week's clamp, client-side); (6) single global pendingAcpApproval clobbered by concurrent panels. Full prioritized list delivered in chat 2026-09-21.
+2026-09-24 · Fixed UI loop stalling and ACP stream stealing:
+- Updated `stalledOnRepoRead` and pseudo tool parsing to recognize standard ACP file tools (`read_file`, `search_files`, `write_to_file`, `replace_file_content`). This prevents the chat loop from stalling mid-analysis or dropping implicit edit continuations when operating via MCP.
+- Fixed "stream stealing on concurrent prompts": `_AcpHandle` now uses an `asyncio.Lock` (`turn_lock`) to serialize concurrent `prompt()` calls against the same session, preventing mid-stream emit reassignment.
+- Fixed "plan mode dropped in loop/swarm": `ensure_session` now compares `handle.plan_mode` against the requested `plan_mode` and tears down/respawns the session if it changed, ensuring mutating tools are actually stripped during the loop instead of being retained from the previous turn.
+- Fixed `DESTRUCTIVE_HERMES_OPS gaps`: Replaced exact-match string paths with a prefix matcher to properly protect mutating `/workspace`, `/skills`, `/mcp-servers` routes.
+- Fixed "auto-approve one-way latch": `approvalPolicyStore.setAutoApprove` now accepts and stores `false`, allowing the latch to be cleared if disabled.
+- Addressed `npm audit` vulnerabilities: Ran `npm audit fix` to clear non-breaking prototype pollution and DoS vulns.
+
+Medium-tier audit findings remaining: only breaking-change `npm audit` vulns (electron, vite, react-router, ai-sdk) remain.

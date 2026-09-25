@@ -462,6 +462,8 @@ export const REPO_EDIT_TOOL_NAMES = new Set([
   'create_repo_file',
   'delete_repo_file',
   'batch_edit_repo_files',
+  'write_to_file',
+  'replace_file_content',
 ]);
 
 export const REPO_MODE_DISABLED_HERMES_TOOLSETS = new Set([
@@ -517,6 +519,8 @@ export function collectRepoWorkflowToolNames(
     .map((toolName) => toolName.toLowerCase())
     .filter((toolName) =>
       toolName === 'read_repo_file' ||
+      toolName === 'read_file' ||
+      toolName === 'search_files' ||
       REPO_EDIT_TOOL_NAMES.has(toolName),
     );
 }
@@ -539,7 +543,7 @@ export function stalledOnRepoRead(
   const lastTool = orderedRepoWorkflowNames.at(-1);
 
   // Stalled if the final repo workflow step is a file read (stopped mid-analysis)
-  if (lastTool === 'read_repo_file') {
+  if (lastTool === 'read_repo_file' || lastTool === 'read_file' || lastTool === 'search_files') {
     return true;
   }
 
@@ -574,7 +578,7 @@ export function describedEditButDidNotExecute(
   }
 
   // Check if the response text mentions repo edit tools
-  const mentionsEditTools = /\b(?:batch_edit_repo_files|edit_repo_file|create_repo_file|delete_repo_file)\b/.test(content);
+  const mentionsEditTools = /\b(?:batch_edit_repo_files|edit_repo_file|create_repo_file|delete_repo_file|write_to_file|replace_file_content)\b/.test(content);
   if (!mentionsEditTools) return false;
 
   // Check if any edit tool was actually called (via structured tool invocations or tool activity)

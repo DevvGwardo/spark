@@ -237,7 +237,19 @@ export function createApp(opts?: { serveFrontend?: boolean }) {
   if (opts?.serveFrontend) {
     if (existsSync(distPath)) {
       logger.info(`[server] Serving frontend from ${distPath}`);
-      app.use(express.static(distPath));
+      app.use(
+        express.static(distPath, {
+          setHeaders: (res, path) => {
+            if (path.includes('/assets/')) {
+              // Vite hashes these files, so they are safe to cache forever.
+              res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+            } else {
+              // HTML files and unhashed root assets should not be cached to ensure updates propagate.
+              res.setHeader('Cache-Control', 'no-cache');
+            }
+          },
+        }),
+      );
     } else {
       logger.warn(`[server] dist/ not found at ${distPath} — frontend not available`);
     }

@@ -11,40 +11,43 @@ import { getHermesBridgeRoot } from '../lib/hermes-bridge-url';
 // whether HERMES_BRIDGE_URL is configured with or without it.
 const HERMES_BRIDGE_URL = getHermesBridgeRoot();
 
-/** Paths that mutate Hermes home / run installers — local UI + tunnel only. */
-const DESTRUCTIVE_HERMES_OPS = new Set([
-  'PUT /api/hermes/moa',
-  'PUT /api/hermes/fallback',
-  'PUT /api/hermes/goals',
-  'PUT /api/hermes/tool-search',
-  'POST /api/hermes/checkpoints/prune',
-  'POST /api/hermes/checkpoints/restore',
-  'POST /api/hermes/curator/run',
-  'POST /api/hermes/computer-use/install',
-  'POST /api/hermes/pets/select',
-  'POST /api/hermes/bundles/create',
-  'POST /api/hermes/bundles/delete',
-  'POST /api/hermes/bundles/reload',
-  'POST /api/hermes/plugins/enable',
-  'POST /api/hermes/plugins/disable',
-  'POST /api/hermes/claw/migrate',
-  'POST /api/hermes/kanban/swarm',
-  'POST /api/hermes/projects',
-  'POST /api/hermes/projects/use',
-  'POST /api/hermes/projects/bind-board',
-  'POST /api/hermes/auth/pool/reset',
-  'POST /api/hermes/auth/pool/remove',
-  'POST /api/hermes/auth/pool/add',
-  'POST /api/hermes/portal/oauth/start',
-]);
+const DESTRUCTIVE_PREFIXES = [
+  '/api/hermes/moa',
+  '/api/hermes/fallback',
+  '/api/hermes/goals',
+  '/api/hermes/tool-search',
+  '/api/hermes/checkpoints',
+  '/api/hermes/curator',
+  '/api/hermes/computer-use',
+  '/api/hermes/pets',
+  '/api/hermes/bundles',
+  '/api/hermes/plugins',
+  '/api/hermes/claw',
+  '/api/hermes/kanban',
+  '/api/hermes/projects',
+  '/api/hermes/auth',
+  '/api/hermes/portal',
+  '/api/hermes/workspace/skills',
+  '/api/hermes/workspace/mcp-servers',
+  '/api/hermes/workspace/files',
+  '/api/hermes/messaging/platforms',
+  '/api/hermes/sessions',
+  '/api/hermes/cron',
+];
+
+function isDestructiveHermesOp(method: string, path: string): boolean {
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
+    return false;
+  }
+  return DESTRUCTIVE_PREFIXES.some((p) => path === p || path.startsWith(p + '/'));
+}
 
 function requireLocalHermesMutation(req: Request, res: Response, next: NextFunction): void {
   // Express 4 has strict routing off, so `POST /api/hermes/kanban/swarm/`
   // (trailing slash) matches the route but yields a req.path with the slash,
   // which would bypass the exact-match set below. Normalize before lookup.
   const normalizedPath = req.path.length > 1 ? req.path.replace(/\/+$/, '') : req.path;
-  const key = `${req.method.toUpperCase()} ${normalizedPath}`;
-  if (!DESTRUCTIVE_HERMES_OPS.has(key)) {
+  if (!isDestructiveHermesOp(req.method, normalizedPath)) {
     next();
     return;
   }
@@ -54,7 +57,7 @@ function requireLocalHermesMutation(req: Request, res: Response, next: NextFunct
     next();
     return;
   }
-  logger.warn(`[hermes-admin] blocked non-local mutating request: ${key}`);
+  logger.warn(`[hermes-admin] blocked non-local mutating request: ${req.method} ${normalizedPath}`);
   sendJson(res, 403, { error: 'This Hermes operation is only available from the local app or an authenticated tunnel.' });
 }
 
@@ -74,6 +77,14 @@ const CACHEABLE_BRIDGE_PATHS = new Set([
   '/v1/providers',
   '/workspace/commands',
   '/workspace/overview',
+  '/workspace/skills',
+  '/workspace/skills/hub',
+  '/workspace/mcp-servers',
+  '/workspace/mcp-catalog',
+  '/messaging/platforms',
+  '/plugins',
+  '/hooks',
+  '/portal/tools',
 ]);
 
 type BridgeCacheEntry = {
@@ -164,6 +175,8 @@ async function proxyTo(
   if (BRIDGE_CACHE_ENABLED && isGet && isCacheableBridgePath(path)) {
     const cached = bridgeReadCache.get(bridgeCacheKey(path, profile));
     if (cached && cached.expiresAt > Date.now()) {
+      const maxAge = Math.max(0, Math.floor((cached.expiresAt - Date.now()) / 1000));
+      res.setHeader('Cache-Control', `public, max-age=${maxAge}`);
       res.status(cached.status).type(cached.contentType).send(cached.body);
       return;
     }
@@ -221,6 +234,11 @@ async function proxyTo(
         body: rawText,
         expiresAt: Date.now() + BRIDGE_CACHE_TTL_MS,
       });
+      // Set Cache-Control so the frontend can avoid network roundtrips entirely
+      // during rapid navigation (e.g. switching panels back and forth).
+      res.setHeader('Cache-Control', `public, max-age=${Math.floor(BRIDGE_CACHE_TTL_MS / 1000)}`);
+    } else {
+      res.setHeader('Cache-Control', 'no-store, max-age=0');
     }
 
     res.status(response.status).type(contentType).send(rawText);
