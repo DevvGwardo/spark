@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect } from 'vitest';
 import { isHermesLoopStatusData } from '@/hooks/chat-utils';
 import { useHermesStore } from '@/stores/hermes-store';

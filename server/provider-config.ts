@@ -7,7 +7,7 @@ import { createMistral } from '@ai-sdk/mistral';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createTogetherAI } from '@ai-sdk/togetherai';
 import { createXai } from '@ai-sdk/xai';
-import type { LanguageModelV1, ProviderMetadata } from 'ai';
+import type { LanguageModel, ProviderMetadata } from 'ai';
 import { Agent } from 'undici';
 import { getHermesBridgeV1 } from './lib/hermes-bridge-url';
 
@@ -405,7 +405,7 @@ export function createProviderModel(
   model: string,
   apiKey: string,
   options?: { origin?: string; extraHeaders?: Record<string, string> }
-): LanguageModelV1 {
+): LanguageModel {
   if (ANTHROPIC_COMPATIBLE[provider]) {
     const anthropic = createAnthropic({
       baseURL: ANTHROPIC_COMPATIBLE[provider],
@@ -415,7 +415,7 @@ export function createProviderModel(
       // generations can run well past undici's 300s default body timeout.
       fetch: createProviderFetch(provider),
     });
-    return anthropic(model);
+    return anthropic(model) as unknown as LanguageModel;
   }
 
   if (usesFirstPartyProviderSdk(provider)) {
@@ -424,7 +424,7 @@ export function createProviderModel(
       apiKey,
       headers: getProviderHeaders(provider, options?.origin, options?.extraHeaders),
       fetch: createProviderFetch(provider),
-    })(model) as LanguageModelV1;
+    })(model) as LanguageModel;
   }
 
   const baseURL = OPENAI_COMPATIBLE[provider];
@@ -435,12 +435,11 @@ export function createProviderModel(
   const openai = createOpenAI({
     baseURL,
     apiKey,
-    compatibility: 'compatible',
     headers: getProviderHeaders(provider, options?.origin, options?.extraHeaders),
     fetch: createProviderFetch(provider),
   });
 
-  return openai(model);
+  return openai(model) as unknown as LanguageModel;
 }
 
 export interface ReviewProviderResolution {

@@ -11,14 +11,14 @@
 // tool calls never break on conversion.
 
 import type { z } from 'zod';
-import type { CoreTool } from 'ai';
+import type { Tool } from 'ai';
 
 export interface OpenAiFunctionTool {
   type: 'function';
   function: {
     name: string;
     description?: string;
-    parameters: Record<string, unknown>;
+    inputSchema: Record<string, unknown>;
   };
 }
 
@@ -136,9 +136,9 @@ function zodToJsonSchema(schema: ZodLike): Record<string, unknown> {
  * Used when the direct-compatible proxy forwards a filtered (read-only) tool
  * set upstream in plan mode.
  */
-export function coreToolToOpenAiFunction(name: string, coreTool: CoreTool): OpenAiFunctionTool {
-  const parameters = coreTool.parameters ? zodToJsonSchema(coreTool.parameters as ZodLike) : { type: 'object', properties: {} };
-  const description = coreTool.description || '';
+export function coreToolToOpenAiFunction(name: string, coreTool: Tool): OpenAiFunctionTool {
+  const parameters = coreTool.inputSchema ? zodToJsonSchema(coreTool.inputSchema as ZodLike) : { type: 'object', properties: {} };
+  const rawDesc = coreTool.description; const description = typeof rawDesc === 'string' ? rawDesc : '';
   if (description) {
     parameters.description = description;
   }
@@ -147,12 +147,12 @@ export function coreToolToOpenAiFunction(name: string, coreTool: CoreTool): Open
     function: {
       name,
       ...(description ? { description } : {}),
-      parameters,
+      inputSchema: parameters as any,
     },
   };
 }
 
 /** Convert a record of AI SDK tools into an OpenAI `tools` array. */
-export function coreToolsToOpenAiFunctions(tools: Record<string, CoreTool>): OpenAiFunctionTool[] {
+export function coreToolsToOpenAiFunctions(tools: Record<string, Tool>): OpenAiFunctionTool[] {
   return Object.entries(tools).map(([name, coreTool]) => coreToolToOpenAiFunction(name, coreTool));
 }

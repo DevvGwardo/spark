@@ -54,7 +54,7 @@ describe('server-tool-events', () => {
       }
     });
 
-    it('SERVER_EXECUTED_REPO_TOOLS contains exactly the 6 expected tool names', () => {
+    it('SERVER_EXECUTED_REPO_TOOLS contains exactly the 10 expected tool names', () => {
       const expectedTools = [
         'read_repo_file',
         'edit_repo_file',
@@ -62,8 +62,12 @@ describe('server-tool-events', () => {
         'delete_repo_file',
         'batch_edit_repo_files',
         'propose_changes',
+        'write_to_file',
+        'replace_file_content',
+        'read_file',
+        'search_files',
       ];
-      expect(SERVER_EXECUTED_REPO_TOOLS.size).toBe(6);
+      expect(SERVER_EXECUTED_REPO_TOOLS.size).toBe(10);
       for (const tool of expectedTools) {
         expect(SERVER_EXECUTED_REPO_TOOLS.has(tool)).toBe(true);
       }

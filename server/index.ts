@@ -149,7 +149,7 @@ export function createApp(opts?: { serveFrontend?: boolean }) {
   // gzip buffers output and would break incremental token delivery.
   app.use(compression({ filter: (req, res) => {
     if ((res.getHeader('Content-Type') || '').toString().includes('text/event-stream')) return false;
-    if (res.getHeader('x-vercel-ai-data-stream')) return false;
+    if (res.getHeader('x-vercel-ai-ui-message-stream')) return false;
     return compression.filter(req, res);
   } }));
   // Origin-aware CORS. Never reflect arbitrary origins: unauthenticated GET

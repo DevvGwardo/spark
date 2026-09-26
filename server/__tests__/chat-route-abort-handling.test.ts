@@ -1,3 +1,4 @@
+// @vitest-environment node
 import type { AddressInfo } from 'net'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -64,7 +65,7 @@ describe('chat route abort handling', () => {
       expect(options.abortSignal).toBeInstanceOf(AbortSignal)
 
       return {
-        pipeDataStreamToResponse(
+        pipeTextStreamToResponse(
           res: {
             writeHead: (statusCode: number, headers: Record<string, string>) => void
             end: (body?: string) => void
@@ -73,7 +74,7 @@ describe('chat route abort handling', () => {
         ) {
           res.writeHead(200, {
             ...streamOptions.headers,
-            'x-vercel-ai-data-stream': 'v1',
+            'x-vercel-ai-ui-message-stream': 'v1',
           })
           res.end('')
         },

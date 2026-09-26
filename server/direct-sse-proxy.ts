@@ -1,6 +1,6 @@
 import { logger } from './lib/logger';
 import express from 'express';
-import { formatDataStreamPart, type JSONValue } from 'ai';
+import { createUiMessageStreamWriter, UI_MESSAGE_STREAM_HEADERS, type UiFinishReason } from './lib/ui-message-stream';
 import { bindClientDisconnect } from './http-disconnect';
 import { buildUsageEvent } from './lib/usage-events';
 import { STREAM_ACTIVITY_TIMEOUT_MS } from './config';
@@ -63,6 +63,12 @@ interface ProxySseToDataStreamInput {
    * ({type:"usage", ...}) emitted once at stream end. Omit to skip the event.
    */
   modelName?: string;
+  /**
+   * Shared writer for multi-stream responses (loop mode pipes several upstream
+   * streams into one message). When provided, text/reasoning block state is
+   * shared with the caller instead of being re-opened per upstream stream.
+   */
+  stream?: import('./lib/ui-message-stream').UiMessageStreamWriter;
 }
 
 /** Maximum size for the SSE buffer before forcibly flushing (1 MB). */
@@ -150,12 +156,15 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
 
   const manageResponse = input.manageResponse !== false;
 
+  const sendChunk = (chunk: string) => writeDataStreamChunk(input.res, chunk);
+  const stream = input.stream ?? createUiMessageStreamWriter(sendChunk);
+
   if (manageResponse) {
     input.res.writeHead(200, {
       ...input.corsHeaders,
-      'Content-Type': 'text/plain; charset=utf-8',
-      'x-vercel-ai-data-stream': 'v1',
+      ...UI_MESSAGE_STREAM_HEADERS,
     });
+    await stream.start();
   }
 
   const decoder = new TextDecoder();
@@ -207,7 +216,7 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
     }
 
     if (normalized.reasoning && canWrite()) {
-      await writeDataStreamChunk(input.res, formatDataStreamPart('reasoning', normalized.reasoning));
+      await stream.reasoning(normalized.reasoning);
     }
 
     if (normalized.text) {
@@ -217,7 +226,7 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
       sawVisibleOutput = true;
       input.onText?.(normalized.text);
       if (canWrite()) {
-        await writeDataStreamChunk(input.res, formatDataStreamPart('text', normalized.text));
+        await stream.text(normalized.text);
       }
     }
 
@@ -233,13 +242,7 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
           };
           toolCallAccumulator.set(index, call);
           if (canWrite()) {
-            await writeDataStreamChunk(
-              input.res,
-              formatDataStreamPart('tool_call_streaming_start', {
-                toolCallId: call.id,
-                toolName: call.name,
-              }),
-            );
+            await stream.toolInputStart(call.id, call.name);
           }
         }
         if (fragment.id && fragment.id !== call.id) {
@@ -251,13 +254,7 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
         if (fragment.argumentsDelta) {
           call.argsBuffer += fragment.argumentsDelta;
           if (canWrite()) {
-            await writeDataStreamChunk(
-              input.res,
-              formatDataStreamPart('tool_call_delta', {
-                toolCallId: call.id,
-                argsTextDelta: fragment.argumentsDelta,
-              }),
-            );
+            await stream.toolInputDelta(call.id, fragment.argumentsDelta);
           }
         }
       }
@@ -269,7 +266,9 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
       }
       sawDataEvent = true;
       if (canWrite()) {
-        await writeDataStreamChunk(input.res, formatDataStreamPart('data', normalized.data as unknown as JSONValue[]));
+        for (const event of normalized.data) {
+          await stream.data(event);
+        }
       }
     }
   };
@@ -304,10 +303,7 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
         );
         buffer = '';
         if (canWrite()) {
-          await writeDataStreamChunk(
-            input.res,
-            formatDataStreamPart('error', 'Stream buffer overflow — some data may have been lost.'),
-          );
+          await stream.error('Stream buffer overflow — some data may have been lost.');
         }
       }
 
@@ -330,10 +326,8 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
     // Surface activity-timeout errors to the client before re-throwing.
     if (error instanceof Error && error.message === 'Upstream activity timeout') {
       try {
-        await writeDataStreamChunk(
-          input.res,
-          formatDataStreamPart('error', 'Upstream provider stopped sending data (activity timeout).'),
-        );
+        await stream.error('Upstream provider stopped sending data (activity timeout).');
+        await stream.done();
         input.res.end();
       } catch {
         // Response may already be closed.
@@ -353,14 +347,14 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
 
   if (!sawVisibleOutput && !sawDataEvent && input.emptyTextFallback) {
     sawVisibleOutput = true;
-    await writeDataStreamChunk(input.res, formatDataStreamPart('text', input.emptyTextFallback));
+    await stream.text(input.emptyTextFallback);
   }
 
   if (!sawVisibleOutput && !sawDataEvent && input.throwOnEmpty) {
     throw new Error(input.throwOnEmpty);
   }
 
-  // Flush any accumulated upstream tool calls as AI SDK tool_call parts so the
+  // Flush any accumulated upstream tool calls as tool-input parts so the
   // client can render/execute them (plan-mode direct proxy path).
   if (toolCallAccumulator.size > 0 && canWrite()) {
     for (const call of toolCallAccumulator.values()) {
@@ -375,14 +369,7 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
         // streaming deltas it already received.
         args = {};
       }
-      await writeDataStreamChunk(
-        input.res,
-        formatDataStreamPart('tool_call', {
-          toolCallId: call.id,
-          toolName: call.name,
-          args,
-        }),
-      );
+      await stream.toolInputAvailable(call.id, call.name, args);
     }
   }
 
@@ -396,7 +383,7 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
       },
       input.modelName,
     );
-    await writeDataStreamChunk(input.res, formatDataStreamPart('data', [usageEvent] as unknown as JSONValue[]));
+    await stream.data(usageEvent);
   }
 
   if (!manageResponse) {
@@ -404,13 +391,10 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
   }
 
   if (!input.res.writableEnded) {
-    await writeDataStreamChunk(
-      input.res,
-      formatDataStreamPart('finish_message', {
-        finishReason: finishReason === 'unknown' && (sawVisibleOutput || sawDataEvent) ? 'stop' : finishReason,
-        usage,
-      }),
-    );
+    const resolvedFinishReason: UiFinishReason =
+      finishReason === 'unknown' && (sawVisibleOutput || sawDataEvent) ? 'stop' : finishReason;
+    await stream.finish(resolvedFinishReason);
+    await stream.done();
     input.res.end();
   }
 }

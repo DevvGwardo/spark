@@ -2,7 +2,7 @@ import { afterEach, describe, it, expect, beforeEach, vi } from 'vitest';
 import type { ToolExecutionOptions } from 'ai';
 import { buildServerRepoTools, RepoContext } from '../agent-loop';
 
-const toolOpts: ToolExecutionOptions = { toolCallId: 'test', messages: [] };
+const toolOpts: ToolExecutionOptions<any> = { toolCallId: 'test', messages: [], context: undefined };
 
 describe('agent-loop', () => {
   afterEach(() => {
@@ -30,7 +30,7 @@ describe('agent-loop', () => {
 
     describe('tool availability', () => {
       it('should return all 6 tool names when repoEditIntent is true', () => {
-        const tools = buildServerRepoTools(baseRepo, mockEmit);
+        const tools = buildServerRepoTools(baseRepo, mockEmit as any);
 
         expect(Object.keys(tools)).toHaveLength(6);
         expect(tools).toHaveProperty('propose_changes');
@@ -47,7 +47,7 @@ describe('agent-loop', () => {
             ...baseRepo,
             repoEditIntent: false,
           },
-          mockEmit,
+          mockEmit as any,
         );
 
         expect(Object.keys(tools)).toEqual(['read_repo_file']);
@@ -56,7 +56,7 @@ describe('agent-loop', () => {
 
     describe('propose_changes', () => {
       it('should emit a repo_proposal event and return a review prompt', async () => {
-        const tools = buildServerRepoTools(baseRepo, mockEmit);
+        const tools = buildServerRepoTools(baseRepo, mockEmit as any);
         const result = await tools.propose_changes.execute!(
           {
             summary: 'Refresh the shell',
@@ -72,7 +72,7 @@ describe('agent-loop', () => {
         );
 
         expect(result).toBe('Proposal ready for review. Pause for approval before editing repo files.');
-        expect(mockEmit).toHaveBeenCalledWith({
+        expect(mockEmit as any).toHaveBeenCalledWith({
           type: 'repo_proposal',
           summary: 'Refresh the shell',
           plan: [
@@ -86,7 +86,7 @@ describe('agent-loop', () => {
       });
 
       it('normalizes provider plan payloads before validation', () => {
-        const tools = buildServerRepoTools(baseRepo, mockEmit);
+        const tools = buildServerRepoTools(baseRepo, mockEmit as any);
         const parsed = tools.propose_changes.parameters.safeParse({
           description: 'Refresh the shell',
           plan: [
@@ -114,30 +114,30 @@ describe('agent-loop', () => {
 
     describe('read_repo_file', () => {
       it('should return cached content and emit repo_file_read event', async () => {
-        const tools = buildServerRepoTools(baseRepo, mockEmit);
+        const tools = buildServerRepoTools(baseRepo, mockEmit as any);
         const result = await tools.read_repo_file.execute!(
           { path: 'src/app.ts' },
           toolOpts,
         );
 
         expect(result).toBe('console.log("hello");');
-        expect(mockEmit).toHaveBeenCalledWith({
+        expect(mockEmit as any).toHaveBeenCalledWith({
           type: 'repo_file_read',
           path: 'src/app.ts',
           content: 'console.log("hello");',
         });
-        expect(mockEmit).toHaveBeenCalledTimes(1);
+        expect(mockEmit as any).toHaveBeenCalledTimes(1);
       });
 
       it('should normalize path by stripping leading ./ and emit with normalized path', async () => {
-        const tools = buildServerRepoTools(baseRepo, mockEmit);
+        const tools = buildServerRepoTools(baseRepo, mockEmit as any);
         const result = await tools.read_repo_file.execute!(
           { path: './src/app.ts' },
           toolOpts,
         );
 
         expect(result).toBe('console.log("hello");');
-        expect(mockEmit).toHaveBeenCalledWith({
+        expect(mockEmit as any).toHaveBeenCalledWith({
           type: 'repo_file_read',
           path: 'src/app.ts',
           content: 'console.log("hello");',
@@ -145,7 +145,7 @@ describe('agent-loop', () => {
       });
 
       it('should return error for invalid path "."', async () => {
-        const tools = buildServerRepoTools(baseRepo, mockEmit);
+        const tools = buildServerRepoTools(baseRepo, mockEmit as any);
         const result = await tools.read_repo_file.execute!(
           { path: '.' },
           toolOpts,
@@ -154,11 +154,11 @@ describe('agent-loop', () => {
         expect(result).toBe(
           'Error: Choose a concrete file path from the loaded repository tree, not `.`, `/`, or a directory path.'
         );
-        expect(mockEmit).not.toHaveBeenCalled();
+        expect(mockEmit as any).not.toHaveBeenCalled();
       });
 
       it('should return error with suggestions when file not in repoFileTree', async () => {
-        const tools = buildServerRepoTools(baseRepo, mockEmit);
+        const tools = buildServerRepoTools(baseRepo, mockEmit as any);
         const result = await tools.read_repo_file.execute!(
           { path: 'app.ts' },
           toolOpts,
@@ -167,7 +167,7 @@ describe('agent-loop', () => {
         expect(result).toContain('Error: `app.ts` is not present in the selected repository');
         expect(result).toContain('Possible matches:');
         expect(result).toContain('src/app.ts');
-        expect(mockEmit).not.toHaveBeenCalled();
+        expect(mockEmit as any).not.toHaveBeenCalled();
       });
 
       it('suggests exact nested files from the same top-level area when a nearby server path is guessed', async () => {
@@ -182,7 +182,7 @@ describe('agent-loop', () => {
             ],
             repoFileCache: {},
           },
-          mockEmit,
+          mockEmit as any,
         );
 
         const result = await tools.read_repo_file.execute!(
@@ -193,7 +193,7 @@ describe('agent-loop', () => {
         expect(result).toContain('Possible matches:');
         expect(result).toContain('server/src/routes/cards.ts');
         expect(result).not.toContain('README.md');
-        expect(mockEmit).not.toHaveBeenCalled();
+        expect(mockEmit as any).not.toHaveBeenCalled();
       });
 
       it('should fetch uncached nested files using slash-preserving GitHub contents paths', async () => {
@@ -209,7 +209,7 @@ describe('agent-loop', () => {
             repoFileTree: ['src/components/Button.tsx'],
             repoFileCache: {},
           },
-          mockEmit,
+          mockEmit as any,
         );
 
         const result = await tools.read_repo_file.execute!(
@@ -226,7 +226,7 @@ describe('agent-loop', () => {
             }),
           }),
         );
-        expect(mockEmit).toHaveBeenCalledWith({
+        expect(mockEmit as any).toHaveBeenCalledWith({
           type: 'repo_file_read',
           path: 'src/components/Button.tsx',
           content: 'export const nested = true;',
@@ -236,7 +236,7 @@ describe('agent-loop', () => {
 
     describe('edit_repo_file', () => {
       it('should emit repo_file_edit event with originalContent from cache and return staged message', async () => {
-        const tools = buildServerRepoTools(baseRepo, mockEmit);
+        const tools = buildServerRepoTools(baseRepo, mockEmit as any);
         const result = await tools.edit_repo_file.execute!(
           {
             path: 'src/app.ts',
@@ -247,18 +247,18 @@ describe('agent-loop', () => {
         );
 
         expect(result).toBe('Staged edit to src/app.ts');
-        expect(mockEmit).toHaveBeenCalledWith({
+        expect(mockEmit as any).toHaveBeenCalledWith({
           type: 'repo_file_edit',
           path: 'src/app.ts',
           content: 'console.log("updated");',
           originalContent: 'console.log("hello");',
           description: 'Update log message',
         });
-        expect(mockEmit).toHaveBeenCalledTimes(1);
+        expect(mockEmit as any).toHaveBeenCalledTimes(1);
       });
 
       it('should normalize path and use empty string for originalContent when not in cache', async () => {
-        const tools = buildServerRepoTools(baseRepo, mockEmit);
+        const tools = buildServerRepoTools(baseRepo, mockEmit as any);
         const result = await tools.edit_repo_file.execute!(
           {
             path: './README.md',
@@ -269,7 +269,7 @@ describe('agent-loop', () => {
         );
 
         expect(result).toBe('Staged edit to README.md');
-        expect(mockEmit).toHaveBeenCalledWith({
+        expect(mockEmit as any).toHaveBeenCalledWith({
           type: 'repo_file_edit',
           path: 'README.md',
           content: '# Updated README',
@@ -279,7 +279,7 @@ describe('agent-loop', () => {
       });
 
       it('rejects edits to paths that do not already exist', async () => {
-        const tools = buildServerRepoTools(baseRepo, mockEmit);
+        const tools = buildServerRepoTools(baseRepo, mockEmit as any);
         const result = await tools.edit_repo_file.execute!(
           {
             path: 'src/missing.ts',
@@ -290,13 +290,13 @@ describe('agent-loop', () => {
         );
 
         expect(result).toContain('can only modify existing repo files');
-        expect(mockEmit).not.toHaveBeenCalled();
+        expect(mockEmit as any).not.toHaveBeenCalled();
       });
     });
 
     describe('create_repo_file', () => {
       it('should emit repo_file_create event and return staged message', async () => {
-        const tools = buildServerRepoTools(baseRepo, mockEmit);
+        const tools = buildServerRepoTools(baseRepo, mockEmit as any);
         const result = await tools.create_repo_file.execute!(
           {
             path: 'src/new-file.ts',
@@ -307,17 +307,17 @@ describe('agent-loop', () => {
         );
 
         expect(result).toBe('Staged new file src/new-file.ts');
-        expect(mockEmit).toHaveBeenCalledWith({
+        expect(mockEmit as any).toHaveBeenCalledWith({
           type: 'repo_file_create',
           path: 'src/new-file.ts',
           content: 'export const foo = 1;',
           description: 'Add new utility file',
         });
-        expect(mockEmit).toHaveBeenCalledTimes(1);
+        expect(mockEmit as any).toHaveBeenCalledTimes(1);
       });
 
       it('should normalize path when creating file', async () => {
-        const tools = buildServerRepoTools(baseRepo, mockEmit);
+        const tools = buildServerRepoTools(baseRepo, mockEmit as any);
         const result = await tools.create_repo_file.execute!(
           {
             path: './src/another.ts',
@@ -328,7 +328,7 @@ describe('agent-loop', () => {
         );
 
         expect(result).toBe('Staged new file src/another.ts');
-        expect(mockEmit).toHaveBeenCalledWith({
+        expect(mockEmit as any).toHaveBeenCalledWith({
           type: 'repo_file_create',
           path: 'src/another.ts',
           content: '// new file',
@@ -337,7 +337,7 @@ describe('agent-loop', () => {
       });
 
       it('treats create_repo_file on an existing path as an edit', async () => {
-        const tools = buildServerRepoTools(baseRepo, mockEmit);
+        const tools = buildServerRepoTools(baseRepo, mockEmit as any);
         const result = await tools.create_repo_file.execute!(
           {
             path: 'src/app.ts',
@@ -348,7 +348,7 @@ describe('agent-loop', () => {
         );
 
         expect(result).toBe('Staged edit to src/app.ts');
-        expect(mockEmit).toHaveBeenCalledWith({
+        expect(mockEmit as any).toHaveBeenCalledWith({
           type: 'repo_file_edit',
           path: 'src/app.ts',
           content: 'console.log("updated via create");',
@@ -360,7 +360,7 @@ describe('agent-loop', () => {
 
     describe('delete_repo_file', () => {
       it('should emit repo_file_delete event with originalContent and return staged message', async () => {
-        const tools = buildServerRepoTools(baseRepo, mockEmit);
+        const tools = buildServerRepoTools(baseRepo, mockEmit as any);
         const result = await tools.delete_repo_file.execute!(
           {
             path: 'src/app.ts',
@@ -370,17 +370,17 @@ describe('agent-loop', () => {
         );
 
         expect(result).toBe('Staged deletion of src/app.ts');
-        expect(mockEmit).toHaveBeenCalledWith({
+        expect(mockEmit as any).toHaveBeenCalledWith({
           type: 'repo_file_delete',
           path: 'src/app.ts',
           originalContent: 'console.log("hello");',
           reason: 'File no longer needed',
         });
-        expect(mockEmit).toHaveBeenCalledTimes(1);
+        expect(mockEmit as any).toHaveBeenCalledTimes(1);
       });
 
       it('should use empty string for originalContent when file not in cache', async () => {
-        const tools = buildServerRepoTools(baseRepo, mockEmit);
+        const tools = buildServerRepoTools(baseRepo, mockEmit as any);
         const result = await tools.delete_repo_file.execute!(
           {
             path: './README.md',
@@ -390,7 +390,7 @@ describe('agent-loop', () => {
         );
 
         expect(result).toBe('Staged deletion of README.md');
-        expect(mockEmit).toHaveBeenCalledWith({
+        expect(mockEmit as any).toHaveBeenCalledWith({
           type: 'repo_file_delete',
           path: 'README.md',
           originalContent: '',
@@ -401,7 +401,7 @@ describe('agent-loop', () => {
 
     describe('batch_edit_repo_files', () => {
       it('normalizes missing batch actions before validation', () => {
-        const tools = buildServerRepoTools(baseRepo, mockEmit);
+        const tools = buildServerRepoTools(baseRepo, mockEmit as any);
         const parsed = tools.batch_edit_repo_files.parameters.safeParse({
           changes: [
             {
@@ -438,7 +438,7 @@ describe('agent-loop', () => {
       });
 
       it('should emit repo_batch_edit event with all changes and return joined status lines', async () => {
-        const tools = buildServerRepoTools(baseRepo, mockEmit);
+        const tools = buildServerRepoTools(baseRepo, mockEmit as any);
         const result = await tools.batch_edit_repo_files.execute!(
           {
             changes: [
@@ -460,7 +460,7 @@ describe('agent-loop', () => {
         );
 
         expect(result).toBe('Staged edit on src/app.ts\nStaged create on src/new.ts');
-        expect(mockEmit).toHaveBeenCalledWith({
+        expect(mockEmit as any).toHaveBeenCalledWith({
           type: 'repo_batch_edit',
           changes: [
             {
@@ -479,11 +479,11 @@ describe('agent-loop', () => {
             },
           ],
         });
-        expect(mockEmit).toHaveBeenCalledTimes(1);
+        expect(mockEmit as any).toHaveBeenCalledTimes(1);
       });
 
       it('should handle delete action with originalContent and remove from cache', async () => {
-        const tools = buildServerRepoTools(baseRepo, mockEmit);
+        const tools = buildServerRepoTools(baseRepo, mockEmit as any);
 
         // First verify the file is in cache by reading it
         await tools.read_repo_file.execute!({ path: 'src/app.ts' }, toolOpts);
@@ -505,7 +505,7 @@ describe('agent-loop', () => {
         );
 
         expect(result).toBe('Staged delete on src/app.ts');
-        expect(mockEmit).toHaveBeenCalledWith({
+        expect(mockEmit as any).toHaveBeenCalledWith({
           type: 'repo_batch_edit',
           changes: [
             {
@@ -520,7 +520,7 @@ describe('agent-loop', () => {
       });
 
       it('should normalize paths for all changes in batch', async () => {
-        const tools = buildServerRepoTools(baseRepo, mockEmit);
+        const tools = buildServerRepoTools(baseRepo, mockEmit as any);
         const result = await tools.batch_edit_repo_files.execute!(
           {
             changes: [
@@ -548,7 +548,7 @@ describe('agent-loop', () => {
       });
 
       it('coerces create actions on existing files to edits', async () => {
-        const tools = buildServerRepoTools(baseRepo, mockEmit);
+        const tools = buildServerRepoTools(baseRepo, mockEmit as any);
         const result = await tools.batch_edit_repo_files.execute!(
           {
             changes: [
@@ -564,7 +564,7 @@ describe('agent-loop', () => {
         );
 
         expect(result).toBe('Staged edit on src/app.ts');
-        expect(mockEmit).toHaveBeenCalledWith({
+        expect(mockEmit as any).toHaveBeenCalledWith({
           type: 'repo_batch_edit',
           changes: [
             {
@@ -579,7 +579,7 @@ describe('agent-loop', () => {
       });
 
       it('rejects batch edits that target missing files with edit actions', async () => {
-        const tools = buildServerRepoTools(baseRepo, mockEmit);
+        const tools = buildServerRepoTools(baseRepo, mockEmit as any);
         const result = await tools.batch_edit_repo_files.execute!(
           {
             changes: [
@@ -595,7 +595,7 @@ describe('agent-loop', () => {
         );
 
         expect(result).toContain('cannot edit missing file');
-        expect(mockEmit).not.toHaveBeenCalled();
+        expect(mockEmit as any).not.toHaveBeenCalled();
       });
     });
   });

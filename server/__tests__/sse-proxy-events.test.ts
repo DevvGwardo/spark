@@ -81,15 +81,16 @@ describe('proxySseToDataStream usage event', () => {
     })
 
     const output = res.chunks.join('')
-    expect(output).toContain('0:"hi"')
+    expect(output).toContain('"type":"text-delta"')
+    expect(output).toContain('"delta":"hi"')
     expect(output).toContain('"type":"usage"')
     expect(output).toContain('"input_tokens":100')
     expect(output).toContain('"output_tokens":20')
     expect(output).toContain('"cached_input_tokens":60')
     expect(output).toContain('"context_window":400000')
     expect(output).toContain('"model":"gpt-5.4"')
-    // Usage part (data part code 2) comes before the finish_message (code d).
-    expect(output.indexOf('2:[{"type":"usage"')).toBeLessThan(output.indexOf('d:{"finishReason"'))
+    // Usage data part is written before the terminal finish chunk.
+    expect(output.indexOf('"type":"usage"')).toBeLessThan(output.indexOf('"type":"finish"'))
   })
 
   it('omits the usage event when no modelName is provided (backward compat)', async () => {
@@ -110,7 +111,7 @@ describe('proxySseToDataStream usage event', () => {
 
     const output = res.chunks.join('')
     expect(output).not.toContain('"type":"usage"')
-    expect(output).toContain('d:{"finishReason"')
+    expect(output).toContain('"type":"finish"')
   })
 })
 
@@ -146,11 +147,11 @@ describe('proxySseToDataStream tool-call forwarding', () => {
     })
 
     const output = res.chunks.join('')
-    // Streaming start (part code b) + deltas (part code c) as they arrive.
-    expect(output).toContain('b:{"toolCallId":"call_9","toolName":"create_html_file"}')
-    expect(output).toContain('c:{"toolCallId":"call_9"')
-    // Final assembled tool_call part (code 9) with parsed args.
-    expect(output).toContain('9:{"toolCallId":"call_9","toolName":"create_html_file"')
+    // Streaming start + deltas as they arrive.
+    expect(output).toContain('{"type":"tool-input-start","toolCallId":"call_9","toolName":"create_html_file"}')
+    expect(output).toContain('{"type":"tool-input-delta","toolCallId":"call_9"')
+    // Final assembled tool-input-available part with parsed args.
+    expect(output).toContain('{"type":"tool-input-available","toolCallId":"call_9","toolName":"create_html_file"')
     expect(output).toContain('"filename":"index.html"')
     expect(output).toContain('"content":"<h1>Plan</h1>"')
   })

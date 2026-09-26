@@ -1,4 +1,4 @@
-import type { Message as AIMessage } from '@ai-sdk/react';
+import type { UIMessage as AIMessage } from '@ai-sdk/react';
 import { useChangesetStore } from '@/stores/changeset-store';
 import { db, type Message as StoredMessage } from '@/lib/db';
 import type { PendingProposal } from '@/lib/proposed-changes';

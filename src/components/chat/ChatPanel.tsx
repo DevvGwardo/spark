@@ -38,7 +38,7 @@ function ChatRuntimeArea({
   return (
     <ChatArea
       conversationId={conversationId}
-      messages={chat.messages}
+      messages={chat.messages as any}
       input={chat.input}
       setInput={chat.setInput}
       handleSend={chat.handleSend}

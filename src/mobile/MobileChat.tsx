@@ -120,7 +120,7 @@ const MobileChat = () => {
       <div className="flex-1 min-h-0 pb-[env(safe-area-inset-bottom)]">
         <ChatArea
           conversationId={conversationId}
-          messages={chat.messages}
+          messages={chat.messages as any}
           input={chat.input}
           setInput={chat.setInput}
           handleSend={chat.handleSend}

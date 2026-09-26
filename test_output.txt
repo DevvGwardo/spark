@@ -1,0 +1,2832 @@
+
+> spark@1.0.0-beta.8 test
+> vitest run
+
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:32:32). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+`optimizeDeps.rollupOptions` / `ssr.optimizeDeps.rollupOptions` is deprecated. Use `optimizeDeps.rolldownOptions` instead. Note that this option may be set by a plugin. Set VITE_DEPRECATION_TRACE=1 to see where it is called.
+[vite:react-swc] We recommend switching to `@vitejs/plugin-react-oxc` for improved performance as no swc plugins are used. More information at https://vite.dev/rolldown
+
+ RUN  v5.0.2 /Users/devgwardo/spark
+
+(node:1833) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:1834) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:1832) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:1821) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:1828) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:1822) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:1831) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:1829) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:1826) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:1830) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:1823) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+hint: Using 'master' as the name for the initial branch. This default branch name
+hint: will change to "main" in Git 3.0. To configure the initial branch name
+hint: to use in all of your new repositories, which will suppress this warning,
+hint: call:
+hint:
+hint: 	git config --global init.defaultBranch <name>
+hint:
+hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+hint: 'development'. The just-created branch can be renamed via this command:
+hint:
+hint: 	git branch -m <name>
+hint:
+hint: Disable this message with "git config set advice.defaultBranchName false"
+Switched to a new branch 'main'
+stderr | src/test/create-pr-modal.test.tsx > CreatePRModal > shows PR check results after creation
+Warning: An update to CreatePRModal inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at CreatePRModal (/Users/devgwardo/spark/src/components/github/CreatePRModal.tsx:121:26)
+
+ ✓ server/__tests__/repo-verifier.test.ts (5 tests) 1820ms
+   ✓ repo verifier helpers (5)
+     ✓ does not write escaping file changes while applying a verification request 1806ms
+[11:13:07] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[11:13:07] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[11:13:07] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[11:13:07] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[11:13:07] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[11:13:07] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[11:13:07] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+stderr | src/test/create-pr-modal.test.tsx > CreatePRModal > submits draft PR intent to the server
+Warning: An update to CreatePRModal inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at CreatePRModal (/Users/devgwardo/spark/src/components/github/CreatePRModal.tsx:121:26)
+
+stderr | src/test/create-pr-modal.test.tsx > CreatePRModal > reopens an existing pull request in review mode
+Warning: An update to CreatePRModal inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at CreatePRModal (/Users/devgwardo/spark/src/components/github/CreatePRModal.tsx:121:26)
+
+stderr | src/test/chat-handoff.test.ts > new thread handoff > leaves original local image references intact when snapshot IPC fails
+Warning: An update to TestComponent inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at TestComponent (/Users/devgwardo/spark/node_modules/@testing-library/react/dist/pure.js:337:5)
+Warning: An update to TestComponent inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at TestComponent (/Users/devgwardo/spark/node_modules/@testing-library/react/dist/pure.js:337:5)
+Warning: An update to TestComponent inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at TestComponent (/Users/devgwardo/spark/node_modules/@testing-library/react/dist/pure.js:337:5)
+
+stderr | src/test/create-pr-modal.test.tsx > CreatePRModal > keeps create actions in a pinned footer instead of the scrollable body
+Warning: An update to CreatePRModal inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at CreatePRModal (/Users/devgwardo/spark/src/components/github/CreatePRModal.tsx:121:26)
+
+[11:13:08] [32mINFO[39m: [36m[server] Serving frontend from /Users/devgwardo/spark[39m
+[11:13:08] [33mWARN[39m: [36m[server] blocked unauthenticated tunnel request: GET /functions/v1/health[39m
+[11:13:08] [32mINFO[39m: [36m[server] Serving frontend from /Users/devgwardo/spark[39m
+[11:13:08] [32mINFO[39m: [36m[chat] provider=minimax runtime=minimax model=MiniMax-M2.5 activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=- hermesUseRuns=false msgs=1[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Proxying minimax directly to AI SDK data stream. model=MiniMax-M2.5 planMode=1[39m
+[11:13:08] [31mERROR[39m: [36mchat error: Unexpected upstream fetch during plan mode repo test: https://api.minimax.io/v1/chat/completions[39m
+[11:13:08] [31mERROR[39m: [36m[chat] Request failed: status=500 error=Unexpected upstream fetch during plan mode repo test: https://api.minimax.io/v1/chat/completions provider=minimax model=MiniMax-M2.5[39m
+[11:13:08] [33mWARN[39m: [36m[chat] Hermes local checkout unavailable for octo/cloudchat: clone unavailable — falling back to GitHub repo tools[39m
+[11:13:08] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=octo/cloudchat serverRepoTools=true hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=octo/cloudchat toolsets=- runs=0 t=1790421188268[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 1ms. status=200 model=meta-llama/llama-4-maverick repo=octo/cloudchat[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 16ms. model=meta-llama/llama-4-maverick repo=octo/cloudchat[39m
+[11:13:08] [32mINFO[39m: [36m[server] Serving frontend from /Users/devgwardo/spark[39m
+[11:13:08] [33mWARN[39m: [36m[chat] Repo validation failed: MisterGuy420/nonexistent-repo returned 403[39m
+[11:13:08] [33mWARN[39m: [36m[chat] Repo validation failed: private-org/private-repo returned 403[39m
+[11:13:08] [32mINFO[39m: [36m[server] Serving frontend from /Users/devgwardo/spark[39m
+hint: Using 'master' as the name for the initial branch. This default branch name
+hint: will change to "main" in Git 3.0. To configure the initial branch name
+hint: to use in all of your new repositories, which will suppress this warning,
+hint: call:
+hint:
+hint: 	git config --global init.defaultBranch <name>
+hint:
+hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+hint: 'development'. The just-created branch can be renamed via this command:
+hint:
+hint: 	git branch -m <name>
+hint:
+hint: Disable this message with "git config set advice.defaultBranchName false"
+[11:13:08] [33mWARN[39m: [36m[server] blocked unauthenticated tunnel request: GET /functions/v1/health[39m
+(node:1830) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 SIGINT listeners added to [process]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit
+[11:13:08] [32mINFO[39m: [36m[server] Serving frontend from /Users/devgwardo/spark[39m
+[11:13:08] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=- toolsets=web,browser,vision runs=0 t=1790421188344[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 2ms. status=200 model=meta-llama/llama-4-maverick repo=-[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Hermes agent-loop first data event emitted in 111ms. model=meta-llama/llama-4-maverick repo=-[39m
+[11:13:08] [32mINFO[39m: [36m[chat] provider=openai runtime=openai model=gpt-5.2 activeRepo=octo/cloudchat serverRepoTools=true hermesExecutionMode=- hermesUseRuns=false msgs=1[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Starting streamText. maxTokens=16384 maxSteps=50 tools=create_html_file,read_repo_file,read_file toolSafe=false localTools=true[39m
+(node:1830) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 SIGTERM listeners added to [process]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit
+ ❯ server/__tests__/plan-mode-tools.test.ts (2 tests | 1 failed) 5408ms
+   ❯ plan mode tool routing (2)
+     × keeps compatible providers on the read-only direct-proxy path in plan mode so create_html_file remains available 5062ms
+     ✓ filters mutating repo and local tools in plan mode while keeping read access 345ms
+[11:13:08] [32mINFO[39m: [36m[server] Serving frontend from /Users/devgwardo/spark[39m
+[11:13:08] [33mWARN[39m: [36m[chat] Repo validation failed: octo/cloudchat returned 401[39m
+[11:13:08] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=octo/cloudchat serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=- toolsets=files,terminal runs=0 t=1790421188559[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 1ms. status=200 model=meta-llama/llama-4-maverick repo=-[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 1ms. model=meta-llama/llama-4-maverick repo=-[39m
+stderr | src/test/create-pr-modal.test.tsx > CreatePRModal > merges the pull request from the modal once checks pass
+Warning: An update to CreatePRModal inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at CreatePRModal (/Users/devgwardo/spark/src/components/github/CreatePRModal.tsx:121:26)
+
+[11:13:08] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=octo/cloudchat serverRepoTools=true hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=octo/cloudchat toolsets=- runs=0 t=1790421188570[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 0ms. status=200 model=meta-llama/llama-4-maverick repo=octo/cloudchat[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 1ms. model=meta-llama/llama-4-maverick repo=octo/cloudchat[39m
+(node:1829) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 SIGINT listeners added to [process]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit
+(node:2105) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[11:13:08] [33mWARN[39m: [36m[chat] Hermes local checkout unavailable for octo/cloudchat: clone unavailable — falling back to GitHub repo tools[39m
+[11:13:08] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=octo/cloudchat serverRepoTools=true hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=octo/cloudchat toolsets=- runs=0 t=1790421188609[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 1ms. status=200 model=meta-llama/llama-4-maverick repo=octo/cloudchat[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 1ms. model=meta-llama/llama-4-maverick repo=octo/cloudchat[39m
+(node:1829) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 SIGTERM listeners added to [process]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit
+[11:13:08] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=- toolsets=- runs=0 t=1790421188634[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Hermes bridge fetch failed (connection error); polling /health up to 15000ms for readiness…[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Hermes bridge became reachable; retrying fetch.[39m
+[11:13:08] [31mERROR[39m: [36mchat error: Hermes bridge is not reachable at http://127.0.0.1:3002/v1. Start hermes-bridge/main.py and try again.[39m
+[11:13:08] [31mERROR[39m: [36m[chat] Request failed: status=500 error=Hermes bridge is not reachable at http://127.0.0.1:3002/v1. Start hermes-bridge/main.py and try again. provider=hermes model=meta-llama/llama-4-maverick[39m
+[11:13:08] [33mWARN[39m: [36m[chat] Repo validation failed: octo/cloudchat returned 401[39m
+[11:13:08] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=xiaomi/mimo-v2-pro activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=xiaomi/mimo-v2-pro[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=xiaomi/mimo-v2-pro repo=- toolsets=- runs=0 t=1790421188757[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 1ms. status=401 model=xiaomi/mimo-v2-pro repo=-[39m
+[11:13:08] [31mERROR[39m: [36mchat error: {"error":{"message":"No API key provided. Set HERMES_OPENROUTER_KEY, pass Authorization: Bearer <key> header, or run the local OpenClaw gateway."}}[39m
+[11:13:08] [31mERROR[39m: [36m[chat] Request failed: status=401 error=No API key provided. Set HERMES_OPENROUTER_KEY, pass Authorization: Bearer <key> header, or run the local OpenClaw gateway. provider=hermes model=xiaomi/mimo-v2-pro[39m
+(node:1826) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 SIGINT listeners added to [process]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit
+ ❯ server/__tests__/openclaw-chat.test.ts (5 tests | 1 failed) 5681ms
+   ❯ OpenClaw provider chat route (5)
+     × routes chat requests through OpenClaw and emits an AI SDK data stream 5061ms
+     ✓ auto-clones the attached repository for OpenClaw when a GitHub token is available 360ms
+     ✓ prefers the PAT-backed managed clone over an attached local path for OpenClaw 208ms
+     ✓ returns 422 when OpenClaw repo mode has neither a token nor a verified local clone 32ms
+     ✓ validates OpenClaw without requiring an API key 18ms
+[11:13:08] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=- toolsets=web,browser,vision runs=0 t=1790421188814[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 29ms. status=200 model=meta-llama/llama-4-maverick repo=-[39m
+[11:13:08] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 30ms. model=meta-llama/llama-4-maverick repo=-[39m
+[11:13:09] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=- toolsets=web,browser,vision runs=0 t=1790421189056[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 3ms. status=200 model=meta-llama/llama-4-maverick repo=-[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 5ms. model=meta-llama/llama-4-maverick repo=-[39m
+[11:13:09] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=- toolsets=web,browser,vision runs=0 t=1790421189101[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 0ms. status=200 model=meta-llama/llama-4-maverick repo=-[39m
+(node:1828) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 SIGINT listeners added to [process]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit
+[11:13:09] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=auto activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=auto[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=auto repo=- toolsets=- runs=0 t=1790421189146[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 0ms. status=200 model=auto repo=-[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 1ms. model=auto repo=-[39m
+[11:13:09] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=deepseek-v4-flash activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=deepseek-v4-flash[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=deepseek-v4-flash repo=- toolsets=- runs=0 t=1790421189156[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 0ms. status=200 model=deepseek-v4-flash repo=-[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 0ms. model=deepseek-v4-flash repo=-[39m
+[11:13:09] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=auto activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=auto[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=auto repo=- toolsets=- runs=0 t=1790421189166[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 1ms. status=200 model=auto repo=-[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 1ms. model=auto repo=-[39m
+[11:13:09] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=auto activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=auto[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=auto repo=- toolsets=- runs=0 t=1790421189171[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 1ms. status=200 model=auto repo=-[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 1ms. model=auto repo=-[39m
+(node:1828) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 SIGTERM listeners added to [process]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit
+[11:13:09] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=auto activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=auto[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=auto repo=- toolsets=- runs=0 t=1790421189189[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 0ms. status=200 model=auto repo=-[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 0ms. model=auto repo=-[39m
+[11:13:09] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=auto activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=auto[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=auto repo=- toolsets=- runs=0 t=1790421189194[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 0ms. status=200 model=auto repo=-[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 0ms. model=auto repo=-[39m
+[11:13:09] [33mWARN[39m: [36m[chat] Hermes local checkout unavailable for octo/project: Cloning into '/Users/devgwardo/.cloudchat/repos/octo/project'...
+remote: Invalid username or token. Password authentication is not supported for Git operations.
+fatal: Authentication failed for 'https://github.com/octo/project.git/' — falling back to GitHub repo tools[39m
+[11:13:09] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=octo/project serverRepoTools=true hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=octo/project toolsets=- runs=0 t=1790421189186[39m
+[11:13:09] [33mWARN[39m: [36m[chat] Hermes local checkout unavailable for octo/project: Cloning into '/Users/devgwardo/.cloudchat/repos/octo/project'...
+remote: Invalid username or token. Password authentication is not supported for Git operations.
+fatal: Authentication failed for 'https://github.com/octo/project.git/' — falling back to GitHub repo tools[39m
+[11:13:09] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=octo/project serverRepoTools=true hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=octo/project toolsets=- runs=0 t=1790421189187[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 1ms. status=200 model=meta-llama/llama-4-maverick repo=octo/project[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 8ms. status=200 model=meta-llama/llama-4-maverick repo=octo/project[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 13ms. model=meta-llama/llama-4-maverick repo=octo/project[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 12ms. model=meta-llama/llama-4-maverick repo=octo/project[39m
+[11:13:09] [33mWARN[39m: [36m[chat] Hermes local checkout unavailable for MisterGuy420/nonexistent-repo: Cloning into '/Users/devgwardo/.cloudchat/repos/MisterGuy420/nonexistent-repo'...
+remote: Invalid username or token. Password authentication is not supported for Git operations.
+fatal: Authentication failed for 'https://github.com/MisterGuy420/nonexistent-repo.git/' — falling back to GitHub repo tools[39m
+[11:13:09] [33mWARN[39m: [36m[chat] Hermes local checkout unavailable for private-org/private-repo: Cloning into '/Users/devgwardo/.cloudchat/repos/private-org/private-repo'...
+remote: Invalid username or token. Password authentication is not supported for Git operations.
+fatal: Authentication failed for 'https://github.com/private-org/private-repo.git/' — falling back to GitHub repo tools[39m
+[11:13:09] [33mWARN[39m: [36m[chat] Repo validation failed: user/repo returned 401[39m
+[11:13:09] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=auto activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=auto[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=auto repo=- toolsets=- runs=0 t=1790421189273[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 21ms. status=200 model=auto repo=-[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 36ms. model=auto repo=-[39m
+stderr | src/test/create-pr-modal.test.tsx > CreatePRModal > lets the user create the PR explicitly after verification fails
+Warning: An update to CreatePRModal inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at CreatePRModal (/Users/devgwardo/spark/src/components/github/CreatePRModal.tsx:121:26)
+
+ ✓ server/__tests__/github-integration-verify.test.ts (10 tests) 6079ms
+   ✓ GitHub verification route (10)
+     ✓ verifies staged repo changes through the shared helper 5021ms
+     ✓ verifies staged changes from a local clone without a GitHub PAT 795ms
+ ❯ server/__tests__/hermes-chat-route.test.ts (15 tests | 1 failed) 6036ms
+   ❯ Hermes chat route (15)
+     × uses ACP transport for Hermes repo turns — the bridge drives the real agent 5031ms
+     ✓ rewraps Hermes agent-loop SSE into an AI SDK data stream and normalizes content blocks 237ms
+     ✓ falls back to a verified local clone for Hermes when GitHub access is unavailable 16ms
+     ✓ auto-provisions a managed local checkout for Hermes repo mode and forwards worktree headers 15ms
+     ✓ tells the agent it has no build tools when Hermes repo mode has no local checkout 37ms
+     ✓ returns 422 when Hermes repo mode has neither GitHub access nor a verified local clone 12ms
+     ✓ returns a friendly 503 when the Hermes bridge is unreachable 11ms
+     ✓ preserves Hermes bridge status and message instead of collapsing to a generic 500 125ms
+     ✓ waits for delayed Hermes bridge headers instead of aborting the proxy request early 130ms
+     ✓ normalizes Hermes agent-loop streams to stop when visible output arrives without an explicit finish reason 189ms
+     ✓ surfaces a fallback assistant reply and stop finish when Hermes returns an empty stream 23ms
+     ✓ omits empty Authorization and uncredentialed openrouter pin when proxying to the bridge 46ms
+     ✓ forwards usable Authorization and an explicit custom provider pin to the bridge 9ms
+     ✓ suppresses placeholder-string API keys ("none"/"null"/"undefined") and whitespace-only keys like empty ones 36ms
+     ✓ keeps an explicit non-openrouter custom pin even when no usable key is present 115ms
+(node:2195) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:2241) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+stderr | src/test/create-pr-modal.test.tsx > CreatePRModal > surfaces GitHub authentication errors from create-pr responses
+Warning: An update to CreatePRModal inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at CreatePRModal (/Users/devgwardo/spark/src/components/github/CreatePRModal.tsx:121:26)
+
+[11:13:09] [33mWARN[39m: [36m[chat] Hermes local checkout unavailable for octo/project: Cloning into '/Users/devgwardo/.cloudchat/repos/octo/project'...
+remote: Invalid username or token. Password authentication is not supported for Git operations.
+fatal: Authentication failed for 'https://github.com/octo/project.git/' — falling back to GitHub repo tools[39m
+[11:13:09] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=octo/project serverRepoTools=true hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=octo/project toolsets=- runs=0 t=1790421189854[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 0ms. status=200 model=meta-llama/llama-4-maverick repo=octo/project[39m
+[11:13:09] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 1ms. model=meta-llama/llama-4-maverick repo=octo/project[39m
+[11:13:09] [33mWARN[39m: [36m[chat] Hermes local checkout unavailable for user/repo: Cloning into '/Users/devgwardo/.cloudchat/repos/user/repo'...
+remote: Invalid username or token. Password authentication is not supported for Git operations.
+fatal: Authentication failed for 'https://github.com/user/repo.git/' — falling back to GitHub repo tools[39m
+(node:2353) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:2354) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+stderr | src/test/create-pr-modal.test.tsx > CreatePRModal > shows a centered verification loader while review and checks are running
+Warning: An update to CreatePRModal inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at CreatePRModal (/Users/devgwardo/spark/src/components/github/CreatePRModal.tsx:121:26)
+
+[11:13:10] [33mWARN[39m: [36m[chat] Hermes local checkout unavailable for octo/project: Cloning into '/Users/devgwardo/.cloudchat/repos/octo/project'...
+remote: Invalid username or token. Password authentication is not supported for Git operations.
+fatal: Authentication failed for 'https://github.com/octo/project.git/' — falling back to GitHub repo tools[39m
+[11:13:10] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=octo/project serverRepoTools=true hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[11:13:10] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[11:13:10] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=octo/project toolsets=- runs=0 t=1790421190510[39m
+[11:13:10] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 0ms. status=200 model=meta-llama/llama-4-maverick repo=octo/project[39m
+[11:13:10] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 0ms. model=meta-llama/llama-4-maverick repo=octo/project[39m
+ ❯ server/__tests__/hermes-file-tree-proxy.test.ts (4 tests | 1 failed) 7383ms
+   ❯ Hermes file tree proxy (4)
+     × includes repo_file_tree in the Hermes bridge request body 5058ms
+     ✓ omits repo_file_tree from bridge body when the tree is empty 1035ms
+     ✓ filters non-string entries from repo_file_tree before sending to bridge 633ms
+     ✓ sends repo headers alongside file tree in the bridge request 654ms
+(node:1822) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 SIGINT listeners added to [process]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit
+[11:13:10] [33mWARN[39m: [36m[chat] Hermes local checkout unavailable for user/valid-repo: Cloning into '/Users/devgwardo/.cloudchat/repos/user/valid-repo'...
+remote: Invalid username or token. Password authentication is not supported for Git operations.
+fatal: Authentication failed for 'https://github.com/user/valid-repo.git/' — falling back to GitHub repo tools[39m
+[11:13:10] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=user/valid-repo serverRepoTools=true hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[11:13:10] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[11:13:10] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=user/valid-repo toolsets=- runs=0 t=1790421190590[39m
+[11:13:10] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 0ms. status=200 model=meta-llama/llama-4-maverick repo=user/valid-repo[39m
+[11:13:10] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 1ms. model=meta-llama/llama-4-maverick repo=user/valid-repo[39m
+[11:13:10] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[11:13:10] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[11:13:10] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=- toolsets=- runs=0 t=1790421190644[39m
+[11:13:10] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 1ms. status=200 model=meta-llama/llama-4-maverick repo=-[39m
+[11:13:10] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 1ms. model=meta-llama/llama-4-maverick repo=-[39m
+(node:1822) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 SIGTERM listeners added to [process]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit
+[11:13:10] [33mWARN[39m: [36m[chat] WARNING: github_pat provided but failed format validation — returning 422[39m
+[11:13:10] [33mWARN[39m: [36m[chat] Repo validation check failed (non-blocking): Network error[39m
+stderr | src/test/create-pr-modal.test.tsx > CreatePRModal > shows a warning headline when command checks pass but provider review is skipped
+Warning: An update to CreatePRModal inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at CreatePRModal (/Users/devgwardo/spark/src/components/github/CreatePRModal.tsx:121:26)
+
+[11:13:10] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[11:13:11] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[11:13:11] [33mWARN[39m: [36m[chat] Hermes local checkout unavailable for user/repo: Cloning into '/Users/devgwardo/.cloudchat/repos/user/repo'...
+remote: Invalid username or token. Password authentication is not supported for Git operations.
+fatal: Authentication failed for 'https://github.com/user/repo.git/' — falling back to GitHub repo tools[39m
+[11:13:11] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=user/repo serverRepoTools=true hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[11:13:11] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[11:13:11] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=user/repo toolsets=- runs=0 t=1790421191353[39m
+[11:13:11] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 0ms. status=200 model=meta-llama/llama-4-maverick repo=user/repo[39m
+[11:13:11] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 0ms. model=meta-llama/llama-4-maverick repo=user/repo[39m
+ ❯ server/__tests__/repo-validation.test.ts (7 tests | 1 failed) 8227ms
+   ❯ Server-side repo validation (7)
+     × returns 422 when the active repo returns 404 from GitHub 5018ms
+     ✓ returns 422 when the GitHub token lacks access (403) 1188ms
+     ✓ returns 422 when the GitHub token is expired (401) 569ms
+     ✓ proceeds normally when the repo is accessible (200) 718ms
+     ✓ skips validation when no activeRepo is provided 26ms
+     ✓ skips validation when github_pat has invalid format 16ms
+     ✓ does not block when the GitHub validation request throws 689ms
+ ✓ src/test/create-pr-modal.test.tsx (11 tests) 6376ms
+   ✓ CreatePRModal (11)
+     ✓ shows PR check results after creation 1395ms
+     ✓ submits draft PR intent to the server 654ms
+     ✓ keeps create actions in a pinned footer instead of the scrollable body 341ms
+     ✓ merges the pull request from the modal once checks pass 908ms
+     ✓ lets the user create the PR explicitly after verification fails 797ms
+     ✓ surfaces GitHub authentication errors from create-pr responses 491ms
+     ✓ shows a centered verification loader while review and checks are running 486ms
+     ✓ shows a warning headline when command checks pass but provider review is skipped 484ms
+     ✓ shows an error when Run checks is clicked without GitHub auth or a local clone 414ms
+[11:13:11] [32mINFO[39m: [36m[server] Serving frontend from /Users/devgwardo/spark[39m
+[11:13:11] [32mINFO[39m: [36m[server] Serving frontend from /Users/devgwardo/spark[39m
+ ❯ server/__tests__/tunnel-token-gate.test.ts (9 tests | 1 failed) 8436ms
+   ❯ public tunnel access token gate (9)
+     × blocks tunnel-host requests without the token 5010ms
+     ✓ accepts tunnel-host requests with ?key= and sets the auth cookie 27ms
+     ✓ accepts tunnel-host requests with the auth cookie 189ms
+     ✓ blocks loopback proxy requests forwarded from the tunnel hostname without the token 90ms
+     ✓ accepts loopback proxy requests forwarded from the tunnel hostname with ?key= 37ms
+     ✓ leaves local/LAN hosts ungated while the tunnel runs 3045ms
+     ✓ embeds the keyed tunnel URL in /api/remote/info for loopback desktop requests 12ms
+     ✓ does not expose the tunnel token in non-loopback remote info responses 19ms
+     ✓ classifies loopback addresses without trusting forwarded headers 2ms
+(node:2446) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+[11:13:11] [32mINFO[39m: [36m[approvals] Resolved approval 298155d4-6cf9-48f4-b6f2-3985ba40c830 decision=approved[39m
+[11:13:11] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[11:13:11] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[11:13:11] [32mINFO[39m: [36m[approvals] Resolved approval 981d9e82-8503-41ce-a1bf-2829cf35d5da decision=approved_for_session[39m
+(node:2195) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 SIGINT listeners added to [process]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit
+[11:13:11] [32mINFO[39m: [36m[approvals] Resolved approval e03c06a6-3715-4e96-8cb9-4311b1c417ae decision=approved[39m
+ ✓ server/__tests__/approvals-route.test.ts (5 tests) 2759ms
+   ✓ POST /api/hermes/approvals/:id (5)
+     ✓ rejects missing or invalid decisions 2486ms
+(node:2488) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ✓ server/__tests__/chat-route-validation.test.ts (3 tests) 2754ms
+   ✓ chat route validation (3)
+     ✓ health endpoint returns 200 and ok=true 2499ms
+(node:2492) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:2490) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ✓ server/__tests__/team-routes.test.ts (3 tests) 2680ms
+   ✓ team list routes (3)
+     ✓ lists active teams without being shadowed by /:id 2594ms
+ ✓ server/__tests__/chat-store-tags.test.ts (2 tests) 2824ms
+   ✓ chat store tags (2)
+     ✓ round-trips tags through the PATCH endpoint 2718ms
+[11:13:12] [33mWARN[39m: [36m[chat-store] Error closing database: database is not open[39m
+(node:2494) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:2498) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+[11:13:12] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[11:13:13] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+ ✓ server/__tests__/server-exports.test.ts (2 tests) 2105ms
+   ✓ server exports (2)
+     ✓ exports createApp and startServer functions 2059ms
+(node:2500) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ✓ src/test/settings-modal.test.tsx (3 tests) 6973ms
+   ✓ SettingsModal (3)
+     ✓ renders the settings modal with vertical nav and switches tabs 3062ms
+     ✓ reveals image controls when image backgrounds are selected 3640ms
+(node:2501) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+[11:13:13] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[11:13:13] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[11:13:13] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+ ✓ server/__tests__/chat-store.test.ts (3 tests) 2086ms
+   ✓ chat store routes (3)
+     ✓ persists conversations, messages, and conversation files 2028ms
+(node:2502) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:2503) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+[11:13:14] [32mINFO[39m: [36m[chat] provider=openai runtime=openai model=gpt-5.2 activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=- hermesUseRuns=false msgs=1[39m
+[11:13:14] [32mINFO[39m: [36m[chat] Starting streamText. maxTokens=32768 maxSteps=50 tools=create_html_file,create_css_file,create_js_file,create_react_component,create_markdown_file,run_command toolSafe=false localTools=true[39m
+[11:13:14] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[11:13:14] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[11:13:14] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[11:13:14] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=- toolsets=- runs=0 t=1790421194012[39m
+[11:13:14] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 0ms. status=200 model=meta-llama/llama-4-maverick repo=-[39m
+[11:13:14] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 13ms. model=meta-llama/llama-4-maverick repo=-[39m
+stderr | src/test/repo-issue-browser.test.tsx > RepoIssueBrowser > creates a new issue from the browser composer
+Warning: An update to RepoIssueBrowser inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at RepoIssueBrowser (/Users/devgwardo/spark/src/components/github/RepoIssueBrowser.tsx:203:29)
+Warning: An update to RepoIssueBrowser inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at RepoIssueBrowser (/Users/devgwardo/spark/src/components/github/RepoIssueBrowser.tsx:203:29)
+Warning: An update to RepoIssueBrowser inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at RepoIssueBrowser (/Users/devgwardo/spark/src/components/github/RepoIssueBrowser.tsx:203:29)
+Warning: An update to RepoIssueBrowser inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at RepoIssueBrowser (/Users/devgwardo/spark/src/components/github/RepoIssueBrowser.tsx:203:29)
+Warning: An update to RepoIssueBrowser inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at RepoIssueBrowser (/Users/devgwardo/spark/src/components/github/RepoIssueBrowser.tsx:203:29)
+
+ ✓ server/__tests__/hermes-plan-mode.test.ts (1 test) 2000ms
+   ✓ Hermes agent-loop plan mode (1)
+     ✓ passes plan_mode to the bridge, strips mutating custom tools, and emits the usage event 1996ms
+[11:13:14] [32mINFO[39m: [36m{"type":"usage","inputTokens":10,"outputTokens":5,"totalTokens":15}[39m
+[11:13:14] [32mINFO[39m: [36m[chat] provider=openai runtime=openai model=gpt-5.2 activeRepo=octo/cloudchat serverRepoTools=true hermesExecutionMode=- hermesUseRuns=false msgs=1[39m
+[11:13:14] [32mINFO[39m: [36m[chat] Starting streamText. maxTokens=16384 maxSteps=50 tools=create_html_file,create_css_file,create_js_file,create_react_component,create_markdown_file,read_repo_file toolSafe=false localTools=false[39m
+[11:13:14] [32mINFO[39m: [36m{"type":"usage","inputTokens":3,"outputTokens":1,"totalTokens":4}[39m
+ ✓ server/__tests__/streamtext-tool-events.test.ts (2 tests) 2021ms
+   ✓ streamText tool-event timing fix (2)
+     ✓ delivers tool_call_begin/delta/end and the usage event after lazy tool execution 1986ms
+ ✓ server/__tests__/translate-route.test.ts (2 tests) 1592ms
+   ✓ translate route (2)
+     ✓ routes OpenClaw translations through the OpenClaw chat turn 1579ms
+[11:13:14] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+(node:2505) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+[11:13:14] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+(node:2498) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 SIGINT listeners added to [process]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit
+(node:2498) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 SIGTERM listeners added to [process]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit
+(node:2508) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ✓ server/__tests__/factory-route.test.ts (7 tests) 1733ms
+   ✓ factory routes (7)
+     ✓ status reports factory presence and queue length 1552ms
+stderr | src/test/repo-issue-browser.test.tsx > RepoIssueBrowser > hands the selected remote repo to chat when explaining an issue
+Warning: An update to RepoIssueBrowser inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at RepoIssueBrowser (/Users/devgwardo/spark/src/components/github/RepoIssueBrowser.tsx:203:29)
+Warning: An update to RepoIssueBrowser inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at RepoIssueBrowser (/Users/devgwardo/spark/src/components/github/RepoIssueBrowser.tsx:203:29)
+Warning: An update to RepoIssueBrowser inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at RepoIssueBrowser (/Users/devgwardo/spark/src/components/github/RepoIssueBrowser.tsx:203:29)
+Warning: An update to RepoIssueBrowser inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at RepoIssueBrowser (/Users/devgwardo/spark/src/components/github/RepoIssueBrowser.tsx:203:29)
+Warning: An update to RepoIssueBrowser inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at RepoIssueBrowser (/Users/devgwardo/spark/src/components/github/RepoIssueBrowser.tsx:203:29)
+
+[11:13:14] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+ ✓ src/test/repo-issue-browser.test.tsx (2 tests) 4097ms
+   ✓ RepoIssueBrowser (2)
+     ✓ creates a new issue from the browser composer 3528ms
+     ✓ hands the selected remote repo to chat when explaining an issue 562ms
+[11:13:14] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+(node:2507) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:2509) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+[11:13:14] [32mINFO[39m: [36m[chat] provider=minimax runtime=minimax model=MiniMax-M2.5 activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=- hermesUseRuns=false msgs=1[39m
+[11:13:14] [32mINFO[39m: [36m[chat] Proxying minimax directly to AI SDK data stream. model=MiniMax-M2.5 planMode=0[39m
+[11:13:14] [32mINFO[39m: [36m[chat] provider=openrouter runtime=openrouter model=openai/gpt-4.1-mini activeRepo=octo/cloudchat serverRepoTools=true hermesExecutionMode=- hermesUseRuns=false msgs=1[39m
+[11:13:14] [32mINFO[39m: [36m[chat] Starting streamText. maxTokens=16384 maxSteps=50 tools=create_html_file,create_css_file,create_js_file,create_react_component,create_markdown_file,read_repo_file,propose_changes,edit_repo_file,create_repo_file,delete_repo_file,batch_edit_repo_files toolSafe=false localTools=false[39m
+ ✓ server/__tests__/chat-route-abort-handling.test.ts (1 test) 1566ms
+   ✓ chat route abort handling (1)
+     ✓ passes a request-scoped abort signal into streamText for tool-capable repo turns 1557ms
+[11:13:14] [32mINFO[39m: [36m[chat] provider=kimi-coding runtime=kimi-coding model=kimi-for-coding activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=- hermesUseRuns=false msgs=1[39m
+[11:13:14] [32mINFO[39m: [36m[chat] Proxying kimi-coding directly to AI SDK data stream. model=kimi-for-coding planMode=0[39m
+ ✓ server/__tests__/compatible-provider-chat-route.test.ts (3 tests) 1591ms
+   ✓ compatible provider chat route (3)
+     ✓ rewraps MiniMax SSE into an AI SDK data stream 1570ms
+[11:13:14] [32mINFO[39m: [36m[server] Serving frontend from /Users/devgwardo/spark[39m
+ ✓ server/__tests__/github-integration-clone.test.ts (2 tests) 1347ms
+   ✓ GitHub clone routes (2)
+     ✓ returns local clone metadata when cloning a repository 1327ms
+[11:13:15] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[11:13:15] [33mWARN[39m: [36m[server] 404 Not Found: GET /api/remote/info[39m
+ ✓ server/__tests__/remote-access-gating.test.ts (2 tests) 1319ms
+   ✓ remote access endpoint gating (2)
+     ✓ exposes /api/remote/info when the frontend is served 1278ms
+[11:13:15] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[11:13:15] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[11:13:15] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+(node:2505) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 SIGINT listeners added to [process]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit
+[11:13:15] [33mWARN[39m: [36m[hermes-admin] blocked non-local mutating request: POST /api/hermes/kanban/swarm[39m
+(node:2505) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 SIGTERM listeners added to [process]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit
+(node:2511) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ server/__tests__/hermes-admin-route.test.ts (9 tests) 1150ms
+   ✓ Hermes admin route (9)
+     ✓ forwards the active Hermes profile to bridge workspace requests 1017ms
+(node:2510) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:2512) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ✓ server/__tests__/chat-store-archive.test.ts (1 test) 1231ms
+   ✓ chat store archive (1)
+     ✓ hides archived conversations from the default list and exposes them under archivedOnly 1229ms
+ ✓ server/__tests__/health-route.test.ts (1 test) 1267ms
+   ✓ health route (1)
+     ✓ advertises the chat-store routes needed by the Electron reuse check 1265ms
+(node:2514) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2513) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ server/__tests__/github-integration.test.ts (3 tests) 1189ms
+   ✓ github integration route (3)
+     ✓ rejects requests without action 1156ms
+(node:2515) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[11:13:15] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[11:13:16] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+ ✓ server/__tests__/hermes-validate-key.test.ts (2 tests) 710ms
+   ✓ Hermes validate-key route (2)
+     ✓ returns the curated Hermes model shortlist after the bridge validates 697ms
+ ✓ server/__tests__/approval-engine.test.ts (28 tests) 246ms
+stdout | server/__tests__/mcp-extension-install.test.ts > mcp extension install: installer (behavioral) > installs a valid unsigned fixture with allowUnsigned, lists it, uninstall removes it, reinstall works
+Manifest schema validation passes!
+
+(node:2521) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+stdout | server/__tests__/mcp-extension-install.test.ts > mcp extension install: installer (behavioral) > installs a valid unsigned fixture with allowUnsigned, lists it, uninstall removes it, reinstall works
+Manifest schema validation passes!
+
+(node:2512) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 SIGINT listeners added to [process]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit
+ ✓ server/__tests__/hermes-stream-resume.test.ts (6 tests) 700ms
+   ✓ Hermes SSE resume buffer (6)
+     ✓ POST /api/hermes/chat/start mints a streamId and resumeToken 649ms
+stderr | server/__tests__/mcp-extension-install.test.ts > mcp extension install: installer (behavioral) > tampered manifest (byte-flipped JSON) throws and installs nothing
+ERROR: Invalid JSON in manifest file: Expected double-quoted property name in JSON at position 90 (line 5 column 3)
+
+stdout | server/__tests__/mcp-extension-install.test.ts > mcp extension install: installer (behavioral) > enable spawns a ready worker, then stopWorker cleans up
+Manifest schema validation passes!
+
+(node:2525) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+stdout | server/__tests__/mcp-extension-install.test.ts > mcp extension install: HTTP (behavioral) > POST valid → 201; GET lists it; DELETE removes it
+Manifest schema validation passes!
+
+stderr | server/__tests__/mcp-extension-install.test.ts > mcp extension install: HTTP (behavioral) > tampered manifest → 400
+ERROR: Invalid JSON in manifest file: Expected double-quoted property name in JSON at position 90 (line 5 column 3)
+
+stdout | server/__tests__/mcp-extension-install.test.ts > mcp extension install: HTTP (behavioral) > enable → 200 with snapshot
+Manifest schema validation passes!
+
+stdout | server/__tests__/mcp-extension-install.test.ts > mcp extension install: HTTP (behavioral) > worker-style serverId (`ext:<id>`) round-trips enable + DELETE
+Manifest schema validation passes!
+
+ ✓ server/__tests__/mcp-extension-install.test.ts (15 tests | 2 skipped) 508ms
+(node:2527) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2528) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2529) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+stderr | src/test/chat-handoff.test.ts > new thread handoff > force-clears the message buffer when switching away from a streaming conversation
+Warning: An update to TestComponent inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at TestComponent (/Users/devgwardo/spark/node_modules/@testing-library/react/dist/pure.js:337:5)
+
+stderr | src/test/chat-handoff.test.ts > new thread handoff > requires 3 stable cycles for content-matched proposals before pausing
+Warning: An update to TestComponent inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at TestComponent (/Users/devgwardo/spark/node_modules/@testing-library/react/dist/pure.js:337:5)
+Warning: An update to TestComponent inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at TestComponent (/Users/devgwardo/spark/node_modules/@testing-library/react/dist/pure.js:337:5)
+
+ ✓ src/test/markdown-renderer.test.tsx (11 tests) 470ms
+ ❯ src/test/chat-handoff.test.ts (47 tests | 14 failed) 10256ms
+   ❯ new thread handoff (47)
+     ✓ binds the panel to a brand-new chat conversation before the initial append settles 37ms
+     ✓ only forwards reasoning effort for supported provider-model pairs 11ms
+     ✓ never bakes continuation approval into the default hook request body 3ms
+     ✓ prepares repo request bodies from the latest store state at send time 5ms
+     ✓ hydrates the selected repo tree before sending the first repo-mode turn 13ms
+     ✓ marks descriptive repo questions as read-only when sending a repo-attached turn 10ms
+     ✓ keeps the selected explain repo attached across an existing-conversation reset 6ms
+     ✓ keeps explain-issue handoff prompts read-only even when the issue text says fix 59ms
+     ✓ keeps the active request body stable while streaming repo reads populate the cache 8ms
+     ✓ deduplicates identical Hermes server-side repo edit events within one stream 37ms
+     ✓ filters local Hermes mutation toolsets when a repo is attached 5ms
+     ✓ returns repo-tree guidance when the model guesses a missing repo file path 29ms
+     ✓ rejects root-like placeholder repo paths before calling GitHub 12ms
+     ✓ blocks repo file reads until the repo tree is available 2ms
+     ✓ allows repo file reads before approval so analysis turns can inspect the repo 7ms
+     ✓ persists the paused proposal snapshot before handing off a new conversation 71ms
+     ✓ only pauses a pending proposal once when Hermes re-ids the same assistant message 65ms
+     × treats approval follow-ups as continuation of the accepted repo plan 45ms
+     ✓ does not pause again when an approved Hermes continuation replays the proposal 28ms
+     × keeps repo edits unlocked across tool-call continuation steps after approval 13ms
+     ✓ recognizes AI SDK data-stream server repo events and avoids re-running those tools locally 10ms
+     ✓ rejects repo delete tool calls for paths that do not exist 3ms
+     ✓ still stages text-only repo edits after an earlier server-side repo read 11ms
+     × persists Hermes server-side repo edits even when the final assistant message is otherwise empty 14ms
+     × injects a synthetic assistant turn when a Hermes repo turn finishes with only data events 40ms
+     × persists streamed server tool events for non-Hermes providers when onFinish omits tool invocations 60ms
+     × snapshots same-basename local image references before persisting assistant messages 9ms
+     × leaves original local image references intact when snapshot IPC fails 7ms
+     × auto-continues read-only Hermes repo analysis after a server-side repo read ends with an unknown finish 1533ms
+     × auto-continues approved Hermes repo work after a later read-only stop even with staged edits 1514ms
+     × auto-continues approved Hermes repo work after a read-only stop when the cached proposal still looks pending 1504ms
+     × auto-continues approved Hermes repo work when a turn edits a file and then stops on a later read 1511ms
+     × keeps auto-continuing approved Hermes repo work across more than two distinct read-stop turns 2015ms
+     × auto-continues approved Hermes repo work when the turn stops after narration without repo tools 1507ms
+     ✓ does not auto-continue when the stopped turn already contains recoverable pseudo repo edits 5ms
+     ✓ does not reopen the PR flow after a read-only Hermes turn just because older staged changes exist 5ms
+     × reconstructs approval continuation from a persisted proposal after restart 4ms
+     ✓ stages pseudo repo edits that arrive in assistant text parts without message content 4ms
+     ✓ does not stage pseudo repo edits from read-only analysis turns 3ms
+     ✓ stages wrapped JSON batch payloads that leak into assistant text parts 4ms
+     ✓ stages plain text file dumps when a Hermes model skips repo edit tool calls 3ms
+     ✓ keeps chatSessionId stable when pendingConversationIdRef clears during streaming 4ms
+     ✓ aborts the stream and switches to a fresh draft when New thread is clicked mid-stream on a draft-promoted conversation 5ms
+     ✓ switches the AI chat session when changing conversations while idle 2ms
+     ✓ force-clears the message buffer when switching away from a streaming conversation 3ms
+     ✓ eagerly hydrates the new conversation when switching during streaming 3ms
+     ✓ requires 3 stable cycles for content-matched proposals before pausing 3ms
+(node:2540) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+stderr | src/test/message-bubble.test.tsx
+Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.
+
+stderr | src/test/chat-sidebar.test.tsx > ChatSidebar > shows the attached repo name in the footer without file counts
+Failed to fetch rooms: TypeError: Failed to parse URL from /api/rooms
+    at node:internal/deps/undici/undici:14976:13
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at apiFetch (/Users/devgwardo/spark/src/stores/room-store.ts:59:15)
+    at fetchRooms (/Users/devgwardo/spark/src/stores/room-store.ts:86:20) {
+  [cause]: TypeError: Invalid URL
+      at new URL (node:internal/url:818:25)
+      at new URL (file:///Users/devgwardo/spark/node_modules/vitest/dist/chunks/index.hTNFpC24.js:1408:2)
+      at new Request (node:internal/deps/undici/undici:9804:25)
+      at fetch (node:internal/deps/undici/undici:10533:25)
+      at fetch (node:internal/deps/undici/undici:14974:10)
+      at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)
+      at apiFetch (/Users/devgwardo/spark/src/stores/room-store.ts:59:21)
+      at fetchRooms (/Users/devgwardo/spark/src/stores/room-store.ts:86:26)
+      at /Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:260:10
+      at commitHookEffectListMount (/Users/devgwardo/spark/node_modules/react-dom/cjs/react-dom.development.js:23189:26) {
+    code: 'ERR_INVALID_URL',
+    input: '/api/rooms'
+  }
+}
+Warning: An update to ChatSidebar inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at ChatSidebar (/Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:274:322)
+Failed to fetch profiles: TypeError: Failed to parse URL from /api/hermes/profiles
+    at node:internal/deps/undici/undici:14976:13
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at apiFetch (/Users/devgwardo/spark/src/stores/profiles-store.ts:55:15)
+    at fetchProfiles (/Users/devgwardo/spark/src/stores/profiles-store.ts:83:24) {
+  [cause]: TypeError: Invalid URL
+      at new URL (node:internal/url:818:25)
+      at new URL (file:///Users/devgwardo/spark/node_modules/vitest/dist/chunks/index.hTNFpC24.js:1408:2)
+      at new Request (node:internal/deps/undici/undici:9804:25)
+      at fetch (node:internal/deps/undici/undici:10533:25)
+      at fetch (node:internal/deps/undici/undici:14974:10)
+      at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)
+      at apiFetch (/Users/devgwardo/spark/src/stores/profiles-store.ts:55:21)
+      at fetchProfiles (/Users/devgwardo/spark/src/stores/profiles-store.ts:83:30)
+      at /Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:261:10
+      at commitHookEffectListMount (/Users/devgwardo/spark/node_modules/react-dom/cjs/react-dom.development.js:23189:26) {
+    code: 'ERR_INVALID_URL',
+    input: '/api/hermes/profiles'
+  }
+}
+Warning: An update to ChatSidebar inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at ChatSidebar (/Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:274:322)
+
+stderr | src/test/chat-sidebar.test.tsx > ChatSidebar > switches to a compact footer layout when the sidebar is narrow
+Failed to fetch rooms: TypeError: Failed to parse URL from /api/rooms
+    at node:internal/deps/undici/undici:14976:13
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at apiFetch (/Users/devgwardo/spark/src/stores/room-store.ts:59:15)
+    at fetchRooms (/Users/devgwardo/spark/src/stores/room-store.ts:86:20) {
+  [cause]: TypeError: Invalid URL
+      at new URL (node:internal/url:818:25)
+      at new URL (file:///Users/devgwardo/spark/node_modules/vitest/dist/chunks/index.hTNFpC24.js:1408:2)
+      at new Request (node:internal/deps/undici/undici:9804:25)
+      at fetch (node:internal/deps/undici/undici:10533:25)
+      at fetch (node:internal/deps/undici/undici:14974:10)
+      at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)
+      at apiFetch (/Users/devgwardo/spark/src/stores/room-store.ts:59:21)
+      at fetchRooms (/Users/devgwardo/spark/src/stores/room-store.ts:86:26)
+      at /Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:260:10
+      at commitHookEffectListMount (/Users/devgwardo/spark/node_modules/react-dom/cjs/react-dom.development.js:23189:26) {
+    code: 'ERR_INVALID_URL',
+    input: '/api/rooms'
+  }
+}
+Warning: An update to ChatSidebar inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at ChatSidebar (/Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:274:322)
+Failed to fetch profiles: TypeError: Failed to parse URL from /api/hermes/profiles
+    at node:internal/deps/undici/undici:14976:13
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at apiFetch (/Users/devgwardo/spark/src/stores/profiles-store.ts:55:15)
+    at fetchProfiles (/Users/devgwardo/spark/src/stores/profiles-store.ts:83:24) {
+  [cause]: TypeError: Invalid URL
+      at new URL (node:internal/url:818:25)
+      at new URL (file:///Users/devgwardo/spark/node_modules/vitest/dist/chunks/index.hTNFpC24.js:1408:2)
+      at new Request (node:internal/deps/undici/undici:9804:25)
+      at fetch (node:internal/deps/undici/undici:10533:25)
+      at fetch (node:internal/deps/undici/undici:14974:10)
+      at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)
+      at apiFetch (/Users/devgwardo/spark/src/stores/profiles-store.ts:55:21)
+      at fetchProfiles (/Users/devgwardo/spark/src/stores/profiles-store.ts:83:30)
+      at /Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:261:10
+      at commitHookEffectListMount (/Users/devgwardo/spark/node_modules/react-dom/cjs/react-dom.development.js:23189:26) {
+    code: 'ERR_INVALID_URL',
+    input: '/api/hermes/profiles'
+  }
+}
+Warning: An update to ChatSidebar inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at ChatSidebar (/Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:274:322)
+
+stderr | src/test/images-panel.test.tsx > ImagesPanel component > shows loading state initially
+Warning: An update to ImagesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at ImagesPanel (/Users/devgwardo/spark/src/components/sidebar/ImagesPanel.tsx:248:69)
+Warning: An update to ImagesPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at ImagesPanel (/Users/devgwardo/spark/src/components/sidebar/ImagesPanel.tsx:248:69)
+
+ ✓ src/test/images-panel.test.tsx (18 tests) 302ms
+stderr | src/test/chat-sidebar.test.tsx > ChatSidebar > collapses the new thread button to icon-only when the sidebar is very narrow
+Failed to fetch rooms: TypeError: Failed to parse URL from /api/rooms
+    at node:internal/deps/undici/undici:14976:13
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at apiFetch (/Users/devgwardo/spark/src/stores/room-store.ts:59:15)
+    at fetchRooms (/Users/devgwardo/spark/src/stores/room-store.ts:86:20) {
+  [cause]: TypeError: Invalid URL
+      at new URL (node:internal/url:818:25)
+      at new URL (file:///Users/devgwardo/spark/node_modules/vitest/dist/chunks/index.hTNFpC24.js:1408:2)
+      at new Request (node:internal/deps/undici/undici:9804:25)
+      at fetch (node:internal/deps/undici/undici:10533:25)
+      at fetch (node:internal/deps/undici/undici:14974:10)
+      at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)
+      at apiFetch (/Users/devgwardo/spark/src/stores/room-store.ts:59:21)
+      at fetchRooms (/Users/devgwardo/spark/src/stores/room-store.ts:86:26)
+      at /Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:260:10
+      at commitHookEffectListMount (/Users/devgwardo/spark/node_modules/react-dom/cjs/react-dom.development.js:23189:26) {
+    code: 'ERR_INVALID_URL',
+    input: '/api/rooms'
+  }
+}
+Warning: An update to ChatSidebar inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at ChatSidebar (/Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:274:322)
+Failed to fetch profiles: TypeError: Failed to parse URL from /api/hermes/profiles
+    at node:internal/deps/undici/undici:14976:13
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at apiFetch (/Users/devgwardo/spark/src/stores/profiles-store.ts:55:15)
+    at fetchProfiles (/Users/devgwardo/spark/src/stores/profiles-store.ts:83:24) {
+  [cause]: TypeError: Invalid URL
+      at new URL (node:internal/url:818:25)
+      at new URL (file:///Users/devgwardo/spark/node_modules/vitest/dist/chunks/index.hTNFpC24.js:1408:2)
+      at new Request (node:internal/deps/undici/undici:9804:25)
+      at fetch (node:internal/deps/undici/undici:10533:25)
+      at fetch (node:internal/deps/undici/undici:14974:10)
+      at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)
+      at apiFetch (/Users/devgwardo/spark/src/stores/profiles-store.ts:55:21)
+      at fetchProfiles (/Users/devgwardo/spark/src/stores/profiles-store.ts:83:30)
+      at /Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:261:10
+      at commitHookEffectListMount (/Users/devgwardo/spark/node_modules/react-dom/cjs/react-dom.development.js:23189:26) {
+    code: 'ERR_INVALID_URL',
+    input: '/api/hermes/profiles'
+  }
+}
+Warning: An update to ChatSidebar inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at ChatSidebar (/Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:274:322)
+
+ ✓ src/test/chat-area-issue-cta.test.tsx (4 tests) 542ms
+   ✓ ChatArea issue fix CTA (4)
+     ✓ shows update and fix CTAs after an explain-only issue response 313ms
+(node:2551) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+stderr | src/test/chat-sidebar.test.tsx > ChatSidebar > returns the focused panel to a blank draft without creating a conversation
+Failed to fetch rooms: TypeError: Failed to parse URL from /api/rooms
+    at node:internal/deps/undici/undici:14976:13
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at apiFetch (/Users/devgwardo/spark/src/stores/room-store.ts:59:15)
+    at fetchRooms (/Users/devgwardo/spark/src/stores/room-store.ts:86:20) {
+  [cause]: TypeError: Invalid URL
+      at new URL (node:internal/url:818:25)
+      at new URL (file:///Users/devgwardo/spark/node_modules/vitest/dist/chunks/index.hTNFpC24.js:1408:2)
+      at new Request (node:internal/deps/undici/undici:9804:25)
+      at fetch (node:internal/deps/undici/undici:10533:25)
+      at fetch (node:internal/deps/undici/undici:14974:10)
+      at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)
+      at apiFetch (/Users/devgwardo/spark/src/stores/room-store.ts:59:21)
+      at fetchRooms (/Users/devgwardo/spark/src/stores/room-store.ts:86:26)
+      at /Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:260:10
+      at commitHookEffectListMount (/Users/devgwardo/spark/node_modules/react-dom/cjs/react-dom.development.js:23189:26) {
+    code: 'ERR_INVALID_URL',
+    input: '/api/rooms'
+  }
+}
+Warning: An update to ChatSidebar inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at ChatSidebar (/Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:274:322)
+Failed to fetch profiles: TypeError: Failed to parse URL from /api/hermes/profiles
+    at node:internal/deps/undici/undici:14976:13
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at apiFetch (/Users/devgwardo/spark/src/stores/profiles-store.ts:55:15)
+    at fetchProfiles (/Users/devgwardo/spark/src/stores/profiles-store.ts:83:24) {
+  [cause]: TypeError: Invalid URL
+      at new URL (node:internal/url:818:25)
+      at new URL (file:///Users/devgwardo/spark/node_modules/vitest/dist/chunks/index.hTNFpC24.js:1408:2)
+      at new Request (node:internal/deps/undici/undici:9804:25)
+      at fetch (node:internal/deps/undici/undici:10533:25)
+      at fetch (node:internal/deps/undici/undici:14974:10)
+      at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)
+      at apiFetch (/Users/devgwardo/spark/src/stores/profiles-store.ts:55:21)
+      at fetchProfiles (/Users/devgwardo/spark/src/stores/profiles-store.ts:83:30)
+      at /Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:261:10
+      at commitHookEffectListMount (/Users/devgwardo/spark/node_modules/react-dom/cjs/react-dom.development.js:23189:26) {
+    code: 'ERR_INVALID_URL',
+    input: '/api/hermes/profiles'
+  }
+}
+Warning: An update to ChatSidebar inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at ChatSidebar (/Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:274:322)
+
+(node:2550) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+stderr | src/test/chat-sidebar-tags.test.tsx > ChatSidebar tags > renders tag chips on rows and a filter bar with both tags
+Failed to fetch rooms: TypeError: Failed to parse URL from /api/rooms
+    at node:internal/deps/undici/undici:14976:13
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at apiFetch (/Users/devgwardo/spark/src/stores/room-store.ts:59:15)
+    at fetchRooms (/Users/devgwardo/spark/src/stores/room-store.ts:86:20) {
+  [cause]: TypeError: Invalid URL
+      at new URL (node:internal/url:818:25)
+      at new URL (file:///Users/devgwardo/spark/node_modules/vitest/dist/chunks/index.hTNFpC24.js:1408:2)
+      at new Request (node:internal/deps/undici/undici:9804:25)
+      at fetch (node:internal/deps/undici/undici:10533:25)
+      at fetch (node:internal/deps/undici/undici:14974:10)
+      at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)
+      at apiFetch (/Users/devgwardo/spark/src/stores/room-store.ts:59:21)
+      at fetchRooms (/Users/devgwardo/spark/src/stores/room-store.ts:86:26)
+      at /Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:260:10
+      at commitHookEffectListMount (/Users/devgwardo/spark/node_modules/react-dom/cjs/react-dom.development.js:23189:26) {
+    code: 'ERR_INVALID_URL',
+    input: '/api/rooms'
+  }
+}
+Warning: An update to ChatSidebar inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at ChatSidebar (/Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:274:322)
+Failed to fetch profiles: TypeError: Failed to parse URL from /api/hermes/profiles
+    at node:internal/deps/undici/undici:14976:13
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at apiFetch (/Users/devgwardo/spark/src/stores/profiles-store.ts:55:15)
+    at fetchProfiles (/Users/devgwardo/spark/src/stores/profiles-store.ts:83:24) {
+  [cause]: TypeError: Invalid URL
+      at new URL (node:internal/url:818:25)
+      at new URL (file:///Users/devgwardo/spark/node_modules/vitest/dist/chunks/index.hTNFpC24.js:1408:2)
+      at new Request (node:internal/deps/undici/undici:9804:25)
+      at fetch (node:internal/deps/undici/undici:10533:25)
+      at fetch (node:internal/deps/undici/undici:14974:10)
+      at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)
+      at apiFetch (/Users/devgwardo/spark/src/stores/profiles-store.ts:55:21)
+      at fetchProfiles (/Users/devgwardo/spark/src/stores/profiles-store.ts:83:30)
+      at /Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:261:10
+      at commitHookEffectListMount (/Users/devgwardo/spark/node_modules/react-dom/cjs/react-dom.development.js:23189:26) {
+    code: 'ERR_INVALID_URL',
+    input: '/api/hermes/profiles'
+  }
+}
+Warning: An update to ChatSidebar inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at ChatSidebar (/Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:274:322)
+
+stderr | src/test/message-bubble.test.tsx > MessageBubble > copies the visible content when the copy action is pressed
+Warning: An update to MessageBubble inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at MessageBubble (/Users/devgwardo/spark/src/components/chat/MessageBubble.tsx:1814:97)
+    at PanelProvider (/Users/devgwardo/spark/src/contexts/PanelContext.tsx:6:26)
+
+ ✓ src/test/message-bubble.test.tsx (28 tests) 590ms
+stderr | src/test/chat-sidebar.test.tsx > ChatSidebar > shows a queue badge for Hermes when queued messages exist
+Failed to fetch rooms: TypeError: Failed to parse URL from /api/rooms
+    at node:internal/deps/undici/undici:14976:13
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at apiFetch (/Users/devgwardo/spark/src/stores/room-store.ts:59:15)
+    at fetchRooms (/Users/devgwardo/spark/src/stores/room-store.ts:86:20) {
+  [cause]: TypeError: Invalid URL
+      at new URL (node:internal/url:818:25)
+      at new URL (file:///Users/devgwardo/spark/node_modules/vitest/dist/chunks/index.hTNFpC24.js:1408:2)
+      at new Request (node:internal/deps/undici/undici:9804:25)
+      at fetch (node:internal/deps/undici/undici:10533:25)
+      at fetch (node:internal/deps/undici/undici:14974:10)
+      at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)
+      at apiFetch (/Users/devgwardo/spark/src/stores/room-store.ts:59:21)
+      at fetchRooms (/Users/devgwardo/spark/src/stores/room-store.ts:86:26)
+      at /Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:260:10
+      at commitHookEffectListMount (/Users/devgwardo/spark/node_modules/react-dom/cjs/react-dom.development.js:23189:26) {
+    code: 'ERR_INVALID_URL',
+    input: '/api/rooms'
+  }
+}
+Warning: An update to ChatSidebar inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at ChatSidebar (/Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:274:322)
+Failed to fetch profiles: TypeError: Failed to parse URL from /api/hermes/profiles
+    at node:internal/deps/undici/undici:14976:13
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at apiFetch (/Users/devgwardo/spark/src/stores/profiles-store.ts:55:15)
+    at fetchProfiles (/Users/devgwardo/spark/src/stores/profiles-store.ts:83:24) {
+  [cause]: TypeError: Invalid URL
+      at new URL (node:internal/url:818:25)
+      at new URL (file:///Users/devgwardo/spark/node_modules/vitest/dist/chunks/index.hTNFpC24.js:1408:2)
+      at new Request (node:internal/deps/undici/undici:9804:25)
+      at fetch (node:internal/deps/undici/undici:10533:25)
+      at fetch (node:internal/deps/undici/undici:14974:10)
+      at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)
+      at apiFetch (/Users/devgwardo/spark/src/stores/profiles-store.ts:55:21)
+      at fetchProfiles (/Users/devgwardo/spark/src/stores/profiles-store.ts:83:30)
+      at /Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:261:10
+      at commitHookEffectListMount (/Users/devgwardo/spark/node_modules/react-dom/cjs/react-dom.development.js:23189:26) {
+    code: 'ERR_INVALID_URL',
+    input: '/api/hermes/profiles'
+  }
+}
+Warning: An update to ChatSidebar inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at ChatSidebar (/Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:274:322)
+
+ ✓ src/test/chat-sidebar.test.tsx (5 tests) 714ms
+   ✓ ChatSidebar (5)
+     ✓ shows a queue badge for Hermes when queued messages exist 318ms
+stderr | src/test/chat-sidebar-tags.test.tsx > ChatSidebar tags > filters the list to only rows carrying the clicked tag
+Failed to fetch rooms: TypeError: Failed to parse URL from /api/rooms
+    at node:internal/deps/undici/undici:14976:13
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at apiFetch (/Users/devgwardo/spark/src/stores/room-store.ts:59:15)
+    at fetchRooms (/Users/devgwardo/spark/src/stores/room-store.ts:86:20) {
+  [cause]: TypeError: Invalid URL
+      at new URL (node:internal/url:818:25)
+      at new URL (file:///Users/devgwardo/spark/node_modules/vitest/dist/chunks/index.hTNFpC24.js:1408:2)
+      at new Request (node:internal/deps/undici/undici:9804:25)
+      at fetch (node:internal/deps/undici/undici:10533:25)
+      at fetch (node:internal/deps/undici/undici:14974:10)
+      at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)
+      at apiFetch (/Users/devgwardo/spark/src/stores/room-store.ts:59:21)
+      at fetchRooms (/Users/devgwardo/spark/src/stores/room-store.ts:86:26)
+      at /Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:260:10
+      at commitHookEffectListMount (/Users/devgwardo/spark/node_modules/react-dom/cjs/react-dom.development.js:23189:26) {
+    code: 'ERR_INVALID_URL',
+    input: '/api/rooms'
+  }
+}
+Warning: An update to ChatSidebar inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at ChatSidebar (/Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:274:322)
+Failed to fetch profiles: TypeError: Failed to parse URL from /api/hermes/profiles
+    at node:internal/deps/undici/undici:14976:13
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at apiFetch (/Users/devgwardo/spark/src/stores/profiles-store.ts:55:15)
+    at fetchProfiles (/Users/devgwardo/spark/src/stores/profiles-store.ts:83:24) {
+  [cause]: TypeError: Invalid URL
+      at new URL (node:internal/url:818:25)
+      at new URL (file:///Users/devgwardo/spark/node_modules/vitest/dist/chunks/index.hTNFpC24.js:1408:2)
+      at new Request (node:internal/deps/undici/undici:9804:25)
+      at fetch (node:internal/deps/undici/undici:10533:25)
+      at fetch (node:internal/deps/undici/undici:14974:10)
+      at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)
+      at apiFetch (/Users/devgwardo/spark/src/stores/profiles-store.ts:55:21)
+      at fetchProfiles (/Users/devgwardo/spark/src/stores/profiles-store.ts:83:30)
+      at /Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:261:10
+      at commitHookEffectListMount (/Users/devgwardo/spark/node_modules/react-dom/cjs/react-dom.development.js:23189:26) {
+    code: 'ERR_INVALID_URL',
+    input: '/api/hermes/profiles'
+  }
+}
+Warning: An update to ChatSidebar inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at ChatSidebar (/Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:274:322)
+
+stderr | src/test/chat-sidebar-tags.test.tsx > ChatSidebar tags > combines filters when shift-clicking multiple tags (AND)
+Failed to fetch rooms: TypeError: Failed to parse URL from /api/rooms
+    at node:internal/deps/undici/undici:14976:13
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at apiFetch (/Users/devgwardo/spark/src/stores/room-store.ts:59:15)
+    at fetchRooms (/Users/devgwardo/spark/src/stores/room-store.ts:86:20) {
+  [cause]: TypeError: Invalid URL
+      at new URL (node:internal/url:818:25)
+      at new URL (file:///Users/devgwardo/spark/node_modules/vitest/dist/chunks/index.hTNFpC24.js:1408:2)
+      at new Request (node:internal/deps/undici/undici:9804:25)
+      at fetch (node:internal/deps/undici/undici:10533:25)
+      at fetch (node:internal/deps/undici/undici:14974:10)
+      at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)
+      at apiFetch (/Users/devgwardo/spark/src/stores/room-store.ts:59:21)
+      at fetchRooms (/Users/devgwardo/spark/src/stores/room-store.ts:86:26)
+      at /Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:260:10
+      at commitHookEffectListMount (/Users/devgwardo/spark/node_modules/react-dom/cjs/react-dom.development.js:23189:26) {
+    code: 'ERR_INVALID_URL',
+    input: '/api/rooms'
+  }
+}
+Warning: An update to ChatSidebar inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at ChatSidebar (/Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:274:322)
+Failed to fetch profiles: TypeError: Failed to parse URL from /api/hermes/profiles
+    at node:internal/deps/undici/undici:14976:13
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at apiFetch (/Users/devgwardo/spark/src/stores/profiles-store.ts:55:15)
+    at fetchProfiles (/Users/devgwardo/spark/src/stores/profiles-store.ts:83:24) {
+  [cause]: TypeError: Invalid URL
+      at new URL (node:internal/url:818:25)
+      at new URL (file:///Users/devgwardo/spark/node_modules/vitest/dist/chunks/index.hTNFpC24.js:1408:2)
+      at new Request (node:internal/deps/undici/undici:9804:25)
+      at fetch (node:internal/deps/undici/undici:10533:25)
+      at fetch (node:internal/deps/undici/undici:14974:10)
+      at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)
+      at apiFetch (/Users/devgwardo/spark/src/stores/profiles-store.ts:55:21)
+      at fetchProfiles (/Users/devgwardo/spark/src/stores/profiles-store.ts:83:30)
+      at /Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:261:10
+      at commitHookEffectListMount (/Users/devgwardo/spark/node_modules/react-dom/cjs/react-dom.development.js:23189:26) {
+    code: 'ERR_INVALID_URL',
+    input: '/api/hermes/profiles'
+  }
+}
+Warning: An update to ChatSidebar inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at ChatSidebar (/Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:274:322)
+
+ ✓ src/test/chat-error-banner.test.tsx (7 tests) 1016ms
+   ✓ ChatErrorBanner (7)
+     ✓ switches Hermes to a suggested model directly from the error banner 372ms
+ ✓ src/test/chat-sidebar-tags.test.tsx (3 tests) 526ms
+stderr | src/test/chat-sidebar-archive.test.tsx > ChatSidebar archive group > shows the Archived group header with count and hides archived rows by default
+Failed to fetch rooms: TypeError: Failed to parse URL from /api/rooms
+    at node:internal/deps/undici/undici:14976:13
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at apiFetch (/Users/devgwardo/spark/src/stores/room-store.ts:59:15)
+    at fetchRooms (/Users/devgwardo/spark/src/stores/room-store.ts:86:20) {
+  [cause]: TypeError: Invalid URL
+      at new URL (node:internal/url:818:25)
+      at new URL (file:///Users/devgwardo/spark/node_modules/vitest/dist/chunks/index.hTNFpC24.js:1408:2)
+      at new Request (node:internal/deps/undici/undici:9804:25)
+      at fetch (node:internal/deps/undici/undici:10533:25)
+      at fetch (node:internal/deps/undici/undici:14974:10)
+      at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)
+      at apiFetch (/Users/devgwardo/spark/src/stores/room-store.ts:59:21)
+      at fetchRooms (/Users/devgwardo/spark/src/stores/room-store.ts:86:26)
+      at /Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:260:10
+      at commitHookEffectListMount (/Users/devgwardo/spark/node_modules/react-dom/cjs/react-dom.development.js:23189:26) {
+    code: 'ERR_INVALID_URL',
+    input: '/api/rooms'
+  }
+}
+Warning: An update to ChatSidebar inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at ChatSidebar (/Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:274:322)
+Failed to fetch profiles: TypeError: Failed to parse URL from /api/hermes/profiles
+    at node:internal/deps/undici/undici:14976:13
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at apiFetch (/Users/devgwardo/spark/src/stores/profiles-store.ts:55:15)
+    at fetchProfiles (/Users/devgwardo/spark/src/stores/profiles-store.ts:83:24) {
+  [cause]: TypeError: Invalid URL
+      at new URL (node:internal/url:818:25)
+      at new URL (file:///Users/devgwardo/spark/node_modules/vitest/dist/chunks/index.hTNFpC24.js:1408:2)
+      at new Request (node:internal/deps/undici/undici:9804:25)
+      at fetch (node:internal/deps/undici/undici:10533:25)
+      at fetch (node:internal/deps/undici/undici:14974:10)
+      at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)
+      at apiFetch (/Users/devgwardo/spark/src/stores/profiles-store.ts:55:21)
+      at fetchProfiles (/Users/devgwardo/spark/src/stores/profiles-store.ts:83:30)
+      at /Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:261:10
+      at commitHookEffectListMount (/Users/devgwardo/spark/node_modules/react-dom/cjs/react-dom.development.js:23189:26) {
+    code: 'ERR_INVALID_URL',
+    input: '/api/hermes/profiles'
+  }
+}
+Warning: An update to ChatSidebar inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at ChatSidebar (/Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:274:322)
+
+ ✓ src/test/chat-sidebar-archive.test.tsx (1 test) 515ms
+   ✓ ChatSidebar archive group (1)
+     ✓ shows the Archived group header with count and hides archived rows by default 509ms
+ ✓ src/test/quick-capture.test.tsx (12 tests) 229ms
+ ✓ src/test/chat-input-reasoning.test.tsx (4 tests) 471ms
+   ✓ ChatInput reasoning selector (4)
+     ✓ shows the reasoning selector for supported OpenAI reasoning models 305ms
+(node:2552) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2553) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/contextual-suggestions-component.test.tsx (5 tests) 227ms
+(node:2555) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2556) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+stderr | src/test/app-layout-tab-switch.test.tsx
+Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.
+
+(node:2557) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2560) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/implement-plan-gate.test.tsx (5 tests) 278ms
+(node:2561) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2562) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/moa-activity.test.tsx (4 tests) 138ms
+ ✓ server/__tests__/workspace-route.test.ts (9 tests) 224ms
+(node:2563) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+stderr | src/test/team-panel.test.tsx > TeamPanel > shows delegation chain when present
+Warning: An update to TeamPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at TeamPanel (/Users/devgwardo/spark/src/components/sidebar/TeamPanel.tsx:610:125)
+
+stderr | src/test/team-panel.test.tsx > TeamPanel > handles review subtask status without crashing
+Warning: An update to TeamPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at TeamPanel (/Users/devgwardo/spark/src/components/sidebar/TeamPanel.tsx:610:125)
+
+ ✓ src/components/layout/McpWorkerPill.test.tsx (5 tests) 191ms
+ ✓ src/test/team-panel.test.tsx (8 tests) 209ms
+stderr | src/test/acp-approval-banner.test.tsx > AcpApprovalBanner > sends allow_once for a legacy approve and deny for a legacy deny
+Warning: An update to AcpApprovalBanner inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at AcpApprovalBanner (/Users/devgwardo/spark/src/components/chat/AcpApprovalBanner.tsx:48:61)
+
+ ✓ src/test/acp-approval-banner.test.tsx (6 tests) 131ms
+ ✓ src/test/goals-settings.test.tsx (1 test) 120ms
+stderr | server/__tests__/mcp-worker-limits.test.ts > mcp worker limits: stdout cap > maxPending is constant-pinned only (needs a live child; skipped-with-reason)
+[limits] NOTE: maxPending trip-wire needs a live child; constant pinned, behavioral path skipped-with-reason.
+
+ ✓ server/__tests__/mcp-worker-limits.test.ts (15 tests | 6 skipped) 161ms
+(node:2564) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ server/__tests__/mcp-worker-wireup.test.ts (7 tests | 2 skipped) 170ms
+stderr | src/test/app-layout-tab-switch.test.tsx > AppLayout tab switching > keeps the chat panel mounted and snaps unsupported tabs back to chat
+Failed to fetch rooms: TypeError: Failed to parse URL from /api/rooms
+    at node:internal/deps/undici/undici:14976:13
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at apiFetch (/Users/devgwardo/spark/src/stores/room-store.ts:59:15)
+    at fetchRooms (/Users/devgwardo/spark/src/stores/room-store.ts:86:20) {
+  [cause]: TypeError: Invalid URL
+      at new URL (node:internal/url:818:25)
+      at new URL (file:///Users/devgwardo/spark/node_modules/vitest/dist/chunks/index.hTNFpC24.js:1408:2)
+      at new Request (node:internal/deps/undici/undici:9804:25)
+      at fetch (node:internal/deps/undici/undici:10533:25)
+      at fetch (node:internal/deps/undici/undici:14974:10)
+      at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)
+      at apiFetch (/Users/devgwardo/spark/src/stores/room-store.ts:59:21)
+      at fetchRooms (/Users/devgwardo/spark/src/stores/room-store.ts:86:26)
+      at /Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:260:10
+      at commitHookEffectListMount (/Users/devgwardo/spark/node_modules/react-dom/cjs/react-dom.development.js:23189:26) {
+    code: 'ERR_INVALID_URL',
+    input: '/api/rooms'
+  }
+}
+Warning: An update to ChatSidebar inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at ChatSidebar (/Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:274:322)
+    at nav
+    at div
+    at div
+    at div
+    at div
+    at AppLayout (/Users/devgwardo/spark/src/components/layout/AppLayout.tsx:120:60)
+Failed to fetch profiles: TypeError: Failed to parse URL from /api/hermes/profiles
+    at node:internal/deps/undici/undici:14976:13
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at apiFetch (/Users/devgwardo/spark/src/stores/profiles-store.ts:55:15)
+    at fetchProfiles (/Users/devgwardo/spark/src/stores/profiles-store.ts:83:24) {
+  [cause]: TypeError: Invalid URL
+      at new URL (node:internal/url:818:25)
+      at new URL (file:///Users/devgwardo/spark/node_modules/vitest/dist/chunks/index.hTNFpC24.js:1408:2)
+      at new Request (node:internal/deps/undici/undici:9804:25)
+      at fetch (node:internal/deps/undici/undici:10533:25)
+      at fetch (node:internal/deps/undici/undici:14974:10)
+      at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)
+      at apiFetch (/Users/devgwardo/spark/src/stores/profiles-store.ts:55:21)
+      at fetchProfiles (/Users/devgwardo/spark/src/stores/profiles-store.ts:83:30)
+      at /Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:261:10
+      at commitHookEffectListMount (/Users/devgwardo/spark/node_modules/react-dom/cjs/react-dom.development.js:23189:26) {
+    code: 'ERR_INVALID_URL',
+    input: '/api/hermes/profiles'
+  }
+}
+Warning: An update to ChatSidebar inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at ChatSidebar (/Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:274:322)
+    at nav
+    at div
+    at div
+    at div
+    at div
+    at AppLayout (/Users/devgwardo/spark/src/components/layout/AppLayout.tsx:120:60)
+
+ ✓ src/test/agent-task-panel.test.tsx (15 tests) 208ms
+stderr | src/test/app-layout-tab-switch.test.tsx > AppLayout tab switching > keeps the chat panel mounted and snaps unsupported tabs back to chat
+Warning: An update to HermesStatusPill inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at HermesStatusPill (/Users/devgwardo/spark/src/components/layout/HermesStatusPill.tsx:28:33)
+    at div
+    at header
+    at div
+    at div
+    at div
+    at AppLayout (/Users/devgwardo/spark/src/components/layout/AppLayout.tsx:120:60)
+
+stderr | src/test/app-layout-tab-switch.test.tsx > AppLayout tab switching > keeps the chat panel mounted and snaps unsupported tabs back to chat
+Warning: A suspended resource finished loading inside a test, but the event was not wrapped in act(...).
+
+When testing, code that resolves suspended data should be wrapped into act(...):
+
+act(() => {
+  /* finish loading suspended data */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+Warning: A suspended resource finished loading inside a test, but the event was not wrapped in act(...).
+
+When testing, code that resolves suspended data should be wrapped into act(...):
+
+act(() => {
+  /* finish loading suspended data */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+Warning: A suspended resource finished loading inside a test, but the event was not wrapped in act(...).
+
+When testing, code that resolves suspended data should be wrapped into act(...):
+
+act(() => {
+  /* finish loading suspended data */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+Warning: A suspended resource finished loading inside a test, but the event was not wrapped in act(...).
+
+When testing, code that resolves suspended data should be wrapped into act(...):
+
+act(() => {
+  /* finish loading suspended data */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+
+ ✓ src/test/chat-area-scroll.test.tsx (9 tests) 297ms
+ ✓ src/test/chat-approval-modal.test.tsx (7 tests) 218ms
+stderr | src/test/app-layout-tab-switch.test.tsx > AppLayout tab switching > shows repo attachment status without implying edits are already approved
+Warning: An update to HermesStatusPill inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at HermesStatusPill (/Users/devgwardo/spark/src/components/layout/HermesStatusPill.tsx:28:33)
+    at div
+    at header
+    at div
+    at div
+    at div
+    at AppLayout (/Users/devgwardo/spark/src/components/layout/AppLayout.tsx:120:60)
+
+stderr | src/test/app-layout-tab-switch.test.tsx > AppLayout tab switching > shows repo attachment status without implying edits are already approved
+Failed to fetch rooms: TypeError: Failed to parse URL from /api/rooms
+    at node:internal/deps/undici/undici:14976:13
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at apiFetch (/Users/devgwardo/spark/src/stores/room-store.ts:59:15)
+    at fetchRooms (/Users/devgwardo/spark/src/stores/room-store.ts:86:20) {
+  [cause]: TypeError: Invalid URL
+      at new URL (node:internal/url:818:25)
+      at new URL (file:///Users/devgwardo/spark/node_modules/vitest/dist/chunks/index.hTNFpC24.js:1408:2)
+      at new Request (node:internal/deps/undici/undici:9804:25)
+      at fetch (node:internal/deps/undici/undici:10533:25)
+      at fetch (node:internal/deps/undici/undici:14974:10)
+      at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)
+      at apiFetch (/Users/devgwardo/spark/src/stores/room-store.ts:59:21)
+      at fetchRooms (/Users/devgwardo/spark/src/stores/room-store.ts:86:26)
+      at /Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:260:10
+      at commitHookEffectListMount (/Users/devgwardo/spark/node_modules/react-dom/cjs/react-dom.development.js:23189:26) {
+    code: 'ERR_INVALID_URL',
+    input: '/api/rooms'
+  }
+}
+Warning: An update to ChatSidebar inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at ChatSidebar (/Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:274:322)
+    at nav
+    at div
+    at div
+    at div
+    at div
+    at AppLayout (/Users/devgwardo/spark/src/components/layout/AppLayout.tsx:120:60)
+Failed to fetch profiles: TypeError: Failed to parse URL from /api/hermes/profiles
+    at node:internal/deps/undici/undici:14976:13
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at apiFetch (/Users/devgwardo/spark/src/stores/profiles-store.ts:55:15)
+    at fetchProfiles (/Users/devgwardo/spark/src/stores/profiles-store.ts:83:24) {
+  [cause]: TypeError: Invalid URL
+      at new URL (node:internal/url:818:25)
+      at new URL (file:///Users/devgwardo/spark/node_modules/vitest/dist/chunks/index.hTNFpC24.js:1408:2)
+      at new Request (node:internal/deps/undici/undici:9804:25)
+      at fetch (node:internal/deps/undici/undici:10533:25)
+      at fetch (node:internal/deps/undici/undici:14974:10)
+      at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)
+      at apiFetch (/Users/devgwardo/spark/src/stores/profiles-store.ts:55:21)
+      at fetchProfiles (/Users/devgwardo/spark/src/stores/profiles-store.ts:83:30)
+      at /Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:261:10
+      at commitHookEffectListMount (/Users/devgwardo/spark/node_modules/react-dom/cjs/react-dom.development.js:23189:26) {
+    code: 'ERR_INVALID_URL',
+    input: '/api/hermes/profiles'
+  }
+}
+Warning: An update to ChatSidebar inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at ChatSidebar (/Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:274:322)
+    at nav
+    at div
+    at div
+    at div
+    at div
+    at AppLayout (/Users/devgwardo/spark/src/components/layout/AppLayout.tsx:120:60)
+
+stderr | src/test/app-layout-tab-switch.test.tsx > AppLayout tab switching > shows repo attachment status without implying edits are already approved
+Warning: A suspended resource finished loading inside a test, but the event was not wrapped in act(...).
+
+When testing, code that resolves suspended data should be wrapped into act(...):
+
+act(() => {
+  /* finish loading suspended data */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+
+(node:2569) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ server/__tests__/mcp-worker-tunnel-gate.test.ts (7 tests | 1 skipped) 88ms
+(node:2570) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/hermes-effort-slider.test.tsx (2 tests) 141ms
+(node:2574) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2575) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+stderr | src/test/app-layout-tab-switch.test.tsx > AppLayout tab switching > keeps a created pull request visible in the thread chrome after staged changes are cleared
+Warning: An update to HermesStatusPill inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at HermesStatusPill (/Users/devgwardo/spark/src/components/layout/HermesStatusPill.tsx:28:33)
+    at div
+    at header
+    at div
+    at div
+    at div
+    at AppLayout (/Users/devgwardo/spark/src/components/layout/AppLayout.tsx:120:60)
+
+stderr | src/test/app-layout-tab-switch.test.tsx > AppLayout tab switching > keeps a created pull request visible in the thread chrome after staged changes are cleared
+Failed to fetch rooms: TypeError: Failed to parse URL from /api/rooms
+    at node:internal/deps/undici/undici:14976:13
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at apiFetch (/Users/devgwardo/spark/src/stores/room-store.ts:59:15)
+    at fetchRooms (/Users/devgwardo/spark/src/stores/room-store.ts:86:20) {
+  [cause]: TypeError: Invalid URL
+      at new URL (node:internal/url:818:25)
+      at new URL (file:///Users/devgwardo/spark/node_modules/vitest/dist/chunks/index.hTNFpC24.js:1408:2)
+      at new Request (node:internal/deps/undici/undici:9804:25)
+      at fetch (node:internal/deps/undici/undici:10533:25)
+      at fetch (node:internal/deps/undici/undici:14974:10)
+      at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)
+      at apiFetch (/Users/devgwardo/spark/src/stores/room-store.ts:59:21)
+      at fetchRooms (/Users/devgwardo/spark/src/stores/room-store.ts:86:26)
+      at /Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:260:10
+      at commitHookEffectListMount (/Users/devgwardo/spark/node_modules/react-dom/cjs/react-dom.development.js:23189:26) {
+    code: 'ERR_INVALID_URL',
+    input: '/api/rooms'
+  }
+}
+Warning: An update to ChatSidebar inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at ChatSidebar (/Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:274:322)
+    at nav
+    at div
+    at div
+    at div
+    at div
+    at AppLayout (/Users/devgwardo/spark/src/components/layout/AppLayout.tsx:120:60)
+Failed to fetch profiles: TypeError: Failed to parse URL from /api/hermes/profiles
+    at node:internal/deps/undici/undici:14976:13
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at apiFetch (/Users/devgwardo/spark/src/stores/profiles-store.ts:55:15)
+    at fetchProfiles (/Users/devgwardo/spark/src/stores/profiles-store.ts:83:24) {
+  [cause]: TypeError: Invalid URL
+      at new URL (node:internal/url:818:25)
+      at new URL (file:///Users/devgwardo/spark/node_modules/vitest/dist/chunks/index.hTNFpC24.js:1408:2)
+      at new Request (node:internal/deps/undici/undici:9804:25)
+      at fetch (node:internal/deps/undici/undici:10533:25)
+      at fetch (node:internal/deps/undici/undici:14974:10)
+      at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)
+      at apiFetch (/Users/devgwardo/spark/src/stores/profiles-store.ts:55:21)
+      at fetchProfiles (/Users/devgwardo/spark/src/stores/profiles-store.ts:83:30)
+      at /Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:261:10
+      at commitHookEffectListMount (/Users/devgwardo/spark/node_modules/react-dom/cjs/react-dom.development.js:23189:26) {
+    code: 'ERR_INVALID_URL',
+    input: '/api/hermes/profiles'
+  }
+}
+Warning: An update to ChatSidebar inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at ChatSidebar (/Users/devgwardo/spark/src/components/sidebar/ChatSidebar.tsx:274:322)
+    at nav
+    at div
+    at div
+    at div
+    at div
+    at AppLayout (/Users/devgwardo/spark/src/components/layout/AppLayout.tsx:120:60)
+
+ ✓ src/test/app-layout-tab-switch.test.tsx (3 tests) 850ms
+   ✓ AppLayout tab switching (3)
+     ✓ keeps a created pull request visible in the thread chrome after staged changes are cleared 559ms
+(node:2580) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ server/__tests__/mcp-extension-tunnel-gate.test.ts (5 tests | 1 skipped) 100ms
+(node:2581) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/context-meter.test.tsx (5 tests) 86ms
+(node:2582) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+stderr | src/test/kanban-panel.test.tsx > KanbanPanel > renders the inline store error when kanban requests fail
+Warning: An update to OrchestratorToggle inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at OrchestratorToggle (/Users/devgwardo/spark/src/components/sidebar/KanbanPanel.tsx:83:112)
+    at div
+    at div
+    at div
+    at KanbanPanel (/Users/devgwardo/spark/src/components/sidebar/KanbanPanel.tsx:111:115)
+Warning: An update to KanbanPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at KanbanPanel (/Users/devgwardo/spark/src/components/sidebar/KanbanPanel.tsx:111:115)
+Warning: An update to OrchestratorToggle inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at OrchestratorToggle (/Users/devgwardo/spark/src/components/sidebar/KanbanPanel.tsx:83:112)
+    at div
+    at div
+    at div
+    at KanbanPanel (/Users/devgwardo/spark/src/components/sidebar/KanbanPanel.tsx:111:115)
+Warning: An update to KanbanPanel inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at KanbanPanel (/Users/devgwardo/spark/src/components/sidebar/KanbanPanel.tsx:111:115)
+
+ ✓ src/test/kanban-panel.test.tsx (2 tests) 202ms
+ ✓ src/test/change-approval-modal.test.tsx (2 tests) 81ms
+(node:2583) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+ ✓ src/test/hermes-mcp-settings.test.tsx (1 test) 115ms
+[11:13:21] [33mWARN[39m: [36m[team-coordinator] Profile discovery returned 404[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Formation for "Fix the login page": single_agent (Task is simple enough for a single agent)[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Execution backend for "Fix the login page": agent_loop — strategy=single_agent → agent_loop (single kanban worker)[39m
+[11:13:21] [33mWARN[39m: [36m[team-coordinator] Only 1 agent(s) available — team dispatch not suitable[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Created team 69e4fca2-ece... for card "Fix the login page" with 1 agents (single_agent)[39m
+[11:13:21] [33mWARN[39m: [36m[team-coordinator] Profile discovery returned 404[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Formation for "Build frontend and backend API": specialist_team (Task spans 2 domains (frontend, backend) — assigning specialist agents)[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Execution backend for "Build frontend and backend API": team_fanout — strategy=specialist_team → team_fanout (multi-profile kanban fan-out)[39m
+[11:13:21] [33mWARN[39m: [36m[team-coordinator] Only 1 agent(s) available — team dispatch not suitable[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Created team 3700a8d0-939... for card "Build frontend and backend API" with 1 agents (specialist_team)[39m
+[11:13:21] [33mWARN[39m: [36m[team-coordinator] Profile discovery returned 404[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Formation for "Build API": single_agent (Task is simple enough for a single agent)[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Execution backend for "Build API": agent_loop — strategy=single_agent → agent_loop (single kanban worker)[39m
+[11:13:21] [33mWARN[39m: [36m[team-coordinator] Only 1 agent(s) available — team dispatch not suitable[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Created team c7d62452-0f2... for card "Build API" with 1 agents (single_agent)[39m
+[11:13:21] [33mWARN[39m: [36m[team-coordinator] Profile discovery returned 404[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Formation for "Test filter": single_agent (Task is simple enough for a single agent)[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Execution backend for "Test filter": agent_loop — strategy=single_agent → agent_loop (single kanban worker)[39m
+[11:13:21] [33mWARN[39m: [36m[team-coordinator] Only 1 agent(s) available — team dispatch not suitable[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Created team ffa531ce-978... for card "Test filter" with 1 agents (single_agent)[39m
+[11:13:21] [33mWARN[39m: [36m[team-coordinator] Profile discovery returned 404[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Formation for "Active test": single_agent (Task is simple enough for a single agent)[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Execution backend for "Active test": agent_loop — strategy=single_agent → agent_loop (single kanban worker)[39m
+[11:13:21] [33mWARN[39m: [36m[team-coordinator] Only 1 agent(s) available — team dispatch not suitable[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Created team 090ecd0a-d0b... for card "Active test" with 1 agents (single_agent)[39m
+[11:13:21] [33mWARN[39m: [36m[team-coordinator] Profile discovery returned 404[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Formation for "Test completion": single_agent (Task is simple enough for a single agent)[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Execution backend for "Test completion": agent_loop — strategy=single_agent → agent_loop (single kanban worker)[39m
+[11:13:21] [33mWARN[39m: [36m[team-coordinator] Only 1 agent(s) available — team dispatch not suitable[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Created team 061c12dd-889... for card "Test completion" with 1 agents (single_agent)[39m
+[11:13:21] [33mWARN[39m: [36m[team-coordinator] LLM call returned 404: [39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Team 061c12dd-889... synthesis complete[39m
+[11:13:21] [33mWARN[39m: [36m[team-coordinator] Profile discovery returned 404[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Formation for "Test blocked": single_agent (Task is simple enough for a single agent)[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Execution backend for "Test blocked": agent_loop — strategy=single_agent → agent_loop (single kanban worker)[39m
+[11:13:21] [33mWARN[39m: [36m[team-coordinator] Only 1 agent(s) available — team dispatch not suitable[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Created team 0c4257a9-7de... for card "Test blocked" with 1 agents (single_agent)[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Subtask st-blocked-1... blocked: Dep failed[39m
+[11:13:21] [33mWARN[39m: [36m[team-coordinator] Profile discovery returned 404[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Formation for "Recover me": single_agent (Task is simple enough for a single agent)[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Execution backend for "Recover me": agent_loop — strategy=single_agent → agent_loop (single kanban worker)[39m
+[11:13:21] [33mWARN[39m: [36m[team-coordinator] Only 1 agent(s) available — team dispatch not suitable[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Created team 5ccdf8f5-679... for card "Recover me" with 1 agents (single_agent)[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Dispatched team 5ccdf8f5-679... launched=1 cap=2 ready=1[39m
+[11:13:21] [33mWARN[39m: [36m[team-coordinator] Profile discovery returned 404[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Formation for "Resume recover": single_agent (Task is simple enough for a single agent)[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Execution backend for "Resume recover": agent_loop — strategy=single_agent → agent_loop (single kanban worker)[39m
+[11:13:21] [33mWARN[39m: [36m[team-coordinator] Only 1 agent(s) available — team dispatch not suitable[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Created team a53d466b-99d... for card "Resume recover" with 1 agents (single_agent)[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Recovering team a53d466b-99d... via re-dispatch[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Dispatched team a53d466b-99d... launched=0 cap=2 ready=0[39m
+[11:13:21] [33mWARN[39m: [36m[team-coordinator] Profile discovery returned 404[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Formation for "Already done": single_agent (Task is simple enough for a single agent)[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Execution backend for "Already done": agent_loop — strategy=single_agent → agent_loop (single kanban worker)[39m
+[11:13:21] [33mWARN[39m: [36m[team-coordinator] Only 1 agent(s) available — team dispatch not suitable[39m
+[11:13:21] [32mINFO[39m: [36m[team-coordinator] Created team 95ff9f05-aef... for card "Already done" with 1 agents (single_agent)[39m
+ ✓ server/__tests__/team-coordinator.test.ts (18 tests) 87ms
+ ✓ server/__tests__/sse-proxy-events.test.ts (4 tests) 83ms
+ ✓ src/test/chat-surface-background.test.tsx (3 tests) 113ms
+(node:2584) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2585) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/mermaid-diagram.test.tsx (2 tests) 109ms
+ ✓ src/test/chat-area-tool-count.test.tsx (7 tests) 177ms
+ ✓ src/test/mini-browser-bridge.test.ts (5 tests) 68ms
+ ✓ src/test/use-conversation-search.test.ts (4 tests) 46ms
+ ✓ src/test/plan-checklist.test.tsx (10 tests) 84ms
+(node:2589) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2590) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2591) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2593) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2594) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2595) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ electron/deep-links.test.ts (23 tests | 1 skipped) 15ms
+ ✓ server/__tests__/agent-loop.test.ts (24 tests) 55ms
+(node:2597) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2596) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/conversation-import.test.ts (5 tests) 24ms
+(node:2598) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2600) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/welcome-hero-mark.test.tsx (1 test) 43ms
+ ✓ server/__tests__/mesh-bridge.test.ts (9 tests) 14ms
+ ✓ src/test/chat-utils.test.ts (8 tests) 17ms
+ ✓ src/test/panel-container-remount.test.tsx (3 tests) 48ms
+ ✓ src/test/activity-indicator.test.tsx (2 tests) 97ms
+ ✓ src/test/pseudo-tool-calls.test.ts (7 tests) 15ms
+ ✓ src/test/context-refs.test.ts (8 tests) 10ms
+(node:2602) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/chat-area-repo-lock.test.tsx (2 tests) 83ms
+(node:2605) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/conversation-search.test.ts (13 tests) 26ms
+(node:2609) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:2608) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2607) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ✓ server/__tests__/hermes-payload-normalize.test.ts (7 tests) 7ms
+ ✓ src/test/proposed-changes.test.ts (10 tests) 14ms
+[11:13:23] [31mERROR[39m: [36m[hermes] Failed to parse agent-loop SSE payload as JSON[39m
+(node:2606) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+stderr | src/test/hermes-loop-mode.test.ts > hermes loop mode > toggles loop mode and resets status on disable
+[zustand persist middleware] Unable to update item 'cloudchat-hermes', the given storage is currently unavailable.
+[zustand persist middleware] Unable to update item 'cloudchat-hermes', the given storage is currently unavailable.
+[zustand persist middleware] Unable to update item 'cloudchat-hermes', the given storage is currently unavailable.
+[zustand persist middleware] Unable to update item 'cloudchat-hermes', the given storage is currently unavailable.
+
+stderr | src/test/hermes-loop-mode.test.ts > hermes loop mode > keeps loop state independent per panel
+[zustand persist middleware] Unable to update item 'cloudchat-hermes', the given storage is currently unavailable.
+[zustand persist middleware] Unable to update item 'cloudchat-hermes', the given storage is currently unavailable.
+[zustand persist middleware] Unable to update item 'cloudchat-hermes', the given storage is currently unavailable.
+[zustand persist middleware] Unable to update item 'cloudchat-hermes', the given storage is currently unavailable.
+
+ ✓ src/test/hermes-loop-mode.test.ts (8 tests) 6ms
+(node:2610) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2611) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/tokens.test.ts (9 tests) 6ms
+ ✓ src/test/hermes-api-workspace.test.ts (5 tests) 9ms
+ ✓ src/test/panel-state.test.ts (11 tests) 12ms
+(node:2612) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/hermes-commands-passthrough.test.ts (9 tests) 8ms
+ ✓ src/test/api-base-url.test.ts (5 tests) 28ms
+ ✓ src/test/team-store.test.ts (10 tests) 13ms
+(node:2614) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2615) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/hermes-api-sessions.test.ts (5 tests) 9ms
+(node:2616) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2618) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2617) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/computer-use-dock.test.ts (7 tests) 12ms
+ ✓ src/test/cron-next.test.ts (4 tests) 8ms
+(node:2619) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/use-chat-queue.test.ts (4 tests) 17ms
+ ✓ src/test/server-tool-events.test.ts (13 tests) 19ms
+(node:2620) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2621) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ server/__tests__/api-base.test.ts (3 tests) 4ms
+ ✓ src/test/hermes-toolsets-store.test.ts (5 tests) 11ms
+(node:2622) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/contextual-suggestions.test.ts (10 tests) 10ms
+ ✓ server/__tests__/team-formation.test.ts (25 tests) 8ms
+(node:2624) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/hermes-api-fork.test.ts (2 tests) 19ms
+(node:2623) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/chat-queue-store.test.ts (2 tests) 8ms
+ ✓ server/__tests__/model-context.test.ts (7 tests) 4ms
+(node:2625) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/cron-run-summary.test.ts (3 tests) 9ms
+(node:2635) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ✓ server/__tests__/team-context-store.test.ts (4 tests) 17ms
+(node:2634) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:2628) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2629) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/tool-call-records.test.ts (21 tests) 10ms
+(node:2627) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2630) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/repo-tool-args.test.ts (5 tests) 9ms
+ ✓ src/test/changeset-store.test.ts (8 tests) 8ms
+(node:2632) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2633) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/stream-anchor.test.ts (3 tests) 19ms
+ ✓ server/__tests__/team-formation-routing.test.ts (9 tests) 6ms
+(node:2636) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/chat-queue.test.ts (4 tests) 7ms
+[11:13:25] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+ ✓ src/test/cron-store-archive.test.ts (3 tests) 14ms
+ ✓ server/__tests__/provider-config.test.ts (17 tests) 8ms
+(node:2637) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2639) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2640) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ server/__tests__/tool-schema.test.ts (4 tests) 8ms
+ ✓ src/test/tag-color.test.ts (4 tests) 5ms
+ ✓ electron/server.test.ts (2 tests) 9ms
+ ✓ src/test/settings-store.test.ts (6 tests) 6ms
+ ✓ server/__tests__/hermes-runtimes-route.test.ts (2 tests) 6ms
+(node:2641) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2642) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/repo-workflow.test.ts (3 tests) 11ms
+ ✓ server/__tests__/mcp-worker-isolation.test.ts (9 tests) 6ms
+ ✓ server/__tests__/skills-manifest.test.ts (3 tests) 6ms
+(node:2643) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/repo-intent.test.ts (6 tests) 7ms
+(node:2645) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/local-images.test.ts (2 tests) 7ms
+(node:2655) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ✓ server/__tests__/cron-archive-store.test.ts (2 tests) 8ms
+(node:2646) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/conversation-export.test.ts (6 tests) 29ms
+ ✓ src/test/issue-chat-prompts.test.ts (4 tests) 3ms
+ ✓ server/__tests__/csrf-protection.test.ts (6 tests) 7ms
+(node:2648) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ server/__tests__/message-normalization.test.ts (2 tests) 10ms
+(node:2652) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/providers.test.ts (3 tests) 9ms
+(node:2653) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/debug-isolation.test.ts (3 tests) 6ms
+(node:2656) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/mcp-tool-index.test.ts (5 tests) 4ms
+(node:2658) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/hermes-session-filter.test.ts (6 tests) 3ms
+(node:2659) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2660) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2661) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2662) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2663) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/hermes-api-cron.test.ts (2 tests) 6ms
+ ✓ src/test/profiles-store.test.ts (1 test) 6ms
+(node:2664) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/chat-scope.test.ts (5 tests) 3ms
+ ✓ src/test/skill-list-filter.test.ts (4 tests) 6ms
+ ✓ server/__tests__/direct-sse-proxy.test.ts (3 tests) 20ms
+(node:2665) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2666) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/memories-export-markdown.test.ts (3 tests) 5ms
+ ✓ src/test/isolation-test.test.ts (2 tests) 4ms
+(node:2671) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ server/__tests__/provider-config-registry.test.ts (4 tests) 3ms
+ ✓ server/__tests__/hermes-bridge-url.test.ts (3 tests) 3ms
+(node:2677) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/change-diff.test.ts (2 tests) 4ms
+ ✓ src/test/usage-budget-level.test.ts (4 tests) 2ms
+(node:2679) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:2680) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/session-status-counts.test.ts (3 tests) 3ms
+(node:2681) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ src/test/model-context-consistency.test.ts (1 test) 2ms
+ ✓ src/test/team-deps.test.ts (2 tests) 2ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 20 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/__tests__/hermes-chat-route.test.ts > Hermes chat route > uses ACP transport for Hermes repo turns — the bridge drives the real agent
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ server/__tests__/hermes-chat-route.test.ts:127:3
+    125|   }
+    126|
+    127|   it('uses ACP transport for Hermes repo turns — the bridge drives the…
+       |   ^
+    128|     // Stub fetch so the ACP proxy can reach a fake hermes bridge
+    129|     const bridgeStream = [
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/20]⎯
+
+ FAIL  server/__tests__/hermes-file-tree-proxy.test.ts > Hermes file tree proxy > includes repo_file_tree in the Hermes bridge request body
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ server/__tests__/hermes-file-tree-proxy.test.ts:84:3
+     82|   })
+     83|
+     84|   it('includes repo_file_tree in the Hermes bridge request body', asyn…
+       |   ^
+     85|     let capturedBody: Record<string, unknown> | null = null
+     86|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/20]⎯
+
+ FAIL  server/__tests__/openclaw-chat.test.ts > OpenClaw provider chat route > routes chat requests through OpenClaw and emits an AI SDK data stream
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ server/__tests__/openclaw-chat.test.ts:87:3
+     85|   }
+     86|
+     87|   it('routes chat requests through OpenClaw and emits an AI SDK data s…
+       |   ^
+     88|     const repoDir = createLocalRepoClone()
+     89|     const server = await createTestServer()
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/20]⎯
+
+ FAIL  server/__tests__/plan-mode-tools.test.ts > plan mode tool routing > keeps compatible providers on the read-only direct-proxy path in plan mode so create_html_file remains available
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ server/__tests__/plan-mode-tools.test.ts:82:3
+     80|   })
+     81|
+     82|   it('keeps compatible providers on the read-only direct-proxy path in…
+       |   ^
+     83|     const actualFetchLocal = global.fetch
+     84|     let upstreamBody: { tools?: unknown[]; tool_choice?: unknown } | n…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/20]⎯
+
+ FAIL  server/__tests__/repo-validation.test.ts > Server-side repo validation > returns 422 when the active repo returns 404 from GitHub
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ server/__tests__/repo-validation.test.ts:88:3
+     86|   // code path, so the provider choice doesn't affect validation behav…
+     87|
+     88|   it('returns 422 when the active repo returns 404 from GitHub', async…
+       |   ^
+     89|     const capturedUrls: string[] = []
+     90|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/20]⎯
+
+ FAIL  server/__tests__/tunnel-token-gate.test.ts > public tunnel access token gate > blocks tunnel-host requests without the token
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ server/__tests__/tunnel-token-gate.test.ts:83:3
+     81| // Host to the local origin and preserve the public host in X-Forwarde…
+     82| describe('public tunnel access token gate', () => {
+     83|   it('blocks tunnel-host requests without the token', async () => {
+       |   ^
+     84|     const server = await createTestServer()
+     85|     try {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/20]⎯
+
+ FAIL  src/test/chat-handoff.test.ts > new thread handoff > treats approval follow-ups as continuation of the accepted repo plan
+AssertionError: expected "vi.fn()" to be called with arguments: [ { role: 'user', …(1) }, …(1) ]
+
+Received:
+
+  1st vi.fn() call:
+
+  [
+    {
+-     "content": "go ahead",
++     "parts": [
++       {
++         "text": "go ahead",
++         "type": "text",
++       },
++     ],
+      "role": "user",
+    },
+-   ObjectContaining {
+-     "body": ObjectContaining {
++   {
++     "body": {
+        "continuing_approved_proposal": true,
+        "conversation_id": "conv-1",
++       "repo_edit_intent": true,
+      },
+    },
+  ]
+
+
+Number of calls: 1
+
+ ❯ src/test/chat-handoff.test.ts:963:32
+    961|     });
+    962|
+    963|     expect(aiChatState.append).toHaveBeenCalledWith(
+       |                                ^
+    964|       { role: 'user', content: 'go ahead' },
+    965|       expect.objectContaining({
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/20]⎯
+
+ FAIL  src/test/chat-handoff.test.ts > new thread handoff > keeps repo edits unlocked across tool-call continuation steps after approval
+AssertionError: expected "vi.fn()" to be called with arguments: [ ObjectContaining{…} ]
+
+Received:
+
+  1st vi.fn() call:
+
+  [
+-   ObjectContaining {
++   {
++     "content": "go ahead",
+      "conversationId": "conv-1",
+-     "id": "assistant-step-1",
+-     "role": "assistant",
+-     "toolInvocations": Any<Array>,
++     "id": "68e0c211-fe51-4343-90bb-ee9b7f98fd4b",
++     "role": "user",
++     "timestamp": "2026-09-26T11:13:07.219Z",
+    },
+  ]
+
+
+Number of calls: 1
+
+ ❯ src/test/chat-handoff.test.ts:1117:33
+    1115|     });
+    1116|
+    1117|     expect(dbMock.messages.add).toHaveBeenCalledWith(
+       |                                 ^
+    1118|       expect.objectContaining({
+    1119|         id: 'assistant-step-1',
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/20]⎯
+
+ FAIL  src/test/chat-handoff.test.ts > new thread handoff > persists Hermes server-side repo edits even when the final assistant message is otherwise empty
+AssertionError: expected "vi.fn()" to be called with arguments: [ ObjectContaining{…} ]
+
+Received:
+
+  1st vi.fn() call:
+
+  [
+-   ObjectContaining {
++   {
+      "content": "",
+      "conversationId": "conv-1",
+-     "id": "assistant-empty-after-server-edit",
++     "id": "cc2c337a-5765-4211-8a18-d5b867703067",
++     "parts": undefined,
+      "role": "assistant",
++     "timestamp": "2026-09-26T11:13:07.264Z",
+      "toolInvocations": [
+-       ObjectContaining {
++       {
+          "args": {
+            "changes": [
+-             ObjectContaining {
++             {
+                "action": "edit",
++               "content": "export default function App() { return <main>Updated</main>; }",
++               "description": "Refresh the app shell",
+                "path": "src/App.tsx",
+              },
+-             ObjectContaining {
++             {
+                "action": "edit",
++               "content": "body { color: white; }",
++               "description": "Refresh the visual styling",
+                "path": "src/styles.css",
+              },
+            ],
+          },
++         "result": {
++           "ok": true,
++         },
+          "state": "result",
++         "toolCallId": "server-batch-edit-0",
+          "toolName": "batch_edit_repo_files",
+        },
+      ],
+    },
+  ]
+
+
+Number of calls: 1
+
+ ❯ src/test/chat-handoff.test.ts:1465:33
+    1463|     });
+    1464|
+    1465|     expect(dbMock.messages.add).toHaveBeenCalledWith(
+       |                                 ^
+    1466|       expect.objectContaining({
+    1467|         id: 'assistant-empty-after-server-edit',
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/20]⎯
+
+ FAIL  src/test/chat-handoff.test.ts > new thread handoff > injects a synthetic assistant turn when a Hermes repo turn finishes with only data events
+TypeError: Cannot read properties of undefined (reading 'message')
+ ❯ onFinish src/hooks/useChat.ts:1804:29
+    1802|
+    1803|     onFinish: async (event) => {
+    1804|       const message = event.message;
+       |                             ^
+    1805|       const options = event;
+    1806|       // Use streamConvIdRef (captured at stream start) so mid-stream
+ ❯ src/test/chat-handoff.test.ts:1582:13
+ ❯ node_modules/@testing-library/react/dist/act-compat.js:47:24
+ ❯ act node_modules/react/cjs/react.development.js:2512:16
+ ❯ Proxy.act node_modules/@testing-library/react/dist/act-compat.js:46:25
+ ❯ src/test/chat-handoff.test.ts:1581:11
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/20]⎯
+
+ FAIL  src/test/chat-handoff.test.ts > new thread handoff > persists streamed server tool events for non-Hermes providers when onFinish omits tool invocations
+AssertionError: expected "vi.fn()" to be called with arguments: [ ObjectContaining{…} ]
+
+Received:
+
+  1st vi.fn() call:
+
+  [
+-   ObjectContaining {
++   {
+      "content": "",
+      "conversationId": "conv-1",
+-     "id": "assistant-openai-tool-fallback",
++     "id": "34f6e507-ee43-4040-bb30-5265702bc72e",
++     "parts": undefined,
+      "role": "assistant",
++     "timestamp": "2026-09-26T11:13:07.353Z",
+      "toolInvocations": [
+-       ObjectContaining {
++       {
+          "args": {
+            "path": "README.md",
+          },
++         "result": {
++           "ok": true,
++         },
+          "state": "result",
++         "toolCallId": "server-read-0:README.md",
+          "toolName": "read_repo_file",
+        },
+      ],
+    },
+  ]
+
+
+Number of calls: 1
+
+ ❯ src/test/chat-handoff.test.ts:1689:33
+    1687|     });
+    1688|
+    1689|     expect(dbMock.messages.add).toHaveBeenCalledWith(
+       |                                 ^
+    1690|       expect.objectContaining({
+    1691|         id: 'assistant-openai-tool-fallback',
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/20]⎯
+
+ FAIL  src/test/chat-handoff.test.ts > new thread handoff > snapshots same-basename local image references before persisting assistant messages
+AssertionError: expected "vi.fn()" to be called with arguments: [ '/tmp/foo.png' ]
+
+Number of calls: 0
+
+ ❯ src/test/chat-handoff.test.ts:1738:52
+    1736|     });
+    1737|
+    1738|     expect(window.electronAPI?.snapshotLocalImage).toHaveBeenCalledWit…
+       |                                                    ^
+    1739|     expect(window.electronAPI?.snapshotLocalImage).toHaveBeenCalledWit…
+    1740|     expect(dbMock.messages.add).toHaveBeenCalledWith(expect.objectCont…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/20]⎯
+
+ FAIL  src/test/chat-handoff.test.ts > new thread handoff > leaves original local image references intact when snapshot IPC fails
+AssertionError: expected "vi.fn()" to be called with arguments: [ ObjectContaining{…} ]
+
+Number of calls: 0
+
+ ❯ src/test/chat-handoff.test.ts:1778:33
+    1776|     )).resolves.toBeUndefined();
+    1777|
+    1778|     expect(dbMock.messages.add).toHaveBeenCalledWith(expect.objectCont…
+       |                                 ^
+    1779|       id: 'assistant-snapshot-failure',
+    1780|       content: 'Generated /tmp/foo.png',
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/20]⎯
+
+ FAIL  src/test/chat-handoff.test.ts > new thread handoff > auto-continues read-only Hermes repo analysis after a server-side repo read ends with an unknown finish
+AssertionError: expected "vi.fn()" to be called with arguments: [ ObjectContaining{…}, …(1) ]
+
+Number of calls: 0
+
+
+Ignored nodes: comments, script, style
+[36m<html>[39m
+  [36m<head />[39m
+  [36m<body>[39m
+    [36m<div />[39m
+  [36m</body>[39m
+[36m</html>[39m
+ ❯ waitFor.timeout src/test/chat-handoff.test.ts:1873:34
+    1871|
+    1872|     await waitFor(() => {
+    1873|       expect(aiChatState.append).toHaveBeenCalledWith(
+       |                                  ^
+    1874|         expect.objectContaining({
+    1875|           role: 'system',
+ ❯ runWithExpensiveErrorDiagnosticsDisabled node_modules/@testing-library/dom/dist/config.js:47:12
+ ❯ checkCallback node_modules/@testing-library/dom/dist/wait-for.js:124:77
+ ❯ Timeout.checkRealTimersCallback node_modules/@testing-library/dom/dist/wait-for.js:118:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/20]⎯
+
+ FAIL  src/test/chat-handoff.test.ts > new thread handoff > auto-continues approved Hermes repo work after a later read-only stop even with staged edits
+AssertionError: expected "vi.fn()" to be called with arguments: [ ObjectContaining{…}, …(1) ]
+
+Number of calls: 0
+
+
+Ignored nodes: comments, script, style
+[36m<html>[39m
+  [36m<head />[39m
+  [36m<body>[39m
+    [36m<div />[39m
+  [36m</body>[39m
+[36m</html>[39m
+ ❯ waitFor.timeout src/test/chat-handoff.test.ts:1984:34
+    1982|
+    1983|     await waitFor(() => {
+    1984|       expect(aiChatState.append).toHaveBeenCalledWith(
+       |                                  ^
+    1985|         expect.objectContaining({
+    1986|           role: 'system',
+ ❯ runWithExpensiveErrorDiagnosticsDisabled node_modules/@testing-library/dom/dist/config.js:47:12
+ ❯ checkCallback node_modules/@testing-library/dom/dist/wait-for.js:124:77
+ ❯ Timeout.checkRealTimersCallback node_modules/@testing-library/dom/dist/wait-for.js:118:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/20]⎯
+
+ FAIL  src/test/chat-handoff.test.ts > new thread handoff > auto-continues approved Hermes repo work after a read-only stop when the cached proposal still looks pending
+AssertionError: expected "vi.fn()" to be called with arguments: [ ObjectContaining{…}, …(1) ]
+
+Number of calls: 0
+
+
+Ignored nodes: comments, script, style
+[36m<html>[39m
+  [36m<head />[39m
+  [36m<body>[39m
+    [36m<div />[39m
+  [36m</body>[39m
+[36m</html>[39m
+ ❯ waitFor.timeout src/test/chat-handoff.test.ts:2081:34
+    2079|
+    2080|     await waitFor(() => {
+    2081|       expect(aiChatState.append).toHaveBeenCalledWith(
+       |                                  ^
+    2082|         expect.objectContaining({
+    2083|           role: 'system',
+ ❯ runWithExpensiveErrorDiagnosticsDisabled node_modules/@testing-library/dom/dist/config.js:47:12
+ ❯ checkCallback node_modules/@testing-library/dom/dist/wait-for.js:124:77
+ ❯ Timeout.checkRealTimersCallback node_modules/@testing-library/dom/dist/wait-for.js:118:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/20]⎯
+
+ FAIL  src/test/chat-handoff.test.ts > new thread handoff > auto-continues approved Hermes repo work when a turn edits a file and then stops on a later read
+AssertionError: expected "vi.fn()" to be called with arguments: [ ObjectContaining{…}, …(1) ]
+
+Number of calls: 0
+
+
+Ignored nodes: comments, script, style
+[36m<html>[39m
+  [36m<head />[39m
+  [36m<body>[39m
+    [36m<div />[39m
+  [36m</body>[39m
+[36m</html>[39m
+ ❯ waitFor.timeout src/test/chat-handoff.test.ts:2185:34
+    2183|
+    2184|     await waitFor(() => {
+    2185|       expect(aiChatState.append).toHaveBeenCalledWith(
+       |                                  ^
+    2186|         expect.objectContaining({
+    2187|           role: 'system',
+ ❯ runWithExpensiveErrorDiagnosticsDisabled node_modules/@testing-library/dom/dist/config.js:47:12
+ ❯ checkCallback node_modules/@testing-library/dom/dist/wait-for.js:124:77
+ ❯ Timeout.checkRealTimersCallback node_modules/@testing-library/dom/dist/wait-for.js:118:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/20]⎯
+
+ FAIL  src/test/chat-handoff.test.ts > new thread handoff > keeps auto-continuing approved Hermes repo work across more than two distinct read-stop turns
+AssertionError: expected "vi.fn()" to be called 1 times, but got 0 times
+
+Ignored nodes: comments, script, style
+[36m<html>[39m
+  [36m<head />[39m
+  [36m<body>[39m
+    [36m<div />[39m
+  [36m</body>[39m
+[36m</html>[39m
+ ❯ waitFor.timeout src/test/chat-handoff.test.ts:2309:36
+    2307|
+    2308|       await waitFor(() => {
+    2309|         expect(aiChatState.append).toHaveBeenCalledTimes(index + 1);
+       |                                    ^
+    2310|       }, { timeout: 2000 });
+    2311|     }
+ ❯ runWithExpensiveErrorDiagnosticsDisabled node_modules/@testing-library/dom/dist/config.js:47:12
+ ❯ checkCallback node_modules/@testing-library/dom/dist/wait-for.js:124:77
+ ❯ Timeout.checkRealTimersCallback node_modules/@testing-library/dom/dist/wait-for.js:118:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/20]⎯
+
+ FAIL  src/test/chat-handoff.test.ts > new thread handoff > auto-continues approved Hermes repo work when the turn stops after narration without repo tools
+AssertionError: expected "vi.fn()" to be called with arguments: [ ObjectContaining{…}, …(1) ]
+
+Number of calls: 0
+
+
+Ignored nodes: comments, script, style
+[36m<html>[39m
+  [36m<head />[39m
+  [36m<body>[39m
+    [36m<div />[39m
+  [36m</body>[39m
+[36m</html>[39m
+ ❯ waitFor.timeout src/test/chat-handoff.test.ts:2399:34
+    2397|
+    2398|     await waitFor(() => {
+    2399|       expect(aiChatState.append).toHaveBeenCalledWith(
+       |                                  ^
+    2400|         expect.objectContaining({
+    2401|           role: 'system',
+ ❯ runWithExpensiveErrorDiagnosticsDisabled node_modules/@testing-library/dom/dist/config.js:47:12
+ ❯ checkCallback node_modules/@testing-library/dom/dist/wait-for.js:124:77
+ ❯ Timeout.checkRealTimersCallback node_modules/@testing-library/dom/dist/wait-for.js:118:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/20]⎯
+
+ FAIL  src/test/chat-handoff.test.ts > new thread handoff > reconstructs approval continuation from a persisted proposal after restart
+AssertionError: expected "vi.fn()" to be called with arguments: [ { role: 'user', …(1) }, …(1) ]
+
+Received:
+
+  1st vi.fn() call:
+
+  [
+    {
+-     "content": "go ahead",
++     "parts": [
++       {
++         "text": "go ahead",
++         "type": "text",
++       },
++     ],
+      "role": "user",
+    },
+-   ObjectContaining {
+-     "body": ObjectContaining {
++   {
++     "body": {
+        "continuing_approved_proposal": true,
+        "conversation_id": "conv-1",
+      },
+    },
+  ]
+
+
+Number of calls: 1
+
+ ❯ src/test/chat-handoff.test.ts:2584:32
+    2582|     });
+    2583|
+    2584|     expect(aiChatState.append).toHaveBeenCalledWith(
+       |                                ^
+    2585|       { role: 'user', content: 'go ahead' },
+    2586|       expect.objectContaining({
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/20]⎯
+
+
+ Test Files  7 failed | 142 passed (149)
+      Tests  20 failed | 919 passed | 13 skipped (952)
+   Start at  07:13:01
+   Duration  26.24s (tests 49%, environment 25%, import 10%, transform 8%, setup 7%, worker 1%)
+
+Environment  jsdom was created 149 times · 64.33s total, 25% of tracked time
+             create it once per worker with pool: 'vmThreads' (keeps per-file isolation) or isolate: false (shares it across files)
+             learn more: https://vitest.dev/guide/improving-performance#test-environments
+
+[11:13:27] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m

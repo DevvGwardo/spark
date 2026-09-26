@@ -1,4 +1,4 @@
-import { tool, type CoreTool } from 'ai';
+import { tool } from 'ai';
 import { z } from 'zod';
 import { exec, execFile } from 'child_process';
 import { readFile, writeFile, mkdir, realpath } from 'fs/promises';
@@ -210,7 +210,7 @@ export interface LocalToolsets {
  */
 export function buildLocalExecutionTools(toolsets: LocalToolsets, hooks?: LocalToolHooks) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tools: Record<string, CoreTool<any, any>> = {};
+  const tools: Record<string, any> = {};
 
   /** Gate a tool call through the approval engine; true when it may proceed. */
   async function approved(
@@ -234,7 +234,7 @@ export function buildLocalExecutionTools(toolsets: LocalToolsets, hooks?: LocalT
     tools.run_command = tool({
       description:
         'Execute a shell command on the local machine. Returns stdout, stderr, and exit code. Supports pipes, redirects, and chained commands.',
-      parameters: z.object({
+      inputSchema: z.object({
         command: z.string().describe('The shell command to execute'),
       }),
       execute: async ({ command }, options) => {
@@ -261,7 +261,7 @@ export function buildLocalExecutionTools(toolsets: LocalToolsets, hooks?: LocalT
     tools.execute_python = tool({
       description:
         'Execute Python code on the local machine. Returns stdout and stderr.',
-      parameters: z.object({
+      inputSchema: z.object({
         code: z.string().describe('The Python code to execute'),
       }),
       execute: async ({ code }, options) => {
@@ -288,7 +288,7 @@ export function buildLocalExecutionTools(toolsets: LocalToolsets, hooks?: LocalT
   if (toolsets.files) {
     tools.read_file = tool({
       description: 'Read a file from the local filesystem. Returns the file content as text.',
-      parameters: z.object({
+      inputSchema: z.object({
         path: z.string().describe('The absolute or relative path to the file to read'),
       }),
       execute: async ({ path }) => {
@@ -332,7 +332,7 @@ export function buildLocalExecutionTools(toolsets: LocalToolsets, hooks?: LocalT
     tools.write_file = tool({
       description:
         'Write content to a file on the local filesystem. Creates parent directories if needed. Overwrites existing files.',
-      parameters: z.object({
+      inputSchema: z.object({
         path: z.string().describe('The absolute or relative path to the file to write'),
         content: z.string().describe('The content to write to the file'),
       }),

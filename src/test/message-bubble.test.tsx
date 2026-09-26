@@ -839,7 +839,7 @@ The optimized code for \`KanbanBoard.tsx\`, \`cards.ts\`, and \`gateway-client.t
           toolInvocations={[
             {
               toolCallId: 'read-local-1',
-              toolName: 'read_file',
+              toolName: 'execute_python',
               args: { path: 'index.html' },
               state: 'result',
               result: '<main>Old</main>',

@@ -2,7 +2,7 @@
 // Proves the streamText tool-event fix: server tool execute handlers run
 // LAZILY — during piping, not before it — so tool events must be appended to
 // the StreamData in real time (not drained into a pre-built StreamData before
-// pipeDataStreamToResponse). This test simulates the ai@4.3.19 lazy-piping
+// pipeTextStreamToResponse). This test simulates the ai@4.3.19 lazy-piping
 // contract with a fake model run: streaming starts, THEN tool execution
 // happens, THEN onFinish fires with usage. All events emitted in that window
 // must reach the client as `data` parts, in order, with usage last.
@@ -63,69 +63,42 @@ async function createTestServer() {
 
 interface CapturedStreamTextOptions {
   tools?: Record<string, { execute?: (...args: unknown[]) => unknown }>
-  onFinish?: (result: { usage: { promptTokens: number; completionTokens: number; totalTokens: number } }) => Promise<void> | void
+  onFinish?: (result: { usage: { inputTokens: number; outputTokens: number; totalTokens: number } }) => Promise<void> | void
 }
 
 /**
- * Fake streamText result whose pipeDataStreamToResponse faithfully simulates
- * the ai@4.3.19 contract: the data stream is consumed concurrently while the
- * model "run" lazily executes server tools and finally calls onFinish (which
- * appends the usage event and closes the StreamData).
+ * Fake streamText result whose `fullStream` faithfully simulates the ai@7
+ * contract: the server merges it through `toUIMessageStream`, the model "run"
+ * lazily executes server tools, and onFinish finally fires (which appends the
+ * usage event). Tool execute handlers run lazily — during piping — so tool
+ * events must reach the client in real time.
  */
 function installLazyStreamTextMock() {
   aiMocks.streamText.mockImplementation((options: CapturedStreamTextOptions) => {
-    const captured = { options }
-    return {
-      pipeDataStreamToResponse(res: {
-        writeHead: (statusCode: number, headers: Record<string, string>) => void
-        write: (chunk: string) => unknown
-        end: (body?: string) => void
-      }, pipeOptions: {
-        headers: Record<string, string>
-        data: { stream: ReadableStream<Uint8Array> }
-      }) {
-        res.writeHead(200, {
-          ...pipeOptions.headers,
-          'x-vercel-ai-data-stream': 'v1',
+    const fullStream = new ReadableStream({
+      async start(controller) {
+        // 1. Streaming begins (model text). ai@7 requires text-start before deltas.
+        controller.enqueue({ type: 'text-start', id: 'txt-1' })
+        controller.enqueue({ type: 'text-delta', id: 'txt-1', text: 'Hello from model' })
+        // 2. The model "runs" and lazily executes a server tool — this is
+        //    exactly when tool events are emitted in production. The old code
+        //    drained an empty array before piping and lost them.
+        const runCommand = options.tools?.run_command as
+          | { execute?: (args: Record<string, unknown>, opts: { toolCallId: string }) => Promise<string> }
+          | undefined
+        if (!runCommand?.execute) {
+          throw new Error('run_command tool not found in streamText tools')
+        }
+        await runCommand.execute({ command: 'ls -la' }, { toolCallId: 'call-1' })
+        // 3. The run finishes; onFinish appends the usage event.
+        controller.enqueue({ type: 'text-end', id: 'txt-1' })
+        await options.onFinish?.({
+          usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
         })
-
-        const decoder = new TextDecoder()
-        const reader = pipeOptions.data.stream.getReader()
-        const readLoop = (async () => {
-          for (;;) {
-            const { done, value } = await reader.read()
-            if (done) break
-            res.write(decoder.decode(value))
-          }
-        })()
-
-        void (async () => {
-          try {
-            // 1. Streaming begins (model text).
-            res.write('0:"Hello from model"\n')
-            // 2. The model "runs" and lazily executes a server tool — this is
-            //    exactly when tool events are emitted in production. The old
-            //    code drained an empty array before piping and lost them.
-            const runCommand = captured.options.tools?.run_command as
-              | { execute?: (args: Record<string, unknown>, opts: { toolCallId: string }) => Promise<string> }
-              | undefined
-            if (!runCommand?.execute) {
-              throw new Error('run_command tool not found in streamText tools')
-            }
-            await runCommand.execute({ command: 'ls -la' }, { toolCallId: 'call-1' })
-            // 3. The run finishes; onFinish appends the usage event and
-            //    closes the StreamData.
-            await captured.options.onFinish?.({
-              usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
-            })
-            await readLoop
-            res.end()
-          } catch (error) {
-            res.end(`mock-error: ${error instanceof Error ? error.message : String(error)}`)
-          }
-        })()
+        controller.close()
       },
-    }
+    })
+    return { fullStream }
   })
 }
 
@@ -164,7 +137,8 @@ describe('streamText tool-event timing fix', () => {
       const body = await response.text()
 
       // Streaming text arrived first (streaming was not regressed).
-      expect(body).toContain('0:"Hello from model"')
+      expect(body).toContain('"type":"text-delta"')
+      expect(body).toContain('Hello from model')
       // Tool events emitted DURING execution reached the client as data parts.
       expect(body).toContain('"type":"tool_call_begin"')
       expect(body).toContain('"call_id":"call-1"')
@@ -198,52 +172,26 @@ describe('streamText tool-event timing fix', () => {
 
     // Also execute read_repo_file during the fake run.
     aiMocks.streamText.mockImplementation((options: CapturedStreamTextOptions) => {
-      const captured = { options }
-      return {
-        pipeDataStreamToResponse(res: {
-          writeHead: (statusCode: number, headers: Record<string, string>) => void
-          write: (chunk: string) => unknown
-          end: (body?: string) => void
-        }, pipeOptions: {
-          headers: Record<string, string>
-          data: { stream: ReadableStream<Uint8Array> }
-        }) {
-          res.writeHead(200, {
-            ...pipeOptions.headers,
-            'x-vercel-ai-data-stream': 'v1',
+      const fullStream = new ReadableStream({
+        async start(controller) {
+          controller.enqueue({ type: 'text-start', id: 'txt-1' })
+          controller.enqueue({ type: 'text-delta', id: 'txt-1', text: 'Repo analysis' })
+          const readRepoFile = options.tools?.read_repo_file as
+            | { execute?: (args: Record<string, unknown>, opts: { toolCallId: string }) => Promise<string> }
+            | undefined
+          if (!readRepoFile?.execute) {
+            throw new Error('read_repo_file tool not found')
+          }
+          const result = await readRepoFile.execute({ path: 'src/App.tsx' }, { toolCallId: 'repo-1' })
+          expect(result).toContain('export default function App')
+          controller.enqueue({ type: 'text-end', id: 'txt-1' })
+          await options.onFinish?.({
+            usage: { inputTokens: 3, outputTokens: 1, totalTokens: 4 },
           })
-          const decoder = new TextDecoder()
-          const reader = pipeOptions.data.stream.getReader()
-          const readLoop = (async () => {
-            for (;;) {
-              const { done, value } = await reader.read()
-              if (done) break
-              res.write(decoder.decode(value))
-            }
-          })()
-
-          void (async () => {
-            try {
-              res.write('0:"Repo analysis"\n')
-              const readRepoFile = captured.options.tools?.read_repo_file as
-                | { execute?: (args: Record<string, unknown>, opts: { toolCallId: string }) => Promise<string> }
-                | undefined
-              if (!readRepoFile?.execute) {
-                throw new Error('read_repo_file tool not found')
-              }
-              const result = await readRepoFile.execute({ path: 'src/App.tsx' }, { toolCallId: 'repo-1' })
-              expect(result).toContain('export default function App')
-              await captured.options.onFinish?.({
-                usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4 },
-              })
-              await readLoop
-              res.end()
-            } catch (error) {
-              res.end(`mock-error: ${error instanceof Error ? error.message : String(error)}`)
-            }
-          })()
+          controller.close()
         },
-      }
+      })
+      return { fullStream }
     })
 
     const server = await createTestServer()

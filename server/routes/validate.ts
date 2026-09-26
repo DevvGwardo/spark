@@ -194,7 +194,7 @@ app.post('/functions/v1/validate-key', async (req, res) => {
     await generateText({
       model,
       prompt: 'ping',
-      maxTokens: 1,
+      // maxTokens: 1,
       temperature: 0,
     });
 

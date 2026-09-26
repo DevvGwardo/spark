@@ -1,3 +1,4 @@
+// @vitest-environment node
 import type { AddressInfo } from 'net'
 import { mkdtempSync, mkdirSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
@@ -114,8 +115,8 @@ describe('OpenClaw provider chat route', () => {
       const body = await response.text()
 
       expect(response.ok).toBe(true)
-      expect(response.headers.get('x-vercel-ai-data-stream')).toBe('v1')
-      expect(body).toContain('0:"ok"')
+      expect(response.headers.get('x-vercel-ai-ui-message-stream')).toBe('v1')
+      expect(body).toContain('"delta":"ok"')
       expect(body).toContain('finishReason')
       expect(openclawMocks.runOpenClawTurn).toHaveBeenCalledWith(
         expect.objectContaining({

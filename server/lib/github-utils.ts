@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { formatDataStreamPart } from 'ai';
+import { createUiMessageStreamWriter } from './ui-message-stream';
 import { existsSync } from 'fs';
 import { isAbsolute, join } from 'path';
 import { getManagedRepoClone } from '../repo-clone-manager';
@@ -466,21 +466,21 @@ export async function fetchGitHubRepoTree(
 
 export function createSingleMessageDataStream(text: string, usage?: { input?: number; output?: number; total?: number }) {
   const encoder = new TextEncoder();
+  const chunks: string[] = [];
+  const stream = createUiMessageStreamWriter((chunk) => {
+    chunks.push(chunk);
+  });
+  void usage;
 
   return new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(encoder.encode(formatDataStreamPart('text', text)));
-      controller.enqueue(
-        encoder.encode(
-          formatDataStreamPart('finish_message', {
-            finishReason: 'stop',
-            usage: {
-              promptTokens: usage?.input ?? 0,
-              completionTokens: usage?.output ?? 0,
-            },
-          }),
-        ),
-      );
+    async start(controller) {
+      await stream.start();
+      await stream.text(text);
+      await stream.finish('stop');
+      await stream.done();
+      for (const chunk of chunks) {
+        controller.enqueue(encoder.encode(chunk));
+      }
       controller.close();
     },
   });

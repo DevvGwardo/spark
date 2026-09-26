@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
-import { useChat as useAIChat, type Message as AIMessage } from '@ai-sdk/react';
-import { parseDataStreamPart } from 'ai';
+import { useChat as useAIChat, type UIMessage as AIMessage } from '@ai-sdk/react';
+import { parseDataStreamPart } from '@ai-sdk/ui-utils';
 import { useShallow } from 'zustand/shallow';
 import { useChatStore } from '@/stores/chat-store';
 import { looksLikePlanText } from '@/lib/plan-steps';
@@ -18,6 +18,15 @@ import { useHermesStore } from '@/stores/hermes-store';
 import type { ToolCallRecords, ToolCallRecordsByMessage, ToolCallStatus } from '@/stores/hermes-store';
 import { useContextUsageStore } from '@/stores/context-usage-store';
 import { getActiveProfile, useProfilesStore } from '@/stores/profiles-store';
+
+function getMessageContent(message: any): string {
+  if (typeof message.content === 'string') return message.content;
+  if (Array.isArray(message.parts)) {
+    return message.parts.filter((p: any) => p.type === 'text').map((p: any) => p.text).join('\n\n');
+  }
+  return '';
+}
+
 import { useChatQueueStore } from '@/stores/chat-queue-store';
 import { useStreamLockStore } from '@/stores/stream-lock-store';
 import { usePanelStore } from '@/stores/panel-store';
@@ -100,8 +109,8 @@ const HERMES_RESUME_CHAT_ROLES = new Set(['user', 'assistant', 'system', 'tool']
 
 function hermesSessionChatToAIMessages(sessionId: string, chat: HermesSessionMessage[] | undefined): AIMessage[] {
   if (!chat?.length) return [];
-  return chat
-    .filter((m) => typeof m.content === 'string' && m.content.trim().length > 0)
+  return (chat as any)
+    .filter((m) => getMessageContent(m).trim().length > 0)
     .filter((m) => HERMES_RESUME_CHAT_ROLES.has(m.role))
     .map((m, index) => ({
       id: `hermes-resume-${sessionId}-${index}`,
@@ -1782,11 +1791,12 @@ When the user asks you to make changes:
     reload,
     setMessages,
     error,
-  } = useAIChat({
+  } = (useAIChat as any)({
+
     api: `${apiBaseUrl}/functions/v1/chat`,
     fetch: chatStreamFetch,
     body: requestBody,
-    experimental_prepareRequestBody: ({ id, messages: requestMessages, requestData, requestBody: perRequestBody }) => ({
+    experimental_prepareRequestBody: ({ id, messages: requestMessages, requestData, requestBody: perRequestBody }: any) => ({
       id,
       messages: requestMessages,
       data: requestData,
@@ -1800,7 +1810,9 @@ When the user asks you to make changes:
     // render work, so coarser batching keeps total work roughly constant.
     experimental_throttle: panelCountThrottle,
     maxSteps: Infinity,
-    onFinish: async (message, options) => {
+    onFinish: async (event: any) => {
+      const message = event.message;
+      const options = event;
       // Use streamConvIdRef (captured at stream start) so mid-stream
       // conversation navigation doesn't redirect persistence to the wrong thread.
       const convId = streamConvIdRef.current ?? convIdRef.current;
@@ -2008,10 +2020,10 @@ When the user asks you to make changes:
         messageServerToolEvents,
       );
       const latestUserApproval = isRepoApprovalFollowUpMessage(
-        messagesRef.current.findLast((entry) => entry.role === 'user')?.content ?? '',
+        messagesRef.current.findLast((entry) => entry.role === 'user') ? getMessageContent(messagesRef.current.findLast((entry) => entry.role === 'user')) : '',
       );
       const approvedPlanMentioned = /\b(?:approved|accepted)\s+plan\b/i.test(
-        typeof finishedMessage!.content === 'string' ? finishedMessage!.content : '',
+        getMessageContent(finishedMessage),
       );
       const inferredApprovedContinuation =
         pendingProposalRef.current !== null &&
@@ -2062,7 +2074,7 @@ When the user asks you to make changes:
           // returning non-standard finish reasons). Recover when the turn was
           // actively doing repo work, including read-only analysis with
           // server-side repo reads, and cap retries to avoid loops.
-          (finishReason === 'unknown' || finishReason === 'length') &&
+          (finishReason === 'other' || finishReason === 'length') &&
           activeRepo &&
           (
             repoEditIntentRef.current ||
@@ -2171,7 +2183,7 @@ When the user asks you to make changes:
         activeRequestBodyRef.current = null;
       }
     },
-    onToolCall: async ({ toolCall }) => {
+    onToolCall: async ({ toolCall }: any) => {
       // Use the scope captured at stream start so late tool callbacks from an
       // aborted stream don't write into the new conversation's scope.
       const toolScopeId = streamScopeIdRef.current ?? scopeId;
@@ -2186,7 +2198,7 @@ When the user asks you to make changes:
         if (approvedProposalContinuationRef.current) {
           return 'This proposal was already approved. Continue directly with read_repo_file or the repo edit tools now.';
         }
-        const normalizedArgs = normalizeProposeChangesArgs(toolCall.args, {
+        const normalizedArgs = normalizeProposeChangesArgs((toolCall as any).args, {
           existingPaths: getRepoToolExistingPaths(toolScopeId),
         }) as { summary?: unknown; plan?: unknown };
         pendingProposalRef.current = {
@@ -2224,7 +2236,7 @@ When the user asks you to make changes:
 
       const fileType = FILE_TYPE_MAP[toolCall.toolName];
       if (fileType) {
-        const { filename, content } = toolCall.args as { filename: string; content: string };
+        const { filename, content } = (toolCall as any).args as { filename: string; content: string };
         const previewStore = usePreviewStore.getState();
         const previewState = previewStore.getPreview(toolScopeId);
         // Check if file already exists (update it) or add new
@@ -2239,7 +2251,7 @@ When the user asks you to make changes:
 
       // Handle repo tool calls
       if (toolCall.toolName === 'read_repo_file') {
-        const { path } = toolCall.args as { path: string };
+        const { path } = (toolCall as any).args as { path: string };
         const normalizedPath = normalizeRepoPath(path);
         const currentRepo = useChangesetStore.getState().getChangeset(toolScopeId).activeRepo;
         if (!currentRepo || !githubPAT) {
@@ -2302,7 +2314,7 @@ When the user asks you to make changes:
       }
 
       if (toolCall.toolName === 'edit_repo_file') {
-        const normalizedArgs = normalizeEditRepoFileArgs(toolCall.args) as {
+        const normalizedArgs = normalizeEditRepoFileArgs((toolCall as any).args) as {
           path?: unknown;
           content?: unknown;
         };
@@ -2325,7 +2337,7 @@ When the user asks you to make changes:
       }
 
       if (toolCall.toolName === 'create_repo_file') {
-        const normalizedArgs = normalizeCreateRepoFileArgs(toolCall.args) as {
+        const normalizedArgs = normalizeCreateRepoFileArgs((toolCall as any).args) as {
           path?: unknown;
           content?: unknown;
         };
@@ -2345,7 +2357,7 @@ When the user asks you to make changes:
       }
 
       if (toolCall.toolName === 'delete_repo_file') {
-        const normalizedArgs = normalizeDeleteRepoFileArgs(toolCall.args) as { path?: unknown };
+        const normalizedArgs = normalizeDeleteRepoFileArgs((toolCall as any).args) as { path?: unknown };
         const path = typeof normalizedArgs.path === 'string' ? normalizedArgs.path : '';
         if (!path) {
           return 'Error: delete_repo_file is missing a valid path.';
@@ -2361,7 +2373,7 @@ When the user asks you to make changes:
       }
 
       if (toolCall.toolName === 'batch_edit_repo_files') {
-        const normalizedArgs = normalizeBatchEditRepoFilesArgs(toolCall.args, {
+        const normalizedArgs = normalizeBatchEditRepoFilesArgs((toolCall as any).args, {
           existingPaths: getRepoToolExistingPaths(toolScopeId),
         }) as { changes?: unknown };
         const fileChanges = Array.isArray(normalizedArgs.changes)
@@ -2406,7 +2418,7 @@ When the user asks you to make changes:
         return results.join('\n');
       }
     },
-    onError: (err) => {
+    onError: (err: any) => {
       activeRequestBodyRef.current = null;
       pendingProposalRef.current = null;
       explicitProposalKeyRef.current = null;
@@ -2502,7 +2514,7 @@ When the user asks you to make changes:
       append(
         {
           role: 'system',
-          content: request.content,
+          parts: [{ type: 'text', text: request.content }] as any,
         },
         {
           body: {
@@ -2515,7 +2527,7 @@ When the user asks you to make changes:
             ...(request.continuingApprovedProposal ? { continuing_approved_proposal: true } : {}),
           },
         },
-      ).catch((err) => {
+      ).catch((err: any) => {
         console.error('[useChat:autoContinue] Failed to auto-continue:', err);
         activeRequestBodyRef.current = null;
       });
@@ -2556,7 +2568,7 @@ When the user asks you to make changes:
         const synthetic = {
           id: syntheticId,
           role: 'assistant' as const,
-          content: payload.text,
+          parts: [{ type: 'text', text: payload.text }] as any,
         } as AIMessage;
         const next = existingIdx >= 0
           ? current.map((m, i) => (i === existingIdx ? synthetic : m))
@@ -2705,7 +2717,7 @@ When the user asks you to make changes:
     pausedProposalKeyRef.current = proposalKey;
     stop();
 
-    const proposalMessage = messages.find((message) => message.id === pendingProposal.messageId);
+    const proposalMessage = messages.find((message: any) => message.id === pendingProposal.messageId);
     const persistedConversationId = convIdRef.current ?? pendingConversationIdRef.current;
     if (proposalMessage && persistedConversationId) {
       void persistAssistantSnapshot(proposalMessage as unknown as Record<string, unknown>, persistedConversationId, {
@@ -2753,14 +2765,14 @@ When the user asks you to make changes:
         content?: string;
         parts?: Array<{ type?: string; text?: string }>;
       });
-      const messageIndex = messages.findIndex((entry) => entry.id === message.id);
+      const messageIndex = messages.findIndex((entry: any) => entry.id === message.id);
       const previousUserMessage = messageIndex > 0
-        ? messages.slice(0, messageIndex).findLast((entry) =>
-            entry.role === 'user' && typeof entry.content === 'string' && entry.content.trim().length > 0,
+        ? messages.slice(0, messageIndex).findLast((entry: any) =>
+            entry.role === 'user' && getMessageContent(entry).trim().length > 0,
           )
         : undefined;
       const allowPseudoRepoWrites = (previousUserMessage
-        ? isRepoWriteMessage(previousUserMessage.content)
+        ? isRepoWriteMessage(getMessageContent(previousUserMessage))
         : false) || repoEditIntentRef.current;
       const pseudoInvocations = extractPseudoToolInvocations(sourceText);
       const repoEditInvocation = allowPseudoRepoWrites
@@ -2858,9 +2870,9 @@ When the user asks you to make changes:
     prevStreamingRef.current = isStreaming;
 
     if (wasStreaming && !isStreaming && activeRepo && onReadyForPR) {
-      const lastAssistantMessage = messages.findLast((message) => message.role === 'assistant');
+      const lastAssistantMessage = messages.findLast((message: any) => message.role === 'assistant');
       const lastAssistantIndex = lastAssistantMessage
-        ? messages.findIndex((message) => message.id === lastAssistantMessage.id)
+        ? messages.findIndex((message: any) => message.id === lastAssistantMessage.id)
         : -1;
       const allowPseudoRepoWrites = lastAssistantIndex >= 0
         ? allowPseudoRepoWritesForAssistantMessage(messages as Array<{
@@ -3435,7 +3447,7 @@ When the user asks you to make changes:
 
     try {
       await append(
-        { role: 'user', content: messageForModel },
+        { role: 'user', parts: [{ type: 'text', text: messageForModel }] as any },
         convId
           ? {
               body: {
@@ -3634,7 +3646,7 @@ When the user asks you to make changes:
     }
     const current = messagesRef.current;
     const userIdx = current.findLastIndex(
-      (m) => m.role === 'user' && typeof m.content === 'string' && m.content.trim().length > 0,
+      (m) => m.role === 'user' && getMessageContent(m).trim().length > 0,
     );
     if (userIdx < 0) {
       return;
@@ -3654,7 +3666,7 @@ When the user asks you to make changes:
     try {
       const stored = await db.messages.getByConversation(convId);
       const storedUserIdx = stored.findLastIndex(
-        (m) => m.role === 'user' && typeof m.content === 'string' && m.content.trim().length > 0,
+        (m) => m.role === 'user' && getMessageContent(m).trim().length > 0,
       );
       if (storedUserIdx >= 0) {
         const kept = stored.slice(0, storedUserIdx);
@@ -3758,7 +3770,7 @@ When the user asks you to make changes:
   }, [conversationId]);
 
   const handleRegenerate = useCallback(() => {
-    const lastUserMessage = messagesRef.current.findLast((message) => message.role === 'user')?.content ?? '';
+    const lastUserMessage = messagesRef.current.findLast((message) => message.role === 'user') ? getMessageContent(messagesRef.current.findLast((message) => message.role === 'user')) : '';
     repoEditIntentRef.current = isRepoMode && activeRepo ? isRepoEditIntentMessage(lastUserMessage) : false;
     activeRequestBodyRef.current = buildRequestBody();
     reload();
