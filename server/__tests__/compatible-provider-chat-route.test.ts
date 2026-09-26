@@ -1,3 +1,4 @@
+// @vitest-environment node
 import type { AddressInfo } from 'net'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -79,8 +80,8 @@ describe('compatible provider chat route', () => {
       const body = await response.text()
 
       expect(response.ok).toBe(true)
-      expect(response.headers.get('x-vercel-ai-data-stream')).toBe('v1')
-      expect(body).toContain('0:"Hello from MiniMax"')
+      expect(response.headers.get('x-vercel-ai-ui-message-stream')).toBe('v1')
+      expect(body).toContain('"delta":"Hello from MiniMax"')
       expect(body).toContain('finishReason":"stop"')
       expect(upstreamUrls).toContain('https://api.minimax.io/v1/chat/completions')
     } finally {
@@ -132,8 +133,8 @@ describe('compatible provider chat route', () => {
       const body = await response.text()
 
       expect(response.ok).toBe(true)
-      expect(response.headers.get('x-vercel-ai-data-stream')).toBe('v1')
-      expect(body).toContain('0:"Kimi coding reply"')
+      expect(response.headers.get('x-vercel-ai-ui-message-stream')).toBe('v1')
+      expect(body).toContain('"delta":"Kimi coding reply"')
       expect(body).toContain('finishReason":"stop"')
       expect(upstreamUrls).toContain('https://api.kimi.com/coding/v1/chat/completions')
     } finally {

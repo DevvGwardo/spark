@@ -22,7 +22,7 @@ const routeFallback = (
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
-      <HashRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <HashRouter>
         <Suspense fallback={routeFallback}>
           <Routes>
             <Route path="/" element={<Index />} />

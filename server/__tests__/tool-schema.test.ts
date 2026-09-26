@@ -8,7 +8,7 @@ describe('coreToolToOpenAiFunction', () => {
   it('converts an AI SDK tool into an OpenAI function definition', () => {
     const coreTool = tool({
       description: 'Create an HTML file.',
-      parameters: z.object({
+      inputSchema: z.object({
         filename: z.string().describe('The filename'),
         content: z.string().describe('The content'),
         overwrite: z.boolean().optional(),
@@ -21,7 +21,7 @@ describe('coreToolToOpenAiFunction', () => {
       function: {
         name: 'create_html_file',
         description: 'Create an HTML file.',
-        parameters: {
+        inputSchema: {
           type: 'object',
           description: 'Create an HTML file.',
           properties: {
@@ -38,14 +38,14 @@ describe('coreToolToOpenAiFunction', () => {
   it('handles arrays, enums and defaults', () => {
     const coreTool = tool({
       description: 'Pick files.',
-      parameters: z.object({
+      inputSchema: z.object({
         paths: z.array(z.string()),
         action: z.enum(['create', 'edit']).default('create'),
       }),
     })
 
     const definition = coreToolToOpenAiFunction('pick', coreTool)
-    const parameters = definition.function.parameters as {
+    const parameters = definition.function.inputSchema as {
       type: string
       properties: Record<string, unknown>
       required?: string[]
@@ -59,22 +59,22 @@ describe('coreToolToOpenAiFunction', () => {
   it('falls back to a permissive schema for unsupported constructs', () => {
     const coreTool = tool({
       description: 'Anything goes.',
-      parameters: z.any(),
+      inputSchema: z.any(),
     })
     const definition = coreToolToOpenAiFunction('any_tool', coreTool)
     expect(definition.function.name).toBe('any_tool')
-    expect(typeof definition.function.parameters).toBe('object')
+    expect(typeof definition.function.inputSchema).toBe('object')
   })
 
   it('converts tool records into an OpenAI tools array', () => {
     const tools = {
       create_html_file: tool({
         description: 'Create an HTML file.',
-        parameters: z.object({ filename: z.string() }),
+        inputSchema: z.object({ filename: z.string() }),
       }),
       create_css_file: tool({
         description: 'Create a CSS file.',
-        parameters: z.object({ filename: z.string() }),
+        inputSchema: z.object({ filename: z.string() }),
       }),
     }
     const definitions = coreToolsToOpenAiFunctions(tools)

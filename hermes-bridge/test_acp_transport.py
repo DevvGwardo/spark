@@ -197,7 +197,7 @@ class ResolveApprovalTests(unittest.TestCase):
 
             delivered = asyncio.run(at.resolve_approval("appr-1", "approved"))
             self.assertTrue(delivered)
-            self.assertEqual(future.result(), {"option_id": "approved"})
+            self.assertEqual(future.result(), {"option_id": "allow_once"})
         finally:
             loop.close()
 

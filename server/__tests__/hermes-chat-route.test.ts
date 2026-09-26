@@ -95,13 +95,13 @@ describe('Hermes chat route', () => {
     providerConfigMocks.createProviderModel.mockReturnValue({ id: 'hermes-model' })
     aiMocks.generateText.mockResolvedValue({ text: 'ok' })
     aiMocks.streamText.mockImplementation(() => ({
-      pipeDataStreamToResponse(res: {
+      pipeTextStreamToResponse(res: {
         writeHead: (statusCode: number, headers: Record<string, string>) => void
         end: (body?: string) => void
       }, options: { headers: Record<string, string> }) {
         res.writeHead(200, {
           ...options.headers,
-          'x-vercel-ai-data-stream': 'v1',
+          'x-vercel-ai-ui-message-stream': 'v1',
         })
         res.end('')
       },
@@ -193,7 +193,7 @@ describe('Hermes chat route', () => {
       const body = await response.text()
 
       expect(response.ok).toBe(true)
-      expect(response.headers.get('x-vercel-ai-data-stream')).toBe('v1')
+      expect(response.headers.get('x-vercel-ai-ui-message-stream')).toBe('v1')
       expect(body).toContain('Updating src/App.tsx via repo tools')
       expect(body).toContain('finishReason":"stop"')
 
@@ -253,8 +253,8 @@ describe('Hermes chat route', () => {
       const body = await response.text()
 
       expect(response.ok).toBe(true)
-      expect(response.headers.get('x-vercel-ai-data-stream')).toBe('v1')
-      expect(body).toContain('0:"Hello from Hermes"')
+      expect(response.headers.get('x-vercel-ai-ui-message-stream')).toBe('v1')
+      expect(body).toContain('"delta":"Hello from Hermes"')
       expect(body).toContain('agent_status')
       expect(body).toContain('Analyzing repository context...')
       expect(body).toContain('hermes_tool_activity')
@@ -559,7 +559,7 @@ describe('Hermes chat route', () => {
 
       expect(response.status).toBe(503)
       await expect(response.json()).resolves.toEqual({
-        error: 'Hermes bridge is not reachable at http://localhost:3002/v1. Start hermes-bridge/main.py and try again.',
+        error: 'Hermes bridge is not reachable at http://127.0.0.1:3002/v1. Start hermes-bridge/main.py and try again.',
       })
     } finally {
       await server.close()
@@ -671,8 +671,8 @@ describe('Hermes chat route', () => {
       const body = await response.text()
 
       expect(response.ok).toBe(true)
-      expect(response.headers.get('x-vercel-ai-data-stream')).toBe('v1')
-      expect(body).toContain('0:"Hello after delayed bridge headers"')
+      expect(response.headers.get('x-vercel-ai-ui-message-stream')).toBe('v1')
+      expect(body).toContain('"delta":"Hello after delayed bridge headers"')
       expect(body).toContain('finishReason":"stop"')
     } finally {
       await server.close()

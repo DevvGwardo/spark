@@ -1,3 +1,4 @@
+// @vitest-environment node
 import type { AddressInfo } from 'net'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 

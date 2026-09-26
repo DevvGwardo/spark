@@ -27,6 +27,10 @@ export const SERVER_EXECUTED_REPO_TOOLS = new Set([
   'delete_repo_file',
   'batch_edit_repo_files',
   'propose_changes',
+  'write_to_file',
+  'replace_file_content',
+  'read_file',
+  'search_files',
 ]);
 
 // ─── Event payload interfaces ────────────────────────────────────────────────

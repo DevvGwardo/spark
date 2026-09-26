@@ -480,6 +480,10 @@ const TOOL_LABELS: Record<string, { label: string; icon: React.ElementType }> = 
   create_repo_file: { label: 'Creating file', icon: FilePlus },
   delete_repo_file: { label: 'Deleting file', icon: FileX },
   batch_edit_repo_files: { label: 'Editing files', icon: FileCode },
+  read_file: { label: 'Reading file', icon: FileSearch },
+  search_files: { label: 'Searching files', icon: FileSearch },
+  write_to_file: { label: 'Creating file', icon: FilePlus },
+  replace_file_content: { label: 'Editing file', icon: FileCode },
   web_search: { label: 'Searching web', icon: FileSearch },
   search: { label: 'Searching', icon: FileSearch },
   browse_url: { label: 'Reading webpage', icon: FileSearch },
@@ -487,7 +491,6 @@ const TOOL_LABELS: Record<string, { label: string; icon: React.ElementType }> = 
   run_command: { label: 'Running command', icon: Wrench },
   terminal: { label: 'Running command', icon: Wrench },
   execute_python: { label: 'Running Python', icon: Wrench },
-  read_file: { label: 'Reading file', icon: FileSearch },
   write_file: { label: 'Writing file', icon: FilePlus },
   create_html_file: { label: 'Created HTML file', icon: FilePlus },
   create_css_file: { label: 'Created CSS file', icon: FilePlus },
@@ -506,12 +509,18 @@ const REPO_TOOL_NAMES = new Set([
   'create_repo_file',
   'delete_repo_file',
   'batch_edit_repo_files',
+  'write_to_file',
+  'replace_file_content',
+  'read_file',
+  'search_files',
 ]);
 const REPO_WRITE_TOOL_NAMES = new Set([
   'edit_repo_file',
   'create_repo_file',
   'delete_repo_file',
   'batch_edit_repo_files',
+  'write_to_file',
+  'replace_file_content',
 ]);
 
 function getFileAction(toolName: string, fallback?: string): 'create' | 'edit' | 'delete' | null {
@@ -939,7 +948,7 @@ function ToolInvocationDisplay({
   const primaryBatchChange = shouldFocusPrimaryBatchFile ? batchChanges?.[0] : undefined;
   const primaryBatchPath = primaryBatchChange?.path;
   const isFileCreationTool = FILE_CREATION_TOOLS.has(invocation.toolName);
-  const isFileModifyingTool = ['edit_repo_file', 'create_repo_file', 'delete_repo_file', 'batch_edit_repo_files'].includes(invocation.toolName);
+  const isFileModifyingTool = ['edit_repo_file', 'create_repo_file', 'delete_repo_file', 'batch_edit_repo_files', 'write_to_file', 'replace_file_content'].includes(invocation.toolName);
   const needsStagedPaths = isFileModifyingTool && !filePath && !isBatch;
   const stagedPathsKey = useChangesetStore((s) => {
     if (!needsStagedPaths) return null;

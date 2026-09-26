@@ -33,6 +33,24 @@ AVAILABLE_APPROVAL_DECISIONS = [
     "abort",
 ]
 
+# UI ladder / aliases → ACP option_ids hermes-agent actually understands.
+# Edit approvals in hermes-agent only accept `allow_once` (see
+# acp_adapter/edit_approval.py); sending `allow_session` is treated as deny
+# ("patch tool keeps getting denied by the client").
+_LADDER_TO_ACP_OPTION = {
+    "approved": "allow_once",
+    "approved_for_session": "allow_session",
+    "allow_once": "allow_once",
+    "allow_session": "allow_session",
+    "allow_always": "allow_always",
+    "prefix": "allow_always",
+    "denied": "deny",
+    "deny": "deny",
+    "deny_always": "deny_always",
+    "timed_out": "deny",
+    "abort": "deny",
+}
+
 # Toolsets that are pure mutation/execution vectors — never registered in
 # plan mode. Matches the legacy agent-loop toolset names and the real
 # hermes-agent toolset names alike.
@@ -326,6 +344,53 @@ def extract_approval_command(tool_call: Any) -> Optional[str]:
     return None
 
 
+def _option_id_of(option: Any) -> str:
+    if isinstance(option, dict):
+        return str(option.get("option_id") or "").strip()
+    return str(getattr(option, "option_id", "") or "").strip()
+
+
+def offered_acp_option_ids(options: Optional[list]) -> set[str]:
+    """ACP option_ids hermes actually offered on this permission request."""
+    return {oid for oid in (_option_id_of(o) for o in (options or [])) if oid}
+
+
+def available_decisions_from_acp_options(options: Optional[list]) -> list[str]:
+    """Map offered ACP option_ids onto the UI ladder.
+
+    Edit prompts only offer ``allow_once`` + ``deny`` — do not advertise
+    ``approved_for_session`` or the UI's session button will send an id
+    hermes treats as a denial.
+    """
+    offered = offered_acp_option_ids(options)
+    decisions: list[str] = []
+    if not offered or "allow_once" in offered:
+        decisions.append("approved")
+    if "allow_session" in offered:
+        decisions.append("approved_for_session")
+    decisions.append("denied")
+    return decisions
+
+
+def clamp_acp_option_id(raw: Any, offered: Optional[set[str]] = None) -> str:
+    """Normalize a UI/bridge decision onto an option_id hermes offered.
+
+    Broader grants (session/always) collapse to ``allow_once`` when that is
+    the only allow option — which is how hermes-agent edit approvals work.
+    """
+    option_id = _LADDER_TO_ACP_OPTION.get(str(raw or "").strip(), str(raw or "").strip())
+    if not option_id:
+        return "deny"
+    offered_ids = offered or set()
+    if option_id in ("deny", "deny_always"):
+        return option_id
+    if not offered_ids or option_id in offered_ids:
+        return option_id
+    if option_id in ("allow_session", "allow_always") and "allow_once" in offered_ids:
+        return "allow_once"
+    return "deny"
+
+
 def build_approval_request_event(
     *,
     approval_id: str,
@@ -352,7 +417,7 @@ def build_approval_request_event(
         "command": command,
         "cwd": cwd,
         "reason": reason,
-        "available_decisions": list(AVAILABLE_APPROVAL_DECISIONS),
+        "available_decisions": available_decisions_from_acp_options(options),
     }
 
 

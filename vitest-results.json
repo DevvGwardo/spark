@@ -1,0 +1,269 @@
+[20:46:06] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[20:46:06] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[20:46:06] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[20:46:06] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[20:46:06] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[20:46:06] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[20:46:06] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[20:46:06] [32mINFO[39m: [36m[server] Serving frontend from /Users/devgwardo/spark[39m
+[20:46:06] [33mWARN[39m: [36m[server] blocked unauthenticated tunnel request: GET /functions/v1/health[39m
+[20:46:06] [33mWARN[39m: [36m[chat] Repo validation failed: MisterGuy420/nonexistent-repo returned 404[39m
+[20:46:06] [32mINFO[39m: [36m[server] Serving frontend from /Users/devgwardo/spark[39m
+[20:46:06] [32mINFO[39m: [36m[server] Serving frontend from /Users/devgwardo/spark[39m
+[20:46:06] [32mINFO[39m: [36m[server] Serving frontend from /Users/devgwardo/spark[39m
+[20:46:06] [33mWARN[39m: [36m[server] blocked unauthenticated tunnel request: GET /functions/v1/health[39m
+[20:46:06] [32mINFO[39m: [36m[server] Serving frontend from /Users/devgwardo/spark[39m
+[20:46:06] [32mINFO[39m: [36m[chat] provider=openai runtime=openai model=gpt-5.2 activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=- hermesUseRuns=false msgs=1[39m
+[20:46:06] [32mINFO[39m: [36m[chat] Starting streamText. maxTokens=32768 maxSteps=50 tools=create_html_file,create_css_file,create_js_file,create_react_component,create_markdown_file,run_command toolSafe=false localTools=true[39m
+[20:46:06] [31mERROR[39m: [36mchat error: result.pipeTextStreamToResponse is not a function[39m
+[20:46:06] [31mERROR[39m: [36m[chat] Request failed: status=500 error=result.pipeTextStreamToResponse is not a function provider=openai model=gpt-5.2[39m
+[20:46:06] [32mINFO[39m: [36m[server] Serving frontend from /Users/devgwardo/spark[39m
+[20:46:06] [33mWARN[39m: [36m[chat] Hermes local checkout unavailable for octo/cloudchat: clone unavailable — falling back to GitHub repo tools[39m
+[20:46:06] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=octo/cloudchat serverRepoTools=true hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[20:46:06] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[20:46:06] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=octo/cloudchat toolsets=- runs=0 t=1790369166957[39m
+[20:46:06] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 1ms. status=200 model=meta-llama/llama-4-maverick repo=octo/cloudchat[39m
+[20:46:06] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 14ms. model=meta-llama/llama-4-maverick repo=octo/cloudchat[39m
+[20:46:06] [32mINFO[39m: [36m[chat] provider=openai runtime=openai model=gpt-5.2 activeRepo=octo/cloudchat serverRepoTools=true hermesExecutionMode=- hermesUseRuns=false msgs=1[39m
+[20:46:06] [32mINFO[39m: [36m[chat] Starting streamText. maxTokens=16384 maxSteps=50 tools=create_html_file,create_css_file,create_js_file,create_react_component,create_markdown_file,read_repo_file toolSafe=false localTools=false[39m
+[20:46:06] [31mERROR[39m: [36mchat error: result.pipeTextStreamToResponse is not a function[39m
+[20:46:06] [31mERROR[39m: [36m[chat] Request failed: status=500 error=result.pipeTextStreamToResponse is not a function provider=openai model=gpt-5.2[39m
+[20:46:06] [32mINFO[39m: [36m[chat] provider=minimax runtime=minimax model=MiniMax-M2.5 activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=- hermesUseRuns=false msgs=1[39m
+[20:46:06] [32mINFO[39m: [36m[chat] Proxying minimax directly to AI SDK data stream. model=MiniMax-M2.5 planMode=1[39m
+[20:46:07] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=- toolsets=web,browser,vision runs=0 t=1790369167012[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 1ms. status=200 model=meta-llama/llama-4-maverick repo=-[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop first data event emitted in 5ms. model=meta-llama/llama-4-maverick repo=-[39m
+[20:46:07] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=octo/cloudchat serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=- toolsets=files,terminal runs=0 t=1790369167025[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 0ms. status=200 model=meta-llama/llama-4-maverick repo=-[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 1ms. model=meta-llama/llama-4-maverick repo=-[39m
+[20:46:07] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=octo/cloudchat serverRepoTools=true hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=octo/cloudchat toolsets=- runs=0 t=1790369167031[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 1ms. status=200 model=meta-llama/llama-4-maverick repo=octo/cloudchat[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 1ms. model=meta-llama/llama-4-maverick repo=octo/cloudchat[39m
+[20:46:07] [32mINFO[39m: [36m[chat] provider=openai runtime=openai model=gpt-5.2 activeRepo=octo/cloudchat serverRepoTools=true hermesExecutionMode=- hermesUseRuns=false msgs=1[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Starting streamText. maxTokens=16384 maxSteps=50 tools=create_html_file,read_repo_file,read_file toolSafe=false localTools=true[39m
+[20:46:07] [31mERROR[39m: [36mchat error: result.pipeTextStreamToResponse is not a function[39m
+[20:46:07] [31mERROR[39m: [36m[chat] Request failed: status=500 error=result.pipeTextStreamToResponse is not a function provider=openai model=gpt-5.2[39m
+[20:46:07] [33mWARN[39m: [36m[chat] Hermes local checkout unavailable for octo/cloudchat: clone unavailable — falling back to GitHub repo tools[39m
+[20:46:07] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=octo/cloudchat serverRepoTools=true hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=octo/cloudchat toolsets=- runs=0 t=1790369167038[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 0ms. status=200 model=meta-llama/llama-4-maverick repo=octo/cloudchat[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 1ms. model=meta-llama/llama-4-maverick repo=octo/cloudchat[39m
+[20:46:07] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=- toolsets=- runs=0 t=1790369167048[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes bridge fetch failed (connection error); polling /health up to 15000ms for readiness…[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes bridge became reachable; retrying fetch.[39m
+[20:46:07] [31mERROR[39m: [36mchat error: Hermes bridge is not reachable at http://127.0.0.1:3002/v1. Start hermes-bridge/main.py and try again.[39m
+[20:46:07] [31mERROR[39m: [36m[chat] Request failed: status=500 error=Hermes bridge is not reachable at http://127.0.0.1:3002/v1. Start hermes-bridge/main.py and try again. provider=hermes model=meta-llama/llama-4-maverick[39m
+[20:46:07] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=xiaomi/mimo-v2-pro activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=xiaomi/mimo-v2-pro[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=xiaomi/mimo-v2-pro repo=- toolsets=- runs=0 t=1790369167052[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 0ms. status=401 model=xiaomi/mimo-v2-pro repo=-[39m
+[20:46:07] [31mERROR[39m: [36mchat error: {"error":{"message":"No API key provided. Set HERMES_OPENROUTER_KEY, pass Authorization: Bearer <key> header, or run the local OpenClaw gateway."}}[39m
+[20:46:07] [31mERROR[39m: [36m[chat] Request failed: status=401 error=No API key provided. Set HERMES_OPENROUTER_KEY, pass Authorization: Bearer <key> header, or run the local OpenClaw gateway. provider=hermes model=xiaomi/mimo-v2-pro[39m
+[20:46:07] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=- toolsets=web,browser,vision runs=0 t=1790369167058[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 26ms. status=200 model=meta-llama/llama-4-maverick repo=-[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 26ms. model=meta-llama/llama-4-maverick repo=-[39m
+[20:46:07] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=- toolsets=web,browser,vision runs=0 t=1790369167092[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 0ms. status=200 model=meta-llama/llama-4-maverick repo=-[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 0ms. model=meta-llama/llama-4-maverick repo=-[39m
+[20:46:07] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=- toolsets=web,browser,vision runs=0 t=1790369167096[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 0ms. status=200 model=meta-llama/llama-4-maverick repo=-[39m
+[20:46:07] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=auto activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=auto[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=auto repo=- toolsets=- runs=0 t=1790369167101[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 1ms. status=200 model=auto repo=-[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 1ms. model=auto repo=-[39m
+[20:46:07] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=deepseek-v4-flash activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=deepseek-v4-flash[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=deepseek-v4-flash repo=- toolsets=- runs=0 t=1790369167106[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 1ms. status=200 model=deepseek-v4-flash repo=-[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 1ms. model=deepseek-v4-flash repo=-[39m
+[20:46:07] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=auto activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=auto[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=auto repo=- toolsets=- runs=0 t=1790369167109[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 0ms. status=200 model=auto repo=-[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 0ms. model=auto repo=-[39m
+[20:46:07] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=auto activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=auto[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=auto repo=- toolsets=- runs=0 t=1790369167112[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 0ms. status=200 model=auto repo=-[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 0ms. model=auto repo=-[39m
+[20:46:07] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=auto activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=auto[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=auto repo=- toolsets=- runs=0 t=1790369167117[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 0ms. status=200 model=auto repo=-[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 0ms. model=auto repo=-[39m
+[20:46:07] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=auto activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=auto[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=auto repo=- toolsets=- runs=0 t=1790369167119[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 0ms. status=200 model=auto repo=-[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 0ms. model=auto repo=-[39m
+[20:46:07] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=auto activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=auto[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=auto repo=- toolsets=- runs=0 t=1790369167123[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 0ms. status=200 model=auto repo=-[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 0ms. model=auto repo=-[39m
+[20:46:07] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[20:46:07] [33mWARN[39m: [36m[chat] Hermes local checkout unavailable for octo/project: Cloning into '/Users/devgwardo/.cloudchat/repos/octo/project'...
+remote: Invalid username or token. Password authentication is not supported for Git operations.
+fatal: Authentication failed for 'https://github.com/octo/project.git/' — falling back to GitHub repo tools[39m
+[20:46:07] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=octo/project serverRepoTools=true hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=octo/project toolsets=- runs=0 t=1790369167459[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 0ms. status=200 model=meta-llama/llama-4-maverick repo=octo/project[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 3ms. model=meta-llama/llama-4-maverick repo=octo/project[39m
+[20:46:07] [33mWARN[39m: [36m[chat] Hermes local checkout unavailable for MisterGuy420/nonexistent-repo: Cloning into '/Users/devgwardo/.cloudchat/repos/MisterGuy420/nonexistent-repo'...
+remote: Invalid username or token. Password authentication is not supported for Git operations.
+fatal: Authentication failed for 'https://github.com/MisterGuy420/nonexistent-repo.git/' — falling back to GitHub repo tools[39m
+[20:46:07] [33mWARN[39m: [36m[chat] Repo validation failed: private-org/private-repo returned 403[39m
+[20:46:07] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[20:46:07] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[20:46:07] [33mWARN[39m: [36m[chat] Hermes local checkout unavailable for private-org/private-repo: Cloning into '/Users/devgwardo/.cloudchat/repos/private-org/private-repo'...
+remote: Invalid username or token. Password authentication is not supported for Git operations.
+fatal: Authentication failed for 'https://github.com/private-org/private-repo.git/' — falling back to GitHub repo tools[39m
+[20:46:07] [33mWARN[39m: [36m[chat] Repo validation failed: user/repo returned 401[39m
+[20:46:07] [33mWARN[39m: [36m[chat] Hermes local checkout unavailable for octo/project: Cloning into '/Users/devgwardo/.cloudchat/repos/octo/project'...
+remote: Invalid username or token. Password authentication is not supported for Git operations.
+fatal: Authentication failed for 'https://github.com/octo/project.git/' — falling back to GitHub repo tools[39m
+[20:46:07] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=octo/project serverRepoTools=true hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=octo/project toolsets=- runs=0 t=1790369167891[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 0ms. status=200 model=meta-llama/llama-4-maverick repo=octo/project[39m
+[20:46:07] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 0ms. model=meta-llama/llama-4-maverick repo=octo/project[39m
+[20:46:07] [32mINFO[39m: [36m[server] Serving frontend from /Users/devgwardo/spark[39m
+[20:46:08] [33mWARN[39m: [36m[server] 404 Not Found: GET /api/remote/info[39m
+[20:46:08] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[20:46:08] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[20:46:08] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[20:46:08] [33mWARN[39m: [36m[chat] Hermes local checkout unavailable for octo/project: Cloning into '/Users/devgwardo/.cloudchat/repos/octo/project'...
+remote: Invalid username or token. Password authentication is not supported for Git operations.
+fatal: Authentication failed for 'https://github.com/octo/project.git/' — falling back to GitHub repo tools[39m
+[20:46:08] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=octo/project serverRepoTools=true hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[20:46:08] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[20:46:08] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=octo/project toolsets=- runs=0 t=1790369168335[39m
+[20:46:08] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 1ms. status=200 model=meta-llama/llama-4-maverick repo=octo/project[39m
+[20:46:08] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 1ms. model=meta-llama/llama-4-maverick repo=octo/project[39m
+[20:46:08] [33mWARN[39m: [36m[chat] Hermes local checkout unavailable for user/repo: Cloning into '/Users/devgwardo/.cloudchat/repos/user/repo'...
+remote: Invalid username or token. Password authentication is not supported for Git operations.
+fatal: Authentication failed for 'https://github.com/user/repo.git/' — falling back to GitHub repo tools[39m
+[20:46:08] [33mWARN[39m: [36m[hermes-admin] blocked non-local mutating request: POST /api/hermes/kanban/swarm[39m
+[20:46:08] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[20:46:08] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[20:46:08] [33mWARN[39m: [36m[chat] Hermes local checkout unavailable for octo/project: Cloning into '/Users/devgwardo/.cloudchat/repos/octo/project'...
+remote: Invalid username or token. Password authentication is not supported for Git operations.
+fatal: Authentication failed for 'https://github.com/octo/project.git/' — falling back to GitHub repo tools[39m
+[20:46:08] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=octo/project serverRepoTools=true hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[20:46:08] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[20:46:08] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=octo/project toolsets=- runs=0 t=1790369168806[39m
+[20:46:08] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 0ms. status=200 model=meta-llama/llama-4-maverick repo=octo/project[39m
+[20:46:08] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 0ms. model=meta-llama/llama-4-maverick repo=octo/project[39m
+[20:46:08] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[20:46:08] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[20:46:08] [33mWARN[39m: [36m[chat] Hermes local checkout unavailable for user/valid-repo: Cloning into '/Users/devgwardo/.cloudchat/repos/user/valid-repo'...
+remote: Invalid username or token. Password authentication is not supported for Git operations.
+fatal: Authentication failed for 'https://github.com/user/valid-repo.git/' — falling back to GitHub repo tools[39m
+[20:46:08] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=user/valid-repo serverRepoTools=true hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[20:46:08] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[20:46:08] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=user/valid-repo toolsets=- runs=0 t=1790369168824[39m
+[20:46:08] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 0ms. status=200 model=meta-llama/llama-4-maverick repo=user/valid-repo[39m
+[20:46:08] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 1ms. model=meta-llama/llama-4-maverick repo=user/valid-repo[39m
+[20:46:08] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[20:46:08] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[20:46:08] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=- toolsets=- runs=0 t=1790369168838[39m
+[20:46:08] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 0ms. status=200 model=meta-llama/llama-4-maverick repo=-[39m
+[20:46:08] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 0ms. model=meta-llama/llama-4-maverick repo=-[39m
+[20:46:08] [33mWARN[39m: [36m[chat] WARNING: github_pat provided but failed format validation — returning 422[39m
+[20:46:08] [33mWARN[39m: [36m[chat] Repo validation check failed (non-blocking): Network error[39m
+[20:46:08] [32mINFO[39m: [36m[approvals] Resolved approval 308344f0-18cb-4af4-9ad5-95877c22998f decision=approved[39m
+[20:46:08] [32mINFO[39m: [36m[approvals] Resolved approval dd1b81e1-1fa9-4599-be01-c1958430f818 decision=approved_for_session[39m
+[20:46:08] [32mINFO[39m: [36m[approvals] Resolved approval 717ec2f6-bff3-4bb5-a0ca-8f8f41b14d1e decision=approved[39m
+[20:46:08] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[20:46:08] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=undefined/- serverRepoTools=false hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[20:46:08] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[20:46:08] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=- toolsets=- runs=0 t=1790369168960[39m
+[20:46:08] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 0ms. status=200 model=meta-llama/llama-4-maverick repo=-[39m
+[20:46:08] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 2ms. model=meta-llama/llama-4-maverick repo=-[39m
+[20:46:08] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[20:46:09] [33mWARN[39m: [36m[chat] Hermes local checkout unavailable for user/repo: Cloning into '/Users/devgwardo/.cloudchat/repos/user/repo'...
+remote: Invalid username or token. Password authentication is not supported for Git operations.
+fatal: Authentication failed for 'https://github.com/user/repo.git/' — falling back to GitHub repo tools[39m
+[20:46:09] [32mINFO[39m: [36m[chat] provider=hermes runtime=hermes model=meta-llama/llama-4-maverick activeRepo=user/repo serverRepoTools=true hermesExecutionMode=acp hermesUseRuns=false msgs=1[39m
+[20:46:09] [32mINFO[39m: [36m[chat] Proxying Hermes acp directly to AI SDK data stream. model=meta-llama/llama-4-maverick[39m
+[20:46:09] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge fetch start. model=meta-llama/llama-4-maverick repo=user/repo toolsets=- runs=0 t=1790369169331[39m
+[20:46:09] [32mINFO[39m: [36m[chat] Hermes agent-loop bridge headers received in 1ms. status=200 model=meta-llama/llama-4-maverick repo=user/repo[39m
+[20:46:09] [32mINFO[39m: [36m[chat] Hermes agent-loop first text event emitted in 1ms. model=meta-llama/llama-4-maverick repo=user/repo[39m
+[20:46:09] [32mINFO[39m: [36m[server] Serving frontend from /Users/devgwardo/spark[39m
+[20:46:10] [32mINFO[39m: [36m[server] Serving frontend from /Users/devgwardo/spark[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+[20:46:12] [33mWARN[39m: [36m[team-coordinator] Profile discovery returned 404[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Formation for "Fix the login page": single_agent (Task is simple enough for a single agent)[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Execution backend for "Fix the login page": agent_loop — strategy=single_agent → agent_loop (single kanban worker)[39m
+[20:46:12] [33mWARN[39m: [36m[team-coordinator] Only 1 agent(s) available — team dispatch not suitable[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Created team 40ddeff5-3ad... for card "Fix the login page" with 1 agents (single_agent)[39m
+[20:46:12] [33mWARN[39m: [36m[team-coordinator] Profile discovery returned 404[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Formation for "Build frontend and backend API": specialist_team (Task spans 2 domains (frontend, backend) — assigning specialist agents)[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Execution backend for "Build frontend and backend API": team_fanout — strategy=specialist_team → team_fanout (multi-profile kanban fan-out)[39m
+[20:46:12] [33mWARN[39m: [36m[team-coordinator] Only 1 agent(s) available — team dispatch not suitable[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Created team 9d3f9cab-76d... for card "Build frontend and backend API" with 1 agents (specialist_team)[39m
+[20:46:12] [33mWARN[39m: [36m[team-coordinator] Profile discovery returned 404[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Formation for "Build API": single_agent (Task is simple enough for a single agent)[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Execution backend for "Build API": agent_loop — strategy=single_agent → agent_loop (single kanban worker)[39m
+[20:46:12] [33mWARN[39m: [36m[team-coordinator] Only 1 agent(s) available — team dispatch not suitable[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Created team 2e4a1a95-e44... for card "Build API" with 1 agents (single_agent)[39m
+[20:46:12] [33mWARN[39m: [36m[team-coordinator] Profile discovery returned 404[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Formation for "Test filter": single_agent (Task is simple enough for a single agent)[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Execution backend for "Test filter": agent_loop — strategy=single_agent → agent_loop (single kanban worker)[39m
+[20:46:12] [33mWARN[39m: [36m[team-coordinator] Only 1 agent(s) available — team dispatch not suitable[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Created team 00e7ba96-251... for card "Test filter" with 1 agents (single_agent)[39m
+[20:46:12] [33mWARN[39m: [36m[team-coordinator] Profile discovery returned 404[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Formation for "Active test": single_agent (Task is simple enough for a single agent)[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Execution backend for "Active test": agent_loop — strategy=single_agent → agent_loop (single kanban worker)[39m
+[20:46:12] [33mWARN[39m: [36m[team-coordinator] Only 1 agent(s) available — team dispatch not suitable[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Created team a6367658-f55... for card "Active test" with 1 agents (single_agent)[39m
+[20:46:12] [33mWARN[39m: [36m[team-coordinator] Profile discovery returned 404[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Formation for "Test completion": single_agent (Task is simple enough for a single agent)[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Execution backend for "Test completion": agent_loop — strategy=single_agent → agent_loop (single kanban worker)[39m
+[20:46:12] [33mWARN[39m: [36m[team-coordinator] Only 1 agent(s) available — team dispatch not suitable[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Created team 15fd316c-33e... for card "Test completion" with 1 agents (single_agent)[39m
+[20:46:12] [33mWARN[39m: [36m[team-coordinator] LLM call returned 404: [39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Team 15fd316c-33e... synthesis complete[39m
+[20:46:12] [33mWARN[39m: [36m[team-coordinator] Profile discovery returned 404[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Formation for "Test blocked": single_agent (Task is simple enough for a single agent)[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Execution backend for "Test blocked": agent_loop — strategy=single_agent → agent_loop (single kanban worker)[39m
+[20:46:12] [33mWARN[39m: [36m[team-coordinator] Only 1 agent(s) available — team dispatch not suitable[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Created team 545ca7e6-af6... for card "Test blocked" with 1 agents (single_agent)[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Subtask st-blocked-1... blocked: Dep failed[39m
+[20:46:12] [33mWARN[39m: [36m[team-coordinator] Profile discovery returned 404[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Formation for "Recover me": single_agent (Task is simple enough for a single agent)[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Execution backend for "Recover me": agent_loop — strategy=single_agent → agent_loop (single kanban worker)[39m
+[20:46:12] [33mWARN[39m: [36m[team-coordinator] Only 1 agent(s) available — team dispatch not suitable[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Created team fe644ca2-97f... for card "Recover me" with 1 agents (single_agent)[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Dispatched team fe644ca2-97f... launched=1 cap=2 ready=1[39m
+[20:46:12] [33mWARN[39m: [36m[team-coordinator] Profile discovery returned 404[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Formation for "Resume recover": single_agent (Task is simple enough for a single agent)[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Execution backend for "Resume recover": agent_loop — strategy=single_agent → agent_loop (single kanban worker)[39m
+[20:46:12] [33mWARN[39m: [36m[team-coordinator] Only 1 agent(s) available — team dispatch not suitable[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Created team 24f9fccb-d29... for card "Resume recover" with 1 agents (single_agent)[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Recovering team 24f9fccb-d29... via re-dispatch[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Dispatched team 24f9fccb-d29... launched=0 cap=2 ready=0[39m
+[20:46:12] [33mWARN[39m: [36m[team-coordinator] Profile discovery returned 404[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Formation for "Already done": single_agent (Task is simple enough for a single agent)[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Execution backend for "Already done": agent_loop — strategy=single_agent → agent_loop (single kanban worker)[39m
+[20:46:12] [33mWARN[39m: [36m[team-coordinator] Only 1 agent(s) available — team dispatch not suitable[39m
+[20:46:12] [32mINFO[39m: [36m[team-coordinator] Created team 24f5e86a-0ba... for card "Already done" with 1 agents (single_agent)[39m
+[20:46:14] [32mINFO[39m: [36m[team-coordinator] Restored 1 team(s) from disk[39m
+JSON report written to /Users/devgwardo/spark/.vitest/json/output.json

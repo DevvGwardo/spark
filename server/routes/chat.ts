@@ -1,5 +1,5 @@
 import type { Express } from 'express';
-import { StreamData, streamText, tool, type CoreMessage, type CoreTool, type JSONValue } from 'ai';
+import { streamText, tool, type ModelMessage, type Tool as CoreTool, type UIMessageStreamWriter, stepCountIs, createUIMessageStream, pipeUIMessageStreamToResponse, toUIMessageStream } from 'ai';
 import { z } from 'zod';
 import { buildServerRepoTools, type ServerToolEvent } from '../agent-loop';
 import {
@@ -19,6 +19,7 @@ import { normalizeChatMessages } from '../message-normalization';
 import { isAbortLikeError } from '../direct-sse-proxy';
 import { buildCorsHeaders, chatRateLimiter, getClientIp, sendJson } from '../lib/helpers';
 import { logger } from '../lib/logger';
+import { UI_MESSAGE_STREAM_HEADERS } from '../lib/ui-message-stream';
 import {
   createSingleMessageDataStream,
   isValidGitHubPAT,
@@ -40,6 +41,7 @@ import { ensureProfileExists, getProfileFromRequest } from '../lib/hermes-profil
 import { approvalPolicyStore } from '../approval-engine';
 import { buildUsageEvent } from '../lib/usage-events';
 import { coreToolsToOpenAiFunctions } from '../lib/tool-schema';
+import { getHermesBridgeRoot } from '../lib/hermes-bridge-url';
 
 // ─── /functions/v1/chat ──────────────────────────────────────────────────────
 
@@ -318,7 +320,7 @@ export function registerChatRoute(app: Express) {
 // bridge's /v1/approvals/{id} contract so the client can use one flow for
 // both ACP approvals (bridge) and streamText-path tool approvals (server).
 // Bridge root + auth for ACP approval forwarding (mirrors hermes-admin.ts).
-const HERMES_BRIDGE_ROOT = (process.env.HERMES_BRIDGE_URL || 'http://localhost:3002').replace(/\/v1\/?$/, '');
+const HERMES_BRIDGE_ROOT = getHermesBridgeRoot();
 function hermesBridgeTokenHeader(): Record<string, string> {
   const token = (process.env.HERMES_BRIDGE_TOKEN || '').trim();
   return token ? { 'X-Hermes-Bridge-Token': token } : {};
@@ -464,9 +466,7 @@ app.post('/functions/v1/chat', async (req, res) => {
       typeof conversation_id === 'string' && conversation_id.trim().length > 0
         ? conversation_id.trim()
         : 'default';
-    if (autoApprove) {
-      approvalPolicyStore.setAutoApprove(conversationKey, true);
-    }
+    approvalPolicyStore.setAutoApprove(conversationKey, autoApprove);
 
     const sanitizeFileTree = (tree: unknown): string[] =>
       Array.isArray(tree)
@@ -710,8 +710,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
         status: 200,
         headers: {
           ...buildCorsHeaders(req.headers.origin),
-          'Content-Type': 'text/plain; charset=utf-8',
-          'x-vercel-ai-data-stream': 'v1',
+          ...UI_MESSAGE_STREAM_HEADERS,
         },
       });
 
@@ -750,7 +749,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
       create_html_file: tool({
         description:
           'Create an HTML file. Use this when the user asks you to create an HTML page, website, or web component. The file will be available for live preview.',
-        parameters: z.object({
+        inputSchema: z.object({
           filename: z.string().describe('The filename (e.g. "index.html")'),
           content: z.string().describe('The full HTML content'),
         }),
@@ -758,7 +757,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
       create_css_file: tool({
         description:
           'Create a CSS stylesheet file. Use this when the user asks you to create CSS styles.',
-        parameters: z.object({
+        inputSchema: z.object({
           filename: z.string().describe('The filename (e.g. "styles.css")'),
           content: z.string().describe('The full CSS content'),
         }),
@@ -766,7 +765,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
       create_js_file: tool({
         description:
           'Create a JavaScript file. Use this when the user asks you to create JS code for a web page.',
-        parameters: z.object({
+        inputSchema: z.object({
           filename: z.string().describe('The filename (e.g. "app.js")'),
           content: z.string().describe('The full JavaScript content'),
         }),
@@ -774,7 +773,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
       create_react_component: tool({
         description:
           'Create a React component file (JSX/TSX). Use this when the user asks you to create a React component.',
-        parameters: z.object({
+        inputSchema: z.object({
           filename: z.string().describe('The filename (e.g. "App.jsx" or "Component.tsx")'),
           content: z.string().describe('The full JSX/TSX content (no import/export needed, just the component function)'),
         }),
@@ -782,7 +781,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
       create_markdown_file: tool({
         description:
           'Create a Markdown file. Use this when the user asks you to create documentation, READMEs, notes, or any markdown content.',
-        parameters: z.object({
+        inputSchema: z.object({
           filename: z.string().describe('The filename (e.g. "README.md")'),
           content: z.string().describe('The full Markdown content'),
         }),
@@ -814,35 +813,24 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
           })
         : false;
 
-    // Collect server tool events to inject into the data stream. Unlike the
-    // old code (which drained an empty array before piping), the StreamData is
-    // created up front and events are appended IN REAL TIME — tool execute
-    // handlers run lazily during piping, so events emitted mid-stream now
-    // actually reach the client as `data` parts.
+    // Collect server tool events and forward them to the client as transient
+    // `data-toolEvent` parts. Tool execute handlers run lazily while the UI
+    // message stream is being piped, so the writer is captured when the stream
+    // starts and events emitted mid-stream reach the client in real time.
     const serverToolEvents: ServerToolEvent[] = [];
-    const streamData = new StreamData();
-    let streamDataClosed = false;
-    const closeStreamData = () => {
-      if (streamDataClosed) {
-        return;
-      }
-      streamDataClosed = true;
-      try {
-        streamData.close();
-      } catch {
-        // Already closed via another path.
-      }
-    };
+    let streamWriter: UIMessageStreamWriter | null = null;
+    let streamClosed = false;
     const emitToolEvent = (event: ServerToolEvent) => {
       serverToolEvents.push(event);
-      if (!streamDataClosed) {
-        try {
-          // `data` part (code 2) — the client pre-scanner collects custom
-          // fields from these; message_annotations (code 8) is NOT scanned.
-          streamData.append(event as unknown as JSONValue);
-        } catch {
-          // Stream already closed (e.g. error during teardown) — drop.
-        }
+      if (streamClosed || !streamWriter) {
+        return;
+      }
+      try {
+        // `data-toolEvent` part — the client pre-scanner collects custom fields
+        // from these; `transient` keeps them out of the persisted message.
+        streamWriter.write({ type: 'data-toolEvent', data: event, transient: true });
+      } catch {
+        // Stream already closed (e.g. error during teardown) — drop.
       }
     };
 
@@ -1132,6 +1120,10 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
     // as tool call arguments. 16k is enough for meaningful edits without stalling.
     const defaultMaxTokens = activeRepo ? 16384 : 32768;
     const providerOptions = getReasoningProviderOptions(provider, model, reasoning_effort);
+    if (reasoning_effort && !providerOptions && provider !== 'hermes') {
+      // Surface the drop instead of silently ignoring the user's setting.
+      logger.warn(`[chat] reasoning_effort="${reasoning_effort}" ignored — provider=${provider} model=${model} has no reasoning option.`);
+    }
 
     // Per-request timeout: abort if the entire streamText run exceeds 5 minutes.
     // This prevents indefinite hangs when a model step generates extremely slowly.
@@ -1156,70 +1148,64 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
       ...filteredRepoTools,
       ...localTools,
     };
-    // Synthesize tool_call_begin/delta/end for every server-executed tool
-    // (repo tools + local execution tools; artifact creators have no server
-    // execute handler and are skipped). Real exit codes come from
-    // local-tools.ts via toolExecutionInfo.
-    const wrappedTools: Record<string, CoreTool> = {};
-    for (const [name, coreTool] of Object.entries(allTools)) {
-      wrappedTools[name] = wrapToolWithCallEvents(name, coreTool, emitToolEvent, toolExecutionInfo);
-    }
+
     const useServerAgentLoop = hasServerRepoContext || hasLocalTools;
     const hasTools = Object.keys(allTools).length > 0;
-    logger.info(`[chat] Starting streamText. maxTokens=${max_tokens ?? defaultMaxTokens} maxSteps=${useServerAgentLoop ? MAX_AGENT_STEPS : 1} tools=${hasTools ? Object.keys(allTools).join(',') : '(none)'} toolSafe=${isToolSafeProvider} localTools=${hasLocalTools}`);
-    const result = streamText({
-      model: aiModel,
-      messages: normalizedChatInput.messages as CoreMessage[],
-      temperature: temperature ?? 0.7,
-      topP: top_p ?? 0.9,
-      maxTokens: max_tokens ?? defaultMaxTokens,
-      abortSignal: abortController.signal,
-      ...(providerOptions ? { providerOptions } : {}),
-      ...(hasTools ? { tools: wrappedTools, toolCallStreaming: true } : {}),
-      // Bound agent steps to prevent runaway tool-call loops. The cap is
-      // configurable via the MAX_AGENT_STEPS env var (default 50).
-      ...(hasTools && useServerAgentLoop ? { maxSteps: MAX_AGENT_STEPS } : {}),
-      onFinish: (finishResult) => {
-        if (requestTimeout) {
-          clearTimeout(requestTimeout);
+    
+    const stream = createUIMessageStream({
+      async execute({ writer }) {
+        streamWriter = writer;
+
+        const wrappedToolsFinal: Record<string, CoreTool> = {};
+        for (const [name, coreTool] of Object.entries(allTools)) {
+          wrappedToolsFinal[name] = wrapToolWithCallEvents(name, coreTool, emitToolEvent, toolExecutionInfo);
         }
-        if (finishResult.usage) {
-          logger.info(JSON.stringify({
-            type: 'usage',
-            promptTokens: finishResult.usage.promptTokens,
-            completionTokens: finishResult.usage.completionTokens,
-            totalTokens: finishResult.usage.totalTokens,
-          }));
-          // Trailing `usage` custom field (contract: once at stream end).
-          const usageEvent = buildUsageEvent(
-            {
-              inputTokens: finishResult.usage.promptTokens,
-              outputTokens: finishResult.usage.completionTokens,
-            },
-            model,
-          );
-          emitToolEvent(usageEvent as unknown as ServerToolEvent);
-        }
-        // All tool execute handlers have run by now — the StreamData carries
-        // every event appended during execution; closing it ends the merged
-        // data stream after the main stream completes.
-        closeStreamData();
-      },
+
+        logger.info(`[chat] Starting streamText. maxTokens=${max_tokens ?? defaultMaxTokens} maxSteps=${useServerAgentLoop ? MAX_AGENT_STEPS : 1} tools=${hasTools ? Object.keys(allTools).join(',') : '(none)'} toolSafe=${isToolSafeProvider} localTools=${hasLocalTools}`);
+        
+        const result = streamText({
+          model: aiModel,
+          messages: normalizedChatInput.messages as ModelMessage[],
+          temperature: temperature ?? 0.7,
+          topP: top_p ?? 0.9,
+          maxOutputTokens: max_tokens ?? defaultMaxTokens,
+          abortSignal: abortController.signal,
+          ...(providerOptions ? { providerOptions } : {}),
+          ...(hasTools ? { tools: wrappedToolsFinal } : {}),
+          ...(hasTools && useServerAgentLoop ? { stopWhen: stepCountIs(MAX_AGENT_STEPS) } : {}),
+          onFinish: (finishResult) => {
+            if (requestTimeout) {
+              clearTimeout(requestTimeout);
+            }
+            if (finishResult.usage) {
+              logger.info(JSON.stringify({
+                type: 'usage',
+                inputTokens: finishResult.usage.inputTokens,
+                outputTokens: finishResult.usage.outputTokens,
+                totalTokens: finishResult.usage.totalTokens,
+              }));
+              const usageEvent = buildUsageEvent(
+                {
+                  inputTokens: finishResult.usage.inputTokens || 0,
+                  outputTokens: finishResult.usage.outputTokens || 0,
+                },
+                model,
+              );
+              emitToolEvent(usageEvent as unknown as ServerToolEvent);
+            }
+
+            streamClosed = true;
+          },
+        });
+
+        writer.merge(toUIMessageStream({ stream: result.fullStream }));
+      }
     });
 
-    // Use pipeDataStreamToResponse for proper Node.js streaming.
-    // This avoids issues with toDataStreamResponse where the finish
-    // message can be emitted before content for some providers.
-    result.pipeDataStreamToResponse(res, {
+    await pipeUIMessageStreamToResponse({
+      response: res,
+      stream,
       headers: buildCorsHeaders(req.headers.origin),
-      sendReasoning: true,
-      data: streamData,
-      getErrorMessage: (error: unknown) => {
-        const msg = error instanceof Error ? error.message : String(error);
-        logger.error(`[chat] Stream error: ${msg}`);
-        closeStreamData();
-        return msg;
-      },
     });
   } catch (err: unknown) {
     if (requestTimeout) {

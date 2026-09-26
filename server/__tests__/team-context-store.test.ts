@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it, beforeEach } from 'vitest'
 import { createTeamContextStore } from '../team-context-store'
 

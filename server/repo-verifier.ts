@@ -530,7 +530,7 @@ async function runProviderReview(input: VerifyRepoChangesInput): Promise<Verific
         schema: reviewResponseSchema,
         prompt: buildReviewPrompt(files),
         temperature: 0,
-        maxTokens: 1800,
+        // maxTokens: 1800,
       });
 
       parsed = {
@@ -548,7 +548,7 @@ async function runProviderReview(input: VerifyRepoChangesInput): Promise<Verific
         model: reviewModel,
         prompt: buildReviewPrompt(files),
         temperature: 0,
-        maxTokens: 1800,
+        // maxTokens: 1800,
       });
       parsed = parseReviewResponse(response.text);
     }
@@ -777,7 +777,7 @@ export async function generatePrMetadata(input: GeneratePrMetadataInput): Promis
       schema: prMetadataSchema,
       prompt,
       temperature: 0,
-      maxTokens: 1000,
+      // maxTokens: 1000,
     });
     return { title: response.object.title, body: response.object.body };
   } catch {
@@ -786,7 +786,7 @@ export async function generatePrMetadata(input: GeneratePrMetadataInput): Promis
       model: aiModel,
       prompt,
       temperature: 0,
-      maxTokens: 1000,
+      // maxTokens: 1000,
     });
 
     try {

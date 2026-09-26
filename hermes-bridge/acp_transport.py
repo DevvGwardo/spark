@@ -40,8 +40,10 @@ from typing import Any, Callable, Optional
 from bridge_events import (
     PLAN_MODE_PROMPT_SUFFIX,
     build_approval_request_event,
+    clamp_acp_option_id,
     extract_approval_command,
     extract_exit_code,
+    offered_acp_option_ids,
     stream_retry_event,
     tool_call_begin_event,
     tool_call_delta_event,
@@ -215,11 +217,17 @@ class BridgeAcpClient:
         )
 
         approval_id = f"acp-{uuid.uuid4().hex[:16]}"
-        options_clean = [
-            {"option_id": str(getattr(o, "option_id", "")), "name": str(getattr(o, "name", "") or getattr(o, "option_id", ""))}
-            for o in (options or [])
-            if getattr(o, "option_id", None)
-        ]
+        options_clean = []
+        for o in options or []:
+            oid = str(getattr(o, "option_id", None) or (o.get("option_id") if isinstance(o, dict) else "") or "")
+            if not oid:
+                continue
+            name = str(
+                getattr(o, "name", None)
+                or (o.get("name") if isinstance(o, dict) else "")
+                or oid
+            )
+            options_clean.append({"option_id": oid, "name": name})
         title = str(getattr(tool_call, "title", "") or "tool")
         detail = _tool_input_for_display(tool_call) or title
 
@@ -248,7 +256,10 @@ class BridgeAcpClient:
         finally:
             self._approvals.pop(approval_id, None)
 
-        option_id = str(decision.get("option_id") or "deny")
+        option_id = clamp_acp_option_id(
+            decision.get("option_id") if isinstance(decision, dict) else decision,
+            offered_acp_option_ids(options_clean),
+        )
         if option_id in ("deny", "deny_always") or option_id == "":
             return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
         return RequestPermissionResponse(outcome=AllowedOutcome(outcome="selected", option_id=option_id))
@@ -351,12 +362,14 @@ class _AcpHandle:
     session_id: str
     client: BridgeAcpClient
     loop: asyncio.AbstractEventLoop
+    plan_mode: bool = False
     approvals: dict[str, asyncio.Future] = field(default_factory=dict)
     last_used: float = field(default_factory=time.time)
     # True while a prompt is in flight on this handle — the idle reaper must
     # never close a session mid-turn (a long stream can legitimately exceed
     # IDLE_TIMEOUT_SECONDS).
     busy: bool = False
+    turn_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     # Open file object for the per-conversation stderr log; closed when the
     # handle is torn down so the fd doesn't leak.
     stderr_file: Any = None
@@ -516,12 +529,12 @@ async def ensure_session(
     async with _sessions_lock:
         handle = _sessions.get(conversation_id)
         if handle is not None and handle.proc.returncode is None:
-            if _same_dir(handle.cwd, cwd):
+            if _same_dir(handle.cwd, cwd) and handle.plan_mode == plan_mode:
                 handle.touch()
                 return handle
-            # The conversation moved to a different checkout (repo switch) —
+            # The conversation moved to a different checkout (repo switch) or toggled plan_mode —
             # a reused session would resolve relative reads/searches against
-            # the old cwd and fail every one. Tear down and respawn there.
+            # the old cwd and fail every one, or have the wrong tools registered. Tear down and respawn there.
             _sessions.pop(conversation_id, None)
             loop.create_task(_close_handle_quietly(handle))
             handle = None
@@ -701,6 +714,7 @@ async def _spawn_session(
         session_id=session_id,
         client=client,
         loop=loop,
+        plan_mode=plan_mode,
         approvals=client._approvals,
         stderr_file=stderr_file,
     )
@@ -742,45 +756,46 @@ def run_prompt_blocking(
             model=model,
             plan_mode=plan_mode,
         )
-        # Mark the handle busy for the whole turn so the idle reaper never
-        # SIGKILLs a session mid-prompt (a long stream can legitimately
-        # outlast IDLE_TIMEOUT_SECONDS).
-        handle.busy = True
-        try:
-            # Notifications must stream into THIS request's queue. The client is
-            # shared across prompts on the same conversation, so repoint its emit
-            # callback for the duration of this prompt.
-            handle.client.emit = emit
-            handle.touch()
-            prompt_text = user_message
-            if plan_mode:
-                prompt_text = prompt_text + PLAN_MODE_PROMPT_SUFFIX
-            blocks = [acp.text_block(prompt_text)]
-            # The `prompt` arg order changed between SDK versions: 0.9.0 is
-            # `prompt(prompt, session_id)`, 0.11+ is `prompt(session_id, prompt)`.
-            # Inspect the bound method so the transport works on whichever venv
-            # the bridge is running under (bridge .venv vs hermes-agent venv).
-            first_param = next(
-                (n for n, p in inspect.signature(handle.conn.prompt).parameters.items() if n not in ("self", "kwargs")),
-                "session_id",
-            )
-            if first_param == "session_id":
-                call = handle.conn.prompt(handle.session_id, blocks)
-            else:
-                call = handle.conn.prompt(blocks, handle.session_id)
-            # Bound the turn: a stuck or over-long prompt must not run forever,
-            # and its late output must not bleed into the next request.
-            await asyncio.wait_for(call, timeout=prompt_timeout)
-        except asyncio.TimeoutError:
-            # The turn overran its deadline. Cancel it and tear the session
-            # down so stale notifications from this turn are dropped instead
-            # of being repointed into the next request on this conversation.
-            async with _sessions_lock:
-                _sessions.pop(conversation_id, None)
-            await handle.close()
-            raise TimeoutError(f"hermes-acp prompt timed out after {prompt_timeout:.0f}s") from None
-        finally:
-            handle.busy = False
+        async with handle.turn_lock:
+            # Mark the handle busy for the whole turn so the idle reaper never
+            # SIGKILLs a session mid-prompt (a long stream can legitimately
+            # outlast IDLE_TIMEOUT_SECONDS).
+            handle.busy = True
+            try:
+                # Notifications must stream into THIS request's queue. The client is
+                # shared across prompts on the same conversation, so repoint its emit
+                # callback for the duration of this prompt.
+                handle.client.emit = emit
+                handle.touch()
+                prompt_text = user_message
+                if plan_mode:
+                    prompt_text = prompt_text + PLAN_MODE_PROMPT_SUFFIX
+                blocks = [acp.text_block(prompt_text)]
+                # The `prompt` arg order changed between SDK versions: 0.9.0 is
+                # `prompt(prompt, session_id)`, 0.11+ is `prompt(session_id, prompt)`.
+                # Inspect the bound method so the transport works on whichever venv
+                # the bridge is running under (bridge .venv vs hermes-agent venv).
+                first_param = next(
+                    (n for n, p in inspect.signature(handle.conn.prompt).parameters.items() if n not in ("self", "kwargs")),
+                    "session_id",
+                )
+                if first_param == "session_id":
+                    call = handle.conn.prompt(handle.session_id, blocks)
+                else:
+                    call = handle.conn.prompt(blocks, handle.session_id)
+                # Bound the turn: a stuck or over-long prompt must not run forever,
+                # and its late output must not bleed into the next request.
+                await asyncio.wait_for(call, timeout=prompt_timeout)
+            except asyncio.TimeoutError:
+                # The turn overran its deadline. Cancel it and tear the session
+                # down so stale notifications from this turn are dropped instead
+                # of being repointed into the next request on this conversation.
+                async with _sessions_lock:
+                    _sessions.pop(conversation_id, None)
+                await handle.close()
+                raise TimeoutError(f"hermes-acp prompt timed out after {prompt_timeout:.0f}s") from None
+            finally:
+                handle.busy = False
 
     future = asyncio.run_coroutine_threadsafe(_impl(), loop)
     # Backstop only: _impl owns the timeout (wait_for cancels the turn and
@@ -790,10 +805,13 @@ def run_prompt_blocking(
 
 async def resolve_approval(approval_id: str, option_id: str) -> bool:
     """Complete a parked approval future. Returns True when the decision was delivered."""
+    # Normalize UI ladder ids (`approved`) so request_permission can clamp
+    # against the option list hermes actually offered.
+    normalized = clamp_acp_option_id(option_id)
     for handle in list(_sessions.values()):
         future = handle.approvals.get(approval_id)
         if future is not None and not future.done():
-            future.set_result({"option_id": option_id})
+            future.set_result({"option_id": normalized})
             return True
     return False
 

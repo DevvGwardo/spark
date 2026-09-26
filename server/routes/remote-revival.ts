@@ -2,11 +2,13 @@ import { logger } from '../lib/logger';
 import type { Express } from 'express';
 import { createSocket } from 'dgram';
 import { sendJson } from '../lib/helpers';
+import { getHermesBridgeRoot } from '../lib/hermes-bridge-url';
 
 // /health lives at the bridge root, not under /v1 (which only serves chat).
 // Strip a trailing /v1 so the probe works whether the env var carries it or not
 // — otherwise the mobile "Hermes online" indicator always reports offline.
-const HERMES_BRIDGE_URL = (process.env.HERMES_BRIDGE_URL || 'http://localhost:3002').replace(/\/v1\/?$/, '');
+
+const HERMES_BRIDGE_URL = getHermesBridgeRoot();
 const HEALTH_URL = `${HERMES_BRIDGE_URL}/health`;
 
 // ─── In-memory cache for last successful health probe ─────────────────────
@@ -97,15 +99,21 @@ export function registerRemoteRevivalRoutes(app: Express) {
   });
 
   // POST /api/remote/ping-bridge
-  app.post('/api/remote/ping-bridge', (_req, res) => {
+  app.post('/api/remote/ping-bridge', (req, res) => {
     const attempts: { attempt: number; online: boolean; error?: string }[] = [];
     let completed = 0;
     const total = 5;
+    let disconnected = false;
+    req.on('close', () => {
+      disconnected = true;
+    });
 
     const doProbe = () => {
+      if (disconnected) return;
       const attempt = completed + 1;
       fetch(HEALTH_URL, { signal: AbortSignal.timeout(5000) })
         .then((resp) => {
+          resp.body?.cancel().catch(() => {});
           attempts.push({ attempt, online: resp.ok });
         })
         .catch((err) => {
@@ -117,7 +125,7 @@ export function registerRemoteRevivalRoutes(app: Express) {
         })
         .finally(() => {
           completed++;
-          if (completed < total) {
+          if (completed < total && !disconnected) {
             setTimeout(doProbe, 6000);
           } else {
             sendJson(res, 200, {

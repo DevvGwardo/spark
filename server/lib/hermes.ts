@@ -1,9 +1,10 @@
 import { logger } from './logger';
 import type express from 'express';
-import { formatDataStreamPart } from 'ai';
+import { createUiMessageStreamWriter, UI_MESSAGE_STREAM_HEADERS } from './ui-message-stream';
 import {
   OPENAI_COMPATIBLE,
   sanitizeCompatibleSseLine,
+  streamingFetch,
 } from '../provider-config';
 import {
   isAbortLikeError,
@@ -15,6 +16,7 @@ import {
 import { bindClientDisconnect } from '../http-disconnect';
 import { buildCorsHeaders } from './helpers';
 import { getChatStore } from '../chat-store';
+import { getHermesBridgeRoot } from './hermes-bridge-url';
 import { randomUUID } from 'crypto';
 
 // ─── Background Session Continuation ─────────────────────────────────────────
@@ -30,7 +32,7 @@ const activeAgentRuns = new Map<string, {
   useRuns?: boolean;
 }>();
 
-const HERMES_BRIDGE_ROOT = (process.env.HERMES_BRIDGE_URL || 'http://localhost:3002').replace(/\/v1\/?$/, '');
+const HERMES_BRIDGE_ROOT = getHermesBridgeRoot();
 
 /** Usable Hermes bridge auth + provider pin headers.
  * Never send empty/placeholder Authorization — it confuses OpenRouter key
@@ -1021,8 +1023,7 @@ export async function proxyHermesLoopToDataStream(input: {
 
   input.res.writeHead(200, {
     ...buildCorsHeaders(input.req.headers.origin),
-    'Content-Type': 'text/plain; charset=utf-8',
-    'x-vercel-ai-data-stream': 'v1',
+    ...UI_MESSAGE_STREAM_HEADERS,
   });
 
   const writePart = (chunk: string) => new Promise<void>((resolve) => {
@@ -1031,9 +1032,14 @@ export async function proxyHermesLoopToDataStream(input: {
     if (ok) return resolve();
     input.res.once('drain', () => resolve());
   });
+  // One writer for the whole loop response: every iteration's upstream stream
+  // shares the text/reasoning block state so deltas never land in a closed or
+  // duplicated part.
+  const stream = createUiMessageStreamWriter(writePart);
+  await stream.start();
   const emitLoopStatus = (status: Parameters<typeof formatLoopStatusPart>[0]) =>
-    writePart(formatDataStreamPart('data', [formatLoopStatusPart(status)] as never));
-  const emitText = (text: string) => writePart(formatDataStreamPart('text', text));
+    stream.data(formatLoopStatusPart(status));
+  const emitText = (text: string) => stream.text(text);
 
   const conversation = [...input.messages] as Array<Record<string, unknown>>;
   let stopReason = 'max-iterations';
@@ -1107,6 +1113,7 @@ export async function proxyHermesLoopToDataStream(input: {
         corsHeaders: {},
         normalizePayload: normalizeHermesAgentLoopPayload,
         manageResponse: false,
+        stream,
         modelName: input.model,
         onText: (text) => {
           iterationText += text;
@@ -1171,7 +1178,7 @@ export async function proxyHermesLoopToDataStream(input: {
     stopReason = error instanceof Error ? error.message : 'loop-error';
     logger.error(`[chat] Hermes loop failed: ${stopReason}`);
     if (!input.res.writableEnded) {
-      await writePart(formatDataStreamPart('error', `Loop mode stopped: ${stopReason}`));
+      await stream.error(`Loop mode stopped: ${stopReason}`);
     }
   }
 
@@ -1188,10 +1195,8 @@ export async function proxyHermesLoopToDataStream(input: {
     }
   }
 
-  await writePart(formatDataStreamPart('finish_message', {
-    finishReason: 'stop',
-    usage: { promptTokens: 0, completionTokens: 0 },
-  }));
+  await stream.finish('stop');
+  await stream.done();
   input.res.end();
 }
 
@@ -1525,7 +1530,9 @@ export async function proxyCompatibleProviderToDataStream(input: {
 
   let upstreamResponse: Response;
   try {
-    upstreamResponse = await fetch(getCompatibleProviderChatUrl(input.provider), {
+    // streamingFetch (not global fetch) so long MiniMax/Kimi generations are not
+    // killed by undici's 300s body timeout.
+    upstreamResponse = await streamingFetch(getCompatibleProviderChatUrl(input.provider), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

@@ -63,13 +63,13 @@ describe('Hermes file tree proxy', () => {
   beforeEach(() => {
     providerConfigMocks.createProviderModel.mockReturnValue({ id: 'hermes-model' })
     aiMocks.streamText.mockImplementation(() => ({
-      pipeDataStreamToResponse(res: {
+      pipeTextStreamToResponse(res: {
         writeHead: (statusCode: number, headers: Record<string, string>) => void
         end: (body?: string) => void
       }, options: { headers: Record<string, string> }) {
         res.writeHead(200, {
           ...options.headers,
-          'x-vercel-ai-data-stream': 'v1',
+          'x-vercel-ai-ui-message-stream': 'v1',
         })
         res.end('')
       },

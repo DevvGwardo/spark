@@ -205,6 +205,10 @@ const REPO_CONTINUATION_TOOL_NAMES = new Set([
   'create_repo_file',
   'delete_repo_file',
   'batch_edit_repo_files',
+  'write_to_file',
+  'replace_file_content',
+  'read_file',
+  'search_files',
 ]);
 
 function collectToolInvocations(message: ProposalMessageLike): ProposalToolInvocationLike[] {

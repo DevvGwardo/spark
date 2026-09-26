@@ -36,10 +36,14 @@ const SUPPORTED_TOOL_NAMES = [
   'create_repo_file',
   'delete_repo_file',
   'read_repo_file',
+  'write_to_file',
+  'replace_file_content',
+  'read_file',
+  'search_files',
 ] as const;
 
 const SUPPORTED_TOOL_SET = new Set<string>(SUPPORTED_TOOL_NAMES);
-const TOOL_CALL_PATTERN = /\[?(propose_changes|batch_edit_repo_files|edit_repo_file|create_repo_file|delete_repo_file|read_repo_file)\(/g;
+const TOOL_CALL_PATTERN = /\[?(propose_changes|batch_edit_repo_files|edit_repo_file|create_repo_file|delete_repo_file|read_repo_file|write_to_file|replace_file_content|read_file|search_files)\(/g;
 const FENCED_CODE_BLOCK_PATTERN = /```([A-Za-z0-9_+-]+)?\n([\s\S]*?)```/g;
 const PATH_CANDIDATE_PATTERN = /[A-Za-z0-9_./-]+\.[A-Za-z0-9]{1,8}/g;
 const HTML_PARAGRAPH_PATTERN = /<p>[\s\S]*?<\/p>/gi;

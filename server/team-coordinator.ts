@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { analyzeTask, type AgentInfo as FormationAgentInfo } from './team-formation.js';
 import { resolveExecutionBackend } from './team-formation-routing.js';
 import { publishToMesh, registerMeshPeer } from './mesh-bridge.js';
+import { getHermesBridgeV1 } from './lib/hermes-bridge-url';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -63,7 +64,7 @@ interface CardLike {
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-const HERMES_BRIDGE_BASE = process.env.HERMES_BRIDGE_URL || 'http://localhost:3002/v1';
+const HERMES_BRIDGE_BASE = getHermesBridgeV1();
 
 const PLANNER_SYSTEM_PROMPT = `You are a task decomposition planner for a multi-agent team.
 Given a task description, break it down into 2-4 well-defined subtasks that can be worked on independently.
@@ -888,6 +889,10 @@ async function spawnTeamAgent(
   child.stderr.on('data', (data: Buffer) => {
     stderr = appendCappedLog(stderr, data.toString(), MAX_AGENT_LOG_BYTES);
   });
+
+  // Drain child stdout — the agent script prints progress to stdout, and an
+  // unread pipe fills at ~64 KB, blocking the child until the team timeout.
+  child.stdout?.resume?.();
 
   // Subtasks whose spawn failed (missing python, etc.). Node emits 'error'
   // followed by 'close', and both handlers would otherwise try to transition

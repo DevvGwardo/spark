@@ -165,12 +165,16 @@ interface HermesState {
   loops: Record<string, LoopState>;
   sessionApprovalPolicies: ApprovalPolicy[];
   /**
-   * A pending ACP permission request from the real hermes-agent (approval mode
-   * 'acp'). The UI shows a banner and POSTs the decision to the bridge, which
-   * resolves the agent's parked permission request. Cleared on decision.
+   * Pending ACP permission requests from the real hermes-agent (approval mode
+   * 'acp'), keyed by approval_id. Concurrent prompts can each park a request;
+   * the UI resolves the oldest first. Cleared on decision and when the stream
+   * reaches a terminal state (finish/error/stop), since a parked request whose
+   * stream is gone can no longer be delivered.
    */
-  pendingAcpApproval: AcpApprovalRequest | null;
-  setPendingAcpApproval: (approval: AcpApprovalRequest | null) => void;
+  pendingAcpApprovals: Record<string, AcpApprovalRequest>;
+  setPendingAcpApproval: (approval: AcpApprovalRequest) => void;
+  clearPendingAcpApproval: (approvalId: string) => void;
+  clearPendingAcpApprovals: () => void;
   /**
    * The underlying provider the Hermes agent should route to (e.g. 'anthropic',
    * 'deepseek', 'openrouter', or a synthetic CLI id like 'custom:api.bullinf.fun').
@@ -291,7 +295,7 @@ export const useHermesStore = create<HermesState>()(
       swarm: { ...defaultSwarm },
       loops: {},
       sessionApprovalPolicies: [],
-      pendingAcpApproval: null,
+      pendingAcpApprovals: {},
       toolCallRecordsByPanel: {},
       pendingChatActions: {},
       underlyingProvider: '',
@@ -514,7 +518,23 @@ export const useHermesStore = create<HermesState>()(
         set(() => ({ sessionApprovalPolicies: [] })),
 
       setPendingAcpApproval: (approval) =>
-        set(() => ({ pendingAcpApproval: approval })),
+        set((state) => ({
+          pendingAcpApprovals: {
+            ...state.pendingAcpApprovals,
+            [approval.approval_id]: approval,
+          },
+        })),
+
+      clearPendingAcpApproval: (approvalId) =>
+        set((state) => {
+          if (!(approvalId in state.pendingAcpApprovals)) return state;
+          const next = { ...state.pendingAcpApprovals };
+          delete next[approvalId];
+          return { pendingAcpApprovals: next };
+        }),
+
+      clearPendingAcpApprovals: () =>
+        set(() => ({ pendingAcpApprovals: {} })),
 
       setToolCallRecords: (panelId, records) =>
         set((state) => {
