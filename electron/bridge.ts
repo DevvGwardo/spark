@@ -1,3 +1,7 @@
+import { fileURLToPath } from "url";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 /**
  * Hermes Bridge Launcher
  *
@@ -19,7 +23,7 @@ import { app } from 'electron'
 import { spawn, ChildProcess, execFileSync } from 'child_process'
 import { randomBytes } from 'crypto'
 import { existsSync, mkdirSync } from 'fs'
-import { join, resolve } from 'path'
+import { dirname, join, resolve } from 'path'
 import { homedir } from 'os'
 
 const BRIDGE_PORT = Number(process.env.HERMES_PORT || 3002)

@@ -1,8 +1,12 @@
+import { fileURLToPath } from "url";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 import { app, BrowserView, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, Notification, Tray, nativeImage, net, protocol, session, shell } from 'electron'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import { createHash } from 'crypto'
-import { extname, join, resolve } from 'path'
+import { extname, join, resolve, dirname } from 'path'
 import { pathToFileURL } from 'url'
 import { is } from '@electron-toolkit/utils'
 import { startEmbeddedServer } from './server'
