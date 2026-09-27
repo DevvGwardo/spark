@@ -1,0 +1,4 @@
+{"id":"c4","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+{"id":"c4","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"agent_status":{"phase":"swarm","label":"architect","elapsed_ms":5,"source":"hermes-bridge"}},"finish_reason":null}]}
+{"id":"c4","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"server_tool_event":{"type":"swarm_result","success":true,"verdict":"approve","review_notes":"ok","staged_files":["a.py"],"plan":["step"],"elapsed_ms":1234}},"finish_reason":null}]}
+{"id":"c4","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"swarm complete"},"finish_reason":"stop"}],"usage":{"prompt_tokens":4,"completion_tokens":6,"total_tokens":10}}
