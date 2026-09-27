@@ -150,6 +150,14 @@ if "fastapi" not in sys.modules:
                 return fn
             return decorator
 
+        def exception_handler(self, *args, **kwargs):
+            # main.py registers handlers for BridgeError, HTTPException and a
+            # catch-all. Under the stub they are simply ignored, so assert none of
+            # them exist rather than emulating FastAPI's dispatch.
+            def decorator(fn):
+                return fn
+            return decorator
+
     class _HTTPException(Exception):
         def __init__(self, status_code=500, detail=None):
             self.status_code = status_code

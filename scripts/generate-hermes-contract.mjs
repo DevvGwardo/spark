@@ -24,7 +24,9 @@ import { jsonSchemaToZod } from 'json-schema-to-zod'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = join(HERE, '..')
 const SCHEMA_PATH = join(REPO_ROOT, 'shared', 'hermes-events.schema.json')
+const ERROR_SCHEMA_PATH = join(REPO_ROOT, 'shared', 'hermes-errors.schema.json')
 const OUT_PATH = join(REPO_ROOT, 'server', 'lib', 'hermes-events.gen.ts')
+const ERROR_OUT_PATH = join(REPO_ROOT, 'server', 'lib', 'hermes-errors.gen.ts')
 
 /**
  * Replace local `$ref`s with the referenced schema, recursively.
@@ -134,37 +136,149 @@ export type HermesCustomDelta = z.infer<typeof hermesCustomDeltaSchema>
 `
 }
 
+/**
+ * The error envelope. The code enum comes from `x-error-codes` in the schema
+ * rather than from the Pydantic `code` field, which is only typed `string` —
+ * so the generated union is actually closed, and adding a code on the Python
+ * side changes the TypeScript union on the next regeneration.
+ */
+function renderErrorContract(schema) {
+  const flat = deref(schema, schema.$defs ?? {})
+  const codes = schema['x-error-codes'] ?? []
+  const retryable = new Set(schema['x-retryable-codes'] ?? [])
+
+  const body = jsonSchemaToZod(flat, {
+    module: 'none',
+    name: 'hermesErrorEnvelopeShape',
+    zodVersion: 3,
+  })
+  const exportedBody = body.replace(
+    /^const\s+hermesErrorEnvelopeShape\s*=/,
+    'export const hermesErrorEnvelopeShape =',
+  )
+  if (exportedBody === body) {
+    throw new Error('json-schema-to-zod did not emit a declaration for the error envelope')
+  }
+
+  return `/**
+ * GENERATED FILE — do not edit by hand.
+ *
+ * Source of truth: the Pydantic models in hermes-bridge/bridge_errors.py,
+ * via shared/hermes-errors.schema.json.
+ * Regenerate with: npm run gen:hermes-contract
+ * CI fails if this file is stale.
+ */
+
+import { z } from 'zod'
+
+/** The closed set of Hermes error codes. */
+export const HERMES_ERROR_CODES = [
+${codes.map((c) => `  '${c}',`).join('\n')}
+] as const
+
+export type HermesErrorCode = (typeof HERMES_ERROR_CODES)[number]
+
+/**
+ * Codes for which retrying the identical request could plausibly succeed.
+ * The UI uses this to decide whether to offer a Retry button.
+ */
+export const HERMES_RETRYABLE_CODES: ReadonlySet<HermesErrorCode> = new Set([
+${[...retryable].map((c) => `  '${c}',`).join('\n')}
+])
+
+${exportedBody}
+
+/** Narrows the generated shape's open \`code\` to the closed union. */
+export const hermesErrorEnvelope = hermesErrorEnvelopeShape.extend({
+  error: hermesErrorEnvelopeShape.shape.error.extend({
+    code: z.enum(HERMES_ERROR_CODES),
+  }),
+}) as unknown as z.ZodType<{
+  error: {
+    code: HermesErrorCode
+    message: string
+    retryable: boolean
+    details?: HermesErrorDetails | null
+  }
+}>
+
+/**
+ * Structured extras. The declared fields are typed; the index signature is what
+ * keeps fields hermes-agent adds upstream from being a type error, matching the
+ * open \`details\` model on the Python side.
+ */
+export interface HermesErrorDetails {
+  current_model?: string | null
+  suggested_models?: string[] | null
+  bridge_url?: string | null
+  retry_after_ms?: number | null
+  approval_id?: string | null
+  provider_message?: string | null
+  provider_status?: number | null
+  [key: string]: unknown
+}
+
+export type HermesErrorEnvelopeShape = z.infer<typeof hermesErrorEnvelope>
+
+/** True when a value already satisfies the error contract. */
+export function isHermesErrorEnvelope(value: unknown): value is HermesErrorEnvelopeShape {
+  return hermesErrorEnvelope.safeParse(value).success
+}
+
+/** Whether a code is retryable, per the contract. */
+export function isRetryableHermesCode(code: string): boolean {
+  return HERMES_RETRYABLE_CODES.has(code as HermesErrorCode)
+}
+`
+}
+
 function main() {
   const check = process.argv.includes('--check')
 
-  if (!existsSync(SCHEMA_PATH)) {
-    console.error(
-      `missing ${relative(REPO_ROOT, SCHEMA_PATH)} — run hermes-bridge/generate_event_schema.py first`,
-    )
-    process.exit(1)
-  }
-
-  const schema = JSON.parse(readFileSync(SCHEMA_PATH, 'utf8'))
-  const rendered = render(schema)
-
-  if (check) {
-    if (!existsSync(OUT_PATH)) {
-      console.error(`missing ${relative(REPO_ROOT, OUT_PATH)}`)
-      process.exit(1)
-    }
-    if (readFileSync(OUT_PATH, 'utf8') !== rendered) {
+  for (const path of [SCHEMA_PATH, ERROR_SCHEMA_PATH]) {
+    if (!existsSync(path)) {
       console.error(
-        `${relative(REPO_ROOT, OUT_PATH)} is stale. Run \`npm run gen:hermes-contract\` and commit the result.`,
+        `missing ${relative(REPO_ROOT, path)} — run the hermes-bridge generate_*.py scripts first`,
       )
       process.exit(1)
     }
-    console.log('hermes event TS contract is up to date')
+  }
+
+  const targets = [
+    {
+      out: OUT_PATH,
+      rendered: render(JSON.parse(readFileSync(SCHEMA_PATH, 'utf8'))),
+      label: 'hermes event TS contract',
+    },
+    {
+      out: ERROR_OUT_PATH,
+      rendered: renderErrorContract(JSON.parse(readFileSync(ERROR_SCHEMA_PATH, 'utf8'))),
+      label: 'hermes error TS contract',
+    },
+  ]
+
+  if (check) {
+    for (const target of targets) {
+      if (!existsSync(target.out)) {
+        console.error(`missing ${relative(REPO_ROOT, target.out)}`)
+        process.exit(1)
+      }
+      if (readFileSync(target.out, 'utf8') !== target.rendered) {
+        console.error(
+          `${relative(REPO_ROOT, target.out)} is stale. Run \`npm run gen:hermes-contract\` and commit the result.`,
+        )
+        process.exit(1)
+      }
+    }
+    for (const target of targets) console.log(`${target.label} is up to date`)
     return
   }
 
-  mkdirSync(dirname(OUT_PATH), { recursive: true })
-  writeFileSync(OUT_PATH, rendered)
-  console.log(`wrote ${relative(REPO_ROOT, OUT_PATH)}`)
+  for (const target of targets) {
+    mkdirSync(dirname(target.out), { recursive: true })
+    writeFileSync(target.out, target.rendered)
+    console.log(`wrote ${relative(REPO_ROOT, target.out)}`)
+  }
 }
 
 main()

@@ -60,8 +60,8 @@
     "test:e2e": "npx playwright test --config playwright-electron.config.ts",
     "test:e2e:headed": "npx playwright test --config playwright-electron.config.ts --headed",
     "dev:electron": "npx concurrently --kill-others --kill-signal SIGTERM -n server,electron -c blue,cyan \"npm run server\" \"npm run electron:dev\"",
-    "gen:hermes-contract": "python3 hermes-bridge/generate_event_schema.py && node scripts/generate-hermes-contract.mjs",
-    "check:hermes-contract": "python3 hermes-bridge/generate_event_schema.py --check && node scripts/generate-hermes-contract.mjs --check"
+    "gen:hermes-contract": "python3 hermes-bridge/generate_event_schema.py && python3 hermes-bridge/generate_error_schema.py && node scripts/generate-hermes-contract.mjs",
+    "check:hermes-contract": "python3 hermes-bridge/generate_event_schema.py --check && python3 hermes-bridge/generate_error_schema.py --check && node scripts/generate-hermes-contract.mjs --check"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.63",

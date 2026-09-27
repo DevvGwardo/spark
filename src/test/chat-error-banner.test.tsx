@@ -91,9 +91,22 @@ describe('ChatErrorBanner', () => {
       },
     });
 
-    renderChatArea(
-      new Error("[Error: Model 'nousresearch/hermes-3-llama-3.1-405b:free' is not compatible with Hermes tool calls on OpenRouter. Choose a tool-capable model like meta-llama/llama-4-maverick, openai/gpt-4.1-mini, google/gemini-2.5-flash.]"),
-    );
+    renderChatArea({
+      error: {
+        code: 'MODEL_INCOMPATIBLE',
+        message:
+          "Model 'nousresearch/hermes-3-llama-3.1-405b:free' is not compatible with Hermes tool calls on OpenRouter.",
+        retryable: false,
+        details: {
+          current_model: 'nousresearch/hermes-3-llama-3.1-405b:free',
+          suggested_models: [
+            'meta-llama/llama-4-maverick',
+            'openai/gpt-4.1-mini',
+            'google/gemini-2.5-flash',
+          ],
+        },
+      },
+    });
 
     fireEvent.click(screen.getByRole('button', { name: /llama-4-maverick/i }));
 
@@ -102,9 +115,17 @@ describe('ChatErrorBanner', () => {
   });
 
   it('opens settings from the error banner', () => {
-    renderChatArea(
-      new Error("[Error: Model 'nousresearch/hermes-3-llama-3.1-405b:free' is not compatible with Hermes tool calls on OpenRouter. Choose a tool-capable model like meta-llama/llama-4-maverick, openai/gpt-4.1-mini, google/gemini-2.5-flash.]"),
-    );
+    renderChatArea({
+      error: {
+        code: 'MODEL_INCOMPATIBLE',
+        message: 'That model cannot use Hermes tools.',
+        retryable: false,
+        details: {
+          current_model: 'nousresearch/hermes-3-llama-3.1-405b:free',
+          suggested_models: ['meta-llama/llama-4-maverick'],
+        },
+      },
+    });
 
     fireEvent.click(screen.getByRole('button', { name: /open hermes settings/i }));
 
@@ -114,7 +135,7 @@ describe('ChatErrorBanner', () => {
   it('renders a neutral local API banner for connectivity failures', () => {
     window.history.replaceState({}, '', '/?apiPort=4312#/chat');
 
-    renderChatArea(new Error('Failed after 3 attempts. Last error: Cannot connect to API:'));
+    renderChatArea({ error: { code: 'BRIDGE_UNREACHABLE', message: 'Cannot connect to API', retryable: true } });
 
     expect(screen.getByText(/could not reach the local api server/i)).toBeInTheDocument();
     expect(screen.getByText('http://localhost:4312')).toBeInTheDocument();
@@ -130,8 +151,10 @@ describe('ChatErrorBanner', () => {
   });
 
   it('re-shows the same connectivity error after a new user message is sent', () => {
-    const errorMessage = 'Failed after 3 attempts. Last error: Cannot connect to API:';
-    const { rerender } = renderChatArea(new Error(errorMessage), [
+    const errorMessage = 'Cannot connect to API';
+    const { rerender } = renderChatArea(
+      { error: { code: 'BRIDGE_UNREACHABLE', message: errorMessage, retryable: true } },
+      [
       { id: 'user-1', role: 'user', content: 'first request' },
     ]);
 
@@ -152,7 +175,7 @@ describe('ChatErrorBanner', () => {
           handleStop={() => {}}
           handleRegenerate={() => {}}
           isStreaming={false}
-          error={new Error(errorMessage)}
+          error={{ error: { code: 'BRIDGE_UNREACHABLE', message: errorMessage, retryable: true } }}
           apiKeyModalOpen={false}
           setApiKeyModalOpen={() => {}}
           activeProvider="hermes"
