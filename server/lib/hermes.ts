@@ -17,6 +17,7 @@ import { bindClientDisconnect } from '../http-disconnect';
 import { buildCorsHeaders } from './helpers';
 import { getChatStore } from '../chat-store';
 import { getHermesBridgeRoot } from './hermes-bridge-url';
+import { HERMES_EVENT_SCHEMAS, type HermesEventKey } from './hermes-events.gen';
 import { randomUUID } from 'crypto';
 
 // ─── Background Session Continuation ─────────────────────────────────────────
@@ -313,10 +314,10 @@ export function extractHermesChoiceText(choice: {
 }
 
 /**
- * Bridge custom fields that are forwarded to the client UNCHANGED (same field
- * names, raw payload). B1 (hermes-bridge) emits these inside
- * `choices[0].delta` and/or at the top level of the SSE payload; the server
- * normalizes them into `data` parts the client pre-scanner collects.
+ * Custom bridge fields that were forwarded to the client UNCHANGED (same field
+ * names, raw payload). The bridge emits these inside `choices[0].delta` and/or at
+ * the top level of the SSE payload; the server normalizes them into `data` parts
+ * the client pre-scanner collects.
  */
 const PASSTHROUGH_CUSTOM_FIELDS = [
   'tool_call_begin',
@@ -326,54 +327,149 @@ const PASSTHROUGH_CUSTOM_FIELDS = [
   'plan_update',
 ] as const;
 
-function collectPassthroughCustomFields(
-  source: Record<string, unknown>,
-  data: Record<string, unknown>[],
-): void {
-  for (const field of PASSTHROUGH_CUSTOM_FIELDS) {
-    const value = source[field];
-    if (value && typeof value === 'object' && !Array.isArray(value)) {
-      data.push({ type: field, ...(value as Record<string, unknown>) });
+/**
+ * Standard OpenAI fields that legitimately appear on a delta and are not part of
+ * the custom event contract. Anything else is treated as a custom event and
+ * looked up in the contract, so a new bridge event surfaces as "unknown" instead
+ * of being silently ignored.
+ */
+const STANDARD_DELTA_KEYS: ReadonlySet<string> = new Set([
+  'role',
+  'content',
+  'reasoning',
+  'refusal',
+  'tool_calls',
+  'function_call',
+  'finish_reason',
+  'name',
+  'index',
+  'id',
+  'object',
+  'created',
+  'model',
+  'choices',
+  'usage',
+  'system_fingerprint',
+]);
+
+/**
+ * How each contracted event becomes a `data` entry.
+ *
+ * The per-key shapes are NOT uniform and are load-bearing — the client matches on
+ * them. `fallback_switch` deliberately emits only provider and model even though
+ * the contract also carries an optional `reason`; `server_tool_event` is spread
+ * raw because it supplies its own `type` discriminant. Encoding each shape here
+ * keeps that knowledge in one place instead of spread across a chain of ifs.
+ */
+const CUSTOM_EVENT_DISPATCH: Readonly<
+  Record<string, (payload: Record<string, unknown>) => Record<string, unknown>>
+> = {
+  transport_status: (p) => ({ type: 'transport_status', ...p }),
+  tool_activity: (p) => ({ type: 'hermes_tool_activity', activity: p }),
+  agent_status: (p) => ({ type: 'agent_status', status: p }),
+  fallback_switch: (p) => ({
+    type: 'fallback_switch',
+    provider: p.provider,
+    model: p.model,
+  }),
+  approval_request: (p) => ({ type: 'approval_request', ...p }),
+  // Carries its own `type` (hermes_run / swarm_result), so it is not wrapped.
+  server_tool_event: (p) => ({ ...p }),
+};
+
+/** Contracted events forwarded with their payload spread as-is. */
+const PASSTHROUGH_VALIDATED: ReadonlySet<string> = new Set(PASSTHROUGH_CUSTOM_FIELDS);
+
+/**
+ * Contracted keys that are deliberately NOT turned into `data` entries.
+ *
+ * computer_use_frame, agent_notice and agent_notice_clear reach the client by
+ * direct SSE passthrough — the frontend pre-scans each `data:` line for them —
+ * so putting them into `data` as well would double-deliver them. `usage` is a
+ * standard key consumed by normalizeHermesUsage.
+ *
+ * They are listed so they are recognised rather than reported as unknown: they
+ * are part of the contract, they just travel a different route.
+ */
+const CONTRACT_KEYS_NOT_IN_DATA: ReadonlySet<string> = new Set([
+  'computer_use_frame',
+  'agent_notice',
+  'agent_notice_clear',
+]);
+
+// Unknown event keys are logged once per type for the process lifetime. A stream
+// can deliver thousands of frames, and an unrecognized new event type should be
+// visible without flooding the log.
+const loggedUnknownEventKeys = new Set<string>();
+
+function logUnknownEventKeyOnce(key: string): void {
+  if (loggedUnknownEventKeys.has(key)) return;
+  loggedUnknownEventKeys.add(key);
+  logger.warn(
+    `[hermes] Ignoring unknown bridge event "${key}". If the bridge gained this event, ` +
+      'add it to hermes-bridge/bridge_events.py and run `npm run gen:hermes-contract`.',
+  );
+}
+
+/** Contract violations, logged once per key per distinct problem. */
+const loggedContractViolations = new Map<string, string>();
+
+function logContractViolationOnce(key: string, detail: string): void {
+  const signature = detail;
+  if (loggedContractViolations.get(key) === signature) return;
+  loggedContractViolations.set(key, signature);
+  logger.error(
+    `[hermes] Bridge event "${key}" does not match the generated contract: ${detail}. ` +
+      'Forwarding it unvalidated so the UI degrades rather than losing the event.',
+  );
+}
+
+type CustomEventEntry = { key: string; payload: Record<string, unknown> };
+
+/**
+ * Pull contracted custom events out of one source object (a delta, or the payload
+ * root), validating each against the generated schema and dispatching it.
+ */
+function collectContractedEvents(source: unknown, out: CustomEventEntry[]): void {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return;
+  const record = source as Record<string, unknown>;
+
+  for (const [key, raw] of Object.entries(record)) {
+    if (STANDARD_DELTA_KEYS.has(key)) continue;
+    if (raw === undefined) continue;
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+      logContractViolationOnce(key, 'payload is not an object');
+      continue;
     }
+
+    const payload = raw as Record<string, unknown>;
+    if (CONTRACT_KEYS_NOT_IN_DATA.has(key)) continue;
+    const dispatch = CUSTOM_EVENT_DISPATCH[key];
+    if (!dispatch && !PASSTHROUGH_VALIDATED.has(key)) {
+      logUnknownEventKeyOnce(key);
+      continue;
+    }
+
+    const validator = HERMES_EVENT_SCHEMAS[key as HermesEventKey];
+    if (validator) {
+      const result = validator.safeParse(payload);
+      if (!result.success) {
+        // Forward anyway. Dropping a tool_activity or a usage block over a type
+        // mismatch would silently break the UI; a loud log is the signal.
+        logContractViolationOnce(key, result.error.issues[0]?.message ?? 'invalid payload');
+      }
+    }
+
+    out.push(
+      dispatch
+        ? { key, payload: dispatch(payload) }
+        : { key, payload: { type: key, ...payload } },
+    );
   }
 }
 
 export function normalizeHermesAgentLoopPayload(payload: string): NormalizedProxyEvent | null {
-  let parsed: {
-    usage?: unknown;
-    transport_status?: unknown;
-    tool_activity?: unknown;
-    server_tool_event?: unknown;
-    agent_status?: unknown;
-    fallback_switch?: unknown;
-    approval_request?: unknown;
-    tool_call_begin?: unknown;
-    tool_call_delta?: unknown;
-    tool_call_end?: unknown;
-    stream_retry?: unknown;
-    plan_update?: unknown;
-    choices?: Array<{
-      finish_reason?: unknown;
-      delta?: {
-        content?: unknown;
-        reasoning?: unknown;
-        tool_activity?: unknown;
-        server_tool_event?: unknown;
-        agent_status?: unknown;
-        fallback_switch?: unknown;
-        transport_status?: unknown;
-        approval_request?: unknown;
-        tool_call_begin?: unknown;
-        tool_call_delta?: unknown;
-        tool_call_end?: unknown;
-        stream_retry?: unknown;
-        plan_update?: unknown;
-      };
-      message?: {
-        content?: unknown;
-      };
-    }>;
-  };
+  let parsed: unknown;
   try {
     parsed = JSON.parse(payload);
   } catch {
@@ -381,64 +477,26 @@ export function normalizeHermesAgentLoopPayload(payload: string): NormalizedProx
     return null;
   }
 
-  const choice = Array.isArray(parsed.choices) ? parsed.choices[0] : undefined;
-  const data: Record<string, unknown>[] = [];
+  const root = (parsed && typeof parsed === 'object' ? parsed : {}) as Record<string, unknown>;
+  const choice = Array.isArray(root.choices)
+    ? (root.choices[0] as Record<string, unknown> | undefined)
+    : undefined;
+  const delta = (choice?.delta && typeof choice.delta === 'object'
+    ? choice.delta
+    : undefined) as Record<string, unknown> | undefined;
 
-  if (choice?.delta?.transport_status && typeof choice.delta.transport_status === 'object') {
-    data.push({ type: 'transport_status', ...(choice.delta.transport_status as Record<string, unknown>) });
-  }
-  if (choice?.delta?.tool_activity && typeof choice.delta.tool_activity === 'object') {
-    data.push({ type: 'hermes_tool_activity', activity: choice.delta.tool_activity as Record<string, unknown> });
-  }
-  if (choice?.delta?.server_tool_event && typeof choice.delta.server_tool_event === 'object') {
-    data.push(choice.delta.server_tool_event as Record<string, unknown>);
-  }
-  if (choice?.delta?.agent_status && typeof choice.delta.agent_status === 'object') {
-    data.push({ type: 'agent_status', status: choice.delta.agent_status as Record<string, unknown> });
-  }
-  if (choice?.delta?.fallback_switch && typeof choice.delta.fallback_switch === 'object') {
-    const switchPayload = choice.delta.fallback_switch as Record<string, unknown>;
-    data.push({
-      type: 'fallback_switch',
-      provider: switchPayload.provider,
-      model: switchPayload.model,
-    });
-  }
-  if (choice?.delta?.approval_request && typeof choice.delta.approval_request === 'object') {
-    data.push({ type: 'approval_request', ...(choice.delta.approval_request as Record<string, unknown>) });
-  }
-  if (choice?.delta) {
-    collectPassthroughCustomFields(choice.delta as Record<string, unknown>, data);
-  }
-  if (parsed.transport_status && typeof parsed.transport_status === 'object') {
-    data.push({ type: 'transport_status', ...(parsed.transport_status as Record<string, unknown>) });
-  }
-  if (parsed.tool_activity && typeof parsed.tool_activity === 'object') {
-    data.push({ type: 'hermes_tool_activity', activity: parsed.tool_activity as Record<string, unknown> });
-  }
-  if (parsed.server_tool_event && typeof parsed.server_tool_event === 'object') {
-    data.push(parsed.server_tool_event as Record<string, unknown>);
-  }
-  if (parsed.agent_status && typeof parsed.agent_status === 'object') {
-    data.push({ type: 'agent_status', status: parsed.agent_status as Record<string, unknown> });
-  }
-  if (parsed.fallback_switch && typeof parsed.fallback_switch === 'object') {
-    const switchPayload = parsed.fallback_switch as Record<string, unknown>;
-    data.push({
-      type: 'fallback_switch',
-      provider: switchPayload.provider,
-      model: switchPayload.model,
-    });
-  }
-  if (parsed.approval_request && typeof parsed.approval_request === 'object') {
-    data.push({ type: 'approval_request', ...(parsed.approval_request as Record<string, unknown>) });
-  }
-  collectPassthroughCustomFields(parsed as Record<string, unknown>, data);
+  // The bridge places custom events in the delta, and some transports also place
+  // them at the payload root. Both are read, delta first, matching the order the
+  // client observes.
+  const collected: CustomEventEntry[] = [];
+  collectContractedEvents(delta, collected);
+  collectContractedEvents(root, collected);
+  const data = collected.map((entry) => entry.payload);
 
-  const reasoning = typeof choice?.delta?.reasoning === 'string' ? choice.delta.reasoning : undefined;
+  const reasoning = typeof delta?.reasoning === 'string' ? delta.reasoning : undefined;
 
   return {
-    usage: normalizeHermesUsage(parsed.usage),
+    usage: normalizeHermesUsage(root.usage),
     finishReason: choice?.finish_reason !== undefined && choice?.finish_reason !== null
       ? normalizeHermesFinishReason(choice.finish_reason)
       : undefined,
