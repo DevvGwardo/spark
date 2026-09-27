@@ -1,0 +1,501 @@
+{
+  "$defs": {
+    "AgentNoticeClearEvent": {
+      "description": "Clears a previously emitted agent_notice by key.",
+      "properties": {
+        "key": {
+          "title": "Key",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key"
+      ],
+      "title": "AgentNoticeClearEvent",
+      "type": "object"
+    },
+    "AgentNoticeEvent": {
+      "additionalProperties": true,
+      "description": "Structured notice from the real agent (credits, run budget).\n\nPayload is open: hermes-agent owns the notice shape and adds notice kinds\nwithout a bridge release.",
+      "properties": {
+        "key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Key"
+        },
+        "level": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Level"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metadata"
+        }
+      },
+      "title": "AgentNoticeEvent",
+      "type": "object"
+    },
+    "AgentStatusEvent": {
+      "description": "Progress heartbeat for the active turn (phase, elapsed time, iteration).",
+      "properties": {
+        "elapsed_ms": {
+          "default": 0,
+          "title": "Elapsed Ms",
+          "type": "integer"
+        },
+        "iteration": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Iteration"
+        },
+        "label": {
+          "default": "",
+          "title": "Label",
+          "type": "string"
+        },
+        "phase": {
+          "title": "Phase",
+          "type": "string"
+        },
+        "source": {
+          "default": "hermes-bridge",
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "phase"
+      ],
+      "title": "AgentStatusEvent",
+      "type": "object"
+    },
+    "ComputerUseFrameEvent": {
+      "additionalProperties": true,
+      "description": "One computer-use screenshot frame. Payload owned by hermes-agent.",
+      "properties": {
+        "data": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Data"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metadata"
+        },
+        "type": {
+          "default": "computer_use_frame",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "title": "ComputerUseFrameEvent",
+      "type": "object"
+    },
+    "FallbackSwitchEvent": {
+      "description": "The agent fell back to a different provider/model mid-turn.",
+      "properties": {
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "provider": {
+          "title": "Provider",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "provider",
+        "model"
+      ],
+      "title": "FallbackSwitchEvent",
+      "type": "object"
+    },
+    "ServerToolEvent": {
+      "additionalProperties": true,
+      "description": "Bridge-originated event surfaced on the same channel as agent events.\n\n`type` is a discriminant: hermes_run, swarm_result, and others are emitted\nfrom different transports, so the payload is open by design.",
+      "properties": {
+        "conversation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Conversation Id"
+        },
+        "elapsed_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Elapsed Ms"
+        },
+        "plan": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Plan"
+        },
+        "review_notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Review Notes"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run Id"
+        },
+        "staged_files": {
+          "anyOf": [
+            {
+              "items": {},
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Staged Files"
+        },
+        "success": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Success"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "verdict": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Verdict"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "ServerToolEvent",
+      "type": "object"
+    },
+    "ToolActivityEvent": {
+      "description": "A tool invocation becoming active or finishing. Legacy shape, still live.\n\nSuperseded in practice by tool_call_begin/delta/end, but the agent-loop\ntransport still emits it, so the contract keeps it.",
+      "properties": {
+        "input": {
+          "default": null,
+          "title": "Input"
+        },
+        "output": {
+          "default": null,
+          "title": "Output"
+        },
+        "status": {
+          "default": "running",
+          "title": "Status",
+          "type": "string"
+        },
+        "tool": {
+          "title": "Tool",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool"
+      ],
+      "title": "ToolActivityEvent",
+      "type": "object"
+    },
+    "TransportStatusEvent": {
+      "description": "The transport that will actually serve this request, and why it differs.",
+      "properties": {
+        "actual": {
+          "title": "Actual",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "requested": {
+          "title": "Requested",
+          "type": "string"
+        }
+      },
+      "required": [
+        "requested",
+        "actual"
+      ],
+      "title": "TransportStatusEvent",
+      "type": "object"
+    },
+    "UsageEvent": {
+      "description": "Token usage and cost for a completed turn.",
+      "properties": {
+        "completion_tokens": {
+          "default": 0,
+          "title": "Completion Tokens",
+          "type": "integer"
+        },
+        "estimated_cost_usd": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Estimated Cost Usd"
+        },
+        "prompt_tokens": {
+          "default": 0,
+          "title": "Prompt Tokens",
+          "type": "integer"
+        },
+        "total_tokens": {
+          "default": 0,
+          "title": "Total Tokens",
+          "type": "integer"
+        }
+      },
+      "title": "UsageEvent",
+      "type": "object"
+    }
+  },
+  "$id": "https://spark.local/schemas/hermes-events.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "description": "Custom event keys the hermes-bridge may place inside a chat.completion.chunk delta. Generated from the Pydantic models in hermes-bridge/bridge_events.py by hermes-bridge/generate_event_schema.py. Do not edit by hand; run `npm run gen:hermes-contract`.",
+  "properties": {
+    "agent_notice": {
+      "$ref": "#/$defs/AgentNoticeEvent"
+    },
+    "agent_notice_clear": {
+      "$ref": "#/$defs/AgentNoticeClearEvent"
+    },
+    "agent_status": {
+      "$ref": "#/$defs/AgentStatusEvent"
+    },
+    "approval_request": {
+      "additionalProperties": true,
+      "description": "Legacy structured event 'approval_request' (constructor predates the custom contract).",
+      "type": "object"
+    },
+    "computer_use_frame": {
+      "$ref": "#/$defs/ComputerUseFrameEvent"
+    },
+    "fallback_switch": {
+      "$ref": "#/$defs/FallbackSwitchEvent"
+    },
+    "plan_update": {
+      "additionalProperties": true,
+      "description": "Legacy structured event 'plan_update' (constructor predates the custom contract).",
+      "type": "object"
+    },
+    "server_tool_event": {
+      "$ref": "#/$defs/ServerToolEvent"
+    },
+    "stream_retry": {
+      "additionalProperties": true,
+      "description": "Legacy structured event 'stream_retry' (constructor predates the custom contract).",
+      "properties": {
+        "attempt": {
+          "title": "attempt"
+        }
+      },
+      "required": [
+        "attempt"
+      ],
+      "type": "object"
+    },
+    "tool_activity": {
+      "$ref": "#/$defs/ToolActivityEvent"
+    },
+    "tool_call_begin": {
+      "additionalProperties": true,
+      "description": "Legacy structured event 'tool_call_begin' (constructor predates the custom contract).",
+      "properties": {
+        "call_id": {
+          "title": "call_id"
+        },
+        "name": {
+          "title": "name"
+        }
+      },
+      "required": [
+        "call_id",
+        "name"
+      ],
+      "type": "object"
+    },
+    "tool_call_delta": {
+      "additionalProperties": true,
+      "description": "Legacy structured event 'tool_call_delta' (constructor predates the custom contract).",
+      "properties": {
+        "call_id": {
+          "title": "call_id"
+        },
+        "output": {
+          "title": "output"
+        }
+      },
+      "required": [
+        "call_id",
+        "output"
+      ],
+      "type": "object"
+    },
+    "tool_call_end": {
+      "additionalProperties": true,
+      "description": "Legacy structured event 'tool_call_end' (constructor predates the custom contract).",
+      "properties": {
+        "call_id": {
+          "title": "call_id"
+        },
+        "name": {
+          "title": "name"
+        },
+        "success": {
+          "title": "success"
+        }
+      },
+      "required": [
+        "call_id",
+        "name",
+        "success"
+      ],
+      "type": "object"
+    },
+    "transport_status": {
+      "$ref": "#/$defs/TransportStatusEvent"
+    },
+    "usage": {
+      "$ref": "#/$defs/UsageEvent"
+    }
+  },
+  "title": "Hermes bridge custom SSE delta",
+  "type": "object",
+  "x-generated-by": "hermes-bridge/generate_event_schema.py"
+}

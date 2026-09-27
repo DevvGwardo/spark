@@ -1,6 +1,6 @@
 {
   "name": "spark",
-  "description": "The AI desktop with an autonomous agent brain — Hermes agent mode, multi-provider chat, and a native Electron app for macOS, Windows, and Linux.",
+  "description": "The AI desktop with an autonomous agent brain \u2014 Hermes agent mode, multi-provider chat, and a native Electron app for macOS, Windows, and Linux.",
   "version": "1.0.0-beta.8",
   "private": true,
   "license": "MIT",
@@ -59,7 +59,9 @@
     "pretest:e2e": "electron-vite build",
     "test:e2e": "npx playwright test --config playwright-electron.config.ts",
     "test:e2e:headed": "npx playwright test --config playwright-electron.config.ts --headed",
-    "dev:electron": "npx concurrently --kill-others --kill-signal SIGTERM -n server,electron -c blue,cyan \"npm run server\" \"npm run electron:dev\""
+    "dev:electron": "npx concurrently --kill-others --kill-signal SIGTERM -n server,electron -c blue,cyan \"npm run server\" \"npm run electron:dev\"",
+    "gen:hermes-contract": "python3 hermes-bridge/generate_event_schema.py && node scripts/generate-hermes-contract.mjs",
+    "check:hermes-contract": "python3 hermes-bridge/generate_event_schema.py --check && node scripts/generate-hermes-contract.mjs --check"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.63",
@@ -190,6 +192,7 @@
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^15.15.0",
     "jsdom": "^20.0.3",
+    "json-schema-to-zod": "^2.8.1",
     "lovable-tagger": "^1.1.13",
     "postcss": "^8.5.6",
     "rollup-plugin-visualizer": "^7.0.1",
