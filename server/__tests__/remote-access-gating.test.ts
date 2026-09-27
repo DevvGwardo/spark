@@ -218,3 +218,85 @@ describe('merged hermes approval route (B3)', () => {
     }
   })
 })
+
+describe('destructive-op loopback gate (G13)', () => {
+  // The test server listens on 127.0.0.1, so isSocketLoopback() is true for
+  // every request it can make over real HTTP — the 403 path is unreachable
+  // that way. Exercise the gate at the unit level instead.
+  it('flags the newly gated mutating paths', async () => {
+    const { DESTRUCTIVE_PREFIXES, isDestructiveHermesOp } = await import('../lib/hermes-op-gate')
+    expect(DESTRUCTIVE_PREFIXES).toContain('/api/hermes/update')
+    expect(DESTRUCTIVE_PREFIXES).toContain('/api/bridge/start')
+    expect(DESTRUCTIVE_PREFIXES).toContain('/api/bridge/install-deps')
+    expect(isDestructiveHermesOp('POST', '/api/hermes/update')).toBe(true)
+    expect(isDestructiveHermesOp('POST', '/api/bridge/start')).toBe(true)
+    expect(isDestructiveHermesOp('POST', '/api/bridge/install-deps')).toBe(true)
+  })
+
+  it('leaves reads and previously gated paths unchanged', async () => {
+    const { isDestructiveHermesOp } = await import('../lib/hermes-op-gate')
+    expect(isDestructiveHermesOp('GET', '/api/bridge/status')).toBe(false)
+    expect(isDestructiveHermesOp('GET', '/api/hermes/update')).toBe(false)
+    expect(isDestructiveHermesOp('POST', '/api/hermes/kanban/swarm')).toBe(true)
+  })
+
+  it('blocks non-loopback sockets with 403 and never calls next()', async () => {
+    const { requireLocalHermesMutation } = await import('../lib/hermes-op-gate')
+    for (const path of ['/api/hermes/update', '/api/bridge/start', '/api/bridge/install-deps']) {
+      const result = driveGate('POST', path, '192.168.1.50', requireLocalHermesMutation)
+      expect(result.status).toBe(403)
+      expect((result.body as { error?: string }).error).toContain('only available from the local app')
+      expect(result.nextCalled).toBe(false)
+    }
+  })
+
+  it('normalizes trailing slashes before the non-loopback check', async () => {
+    const { requireLocalHermesMutation } = await import('../lib/hermes-op-gate')
+    const result = driveGate('POST', '/api/hermes/update/', '192.168.1.50', requireLocalHermesMutation)
+    expect(result.status).toBe(403)
+    expect(result.nextCalled).toBe(false)
+  })
+
+  it('lets loopback sockets through without responding', async () => {
+    const { requireLocalHermesMutation } = await import('../lib/hermes-op-gate')
+    for (const remoteAddress of ['127.0.0.1', '::1', '::ffff:127.0.0.1']) {
+      const result = driveGate('POST', '/api/hermes/update', remoteAddress, requireLocalHermesMutation)
+      expect(result.nextCalled).toBe(true)
+      expect(result.status).toBe(0)
+    }
+    // Reads pass through regardless of origin.
+    const read = driveGate('GET', '/api/bridge/status', '192.168.1.50', requireLocalHermesMutation)
+    expect(read.nextCalled).toBe(true)
+    expect(read.status).toBe(0)
+  })
+})
+
+function driveGate(
+  method: string,
+  path: string,
+  remoteAddress: string,
+  requireLocalHermesMutation: (
+    req: import('express').Request,
+    res: import('express').Response,
+    next: import('express').NextFunction,
+  ) => void,
+) {
+  let status = 0
+  let body: unknown
+  let nextCalled = false
+  const req = { method, path, socket: { remoteAddress } } as unknown as import('express').Request
+  const res = {
+    status(code: number) {
+      status = code
+      return res
+    },
+    json(payload: unknown) {
+      body = payload
+      return res
+    },
+  } as unknown as import('express').Response
+  requireLocalHermesMutation(req, res, () => {
+    nextCalled = true
+  })
+  return { status, body, nextCalled }
+}
