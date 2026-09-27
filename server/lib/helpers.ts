@@ -62,9 +62,9 @@ export function csrfProtection(req: express.Request, res: express.Response, next
   }
 
   // Same-origin: the Origin matches the host this request was actually sent to.
-  // This covers remote access over LAN/tunnel where the host is the LAN IP or a
-  // *.trycloudflare.com domain rather than localhost. X-Forwarded-Host handles
-  // reverse proxies (e.g. cloudflared) that may rewrite the Host header.
+  // This covers remote access where the host is a tailnet name
+  // (*.ts.net) rather than localhost. X-Forwarded-Host handles reverse proxies
+  // (e.g. `tailscale serve`) that may rewrite the Host header.
   // A genuine cross-site CSRF attempt still fails here because the attacker's
   // Origin won't equal the server's own host, and falls through to the allowlist.
   const forwardedHost = (req.headers['x-forwarded-host'] as string | undefined)?.split(',')[0]?.trim();

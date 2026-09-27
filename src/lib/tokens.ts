@@ -18,15 +18,20 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-export function estimateMessagesTokens(messages: { role: string; content: string }[]): number {
+export function estimateMessagesTokens(messages: Array<{ role: string; content?: string; parts?: any[] }>): number {
   return messages.reduce((sum, m) => {
     // Each message has ~4 tokens overhead (role, formatting)
-    return sum + 4 + estimateTokens(m.content);
+    const text = typeof m.content === 'string'
+      ? m.content
+      : Array.isArray(m.parts)
+        ? m.parts.filter((p: any) => p && p.type === 'text' && typeof p.text === 'string').map((p: any) => p.text).join('\n\n')
+        : '';
+    return sum + 4 + estimateTokens(text);
   }, 3); // 3 tokens for chat format priming
 }
 
 export function getContextUsage(
-  messages: { role: string; content: string }[],
+  messages: Array<{ role: string; content?: string; parts?: any[] }>,
   model: string,
   realUsage?: { promptTokens: number; completionTokens: number; totalTokens: number },
 ) {

@@ -19,6 +19,35 @@ const DEFAULT_KEYS = ['soul', 'user', 'memory'] as const;
 
 type MemoryTab = 'files' | 'journey';
 
+const MEMORY_TABS: Array<{ key: MemoryTab; label: string }> = [
+  { key: 'files', label: 'Files' },
+  { key: 'journey', label: 'Journey' },
+];
+
+/** Shared Files/Journey switcher — both tab bodies render the same control. */
+function MemoryTabBar({ tab, onChange }: { tab: MemoryTab; onChange: (tab: MemoryTab) => void }) {
+  return (
+    <div className="flex items-center gap-1 border-b border-border/30 px-3 py-1.5">
+      {MEMORY_TABS.map(({ key, label }) => (
+        <button
+          key={key}
+          type="button"
+          onClick={() => onChange(key)}
+          aria-current={tab === key ? 'page' : undefined}
+          className={cn(
+            'rounded-md px-2 py-1 text-[11px] font-medium transition-colors',
+            tab === key
+              ? 'bg-[hsl(var(--sidebar-active))] text-foreground'
+              : 'text-muted-foreground/60 hover:text-foreground',
+          )}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function HermesMemoriesPanel() {
   const [tab, setTab] = useState<MemoryTab>('files');
   const [files, setFiles] = useState<HermesWorkspaceFileSummary[]>([]);
@@ -164,23 +193,7 @@ export function HermesMemoriesPanel() {
   if (tab === 'journey') {
     return (
       <div className="flex flex-1 flex-col overflow-hidden">
-        <div className="flex items-center gap-1 border-b border-border/30 px-3 py-1.5">
-          {(['files', 'journey'] as const).map((key) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setTab(key)}
-              className={cn(
-                'rounded-md px-2 py-1 text-[11px] font-medium transition-colors',
-                tab === key
-                  ? 'bg-[hsl(var(--sidebar-active))] text-foreground'
-                  : 'text-muted-foreground/60 hover:text-foreground',
-              )}
-            >
-              {key === 'files' ? 'Files' : 'Journey'}
-            </button>
-          ))}
-        </div>
+        <MemoryTabBar tab={tab} onChange={setTab} />
         <JourneyPanel />
       </div>
     );
@@ -188,23 +201,7 @@ export function HermesMemoriesPanel() {
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      <div className="flex items-center gap-1 border-b border-border/30 px-3 py-1.5">
-        {(['files', 'journey'] as const).map((key) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => setTab(key)}
-            className={cn(
-              'rounded-md px-2 py-1 text-[11px] font-medium transition-colors',
-              tab === key
-                ? 'bg-[hsl(var(--sidebar-active))] text-foreground'
-                : 'text-muted-foreground/60 hover:text-foreground',
-            )}
-          >
-            {key === 'files' ? 'Files' : 'Journey'}
-          </button>
-        ))}
-      </div>
+      <MemoryTabBar tab={tab} onChange={setTab} />
       <div className="flex items-center justify-between px-3 py-2">
         <div className="min-w-0">
           <span className="text-[12px] font-semibold uppercase tracking-wide text-muted-foreground">Memories</span>
@@ -263,7 +260,7 @@ export function HermesMemoriesPanel() {
         <div className={cn(
           'mx-3 mb-2 rounded-xl border p-2 text-[11px]',
           error
-            ? 'border-red-500/20 bg-red-500/10 text-red-300'
+            ? 'border-destructive/25 bg-destructive/10 text-destructive'
             : 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300'
         )}>
           {error ?? notice}

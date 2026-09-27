@@ -51,7 +51,7 @@ export function HermesSystemPanel() {
   const diskPct = disk && disk.total > 0 ? (disk.used / disk.total) * 100 : 0;
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div className="flex flex-1 flex-col overflow-y-auto">
       <div className="flex items-center justify-between px-3 py-2">
         <div className="flex items-center gap-2 text-muted-foreground">
           <Server className="h-3.5 w-3.5" />
@@ -67,13 +67,13 @@ export function HermesSystemPanel() {
       </div>
 
       {error && (
-        <div className="mx-3 mb-2 rounded-xl border border-red-500/20 bg-red-500/10 p-2 text-[11px] text-red-300">
+        <div className="mx-3 mb-2 rounded-xl border border-destructive/25 bg-destructive/10 p-2 text-[11px] text-destructive">
           {error}
         </div>
       )}
 
-      {stats && (
-        <div className="flex-1 space-y-3 overflow-y-auto px-3 pb-3">
+      {stats ? (
+        <div className="space-y-3 px-3">
           {/* Gateway status */}
           <div className="rounded-xl border border-border/40 bg-background/40 p-3">
             <div className="flex items-center justify-between">
@@ -84,7 +84,7 @@ export function HermesSystemPanel() {
               <span
                 className={cn(
                   'inline-flex items-center gap-1 text-[11px] font-medium',
-                  stats.gateway.reachable ? 'text-emerald-300' : 'text-red-400',
+                  stats.gateway.reachable ? 'text-emerald-500' : 'text-destructive',
                 )}
               >
                 <CircleDot className="h-3 w-3" />
@@ -164,7 +164,7 @@ export function HermesSystemPanel() {
                 <div
                   className={cn(
                     'h-full rounded-full',
-                    diskPct > 90 ? 'bg-red-400' : diskPct > 75 ? 'bg-yellow-400' : 'bg-[linear-gradient(90deg,#59d4ff_0%,#8fffc1_100%)]',
+                    diskPct > 90 ? 'bg-destructive' : diskPct > 75 ? 'bg-yellow-500' : 'bg-primary',
                   )}
                   style={{ width: `${Math.max(2, diskPct)}%` }}
                 />
@@ -174,10 +174,14 @@ export function HermesSystemPanel() {
               </div>
             </div>
           )}
-
-          <HermesOpsExtras />
         </div>
-      )}
+      ) : null}
+
+      {/* Host stats are a nice-to-have; the ops surface below is not. Keep them
+          in separate regions so a failed stats fetch can't hide it. */}
+      <div className="pb-3">
+        <HermesOpsExtras />
+      </div>
     </div>
   );
 }

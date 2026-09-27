@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useCallback, useState } from 'react';
-import { ArrowUp, Square, Plus, ChevronDown, Mic, MicOff, CornerDownLeft, Bot, ClipboardList, Loader2, Repeat, X, Flag, SlidersHorizontal } from 'lucide-react';
+import { ArrowUp, Square, Plus, ChevronDown, Mic, MicOff, CornerDownLeft, Bot, ShieldCheck, Check, Loader2, Repeat, X, Flag, SlidersHorizontal } from 'lucide-react';
 import { useHermesStore, DEFAULT_LOOP_STATE } from '@/stores/hermes-store';
 import { usePanelId, useChatScopeId } from '@/hooks/use-panel-context';
 import { useChangesetStore } from '@/stores/changeset-store';
@@ -20,6 +20,7 @@ import type { QueuedMessage } from '@/lib/chat-queue';
 import { StreamingStatusBar } from './StreamingStatusBar';
 import { ContextMeter } from './ContextMeter';
 import { useChatStore } from '@/stores/chat-store';
+import { PERMISSION_MODE_IDS, getPermissionModeSpec } from '../../../shared/permission-modes';
 import { QueuedMessageTray } from './QueuedMessageTray';
 import { CommandSuggestions } from './CommandSuggestions';
 import { buildPickerSuggestions, type ContextRefSuggestion } from '@/lib/context-refs';
@@ -140,8 +141,10 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
   const displayModel = config.model.split('/').pop() || config.model;
   const reasoningSupported = supportsReasoningEffort(selectedProvider, config.model);
   const reasoningLabel = REASONING_EFFORT_LABELS[config.reasoningEffort];
+  const permissionMode = useChatStore((s) => s.permissionMode);
+  const setPermissionMode = useChatStore((s) => s.setPermissionMode);
+  // Kept for the composer indicator dot: `plan` is the read-only mode.
   const planMode = useChatStore((s) => s.planMode);
-  const setPlanMode = useChatStore((s) => s.setPlanMode);
   const streamRetry = useChatStore((s) => s.streamRetry);
   const panelId = usePanelId();
   const scopeId = useChatScopeId();
@@ -151,6 +154,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
   const setLoopEnabled = useHermesStore((s) => s.setLoopEnabled);
   const setLoopConfig = useHermesStore((s) => s.setLoopConfig);
   const [showLoopConfig, setShowLoopConfig] = useState(false);
+  const [showPermissionModes, setShowPermissionModes] = useState(false);
   const [goalsConfig, setGoalsConfig] = useState<GoalsConfig>({ max_turns: 20, enabled: true });
   const [goalsBusy, setGoalsBusy] = useState(false);
   const [showGoalsConfig, setShowGoalsConfig] = useState(false);
@@ -856,7 +860,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
                 onClick={() => setOptionsMenuOpen((v) => !v)}
                 aria-expanded={optionsMenuOpen}
                 aria-label="Composer options"
-                title="Plan mode, Loop and Goals"
+                title="Permissions, Loop and Goals"
                 className={cn(
                   'inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-xs transition-colors',
                   optionsMenuOpen || planMode || loop.enabled || goalsConfig.enabled
@@ -883,21 +887,56 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
                   )}
                   role="menu"
                 >
-                  {/* Plan mode */}
+                  {/* Permission mode */}
                   <button
                     type="button"
                     role="menuitemcheckbox"
-                    aria-checked={planMode}
-                    onClick={() => setPlanMode(!planMode)}
+                    aria-checked={permissionMode !== 'default'}
+                    aria-expanded={showPermissionModes}
+                    onClick={() => setShowPermissionModes((v) => !v)}
+                    title={getPermissionModeSpec(permissionMode).description}
                     className={cn(
                       'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-muted/60',
-                      planMode ? 'text-purple-400' : 'text-muted-foreground hover:text-foreground',
+                      permissionMode !== 'default' ? 'text-purple-400' : 'text-muted-foreground hover:text-foreground',
                     )}
                   >
-                    <ClipboardList className="h-3.5 w-3.5 shrink-0" />
-                    <span className="flex-1">Plan mode</span>
-                    {planMode && <span className="text-[10px] font-medium">On</span>}
+                    <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
+                    <span className="flex-1">Permissions</span>
+                    <span className="text-[10px] font-medium">{getPermissionModeSpec(permissionMode).label}</span>
+                    <ChevronDown className={cn('h-3 w-3 shrink-0 transition-transform', showPermissionModes && 'rotate-180')} />
                   </button>
+                  {showPermissionModes && (
+                    <div className="mx-1 mb-1 space-y-0.5 rounded-md bg-muted/40 p-1">
+                      {PERMISSION_MODE_IDS.map((mode) => {
+                        const spec = getPermissionModeSpec(mode);
+                        const active = mode === permissionMode;
+                        return (
+                          <button
+                            key={mode}
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={active}
+                            onClick={() => {
+                              setPermissionMode(mode);
+                              setShowPermissionModes(false);
+                            }}
+                            className={cn(
+                              'flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted/60',
+                              active ? 'text-purple-400' : 'text-muted-foreground hover:text-foreground',
+                            )}
+                          >
+                            <Check className={cn('mt-0.5 h-3 w-3 shrink-0', active ? 'opacity-100' : 'opacity-0')} />
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-xs font-medium">{spec.label}</span>
+                              <span className="block text-[10px] leading-tight text-muted-foreground/80">
+                                {spec.description}
+                              </span>
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
 
                   {/* Loop mode */}
                   <button

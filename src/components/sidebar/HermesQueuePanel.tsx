@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Clock3, Columns2, CornerDownLeft, Ghost, Send, TimerReset, UserRound } from 'lucide-react';
+import { Clock3, Columns2, CornerDownLeft, Ghost, Send, UserRound } from 'lucide-react';
 import { useChatQueueStore } from '@/stores/chat-queue-store';
 import { usePanelStore } from '@/stores/panel-store';
 import { useChatStore } from '@/stores/chat-store';
@@ -68,15 +68,13 @@ export const HermesQueuePanel: React.FC = () => {
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-2">
-          <span className="text-[11px] font-semibold uppercase tracking-[1px] text-[#666666]">Queue</span>
-          <span className="rounded-full border border-border/60 bg-muted/30 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-            {totalQueued} pending
+          <span className="text-[11px] font-semibold uppercase tracking-[1px] text-[hsl(var(--text-tertiary))]">
+            Queue
           </span>
         </div>
-        <div className="flex items-center gap-1 text-[10px] text-muted-foreground/70">
-          <TimerReset className="h-3.5 w-3.5" />
-          FIFO per panel
-        </div>
+        <span className="text-[10px] text-muted-foreground/60">
+          {totalQueued} pending · read-only
+        </span>
       </div>
 
       <div className="flex-1 space-y-3 overflow-y-auto px-3 pb-3">

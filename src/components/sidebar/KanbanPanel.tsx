@@ -29,7 +29,9 @@ function elapsed(ms: number): string {
 }
 
 function ElapsedTimer({ startedAt }: { startedAt: number }) {
-  const [_now, setNow] = useState(Date.now());
+  // The value is never read — it exists purely to re-render once a second so
+  // `elapsed` recomputes. `setNow` is the real effect here.
+  const [, setNow] = useState(Date.now());
   const idRef = useRef<ReturnType<typeof setInterval>>();
   useEffect(() => {
     idRef.current = setInterval(() => setNow(Date.now()), 1000);
@@ -309,7 +311,7 @@ export function KanbanPanel() {
 
       {error && (
         <div className="px-3 pb-2">
-          <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-2.5 py-2 text-[10px] leading-relaxed text-red-300">
+          <div className="rounded-lg border border-destructive/25 bg-destructive/10 px-2.5 py-2 text-[10px] leading-relaxed text-destructive">
             {error}
           </div>
         </div>
@@ -528,7 +530,7 @@ export function KanbanPanel() {
                   <>
                     <button
                       onClick={() => handleDelete(card.id)}
-                      className="rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] text-red-300 hover:bg-red-500/30"
+                      className="rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] text-destructive hover:bg-red-500/30"
                     >
                       Delete
                     </button>

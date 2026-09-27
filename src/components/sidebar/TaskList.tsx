@@ -32,7 +32,7 @@ export function TaskList({ tasks }: TaskListProps) {
           className={cn(
             'flex items-start gap-2 rounded-md border border-border/30 bg-background/40 px-2 py-1.5',
             task.status === 'running' && 'border-blue-500/20 bg-blue-500/5',
-            task.status === 'error' && 'border-red-500/20 bg-red-500/5',
+            task.status === 'error' && 'border-destructive/25 bg-destructive/10',
           )}
         >
           <div className="mt-0.5 flex-shrink-0">

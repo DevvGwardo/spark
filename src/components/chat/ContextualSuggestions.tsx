@@ -4,9 +4,10 @@ import { cn } from '@/lib/utils';
 import { generateSuggestions, type ContextualSuggestion } from '@/lib/contextual-suggestions';
 import { useChangesetStore } from '@/stores/changeset-store';
 import { useChatScopeId } from '@/hooks/use-panel-context';
+import { getMessageContent } from '@/hooks/chat-utils';
 
 interface ContextualSuggestionsProps {
-  messages: { role: string; content: string }[];
+  messages: Array<{ role: string; content?: string; parts?: any[] }>;
   isStreaming: boolean;
   onSend: (prompt: string) => void;
 }
@@ -46,8 +47,8 @@ export const ContextualSuggestions: React.FC<ContextualSuggestionsProps> = ({
     }
 
     const result = generateSuggestions({
-      lastAssistantContent: lastAssistant.content,
-      lastUserContent: lastUser?.content || '',
+      lastAssistantContent: getMessageContent(lastAssistant),
+      lastUserContent: getMessageContent(lastUser),
       hasRepo: isRepoMode,
       hasChanges: changeCount > 0,
       messageCount: messages.length,

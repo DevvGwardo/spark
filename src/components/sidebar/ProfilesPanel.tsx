@@ -26,9 +26,6 @@ export function ProfilesPanel() {
   const [error, setError] = useState<string | null>(null);
   const [viewingDetail, setViewingDetail] = useState<string | null>(null);
   const [showEnvKeys, setShowEnvKeys] = useState(false);
-  const [_editConfigOpen, _setEditConfigOpen] = useState(false);
-  const [_configText, _setConfigText] = useState('');
-  const [_viewEnvOpen, _setViewEnvOpen] = useState(false);
 
   useEffect(() => {
     fetchProfiles();
@@ -104,7 +101,7 @@ export function ProfilesPanel() {
       </div>
 
       {error && (
-        <div className="mx-3 mb-2 rounded-xl border border-red-500/20 bg-red-500/10 p-2 text-[11px] text-red-300">
+        <div className="mx-3 mb-2 rounded-xl border border-destructive/25 bg-destructive/10 p-2 text-[11px] text-destructive">
           {error}
         </div>
       )}
@@ -262,7 +259,7 @@ function ProfileRow({
           <>
             <button
               onClick={onDeleteConfirm}
-              className="rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] text-red-300 hover:bg-red-500/30"
+              className="rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] text-destructive hover:bg-red-500/30"
             >
               Delete
             </button>
@@ -495,7 +492,7 @@ function ProfileDetailView({
               className="w-full resize-none rounded-md border border-border/60 bg-background/80 px-3 py-2 text-[11px] font-mono leading-relaxed text-foreground/90 focus:border-primary/60 focus:outline-none disabled:opacity-60"
             />
             {saveError && (
-              <div className="mt-2 rounded-md border border-red-500/20 bg-red-500/10 px-2 py-1.5 text-[10px] text-red-300">
+              <div className="mt-2 rounded-md border border-destructive/25 bg-destructive/10 px-2 py-1.5 text-[10px] text-destructive">
                 {saveError}
               </div>
             )}

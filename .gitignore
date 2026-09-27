@@ -93,6 +93,8 @@ __pycache__/
 # Backup files
 *.bak
 *.backup
+*.orig
+*.rej
 
 # Hermes bridge runtime data
 hermes-bridge/data/*.json

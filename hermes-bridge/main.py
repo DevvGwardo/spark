@@ -1,4 +1,6 @@
 import os
+os.environ["HERMES_DISABLE_LAZY_INSTALLS"] = "1"
+import os
 import re
 import json
 import asyncio

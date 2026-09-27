@@ -1,3 +1,4 @@
+import { getMessageContent } from "@/hooks/chat-utils";
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Trash2, Zap, AlertCircle, Loader2, ChevronRight, Search, GitBranch } from 'lucide-react';
 import { useSessionsStore, type HermesSession } from '@/stores/sessions-store';
@@ -226,18 +227,18 @@ function SessionCard({
                     return (
                       <ToolMessageAccordion
                         key={key}
-                        content={message.content}
+                        content={getMessageContent(message)}
                         label="TOOL RESULT"
                         tone="amber"
                       />
                     );
                   }
 
-                  if (message.role === 'system' && message.content.length > SIDEBAR_LONG_CONTENT_THRESHOLD) {
+                  if (message.role === 'system' && getMessageContent(message).length > SIDEBAR_LONG_CONTENT_THRESHOLD) {
                     return (
                       <ToolMessageAccordion
                         key={key}
-                        content={message.content}
+                        content={getMessageContent(message)}
                         label="SYSTEM PROMPT"
                         tone="violet"
                       />
@@ -578,7 +579,7 @@ export function HermesChatsPanel() {
 
       {/* Error */}
       {(error || forkError) && (
-        <div className="mx-3 mb-2 flex items-center gap-2 rounded-xl border border-red-500/20 bg-red-500/10 p-2">
+        <div className="mx-3 mb-2 flex items-center gap-2 rounded-xl border border-destructive/25 bg-destructive/10 p-2">
           <AlertCircle className="h-3.5 w-3.5 flex-shrink-0 text-red-400" />
           <span className="text-[11px] text-red-400">{forkError ?? error}</span>
         </div>

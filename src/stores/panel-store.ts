@@ -48,7 +48,7 @@ function generatePanelId(): string {
 // Session profile name: human-sortable timestamp + counter. Kept short so the
 // bridge's ~/.hermes/profiles/<name> path stays reasonable.
 function generateSessionProfile(): string {
-  const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(2, 12);
+  const stamp = new Date().toISOString().replace(/\D/g, '').slice(2, 12);
   return `session-${stamp}-${panelCounter}`;
 }
 

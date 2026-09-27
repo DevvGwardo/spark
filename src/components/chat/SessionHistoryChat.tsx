@@ -1,3 +1,4 @@
+import { getMessageContent } from "@/hooks/chat-utils";
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { ArrowLeft, Loader2, AlertCircle, RefreshCw, MessageSquare } from 'lucide-react';
 import { useUIStore } from '@/stores/ui-store';
@@ -188,7 +189,7 @@ export function SessionHistoryChat() {
               // Tool results render as a standalone accordion — no outer role wrapper,
               // since the accordion itself carries the tool affordance.
               if (msg.role === 'tool') {
-                return <ToolMessageAccordion key={key} content={msg.content} label="TOOL RESULT" tone="amber" />;
+                return <ToolMessageAccordion key={key} content={getMessageContent(msg)} label="TOOL RESULT" tone="amber" />;
               }
 
               const style = ROLE_STYLES[msg.role] ?? { border: 'border-border/30', bg: 'bg-background/50', label: 'text-muted-foreground/60' };
@@ -206,7 +207,7 @@ export function SessionHistoryChat() {
                       {roleLabel(msg.role)}
                     </span>
                   </div>
-                  {renderMessageContent(msg.content, msg.role)}
+                  {renderMessageContent(getMessageContent(msg), msg.role)}
                 </div>
               );
             })

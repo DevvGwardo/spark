@@ -317,7 +317,7 @@ export function HermesMCPPanel() {
 
       <div className="flex-1 overflow-y-auto px-3 pb-3">
         {loadError && (
-          <div className="mb-2 flex items-start gap-1.5 rounded-lg border border-red-500/20 bg-red-500/8 px-2.5 py-2 text-[10px] text-red-300/80">
+          <div className="mb-2 flex items-start gap-1.5 rounded-lg border border-destructive/25 bg-destructive/10 px-2.5 py-2 text-[10px] text-destructive/80">
             <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
             <span className="break-all">{loadError}</span>
           </div>

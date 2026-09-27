@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { useChat as useAIChat, type UIMessage as AIMessage } from '@ai-sdk/react';
+import { DefaultChatTransport } from 'ai';
 import { parseDataStreamPart } from '@ai-sdk/ui-utils';
 import { useShallow } from 'zustand/shallow';
 import { useChatStore } from '@/stores/chat-store';
@@ -17,15 +18,12 @@ import { PROVIDERS, supportsReasoningEffort } from '@/lib/providers';
 import { useHermesStore } from '@/stores/hermes-store';
 import type { ToolCallRecords, ToolCallRecordsByMessage, ToolCallStatus } from '@/stores/hermes-store';
 import { useContextUsageStore } from '@/stores/context-usage-store';
+import { evaluateCompaction } from '../../shared/compaction';
+import { buildCompactionSummaryMessage, requestCompaction } from '@/lib/compaction-client';
 import { getActiveProfile, useProfilesStore } from '@/stores/profiles-store';
 
-function getMessageContent(message: any): string {
-  if (typeof message.content === 'string') return message.content;
-  if (Array.isArray(message.parts)) {
-    return message.parts.filter((p: any) => p.type === 'text').map((p: any) => p.text).join('\n\n');
-  }
-  return '';
-}
+import { getMessageContent } from './chat-utils';
+export { getMessageContent } from './chat-utils';
 
 import { useChatQueueStore } from '@/stores/chat-queue-store';
 import { useStreamLockStore } from '@/stores/stream-lock-store';
@@ -109,14 +107,21 @@ const HERMES_RESUME_CHAT_ROLES = new Set(['user', 'assistant', 'system', 'tool']
 
 function hermesSessionChatToAIMessages(sessionId: string, chat: HermesSessionMessage[] | undefined): AIMessage[] {
   if (!chat?.length) return [];
-  return (chat as any)
+  return (chat as HermesSessionMessage[])
     .filter((m) => getMessageContent(m).trim().length > 0)
     .filter((m) => HERMES_RESUME_CHAT_ROLES.has(m.role))
-    .map((m, index) => ({
-      id: `hermes-resume-${sessionId}-${index}`,
-      role: (m.role === 'tool' ? 'assistant' : m.role) as AIMessage['role'],
-      content: m.role === 'tool' ? `[Tool result]\n${m.content}` : m.content,
-    }));
+    .map((m, index) => {
+      const textContent = getMessageContent(m);
+      const content = m.role === 'tool' ? `[Tool result]\n${textContent}` : textContent;
+      const parts = m.parts?.length ? m.parts : [{ type: 'text' as const, text: content }];
+
+      return {
+        id: `hermes-resume-${sessionId}-${index}`,
+        role: (m.role === 'tool' ? 'assistant' : m.role) as AIMessage['role'],
+        content,
+        parts,
+      };
+    });
 }
 
 const TOOL_INVOCATION_STATE_PRIORITY: Record<string, number> = {
@@ -761,13 +766,14 @@ export function useChat(
     return panel?.profile || getActiveProfile();
   }, [panelId]);
 
-  const { activeProvider, providers, defaultSystemPrompt, githubPAT, autoApproveRepoChanges } = useSettingsStore(
+  const { activeProvider, providers, defaultSystemPrompt, githubPAT, autoApproveRepoChanges, outputStyle } = useSettingsStore(
     useShallow((s) => ({
       activeProvider: s.activeProvider,
       providers: s.providers,
       defaultSystemPrompt: s.defaultSystemPrompt,
       githubPAT: s.githubPAT,
       autoApproveRepoChanges: s.autoApproveRepoChanges,
+      outputStyle: s.outputStyle,
     })),
   );
   const knowledgeContext = useKnowledgeStore((s) => s.getActiveContext());
@@ -1124,7 +1130,7 @@ When the user asks you to make changes:
     });
     if (!response.ok) {
       const text = await response.clone().text().catch(() => '');
-      console.error(`[useChat:fetch] Error response body:`, text.slice(0, 500));
+      console.error(`[useChat] fetch Error response body:`, text.slice(0, 500));
       if (text) {
         try {
           const parsed = JSON.parse(text) as { error?: unknown };
@@ -1751,8 +1757,11 @@ When the user asks you to make changes:
         : {}),
       ...(conversationIdForRequest ? { conversation_id: conversationIdForRequest } : {}),
       ...(continuingApprovedProposal ? { continuing_approved_proposal: true } : {}),
-      // STEP 7: Pass planMode in the request body
+      // STEP 7: Pass the active permission mode and output style. `planMode`
+      // stays for servers that only understand the legacy boolean.
       ...(useChatStore.getState().planMode ? { planMode: true } : {}),
+      permissionMode: useChatStore.getState().permissionMode,
+      ...(outputStyle && outputStyle !== 'default' ? { outputStyle } : {}),
     };
   }, [
     agentToolsets,
@@ -1767,6 +1776,7 @@ When the user asks you to make changes:
     effectiveModel,
     effectiveProvider,
     reasoningEffort,
+    outputStyle,
     scopeId,
     panelId,
   ]);
@@ -1783,16 +1793,44 @@ When the user asks you to make changes:
     return rest;
   })();
 
+  const chatTransport = useMemo(
+    () =>
+      new DefaultChatTransport({
+        api: `${apiBaseUrl}/functions/v1/chat`,
+        fetch: chatStreamFetch,
+        body: requestBody,
+        prepareSendMessagesRequest: ({ id, messages: requestMessages, body: perRequestBody }: any) => {
+          // Hermes strict validation requires a `content` string field on every message
+          const normalizedMessages = requestMessages.map((m: any) => ({
+            ...m,
+            content: m.content ?? getMessageContent(m),
+          }));
+
+          return {
+            body: {
+              id,
+              messages: normalizedMessages,
+              ...(activeRequestBodyRef.current ?? buildRequestBody()),
+              ...(perRequestBody ?? {}),
+            },
+          };
+        },
+      }),
+    [apiBaseUrl, buildRequestBody, chatStreamFetch, requestBody],
+  );
+
   const {
     messages,
-    append,
+    sendMessage: sdkSendMessage,
+    append: sdkAppend,
     status,
     stop: sdkStop,
-    reload,
+    regenerate: sdkRegenerate,
+    reload: sdkReload,
     setMessages,
     error,
   } = (useAIChat as any)({
-
+    transport: chatTransport,
     api: `${apiBaseUrl}/functions/v1/chat`,
     fetch: chatStreamFetch,
     body: requestBody,
@@ -2439,7 +2477,7 @@ When the user asks you to make changes:
         }
       }
       const errorMessage = getErrorMessage(err);
-      console.error('[useChat:onError] Chat error:', errorMessage, 'provider:', effectiveProvider, 'model:', effectiveModel);
+      console.error('[useChat] onError Chat error:', errorMessage, 'provider:', effectiveProvider, 'model:', effectiveModel);
       if (errorMessage.includes('not configured')) {
         setProviderUnavailableOpen(true);
       }
@@ -2449,6 +2487,9 @@ When the user asks you to make changes:
       }
     },
   });
+
+  const append = sdkAppend ?? sdkSendMessage;
+  const reload = sdkReload ?? sdkRegenerate;
 
   // Wrap SDK stop to also abort the in-flight fetch
   const stop = useCallback(() => {
@@ -2528,7 +2569,7 @@ When the user asks you to make changes:
           },
         },
       ).catch((err: any) => {
-        console.error('[useChat:autoContinue] Failed to auto-continue:', err);
+        console.error('[useChat] autoContinue Failed to auto-continue:', err);
         activeRequestBodyRef.current = null;
       });
     }, AUTO_CONTINUE_DELAY_MS);
@@ -2537,6 +2578,79 @@ When the user asks you to make changes:
   // Track streaming state in global activity store
   const isStreaming = status === 'streaming' || status === 'submitted';
   isStreamingRef.current = isStreaming;
+
+  // ── Auto-compaction ────────────────────────────────────────────────────────
+  // When the context window fills up, summarize the conversation and replace the
+  // working history with the summary so the next turn has room again. Only ever
+  // fires while idle: compacting mid-stream would clobber the streaming buffer
+  // and the turn in flight.
+  const liveUsage = useContextUsageStore((s) => s.usage);
+  const autoCompact = useSettingsStore((s) => s.autoCompact);
+  const autoCompactThreshold = useSettingsStore((s) => s.autoCompactThreshold);
+  const compactionInFlightRef = useRef(false);
+
+  useEffect(() => {
+    if (!autoCompact || !liveUsage) return;
+    if (compactionInFlightRef.current || isStreaming) return;
+
+    const decision = evaluateCompaction({
+      used: liveUsage.inputTokens + liveUsage.outputTokens,
+      total: liveUsage.contextWindow,
+      threshold: autoCompactThreshold,
+      enabled: autoCompact,
+    });
+    if (!decision.shouldCompact) return;
+
+    const sourceMessages: AIMessage[] = Array.isArray(messages) ? (messages as AIMessage[]) : [];
+    const history = sourceMessages
+      .map((m) => ({ role: m.role, content: getMessageContent(m) }))
+      .filter((m) => m.content.trim().length > 0);
+    // Nothing worth summarizing — a single message has no history to compress.
+    if (history.length < 2) return;
+
+    compactionInFlightRef.current = true;
+    void (async () => {
+      try {
+        const result = await requestCompaction({
+          provider: effectiveProvider,
+          model: effectiveModel,
+          apiKey: config.apiKey,
+          messages: history,
+          threshold: autoCompactThreshold,
+        });
+        safeSetMessages(
+          [
+            {
+              id: `compaction-${Date.now()}`,
+              role: 'user',
+              content: buildCompactionSummaryMessage(result.summary).content,
+            },
+          ] as unknown as AIMessage[],
+          true,
+        );
+        // The stored usage describes the pre-compaction history, so drop it —
+        // otherwise this effect would fire again on the same numbers. The next
+        // turn reports fresh usage for the compacted history.
+        useContextUsageStore.getState().setUsage(null);
+      } catch (err) {
+        // Never break the conversation because a summary failed; the history is
+        // left untouched and the user can keep going.
+        console.error('[useChat] auto-compaction failed:', err);
+      } finally {
+        compactionInFlightRef.current = false;
+      }
+    })();
+  }, [
+    autoCompact,
+    autoCompactThreshold,
+    liveUsage,
+    isStreaming,
+    messages,
+    effectiveProvider,
+    effectiveModel,
+    config.apiKey,
+    safeSetMessages,
+  ]);
 
   // A hermes run for this conversation that is still active server-side but
   // not streamed by this panel (the originating panel/window was closed).
@@ -3278,7 +3392,7 @@ When the user asks you to make changes:
     // Guard against duplicate / reentrant sends (e.g. React StrictMode, fast
     // double-clicks, or effects re-firing while the first send is in-flight).
     if (isSendingRef.current) {
-      console.warn('[useChat:sendMessage] Duplicate send blocked');
+      console.warn('[useChat] sendMessage Duplicate send blocked');
       return;
     }
     isSendingRef.current = true;
@@ -3608,12 +3722,12 @@ When the user asks you to make changes:
       return;
     }
     if (visibleRetryCountRef.current >= MAX_VISIBLE_TOOL_RETRIES) {
-      console.warn('[useChat:retryTool] Retry cap reached for this message');
+      console.warn('[useChat] retryTool Retry cap reached for this message');
       return;
     }
     const convId = convIdRef.current ?? pendingConversationIdRef.current;
     if (!convId) {
-      console.warn('[useChat:retryTool] No conversation bound — cannot retry');
+      console.warn('[useChat] retryTool No conversation bound — cannot retry');
       return;
     }
     // Idempotency: one explicit retry per tool call per turn — a queued
@@ -3676,7 +3790,7 @@ When the user asks you to make changes:
         }
       }
     } catch (error) {
-      console.error('[useChat:editMessage] Failed to rewrite persisted messages:', error);
+      console.error('[useChat] editMessage Failed to rewrite persisted messages:', error);
     }
     await sendMessage(trimmed);
   }, [safeSetMessages, sendMessage]);
@@ -3721,7 +3835,7 @@ When the user asks you to make changes:
       await db.conversations.update(convId, { updatedAt: new Date().toISOString() });
       await loadConversations();
     } catch (error) {
-      console.error('[useChat:approvalAudit] Failed to persist audit entry:', error);
+      console.error('[useChat] approvalAudit Failed to persist audit entry:', error);
     }
   }, [loadConversations, setMessages]);
 

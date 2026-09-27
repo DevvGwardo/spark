@@ -25,6 +25,9 @@ const HOME_HTML =
   '<!doctype html><html><body><h1 id="fixture-home">Mini browser fixture home</h1><a href="/page2">page 2</a></body></html>'
 const PAGE2_HTML =
   '<!doctype html><html><body><h1 id="fixture-page2">Mini browser fixture page 2</h1></body></html>'
+// Deliberately contains "needle" three times so find-in-page has a known count.
+const FIND_HTML =
+  '<!doctype html><html><body><h1 id="fixture-find">needle one</h1><p>needle two</p><p>needle three</p></body></html>'
 
 test.beforeAll(async () => {
   fixture = await launchElectronApp()
@@ -34,6 +37,10 @@ test.beforeAll(async () => {
     res.setHeader('content-type', 'text/html')
     if (req.url === '/page2') {
       res.end(PAGE2_HTML)
+      return
+    }
+    if (req.url === '/find') {
+      res.end(FIND_HTML)
       return
     }
     res.end(HOME_HTML)
@@ -365,5 +372,67 @@ test.describe('MiniBrowser IPC — Lifecycle', () => {
     }, fixtureBase)
 
     expect(result).toEqual({ success: true, urlAfterClose: null, steps: 'all passed' })
+  })
+})
+
+test.describe('MiniBrowser IPC — Find in page', () => {
+  test('findInPage reports matches over found-in-page and stopFindInPage clears', async () => {
+    const result = await fixture.window.evaluate(async (base: string) => {
+      const api = (window as unknown as { electronAPI?: ElectronAPI }).electronAPI?.browser
+      if (!api?.findInPage || !api?.stopFindInPage || !api?.onFoundInPage || !api?.getUrl || !api?.create || !api?.close) {
+        return { error: 'no find API' }
+      }
+
+      const events: { requestId: number; matches: number; activeMatchOrdinal: number }[] = []
+      const unsub = api.onFoundInPage((r) => events.push(r))
+
+      await api.create(`${base}/find`)
+      const deadline = Date.now() + 8000
+      while (Date.now() < deadline) {
+        if ((await api.getUrl()) === `${base}/find`) break
+        await new Promise((r) => setTimeout(r, 100))
+      }
+      // Let the page finish layout so findInPage has content to scan.
+      await new Promise((r) => setTimeout(r, 800))
+
+      const search = async (q: string) => {
+        events.length = 0
+        const invoked = (await api.findInPage(q, { findNext: true })) as { requestId: number } | null
+        await new Promise((r) => setTimeout(r, 600))
+        return { invoked, events: JSON.parse(JSON.stringify(events)) as typeof events }
+      }
+
+      const first = await search('needle')
+      const repeat = await search('needle')
+      const miss = await search('zzz-no-such-text-zzz')
+      const back = await search('needle')
+
+      await api.stopFindInPage('clearSelection')
+      unsub()
+      await api.close()
+
+      return {
+        firstId: first.invoked?.requestId ?? -1,
+        firstEvent: first.events[0] ?? null,
+        repeatOrdinal: repeat.events[0]?.activeMatchOrdinal ?? -1,
+        missMatches: miss.events[0]?.matches ?? -1,
+        backOrdinal: back.events[0]?.activeMatchOrdinal ?? -1,
+        backMatches: back.events[0]?.matches ?? -1,
+      }
+    }, fixtureBase)
+
+    expect(result.error).toBeUndefined()
+    // A real find request reached the BrowserView.
+    expect(result.firstId).toBeGreaterThan(0)
+    // The fixture page has exactly three "needle" occurrences.
+    expect(result.firstEvent?.matches).toBe(3)
+    expect(result.firstEvent?.activeMatchOrdinal).toBe(1)
+    // Repeating the query advances to the next match instead of restarting.
+    expect(result.repeatOrdinal).toBe(2)
+    // Text that isn't on the page reports zero matches...
+    expect(result.missMatches).toBe(0)
+    // ...and returning to a real query restarts at match 1 with the full count.
+    expect(result.backMatches).toBe(3)
+    expect(result.backOrdinal).toBe(1)
   })
 })

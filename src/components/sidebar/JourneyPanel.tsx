@@ -313,7 +313,7 @@ export function JourneyPanel() {
       </div>
 
       {error && (
-        <div className="mx-3 mb-2 rounded-md border border-red-500/20 bg-red-500/10 p-2 text-[11px] text-red-300">
+        <div className="mx-3 mb-2 rounded-md border border-destructive/25 bg-destructive/10 p-2 text-[11px] text-destructive">
           {error}
         </div>
       )}

@@ -148,11 +148,13 @@ function Lightbox({
 
 export function ImagesPanel() {
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [images, setImages] = useState<ImageItem[]>([]);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   const loadImages = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const allImages: ImageItem[] = [];
       const convs = await db.conversations.getAll();
@@ -165,6 +167,11 @@ export function ImagesPanel() {
 
       allImages.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
       setImages(allImages);
+    } catch (err) {
+      // Without this the rejection escapes `void loadImages()` unhandled and
+      // the panel just stops spinning with no explanation.
+      setError(err instanceof Error ? err.message : 'Failed to read local image index');
+      setImages([]);
     } finally {
       setLoading(false);
     }
@@ -205,6 +212,10 @@ export function ImagesPanel() {
           <div className="flex items-center justify-center py-8 text-[12px] text-muted-foreground/60">
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             Loading images...
+          </div>
+        ) : error ? (
+          <div className="rounded-xl border border-destructive/25 bg-destructive/10 p-3 text-[11px] text-destructive">
+            {error}
           </div>
         ) : images.length === 0 ? (
           <div className="rounded-xl border border-border/30 bg-background/30 p-4 text-[12px] text-muted-foreground/55">

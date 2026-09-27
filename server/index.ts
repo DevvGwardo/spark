@@ -2,7 +2,6 @@ import express, { type Request } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
-import { timingSafeEqual } from 'crypto';
 import { existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -13,6 +12,7 @@ import { registerGitHubRoutes } from './routes/github';
 import { registerValidateRoute } from './routes/validate';
 import { registerProxyRoute } from './routes/proxy';
 import { registerTranslateRoute } from './routes/translate';
+import { registerCompactRoute } from './routes/compact';
 import { registerHermesAdminRoute, warnIfBridgeMisconfigured } from './routes/hermes-admin';
 import { registerHermesRuntimesRoute } from './routes/hermes-runtimes';
 import { registerHermesUpdateRoute } from './routes/hermes-update';
@@ -28,17 +28,17 @@ import { logger, requestIdMiddleware } from './lib/logger';
 import { MAX_BODY_SIZE } from './config';
 
 import { registerHermesStreamResumeRoute } from './lib/hermes';
-import { registerRemoteRevivalRoutes } from './routes/remote-revival';
 import { registerBridgeRoutes } from './routes/bridge';
 import { registerWorkspaceRoutes } from './routes/workspace';
 import { registerFactoryRoutes } from './routes/factory';
 import { registerMcpWorkersRoute } from './routes/mcp-workers.route';
 import { registerMcpExtensionsRoute } from './routes/mcp-extensions.route';
+import { registerRemoteStatusRoutes } from './routes/remote-status';
 import { startManagedBridge, stopManagedBridge } from './lib/bridge-manager';
 import { taskOrchestrator } from './task-orchestrator';
 import { shutdownTeamCoordinator } from './team-coordinator';
-import { getLanIp, generateTerminalQr, generateQrSvgDataUri, formatConnectionInfo } from './lib/qr-display';
-import { startTunnel, killTunnel, getTunnelState, cloudflaredAvailable, brewAvailable, installCloudflared } from './lib/tunnel';
+import { generateTerminalQr, generateQrSvgDataUri } from './lib/qr-display';
+import { getTailscaleStatus, getTailscaleServeInfo, buildServeCommand } from './lib/tailscale';
 
 const __serverFilename = fileURLToPath(import.meta.url);
 const __serverDirname = dirname(__serverFilename);
@@ -57,21 +57,6 @@ export function isLoopbackAddress(address: string | null | undefined): boolean {
     return isLoopbackAddress(normalized.slice('::ffff:'.length));
   }
   return normalized === '127.0.0.1' || normalized.startsWith('127.');
-}
-
-function isLoopbackRequest(req: Request): boolean {
-  return isLoopbackAddress(req.socket.remoteAddress);
-}
-
-/**
- * Constant-time comparison for the tunnel access token so the ?key= /
- * cookie checks don't leak timing information about the token.
- */
-function tokensEqual(a: string, b: string): boolean {
-  const aBuf = Buffer.from(a);
-  const bBuf = Buffer.from(b);
-  if (aBuf.length !== bBuf.length) return false;
-  return timingSafeEqual(aBuf, bBuf);
 }
 
 export const HEALTH_ROUTES = [
@@ -130,9 +115,7 @@ export const HEALTH_ROUTES = [
   '/api/hermes/team/synthesize/:id',
   '/api/hermes/team/complexity-check',
   '/api/remote/hermes-status',
-  '/api/remote/wake',
-  '/api/remote/ping-bridge',
-  '/api/remote/smart-plug',
+  '/api/remote/info',
   '/functions/v1/transcribe',
   '/api/factory/status',
   '/api/factory/dispatch',
@@ -172,55 +155,6 @@ export function createApp(opts?: { serveFrontend?: boolean }) {
   }));
   app.use(requestIdMiddleware);
   app.use(csrfProtection);
-
-  // ─── Public-tunnel access gate ─────────────────────────────────────────────
-  // Tunnel traffic terminates at the local cloudflared/localtunnel process, so
-  // it arrives from 127.0.0.1. Some providers rewrite Host to the local origin
-  // and preserve the public hostname in X-Forwarded-Host; trust that forwarded
-  // host only for loopback proxy traffic. While a tunnel is running, any request
-  // addressed to the tunnel hostname must present the per-tunnel token (?key=…
-  // on first visit, cookie afterwards). Local and LAN access is unaffected.
-  const REMOTE_KEY_COOKIE = 'spark_remote_key';
-  app.use((req, res, next) => {
-    const tunnel = getTunnelState();
-    if (!tunnel.running || !tunnel.url || !tunnel.accessToken) return next();
-
-    const tunnelHost = new URL(tunnel.url).host.toLowerCase();
-    const requestHost = (req.headers.host || '').toLowerCase();
-    const forwardedHost = (req.headers['x-forwarded-host'] as string | undefined)
-      ?.split(',')[0]
-      ?.trim()
-      ?.toLowerCase();
-    const isTunnelRequest =
-      requestHost === tunnelHost ||
-      (isLoopbackRequest(req) && forwardedHost === tunnelHost);
-    if (!isTunnelRequest) return next();
-
-    const cookies = req.headers.cookie || '';
-    const cookieMatch = cookies.match(new RegExp(`(?:^|;\\s*)${REMOTE_KEY_COOKIE}=([^;]+)`));
-    if (cookieMatch?.[1] && tokensEqual(cookieMatch[1], tunnel.accessToken)) return next();
-
-    const queryKey = typeof req.query.key === 'string' ? req.query.key : null;
-    if (queryKey && tokensEqual(queryKey, tunnel.accessToken)) {
-      res.setHeader(
-        'Set-Cookie',
-        `${REMOTE_KEY_COOKIE}=${tunnel.accessToken}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400`
-      );
-      return next();
-    }
-
-    // req.path (not req.originalUrl) — the token arrives as ?key= and must
-    // not leak into logs.
-    logger.warn(`[server] blocked unauthenticated tunnel request: ${req.method} ${req.path}`);
-    res.status(401);
-    if (req.accepts('html') && !req.path.startsWith('/api/')) {
-      res
-        .type('html')
-        .send('<!doctype html><html><body style="background:#0a0a0a;color:#e0e0e0;font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100dvh"><div style="text-align:center"><h1 style="font-size:1.1rem">🔒 Spark Remote</h1><p style="color:#888;font-size:.85rem">This link requires an access key.<br>Scan the QR code from the Spark desktop app to connect.</p></div></body></html>');
-    } else {
-      sendJson(res, 401, { error: 'Remote access key required' });
-    }
-  });
 
   app.use(express.json({ limit: MAX_BODY_SIZE }));
 
@@ -263,6 +197,7 @@ export function createApp(opts?: { serveFrontend?: boolean }) {
   registerValidateRoute(app);
   registerProxyRoute(app);
   registerTranslateRoute(app);
+  registerCompactRoute(app);
   registerHermesAdminRoute(app);
   registerHermesRuntimesRoute(app);
   registerHermesUpdateRoute(app);
@@ -274,12 +209,12 @@ export function createApp(opts?: { serveFrontend?: boolean }) {
   registerImagesRoute(app);
   registerHermesStreamResumeRoute(app);
   registerRoomRoutes(app);
-  registerRemoteRevivalRoutes(app);
   registerBridgeRoutes(app);
   registerWorkspaceRoutes(app);
   registerFactoryRoutes(app);
   registerMcpWorkersRoute(app);
   registerMcpExtensionsRoute(app);
+  registerRemoteStatusRoutes(app);
 
   // Workspace search lives in registerWorkspaceRoutes (hardened root checks).
   // ─── Health check ──────────────────────────────────────────────────────────
@@ -287,82 +222,77 @@ export function createApp(opts?: { serveFrontend?: boolean }) {
     sendJson(res, 200, { ok: true, routes: HEALTH_ROUTES });
   });
 
-  // ─── Remote access QR page ─────────────────────────────────────────────────
+  // ─── Remote access (Tailscale) ─────────────────────────────────────────────
+  // Spark is reachable from the user's own tailnet, never the public internet.
+  // This only *detects* Tailscale — running `tailscale serve` is the user's
+  // call to make, so we report state and hand back a copy-paste command.
   if (opts?.serveFrontend) {
-    // Tunnel URLs shown to the user (and baked into the QR) carry the access
-    // key so scanning the code authenticates the phone in one step.
-    const keyedTunnelUrl = (t: ReturnType<typeof getTunnelState>) =>
-      t.url && t.accessToken ? `${t.url}/?key=${t.accessToken}` : t.url;
-    const publicTunnelUrl = (t: ReturnType<typeof getTunnelState>, req: Request) =>
-      isLoopbackRequest(req) ? keyedTunnelUrl(t) : t.url;
+    const remotePort = Number(process.env.PORT || 3001);
 
     // JSON endpoint for the frontend component
-    app.get('/api/remote/info', async (req, res) => {
+    app.get('/api/remote/info', async (_req, res) => {
       try {
-        const ip = getLanIp();
-        const port = Number(process.env.PORT || 3001);
-        const { lanUrl, localUrl } = formatConnectionInfo(ip, port);
-        const tunnelState = getTunnelState();
-        const tunnelUrl = publicTunnelUrl(tunnelState, req);
-        // Use tunnel URL if available (works from anywhere), otherwise LAN URL
-        const url = tunnelState.running && tunnelState.url
-          ? tunnelUrl!
-          : (ip ? lanUrl : localUrl);
-        const qrSvg = await generateQrSvgDataUri(url);
-        sendJson(res, 200, { url, lanUrl, localUrl, qrSvg, tunnelUrl });
+        const [status, serve] = await Promise.all([
+          getTailscaleStatus(),
+          getTailscaleServeInfo(remotePort),
+        ]);
+        const localUrl = `http://localhost:${remotePort}`;
+        // Only advertise a tailnet URL that is actually wired up.
+        const url = serve.configured && serve.url ? serve.url : localUrl;
+        // Only encode a QR a phone can actually resolve — a localhost URL would
+        // scan into a dead link. The UI shows the setup command instead.
+        const qrSvg = serve.configured && serve.url ? await generateQrSvgDataUri(url) : '';
+        sendJson(res, 200, {
+          url,
+          localUrl,
+          qrSvg,
+          tailscale: {
+            installed: status.installed,
+            running: status.running,
+            needsLogin: status.needsLogin,
+            hostname: status.hostname,
+            url: status.url,
+            authUrl: status.authUrl,
+            serveConfigured: serve.configured,
+            error: status.error ?? serve.error,
+          },
+          setupCommand: buildServeCommand(remotePort),
+        });
       } catch (err) {
         logger.error(`[server] /api/remote/info failed: ${err instanceof Error ? err.message : String(err)}`);
         sendJson(res, 500, { error: 'Internal server error' });
       }
     });
 
-    // Tunnel management endpoints
-    app.get('/api/remote/tunnel/status', (req, res) => {
-      const t = getTunnelState();
-      sendJson(res, 200, {
-        running: t.running,
-        url: publicTunnelUrl(t, req),
-        provider: t.provider,
-        error: t.error,
-        cloudflaredAvailable: cloudflaredAvailable(),
-        brewAvailable: brewAvailable(),
-      });
-    });
-
-    app.post('/api/remote/tunnel/start', async (req, res) => {
-      const port = Number(process.env.PORT || 3001);
-      // If already running, return current state
-      const current = getTunnelState();
-      if (current.running) {
-        sendJson(res, 200, { ...current, url: publicTunnelUrl(current, req), accessToken: undefined });
-        return;
-      }
-      // Try to start
-      const result = await startTunnel(port);
-      sendJson(res, result.running ? 200 : 500, { ...result, url: publicTunnelUrl(result, req), accessToken: undefined });
-    });
-
-    app.post('/api/remote/tunnel/stop', (_req, res) => {
-      killTunnel();
-      sendJson(res, 200, { running: false });
-    });
-
-    app.post('/api/remote/tunnel/install', async (_req, res) => {
-      if (cloudflaredAvailable()) {
-        sendJson(res, 200, { ok: true, message: 'cloudflared is already installed.' });
-        return;
-      }
-      const result = await installCloudflared();
-      sendJson(res, result.ok ? 200 : 500, result);
-    });
-
     app.get('/remote', async (_req, res) => {
       try {
-        const ip = getLanIp();
         const port = Number(process.env.PORT || 3001);
-        const { lanUrl, localUrl } = formatConnectionInfo(ip, port);
-        const url = ip ? lanUrl : localUrl;
-        const qrSvg = await generateQrSvgDataUri(url);
+        const [status, serve] = await Promise.all([
+          getTailscaleStatus(),
+          getTailscaleServeInfo(port),
+        ]);
+        const ready = serve.configured && Boolean(serve.url);
+        const url = ready && serve.url ? serve.url : `http://localhost:${port}`;
+        const setupCommand = buildServeCommand(port);
+        // Only encode a QR that a phone can actually resolve — a localhost URL
+        // would scan into a dead link.
+        const qrSvg = ready ? await generateQrSvgDataUri(url) : '';
+
+        const hint = ready
+          ? 'Reachable from any device on your tailnet'
+          : !status.installed
+            ? 'Tailscale is not installed on this computer'
+            : !status.running
+              ? 'Tailscale is not running'
+              : 'Not exposed to the tailnet yet — run the command below';
+
+        const steps = ready
+          ? `<li>1. Install Tailscale on your phone and sign in to the same tailnet</li>
+      <li>2. Open your camera app and point at the QR code</li>
+      <li>3. Tap the notification to open Spark</li>`
+          : `<li>1. Start Tailscale on this computer</li>
+      <li>2. Run <code>${setupCommand}</code></li>
+      <li>3. Reload this page to get the QR code</li>`;
 
         res.send(`<!doctype html>
 <html lang="en">
@@ -433,20 +363,32 @@ export function createApp(opts?: { serveFrontend?: boolean }) {
       line-height: 1.6;
       margin-bottom: 0.25rem;
     }
+    .steps code {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 0.7rem;
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 6px;
+      padding: 0.1rem 0.35rem;
+      color: #a78bfa;
+      word-break: break-all;
+    }
   </style>
 </head>
 <body>
   <div class="card">
     <h1>📱 Spark Remote</h1>
-    <p>Scan the QR code with your phone camera<br>to open Spark on your mobile device</p>
-    <div class="qr-wrap"><img src="${qrSvg}" alt="QR Code"></div>
-    <div class="url">${url}</div>
-    <div class="url-label">Same Wi-Fi network required</div>
+    <p>${ready
+      ? 'Scan the QR code with your phone camera<br>to open Spark on your mobile device'
+      : 'Expose Spark to your tailnet<br>to enable mobile access'}</p>
+    ${ready
+      ? `<div class="qr-wrap"><img src="${qrSvg}" alt="QR Code"></div>
+    <div class="url">${url}</div>`
+      : `<div class="url">${setupCommand}</div>`}
+    <div class="url-label">${hint}</div>
     <a class="btn" href="/">Open Spark →</a>
     <ol class="steps">
-      <li>1. Connect your phone to the same Wi-Fi as this computer</li>
-      <li>2. Open your camera app and point at the QR code</li>
-      <li>3. Tap the notification to open Spark</li>
+      ${steps}
     </ol>
   </div>
 </body>
@@ -526,32 +468,43 @@ export function startServer(port?: number) {
       // Surface a mispointed HERMES_BRIDGE_URL (gateway vs full bridge) early.
       warnIfBridgeMisconfigured();
 
-      // ─── Terminal QR code for mobile access ─────────────────────────────
+      // ─── Tailscale remote access ────────────────────────────────────────
       if (serveFrontend) {
-        const ip = getLanIp();
-        const { lanUrl, localUrl } = formatConnectionInfo(ip, resolvedPort);
+        const [tsStatus, tsServe] = await Promise.all([
+          getTailscaleStatus(),
+          getTailscaleServeInfo(resolvedPort),
+        ]);
+        const localUrl = `http://localhost:${resolvedPort}`;
 
         logger.info('');
-        logger.info('━━━ 📱 Mobile Access ━━━');
+        logger.info('━━━ 📱 Remote Access (Tailscale) ━━━');
         logger.info('');
         logger.info(`  Local:  ${localUrl}`);
-        if (ip) {
-          logger.info(`  LAN:    ${lanUrl}`);
-          logger.info(`  QR:     ${lanUrl}/remote`);
+        if (!tsStatus.installed) {
+          logger.info('  Tailscale is not installed — remote access is off.');
+          logger.info('  Install it from https://tailscale.com/download');
+        } else if (!tsStatus.running) {
+          logger.info('  Tailscale is stopped — start it to reach Spark from your tailnet.');
+          if (tsStatus.url) logger.info(`  Tailnet URL once running: ${tsStatus.url}`);
+        } else if (tsServe.configured && tsServe.url) {
+          logger.info(`  Tailnet: ${tsServe.url}`);
+          logger.info(`  QR page: ${localUrl}/remote`);
           logger.info('');
           try {
-            const qr = await generateTerminalQr(lanUrl);
+            const qr = await generateTerminalQr(tsServe.url);
             logger.info(qr);
           } catch {
             logger.info('  [QR generation skipped]');
           }
-          logger.info('');
-          logger.info('  Open /remote on this server from any browser to see the QR page.');
-          logger.info('  Or scan the code above with your phone camera.');
         } else {
-          logger.info('  (No LAN IP detected — connect to Wi-Fi for mobile access)');
+          logger.info(`  Tailnet: ${tsStatus.url ?? '(unknown)'} (not exposed yet)`);
+          logger.info('');
+          logger.info('  Expose Spark to your tailnet with:');
+          logger.info(`    ${buildServeCommand(resolvedPort)}`);
+          logger.info('');
+          logger.info(`  Then open ${localUrl}/remote for the QR code.`);
         }
-        logger.info('━━━━━━━━━━━━━━━━━━━━━');
+        logger.info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
         logger.info('');
       }
       resolve({ app, port: resolvedPort });
@@ -593,9 +546,6 @@ if (isEntry) {
     });
   }
   const shutdown = () => {
-    // Kill the public tunnel first: while it lives, its process still accepts
-    // connections, so the access-token gate must stay armed until it's dead.
-    killTunnel();
     // Stop team-agent subprocesses so a `npm run server` exit doesn't orphan
     // run-kanban-agent.py children.
     shutdownTeamCoordinator();

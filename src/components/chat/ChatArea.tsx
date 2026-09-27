@@ -57,6 +57,7 @@ import {
   getProposalApprovalKey,
   matchApprovalPolicy,
 } from '@/lib/approval-policy';
+import { getMessageContent } from '@/hooks/chat-utils';
 
 interface ChatPartLike {
   type?: 'text' | 'reasoning' | 'tool-invocation' | 'step-start' | 'source' | 'file';
@@ -68,7 +69,7 @@ interface ChatPartLike {
 interface ChatMessageLike {
   id: string;
   role: string;
-  content: string;
+  content?: string;
   timestamp?: string;
   parts?: ChatPartLike[];
   toolInvocations?: ProposalToolInvocationLike[];
@@ -113,7 +114,7 @@ function getMessageScrollDigest(message?: ChatMessageLike | null) {
     ? message.toolInvocations.map((t) => `${t.toolName}:${t.state ?? ''}`).join(',')
     : '0';
 
-  return `${message.id}:${message.content}:${partsDigest}:${invocationsDigest}`;
+  return `${message.id}:${getMessageContent(message)}:${partsDigest}:${invocationsDigest}`;
 }
 
 function getToolActivityDigest(toolActivity: ToolActivityEvent[] = []) {
@@ -220,7 +221,7 @@ function getVisibleAssistantToolCount(
   }
 
   const pseudoSource = getPseudoToolSourceText({
-    content: message.content,
+    content: getMessageContent(message),
     parts: parts.map((part) => ({ type: part.type, text: part.text })),
   });
   const pseudoCount = extractPseudoToolInvocations(pseudoSource)
@@ -244,10 +245,10 @@ function allowPseudoRepoWritesForAssistant(messages: ChatMessageLike[], assistan
   }
 
   const previousUserMessage = messages.slice(0, assistantIndex).findLast((message) =>
-    message.role === 'user' && typeof message.content === 'string' && message.content.trim().length > 0,
+    message.role === 'user' && getMessageContent(message).trim().length > 0,
   );
 
-  return previousUserMessage ? isRepoWriteMessage(previousUserMessage.content) : false;
+  return previousUserMessage ? isRepoWriteMessage(getMessageContent(previousUserMessage)) : false;
 }
 
 function IssueNextStepCallout({
@@ -414,7 +415,7 @@ const ChatVirtuosoFooter = React.memo(function ChatVirtuosoFooter({
           <BuddyComparisonPanel
             buddyResponse={buddyResponse}
             primaryResponse={lastAssistantMessage ? {
-              content: lastAssistantMessage.content,
+              content: getMessageContent(lastAssistantMessage),
               modelName: activeModel,
             } : undefined}
             autoExpandOnArrival={true}
@@ -585,7 +586,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     !isStreaming &&
     Object.keys(changeset.changes).length === 0 &&
     lastUserMessage &&
-    isIssueExplainPrompt(lastUserMessage.content),
+    isIssueExplainPrompt(getMessageContent(lastUserMessage)),
   );
   const showFooterActivity = isStreaming && !hasInlineAssistantActivity(lastAssistantMessage);
   const proposalDigest = getProposalDigest(messages);
@@ -706,7 +707,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   }, [scrollerEl]);
 
   useEffect(() => {
-    const hasMessageHistory = messages.some((message) => message.content.trim().length > 0);
+    const hasMessageHistory = messages.some((message) => getMessageContent(message).trim().length > 0);
     if (!hasMessageHistory) {
       clearPanelUsage(panelId);
       return;
@@ -985,7 +986,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           .join('\n') || undefined
       : undefined;
 
-    const isReasoningStreaming = isLastAssistantStreaming && !!reasoning && !msg.content;
+    const messageContent = getMessageContent(msg);
+    const isReasoningStreaming = isLastAssistantStreaming && !!reasoning && !messageContent;
 
     const messageToolActivity = toolActivityMap?.[msg.id]
       || (isLastAssistantStreaming ? toolActivityMap?.['current'] : undefined);
@@ -1004,11 +1006,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             id: msg.id,
             conversationId: conversationId || '',
             role: msg.role as 'user' | 'assistant',
-            content: msg.content,
+            content: messageContent,
             timestamp: msg.timestamp || (messageTimestampCacheRef.current[msg.id] ??= new Date().toISOString()),
           }}
           isStreaming={isLastAssistantStreaming}
-          streamingContent={isLastAssistantStreaming ? msg.content : undefined}
+          streamingContent={isLastAssistantStreaming ? messageContent : undefined}
           parts={displayParts as React.ComponentProps<typeof MessageBubble>['parts']}
           reasoning={reasoning}
           isReasoningStreaming={isReasoningStreaming}

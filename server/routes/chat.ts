@@ -19,6 +19,14 @@ import { normalizeChatMessages } from '../message-normalization';
 import { isAbortLikeError } from '../direct-sse-proxy';
 import { buildCorsHeaders, chatRateLimiter, getClientIp, sendJson } from '../lib/helpers';
 import { logger } from '../lib/logger';
+import {
+  isReadOnlyMode,
+  resolvePermissionMode,
+  shouldAutoApprove,
+  getPermissionModeSpec,
+  type PermissionMode,
+} from '../lib/permission-modes';
+import { buildOutputStylePrompt, resolveOutputStyle } from '../lib/output-styles';
 import { UI_MESSAGE_STREAM_HEADERS } from '../lib/ui-message-stream';
 import {
   createSingleMessageDataStream,
@@ -117,22 +125,10 @@ function wrapToolWithCallEvents(
   };
 }
 
-const PLAN_MODE_SYSTEM_PROMPT = `You are operating in PLAN MODE (read-only exploration).
-
-RULES (strict):
-- You MAY: read files, search code, analyze structure, inspect configs, run read-only commands
-- You MAY NOT: write files, edit files, delete files, run mutating commands, apply patches
-- You MAY NOT: use write_file, patch, or execute_code tools
-- For the terminal tool, only run read-only commands (ls, cat, grep, find, git log, git diff, git status, etc.)
-- Do NOT use shell redirects (>, >>) or destructive commands (rm, mv, chmod)
-
-YOUR GOAL:
-- Explore the codebase to understand the current state
-- Produce a clear, actionable implementation plan
-- Your plan should be "decision complete" — detailed enough for another engineer to implement without asking questions
-- Structure your plan with: goal, files to modify, specific changes, and expected outcome
-
-When you are done exploring and ready to present your plan, clearly mark it with a section header like "## Implementation Plan".`;
+// Permission-mode and output-style prompts are canonical in server/lib (shared
+// with the client so both sides agree on the vocabulary). The read-only
+// plan-mode prompt used to be inlined here; it now lives in
+// `permission-modes.ts` as the 'plan' mode's prompt.
 
 // Filter out problematic stream lines (e.g. empty error entries from some providers)
 const REPO_PROMPT_FILE_TREE_LIMIT = 200;
@@ -446,6 +442,8 @@ app.post('/functions/v1/chat', async (req, res) => {
       hermes_swarm_mode,
       hermes_loop_mode,
       planMode: rawPlanMode,
+      permissionMode: rawPermissionMode,
+      outputStyle: rawOutputStyle,
       repo_file_cache,
       repo_file_tree,
       agent_toolsets,
@@ -455,7 +453,16 @@ app.post('/functions/v1/chat', async (req, res) => {
       continuing_approved_proposal: rawContinuingApprovedProposal,
     } = req.body;
 
-    const planMode = rawPlanMode === true || rawPlanMode === 'true';
+    // Permission mode supersedes the legacy `planMode` boolean: `plan` maps to
+    // the same read-only behaviour, and the other modes add their own gates.
+    const permissionMode: PermissionMode = resolvePermissionMode({
+      permissionMode: rawPermissionMode,
+      planMode: rawPlanMode,
+    });
+    // `planMode` is kept as the read-only shorthand because every downstream
+    // tool filter already speaks it.
+    const planMode = isReadOnlyMode(permissionMode);
+    const outputStyle = resolveOutputStyle(rawOutputStyle);
     // Per-conversation auto-approve for server-side approval gates (additive;
     // the client settings UI sends this when the user opts into auto-approve).
     const autoApprove = rawAutoApprove === true || rawAutoApprove === 'true';
@@ -466,7 +473,11 @@ app.post('/functions/v1/chat', async (req, res) => {
       typeof conversation_id === 'string' && conversation_id.trim().length > 0
         ? conversation_id.trim()
         : 'default';
-    approvalPolicyStore.setAutoApprove(conversationKey, autoApprove);
+    approvalPolicyStore.setAutoApprove(
+      conversationKey,
+      // `bypassPermissions` / `dontAsk` waive every gate, including shell.
+      autoApprove || shouldAutoApprove(permissionMode, 'command'),
+    );
 
     const sanitizeFileTree = (tree: unknown): string[] =>
       Array.isArray(tree)
@@ -678,9 +689,20 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
         : noBuildNote;
     }
 
-    // STEP 4: Prepend plan mode system prompt when active
-    if (planMode) {
-      effectiveSystemPrompt = PLAN_MODE_SYSTEM_PROMPT + '\n\n' + effectiveSystemPrompt;
+    // STEP 4: Prepend the active permission mode's system prompt. Modes with no
+    // prompt of their own (e.g. `default`) contribute nothing.
+    const permissionModePrompt = getPermissionModeSpec(permissionMode).prompt;
+    if (permissionModePrompt) {
+      effectiveSystemPrompt = permissionModePrompt + '\n\n' + effectiveSystemPrompt;
+    }
+
+    // STEP 4b: Append the active output style (its prompt plus the per-turn
+    // reminder that keeps the model in the style as the conversation grows).
+    const outputStylePrompt = buildOutputStylePrompt(outputStyle);
+    if (outputStylePrompt) {
+      effectiveSystemPrompt = effectiveSystemPrompt
+        ? `${effectiveSystemPrompt}\n\n${outputStylePrompt}`
+        : outputStylePrompt;
     }
 
     const normalizedChatInput = normalizeChatMessages(messages, effectiveSystemPrompt);
@@ -863,6 +885,12 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
         input.tool === 'create_repo_file' ||
         input.tool === 'delete_repo_file' ||
         input.tool === 'batch_edit_repo_files';
+      // `acceptEdits` pre-approves file writes while still gating shell;
+      // `bypassPermissions` / `dontAsk` pre-approve everything.
+      const modeAutoApproves = shouldAutoApprove(
+        permissionMode,
+        isRepoWriteTool ? 'edit' : input.tool === 'run_command' || input.tool === 'execute_python' ? 'command' : 'other',
+      );
       return approvalPolicyStore.authorize({
         conversationId: conversationKey,
         tool: input.tool,
@@ -871,7 +899,7 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
         reason: input.reason,
         // Repo writes are additionally auto-approved for the turn following an
         // approved proposal (the client's proposal modal already gated them).
-        autoApprove: continuingApprovedProposal && isRepoWriteTool,
+        autoApprove: modeAutoApproves || (continuingApprovedProposal && isRepoWriteTool),
         emit: (payload) => emitToolEvent(payload as unknown as ServerToolEvent),
       });
     };

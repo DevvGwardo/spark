@@ -1,0 +1,10 @@
+--- src/components/chat/SessionHistoryChat.tsx
++++ src/components/chat/SessionHistoryChat.tsx
+@@ -4,6 +4,7 @@
+ import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
+ import { ToolMessageAccordion } from './ToolMessageAccordion';
+ import { MarkdownBlock } from './MarkdownBlock';
++import { getMessageContent } from '@/hooks/chat-utils';
+ 
+ const ROLE_STYLES: Record<string, { border: string; bg: string; label: string }> = {
+   system: { border: 'border-violet-500/20', bg: 'bg-violet-500/5', label: 'text-violet-500/70' },

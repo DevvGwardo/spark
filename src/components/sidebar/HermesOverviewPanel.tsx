@@ -18,7 +18,10 @@ export function HermesOverviewPanel() {
   const [overview, setOverview] = useState<HermesWorkspaceOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [dashboardUrl, setDashboardUrl] = useState('http://127.0.0.1:9119');
+  // Null until the bridge tells us the real host. Previously this defaulted to
+  // a hardcoded 127.0.0.1:9119, which silently opened the wrong address
+  // whenever Spark ran against a remote Hermes host and this fetch failed.
+  const [dashboardUrl, setDashboardUrl] = useState<string | null>(null);
 
   const loadOverview = async () => {
     setLoading(true);
@@ -53,7 +56,7 @@ export function HermesOverviewPanel() {
 
   if (error && !overview) {
     return (
-      <div className="mx-3 mt-3 rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-[12px] text-red-300">
+      <div className="mx-3 mt-3 rounded-xl border border-destructive/25 bg-destructive/10 p-3 text-[12px] text-destructive">
         {error}
       </div>
     );
@@ -71,9 +74,10 @@ export function HermesOverviewPanel() {
         <div className="flex items-center gap-1">
           <button
             type="button"
-            onClick={() => openExternalUrl(dashboardUrl)}
-            className="inline-flex h-7 items-center gap-1 rounded-lg px-2 text-[10px] text-muted-foreground/60 transition-colors hover:bg-[hsl(var(--sidebar-active))] hover:text-foreground"
-            title="Open Hermes dashboard"
+            onClick={() => { if (dashboardUrl) openExternalUrl(dashboardUrl); }}
+            disabled={!dashboardUrl}
+            className="inline-flex h-7 items-center gap-1 rounded-lg px-2 text-[10px] text-muted-foreground/60 transition-colors hover:bg-[hsl(var(--sidebar-active))] hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent"
+            title={dashboardUrl ? 'Open Hermes dashboard' : 'Dashboard URL unavailable'}
           >
             <ExternalLink className="h-3 w-3" />
             Dashboard
@@ -89,7 +93,7 @@ export function HermesOverviewPanel() {
       </div>
 
       {error && (
-        <div className="mx-3 mb-2 rounded-xl border border-red-500/20 bg-red-500/10 p-2 text-[11px] text-red-300">
+        <div className="mx-3 mb-2 rounded-xl border border-destructive/25 bg-destructive/10 p-2 text-[11px] text-destructive">
           {error}
         </div>
       )}

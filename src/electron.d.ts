@@ -21,6 +21,14 @@ export interface DeepLinkNavigateTarget {
   name?: string
 }
 
+/** Result of an in-page find request over the mini browser's webContents. */
+export interface BrowserFindResult {
+  requestId: number
+  activeMatchOrdinal: number
+  matches: number
+  finalUpdate: boolean
+}
+
 export interface ElectronAPI {
   versions: {
     electron: string
@@ -62,6 +70,12 @@ export interface ElectronAPI {
     onLoading: (callback: (loading: boolean) => void) => () => void
     onFailLoad: (callback: (payload: { url: string; errorCode: number; errorDescription: string }) => void) => () => void
     onNavState: (callback: (state: { canGoBack: boolean; canGoForward: boolean }) => void) => () => void
+    findInPage: (
+      query: string,
+      options?: { forward?: boolean; findNext?: boolean },
+    ) => Promise<{ requestId: number } | null>
+    stopFindInPage: (action?: 'clearSelection' | 'keepSelection') => Promise<void>
+    onFoundInPage: (callback: (result: BrowserFindResult) => void) => () => void
   }
   onNewChat?: (callback: () => void) => () => void
   quick?: {

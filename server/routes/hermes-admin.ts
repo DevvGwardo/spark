@@ -719,37 +719,8 @@ export function registerHermesAdminRoute(app: Express) {
     await proxyTo(req, res, '/workspace/usage');
   });
 
-  app.get('/api/hermes/workspace/logs', async (req: Request, res: Response) => {
-    await proxyTo(req, res, `/workspace/logs${getQuerySuffix(req)}`);
-  });
-
   app.get('/api/hermes/workspace/system', async (req: Request, res: Response) => {
     await proxyTo(req, res, '/workspace/system');
-  });
-
-  // ─── Webhooks ─────────────────────────────────────────────────────────
-
-  app.get('/api/hermes/webhooks', async (req: Request, res: Response) => {
-    await proxyTo(req, res, '/webhooks');
-  });
-
-  app.post('/api/hermes/webhooks', async (req: Request, res: Response) => {
-    await proxyTo(req, res, '/webhooks', {
-      method: 'POST',
-      body: JSON.stringify(req.body),
-    });
-  });
-
-  app.delete('/api/hermes/webhooks/:name', async (req: Request, res: Response) => {
-    await proxyTo(req, res, `/webhooks/${encodeURIComponent(req.params.name)}`, {
-      method: 'DELETE',
-    });
-  });
-
-  // ─── Pairing ──────────────────────────────────────────────────────────
-
-  app.get('/api/hermes/pairing', async (req: Request, res: Response) => {
-    await proxyTo(req, res, '/pairing');
   });
 
   app.get('/api/hermes/workspace/files', async (req: Request, res: Response) => {

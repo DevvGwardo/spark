@@ -1,12 +1,12 @@
 # Mobile & Remote Access
 
-> **Status: optional, not currently deployed.** Spark is primarily a desktop app; the web build below is an opt-in way to reach it from a browser. No hosted instance is maintained — if you want web access, use one of the options below on your own infrastructure.
+> **Status: optional, not currently deployed.** Spark is primarily a desktop app; the web build below is an opt-in way to reach it from a browser. No hosted instance is maintained — if you want web access, use the setup below on your own infrastructure.
 
-Spark is primarily a desktop app, but the web build can be deployed to a server and accessed from any browser — including mobile phones.
+Spark is primarily a desktop app, but the web build can be served over HTTP and reached from any browser — including mobile phones.
 
 ## How It Works
 
-The Express API server (`server/index.ts`) now has a **production mode** that serves the built frontend (`dist/`) as static files. This means a single process serves both the API and the UI, deployable anywhere Node.js runs.
+The Express API server (`server/index.ts`) has a **production mode** that serves the built frontend (`dist/`) as static files. A single process serves both the API and the UI.
 
 ### Production Mode
 
@@ -31,104 +31,56 @@ This builds the frontend with `VITE_API_URL=` (same-origin) and starts the serve
 
 Terminal and mini-browser gracefully degrade — they won't appear in the web build.
 
-## Deployment Options
+## Remote Access: Tailscale
 
-### Option 1: Cloudflare Tunnel (from your home machine)
+Remote access goes through the user's **own tailnet**. Spark is never exposed to the public internet, and there is no built-in auth to defeat because only devices signed in to the tailnet can reach the host.
 
-Best when you want to keep everything running on your local machine but access it from anywhere.
+### Setup
 
-**Prerequisites:**
-- A domain on Cloudflare
-- `cloudflared` installed: `brew install cloudflared`
+1. Install Tailscale on the machine running Spark: <https://tailscale.com/download>
+2. Install Tailscale on your phone and sign in to the same tailnet.
+3. Start the server, then expose it:
 
-**Steps:**
-
-1. Start the production server locally:
-   ```bash
+   ```
    npm run serve
+   tailscale serve --bg --https=8443 http://localhost:3001
    ```
 
-2. Create a tunnel:
-   ```bash
-   cloudflared tunnel create cloudchat
-   ```
+   Spark never runs this for you — `tailscale serve` writes persistent config, so it stays the user's call. The Remote Access dialog shows the exact command for the running port with a copy button.
 
-3. Configure the tunnel (`~/.cloudflared/config.yml`):
-   ```yaml
-   tunnel: cloudchat
-   credentials-file: /Users/devgwardo/.cloudflared/cloudchat.json
-   
-   ingress:
-     - hostname: cloudchat.yourdomain.com
-       service: http://localhost:3001
-     - service: http_status:404
-   ```
+4. Open `https://<machine>.<tailnet>.ts.net:8443` from any tailnet device, or scan the QR code in the Remote Access dialog (or on `/remote`).
 
-4. Start the tunnel:
-   ```bash
-   cloudflared tunnel run cloudchat
-   ```
+`tailscale serve` provisions real TLS for the `*.ts.net` name, so no certificate setup is needed. The app requests **port 8443, not 443**, deliberately: 443 is `tailscale serve`'s default and is commonly already mapped to another local service, so claiming it would clobber that mapping.
 
-### Option 2: Direct VPS / Vercel / Fly.io
+### What the app does and does not do
 
-Any Node.js host works. The key is setting `SERVE_FRONTEND=true` and building with `VITE_API_URL=` (empty).
+The Remote Access dialog and `/remote` page **detect** Tailscale and report one of four states — not installed, stopped, running-but-not-exposed, or active. When it is running but not yet exposed, they show the copy-paste command. They never start the daemon, run `tailscale serve`, or change any Tailscale configuration.
 
-Example Dockerfile for a VPS:
+Endpoints:
 
-```dockerfile
-FROM node:22-alpine
-WORKDIR /app
-COPY . .
-RUN npm ci
-RUN npm run build
-EXPOSE 3001
-CMD ["npx", "tsx", "server/index.ts"]
-```
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/remote/info` | Tailnet URL, QR SVG, detection state, and the setup command |
+| `GET /api/remote/hermes-status` | Read-only bridge reachability probe for the mobile status card |
+| `GET /remote` | Standalone HTML page with the QR code and setup steps |
 
-## Mobile-Specific Considerations
+All three are registered only when the frontend is served (`SERVE_FRONTEND=true`).
 
-### Responsive Layout
-The current UI is desktop-first. Some panels may be cramped on small screens. Key layout features that work on mobile:
-- **Chat panel** — responsive, scrolls naturally
-- **Sidebar** — collapses automatically
-- **Settings** — uses modals and scrollable content
+### Environment Variables
 
-### Touch Interactions
-- Standard mobile browser touch works for scrolling, tapping, text input
-- Code blocks can be tapped to copy
-- Markdown rendering is mobile-friendly
-
-### Performance
-- The built frontend is ~5MB total (JS + CSS + assets)
-- First load may be slow on cellular — subsequent loads cache well
-- Each chat message streams via SSE — works on flaky connections
-
-### Security
-There is **no built-in auth** — the server is designed for local use. When deploying publicly:
-- Use Cloudflare Tunnel with Access policies (email, Google, one-time pin)
-- Or add a reverse proxy with auth (Caddy, nginx, Traefik)
-- Or keep it on a VPN (Tailscale, WireGuard, ZeroTier)
+None are required. There is no tunnel to configure and no revival action to enable — the tailnet is the transport.
 
 ## Mobile Control App
 
-When you visit Spark from a mobile device (or scan the QR code shown in the Remote Access modal), open the `/m` mobile-optimized interface. This is a status-first view designed for quick Hermes checks and revival actions when you're away from home.
+When you visit Spark from a mobile device (or scan the QR code in the Remote Access dialog), open the `/m` mobile-optimized interface. This is a status-first view designed for quick Hermes checks when you're away from home.
 
 ### What the view shows
 
 - **Live Hermes status** — online / recently-lost / offline, with a "last seen" timestamp, sourced from the bridge `/health` endpoint. The status polls every 5s (with backoff on failure) and updates without a manual refresh.
-- **Chat** — a primary CTA opens `/m/chat`, a mobile-optimized chat that reuses the standard streaming chat infrastructure (SSE over the tunnel).
-- **Revival actions** — `Wake Computer` (Wake-on-LAN magic packet), `Ping Bridge` (retry probes against the bridge), and `Smart Plug Power Cycle` (webhook). Env-gated actions whose variable is unset are disabled with a "Not configured" hint. After a wake, the view polls status and reflects the flip to online within ~60s.
+- **Chat** — a primary CTA opens `/m/chat`, a mobile-optimized chat that reuses the standard streaming chat infrastructure.
 
-### Environment Variables
+### Security
 
-The revival panel uses these env vars on the server. None are required — actions degrade gracefully to "Not configured".
+Reachability is enforced by the tailnet, not by the app. A device that is not signed in to the tailnet cannot resolve or connect to the `*.ts.net` hostname at all.
 
-| Variable | Description |
-|---|---|
-| `REMOTE_WAKE_MAC` | MAC address of the home PC for Wake-on-LAN (format: `aa:bb:cc:dd:ee:ff`) |
-| `REMOTE_WAKE_BROADCAST` | Broadcast address for the WoL magic packet (defaults to `255.255.255.255`) |
-| `REMOTE_SMART_PLUG_URL` | Webhook URL for smart plug power cycling (Kasa, Shelly, IFTTT, etc.) |
-
-### Security Warning
-
-The mobile control app exposes revival actions over the same tunnel as the rest of Spark. **Anyone with the tunnel URL can wake your computer or power-cycle your machine.** Strongly consider adding Cloudflare Access (email, Google, or one-time pin) on your tunnel to prevent unauthorized access. Without it, the tunnel URL is effectively an open door to your home machine.
+Do **not** put this behind `tailscale funnel` — that publishes the service to the public internet and reintroduces exactly the exposure this setup exists to avoid.

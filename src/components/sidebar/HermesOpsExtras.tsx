@@ -109,49 +109,52 @@ export function HermesOpsExtras() {
       : 'runs (gateway when request supports it)'
     : 'agent-loop (default)';
 
+  // Each source is pre-caught to `null`, and every render branch has an
+  // "Unavailable" fallback, so a `Promise.all` here can never reject. There is
+  // deliberately no try/catch — `error` is reserved for the action handlers
+  // below, which is the only thing that can actually fail in a way the user
+  // needs to see.
   const loadPrimary = useCallback(async () => {
     setLoading(true);
-    setError(null);
-    try {
-      const [m, c, cu, comp, g] = await Promise.all([
-        fetchMemoryStatus().catch(() => null),
-        fetchCheckpoints().catch(() => null),
-        fetchCuratorStatus().catch(() => null),
-        fetchComputerUseStatus().catch(() => null),
-        fetchGatewayCapabilities().catch(() => null),
-      ]);
-      setMemory(m);
-      setCheckpoints(c);
-      setCurator(cu);
-      setComputer(comp);
-      setGateway(g);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load ops status');
-    } finally {
-      setLoading(false);
-    }
+    const [m, c, cu, comp, g] = await Promise.all([
+      fetchMemoryStatus().catch(() => null),
+      fetchCheckpoints().catch(() => null),
+      fetchCuratorStatus().catch(() => null),
+      fetchComputerUseStatus().catch(() => null),
+      fetchGatewayCapabilities().catch(() => null),
+    ]);
+    setMemory(m);
+    setCheckpoints(c);
+    setCurator(cu);
+    setComputer(comp);
+    setGateway(g);
+    setLoading(false);
   }, []);
 
   const loadSecondary = useCallback(async () => {
-    const [b, i, p, pl, hk, ls, sec, dash] = await Promise.all([
-      fetchSkillBundles().catch(() => ({ bundles: [] as SkillBundle[] })),
-      fetchInsights(7).catch(() => ({ report: '' })),
-      fetchPetsStatus().catch(() => null),
-      fetchPluginsStatus(120).catch(() => null),
-      fetchHooksStatus().catch(() => null),
-      fetchLspStatus().catch(() => null),
-      fetchSecretsStatus().catch(() => null),
-      fetchHermesDashboardUrl().catch(() => ({ ok: false, url: null })),
-    ]);
-    setBundles(b.bundles || []);
-    setInsights(i.report || '');
-    setPets(p);
-    setPlugins(pl?.plugins || []);
-    setPluginsSummary(pl ? { total: pl.total, enabled: pl.enabled_count } : null);
-    setHooks(hk);
-    setLsp(ls);
-    setSecrets(sec);
-    setDashboardUrl(dash.ok && dash.url ? dash.url : null);
+    try {
+      const [b, i, p, pl, hk, ls, sec, dash] = await Promise.all([
+        fetchSkillBundles().catch(() => ({ bundles: [] as SkillBundle[] })),
+        fetchInsights(7).catch(() => ({ report: '' })),
+        fetchPetsStatus().catch(() => null),
+        fetchPluginsStatus(120).catch(() => null),
+        fetchHooksStatus().catch(() => null),
+        fetchLspStatus().catch(() => null),
+        fetchSecretsStatus().catch(() => null),
+        fetchHermesDashboardUrl().catch(() => ({ ok: false, url: null })),
+      ]);
+      setBundles(b.bundles || []);
+      setInsights(i.report || '');
+      setPets(p);
+      setPlugins(pl?.plugins || []);
+      setPluginsSummary(pl ? { total: pl.total, enabled: pl.enabled_count } : null);
+      setHooks(hk);
+      setLsp(ls);
+      setSecrets(sec);
+      setDashboardUrl(dash.ok && dash.url ? dash.url : null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load ops status');
+    }
   }, []);
 
   const load = useCallback(async () => {
@@ -417,7 +420,7 @@ export function HermesOpsExtras() {
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-2 py-1.5 text-[11px] text-red-300">
+        <div className="rounded-lg border border-destructive/25 bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">
           {error}
         </div>
       )}
@@ -804,7 +807,7 @@ export function HermesOpsExtras() {
                       type="button"
                       onClick={() => void onDeleteBundle(bundle.name)}
                       disabled={busy === `bundle-del-${bundle.name}`}
-                      className="shrink-0 rounded border border-border/50 px-1.5 py-0.5 text-[10px] text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                      className="shrink-0 rounded border border-border/50 px-1.5 py-0.5 text-[10px] text-muted-foreground hover:text-destructive disabled:opacity-50"
                     >
                       {busy === `bundle-del-${bundle.name}` ? '…' : 'Del'}
                     </button>

@@ -1313,7 +1313,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function M
 }) {
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [editContent, setEditContent] = useState(message.content);
+  const [editContent, setEditContent] = useState(message.content || '');
   const [thinkingOpen, setThinkingOpen] = useState(false);
   const prevReasoningStreamingRef = useRef(false);
   const copyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1324,11 +1324,11 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function M
   // stale copy is never submitted.
   useEffect(() => {
     if (editing) {
-      setEditContent(message.content);
+      setEditContent(message.content || '');
     }
   }, [editing, message.content]);
 
-  const rawContent = isStreaming ? (streamingContent || '') : message.content;
+  const rawContent = isStreaming ? (streamingContent || '') : (message.content || '');
   const hasStructuredRepoToolInvocations = Boolean(
     toolInvocations?.some((invocation) => REPO_TOOL_NAMES.has(invocation.toolName)) ||
     parts?.some((part) => part.type === 'tool-invocation' && part.toolInvocation && REPO_TOOL_NAMES.has(part.toolInvocation.toolName)),

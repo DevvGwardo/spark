@@ -1,6 +1,5 @@
 import { useNavigate } from "react-router-dom";
 import StatusCard from "./StatusCard";
-import RevivalPanel from "./RevivalPanel";
 import OfflineBanner from "./OfflineBanner";
 
 const MobileShell = () => {
@@ -40,12 +39,6 @@ const MobileShell = () => {
       >
         Chat
       </button>
-
-      {/* RevivalPanel slot */}
-      <div>
-        {/* RevivalPanel owned by another agent */}
-        <RevivalPanel />
-      </div>
     </div>
   );
 };

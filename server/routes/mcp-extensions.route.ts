@@ -2,9 +2,7 @@
 // HTTP surface for .mcpb extension installs. Statically imports the
 // backend installer (server/lib/mcp-extension-installer.ts) — the runtime
 // poll-read loader was retired once the installer landed.
-import { timingSafeEqual } from 'crypto';
 import { Router, type Express, type Request, type Response } from 'express';
-import { getTunnelState } from '../lib/tunnel';
 import {
   installExtension,
   listExtensions,
@@ -14,27 +12,7 @@ import {
 
 export const mcpExtensionsRouter = Router();
 
-function tokensEqual(a: string, b: string): boolean {
-  const aBuf = Buffer.from(a);
-  const bBuf = Buffer.from(b);
-  if (aBuf.length !== bBuf.length) return false;
-  return timingSafeEqual(aBuf, bBuf);
-}
 
-// NOTE: surgical ~15-line duplication of the mcp-workers.route.ts tunnel
-// gate (same getTunnelState + timingSafeEqual shape). Shared helper was
-// out of scope for this phase; a follow-up can extract one.
-function requireTunnelKey(req: Request, res: Response): boolean {
-  const tunnel = getTunnelState();
-  if (!tunnel.running || !tunnel.url || !tunnel.accessToken) return true;
-  const queryKey = typeof req.query.key === 'string' ? req.query.key : null;
-  if (queryKey && tokensEqual(queryKey, tunnel.accessToken)) return true;
-  const cookies = req.headers.cookie || '';
-  const cookieMatch = cookies.match(/(?:^|;\s*)spark_remote_key=([^;]+)/);
-  if (cookieMatch?.[1] && tokensEqual(cookieMatch[1], tunnel.accessToken)) return true;
-  res.status(401).json({ error: 'Remote access key required' });
-  return false;
-}
 
 // Mirror of the supervisor statusCodeOf pattern (prefer err.statusCode,
 // else message-match): installer errors default 400; rate/limit → 429,
@@ -89,7 +67,6 @@ function decodeBase64Input(input: unknown): { ok: true; data: Buffer } | { ok: f
 }
 
 mcpExtensionsRouter.post('/api/mcp-extensions/install', async (req: Request, res: Response) => {
-  if (!requireTunnelKey(req, res)) return;
   const body = (req.body ?? {}) as Record<string, unknown>;
   const { filename, dataBase64, allowUnsigned } = body;
   if (typeof filename !== 'string' || filename.length === 0 || filename.length > 256) {
@@ -128,7 +105,6 @@ mcpExtensionsRouter.get('/api/mcp-extensions', async (_req: Request, res: Respon
 });
 
 mcpExtensionsRouter.delete('/api/mcp-extensions/:serverId', async (req: Request, res: Response) => {
-  if (!requireTunnelKey(req, res)) return;
   const serverId = req.params.serverId;
   if (invalidServerId(serverId)) {
     return res.status(400).json({ error: 'Invalid serverId' });
@@ -146,7 +122,6 @@ mcpExtensionsRouter.delete('/api/mcp-extensions/:serverId', async (req: Request,
 });
 
 mcpExtensionsRouter.post('/api/mcp-extensions/:serverId/enable', async (req: Request, res: Response) => {
-  if (!requireTunnelKey(req, res)) return;
   const serverId = req.params.serverId;
   if (invalidServerId(serverId)) {
     return res.status(400).json({ error: 'Invalid serverId' });

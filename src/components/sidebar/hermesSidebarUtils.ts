@@ -1,4 +1,4 @@
-import type { CronRun, HermesSession, HermesSkillSummary, HermesWorkspaceFile } from '@/lib/hermes-api';
+import type { CronRun, HermesSkillSummary, HermesWorkspaceFile } from '@/lib/hermes-api';
 
 export function formatCompactNumber(value: number): string {
   return new Intl.NumberFormat('en-US', {
@@ -54,28 +54,6 @@ export function summarizeCronRuns(runs: Array<Pick<CronRun, 'status'>>): CronRun
   };
 }
 
-export interface SessionStatusCounts {
-  active: number;
-  completed: number;
-  error: number;
-  total: number;
-}
-
-// Tally sessions by status. Unknown statuses count toward `total` only, never
-// toward the named buckets; an empty list yields all zeros.
-export function countSessionStatuses(
-  sessions: Array<Pick<HermesSession, 'status'>>,
-): SessionStatusCounts {
-  const counts: SessionStatusCounts = { active: 0, completed: 0, error: 0, total: 0 };
-  for (const session of sessions) {
-    counts.total += 1;
-    if (session.status === 'active' || session.status === 'completed' || session.status === 'error') {
-      counts[session.status] += 1;
-    }
-  }
-  return counts;
-}
-
 type FilterableSkill = Pick<HermesSkillSummary, 'name' | 'summary' | 'category' | 'path'>;
 
 // Case-insensitive substring filter over a skill's name/summary/category/path.
@@ -99,23 +77,4 @@ export function memoriesToMarkdown(memories: ExportableMemory[]): string {
   }
   const sections = memories.map((memory) => `## ${memory.label}\n\n${memory.content.trim()}\n`);
   return `# Hermes Memories\n\n${sections.join('\n')}`;
-}
-
-type FilterableSession = Pick<
-  HermesSession,
-  'id' | 'model' | 'repo' | 'firstUserMessage'
->;
-
-// Case-insensitive substring filter over a session's title/id/repo/model.
-// An empty (or whitespace-only) query returns every session unchanged.
-export function filterSessions<T extends FilterableSession>(
-  sessions: T[],
-  query: string,
-): T[] {
-  const needle = query.trim().toLowerCase();
-  if (!needle) return sessions;
-  return sessions.filter((session) =>
-    [session.firstUserMessage, session.id, session.repo, session.model]
-      .some((field) => field?.toLowerCase().includes(needle)),
-  );
 }

@@ -23,6 +23,45 @@ export const COLOR_THEMES: ColorTheme[] = [
     variables: {},
   },
   {
+    // Palette lifted from Claude Desktop's "CDS" design system (969 tokens
+    // extracted from the app bundle): warm-neutral gray ramp + the terracotta
+    // brand accent (--accent-brand: 15 63.1% 59.6%).
+    id: 'claude',
+    name: 'Claude',
+    preview: {
+      bg: '#151515',
+      sidebar: '#111111',
+      accent: '#d97757',
+      text: '#f0efec',
+    },
+    variables: {
+      'background': '0 0% 8.2%',
+      'foreground': '45 11.8% 93.3%',
+      'card': '60 1.8% 10.8%',
+      'card-foreground': '45 11.8% 93.3%',
+      'popover': '60 1.8% 10.8%',
+      'popover-foreground': '45 11.8% 93.3%',
+      'secondary': '60 1.6% 12.4%',
+      'secondary-foreground': '45 11.8% 93.3%',
+      'muted': '60 1.6% 12.4%',
+      'muted-foreground': '45 3.3% 52.2%',
+      'accent': '60 1.6% 12.4%',
+      'accent-foreground': '45 11.8% 93.3%',
+      'border': '60 2.3% 16.9%',
+      'input': '60 2.8% 21.4%',
+      'sidebar-bg': '0 0% 6.7%',
+      'sidebar-background': '0 0% 6.7%',
+      'sidebar-foreground': '45 11.8% 93.3%',
+      'sidebar-border': '60 2.3% 16.9%',
+      'sidebar-hover': '60 1.6% 12.4%',
+      'sidebar-active': '60 1.8% 10.8%',
+      'sidebar-accent': '60 1.6% 12.4%',
+      'sidebar-accent-foreground': '45 11.8% 93.3%',
+      'code-bg': '0 0% 4.3%',
+      'frame-bg': '0 0% 4.3%',
+    },
+  },
+  {
     id: 'ayu',
     name: 'Ayu',
     preview: {
@@ -215,9 +254,11 @@ export const ACCENT_COLORS = [
   { name: 'Yellow', value: '45 93% 58%' },
   { name: 'Amber', value: '30 90% 55%' },
   { name: 'Pink', value: '330 81% 60%' },
+  // Claude Desktop's terracotta brand accent (--accent-brand)
+  { name: 'Claude', value: '15 63.1% 59.6%' },
 ];
 
-export type ColorThemeId = 'default' | 'ayu' | 'dracula' | 'gruvbox' | 'intellij' | 'terminal';
+export type ColorThemeId = 'default' | 'claude' | 'ayu' | 'dracula' | 'gruvbox' | 'intellij' | 'terminal';
 
 const VALID_THEME_IDS = new Set<string>(COLOR_THEMES.map((t) => t.id));
 

@@ -47,6 +47,15 @@
     --sidebar-active: 0 0% 92%;
 
     --code-bg: 220 5% 96%;
+
+    /* Text ramp. The .dark block below defines these too; both themes must
+       define them or `hsl(var(--text-*))` resolves to invalid CSS and the
+       declaration is silently dropped. */
+    --text-primary: 0 0% 12%;
+    --text-secondary: 0 0% 32%;
+    --text-tertiary: 0 0% 46%;
+    --text-muted: 0 0% 56%;
+    --text-faint: 0 0% 62%;
     --text-dim: 0 0% 45%;
 
     --sidebar-background: 0 0% 98%;
