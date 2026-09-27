@@ -20,13 +20,21 @@ import pricing
 import mcp_telemetry
 import delegation_live
 from bridge_events import (
+    agent_notice_clear_event,
+    hermes_run_server_tool_event,
+    swarm_result_server_tool_event,
+    agent_status_event,
     build_plan_update_event,
+    fallback_switch_event,
     filter_toolsets_for_plan_mode,
     output_truncation_info,
     stream_retry_event,
     todo_plan_steps,
+    tool_activity_event,
     tool_call_begin_event,
     tool_call_end_event,
+    transport_status_event,
+    usage_event,
 )
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -4249,24 +4257,6 @@ def _format_tool_end_text(tool_name: str, tool_output: str) -> str:
     return f"> *{display} — done*\n\n"
 
 
-def _build_agent_status(
-    *,
-    phase: str,
-    label: str,
-    started_at: float,
-    iteration: Optional[int] = None,
-) -> dict:
-    status = {
-        "phase": phase,
-        "label": label,
-        "elapsed_ms": max(0, int((time.monotonic() - started_at) * 1000)),
-        "source": "hermes-bridge",
-    }
-    if iteration is not None:
-        status["iteration"] = iteration
-    return status
-
-
 def make_delta_chunk(chunk_id: str, model: str, delta: dict, finish_reason: Optional[str] = None) -> dict:
     chunk: dict = {
         "id": chunk_id,
@@ -4283,7 +4273,7 @@ def make_delta_chunk(chunk_id: str, model: str, delta: dict, finish_reason: Opti
     # parser recognises this as a proper completion and maps finish_reason
     # to finishReason instead of defaulting to 'unknown'.
     if finish_reason is not None:
-        chunk["usage"] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        chunk["usage"] = usage_event(0, 0, 0)
     return chunk
 
 
@@ -5353,13 +5343,10 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
         _qput(("server_tool_event", event))
 
     def on_fallback_switch(provider: str, model: str):
-        _qput(("fallback_switch", {"provider": provider, "model": model}))
+        _qput(("fallback_switch", fallback_switch_event(provider, model)))
 
     def on_transport_status(requested: str, actual: str, reason: str | None = None):
-        event = {"requested": requested, "actual": actual}
-        if reason:
-            event["reason"] = reason
-        _qput(("transport_status", event))
+        _qput(("transport_status", transport_status_event(requested, actual, reason)))
 
     def on_stream_retry(attempt: int, max_attempts: int, reason: str, delay_ms: int):
         # The agent-loop retried an upstream stream — surface it once per retry.
@@ -5374,7 +5361,7 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
         _qput(("agent_notice", notice))
 
     def on_notice_clear(key: str):
-        _qput(("agent_notice_clear", {"key": key}))
+        _qput(("agent_notice_clear", agent_notice_clear_event(key)))
 
     def _run_agent_sync():
         wt_info = None
@@ -5593,11 +5580,7 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
                 )
                 _qput((
                     "server_tool_event",
-                    {
-                        "type": "hermes_run",
-                        "run_id": run_id,
-                        "conversation_id": workspace_id,
-                    },
+                    hermes_run_server_tool_event(run_id, workspace_id),
                 ))
 
                 def _emit_run_event(*args):
@@ -5718,7 +5701,7 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
         stream_started_at = time.monotonic()
         yield sse_chunk(make_delta_chunk(chunk_id, body.model, {"role": "assistant"}))
         yield sse_chunk(make_delta_chunk(chunk_id, body.model, {
-            "agent_status": _build_agent_status(
+            "agent_status": agent_status_event(
                 phase="starting",
                 label=_transport_label,
                 started_at=stream_started_at,
@@ -5749,14 +5732,14 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
                     text = _format_tool_start_text(tool_name, tool_input)
                     yield sse_chunk(make_delta_chunk(chunk_id, body.model, {"content": text}))
                     yield sse_chunk(make_delta_chunk(chunk_id, body.model, {
-                        "tool_activity": {"tool": tool_name, "status": "running", "input": tool_input, "output": None}
+                        "tool_activity": tool_activity_event(tool_name, "running", tool_input, None)
                     }))
                 elif event[0] == "tool_end":
                     tool_name, tool_output = event[1], event[2]
                     text = _format_tool_end_text(tool_name, tool_output)
                     yield sse_chunk(make_delta_chunk(chunk_id, body.model, {"content": text}))
                     yield sse_chunk(make_delta_chunk(chunk_id, body.model, {
-                        "tool_activity": {"tool": tool_name, "status": "completed", "input": "", "output": tool_output}
+                        "tool_activity": tool_activity_event(tool_name, "completed", "", tool_output)
                     }))
                 elif event[0] == "tool_call_begin":
                     yield sse_chunk(make_delta_chunk(chunk_id, body.model, {"tool_call_begin": event[1]}))
@@ -5778,7 +5761,7 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
                         else f"Planning iteration {iteration}..."
                     )
                     yield sse_chunk(make_delta_chunk(chunk_id, body.model, {
-                        "agent_status": _build_agent_status(
+                        "agent_status": agent_status_event(
                             phase="thinking",
                             label=status_label,
                             started_at=stream_started_at,
@@ -6259,7 +6242,7 @@ async def _acp_chat_completions_impl(request: Request, body: ChatCompletionReque
     async def event_stream():
         yield sse_chunk(make_delta_chunk(chunk_id, body.model, {"role": "assistant"}))
         yield sse_chunk(make_delta_chunk(chunk_id, body.model, {
-            "agent_status": _build_agent_status(
+            "agent_status": agent_status_event(
                 phase="starting",
                 label="Starting Hermes agent (ACP)...",
                 started_at=started_at,
@@ -6289,13 +6272,13 @@ async def _acp_chat_completions_impl(request: Request, body: ChatCompletionReque
                     tool_name, tool_input = event[1], event[2]
                     yield sse_chunk(make_delta_chunk(chunk_id, body.model, {"content": _format_tool_start_text(tool_name, tool_input)}))
                     yield sse_chunk(make_delta_chunk(chunk_id, body.model, {
-                        "tool_activity": {"tool": tool_name, "status": "running", "input": tool_input, "output": None}
+                        "tool_activity": tool_activity_event(tool_name, "running", tool_input, None)
                     }))
                 elif event[0] == "tool_end":
                     tool_name, tool_input, tool_output = event[1], event[2], event[3]
                     yield sse_chunk(make_delta_chunk(chunk_id, body.model, {"content": _format_tool_end_text(tool_name, tool_output)}))
                     yield sse_chunk(make_delta_chunk(chunk_id, body.model, {
-                        "tool_activity": {"tool": tool_name, "status": "completed", "input": tool_input, "output": tool_output}
+                        "tool_activity": tool_activity_event(tool_name, "completed", tool_input, tool_output)
                     }))
                 elif event[0] == "tool_call_begin":
                     yield sse_chunk(make_delta_chunk(chunk_id, body.model, {"tool_call_begin": event[1]}))
@@ -6311,7 +6294,7 @@ async def _acp_chat_completions_impl(request: Request, body: ChatCompletionReque
                     yield sse_chunk(make_delta_chunk(chunk_id, body.model, {"reasoning": event[1]}))
                 elif event[0] == "thinking":
                     yield sse_chunk(make_delta_chunk(chunk_id, body.model, {
-                        "agent_status": _build_agent_status(
+                        "agent_status": agent_status_event(
                             phase="thinking",
                             label="Planning...",
                             started_at=started_at,
@@ -6403,7 +6386,7 @@ async def swarm_endpoint(request: Request, body: SwarmRequest):
         # Opening role chunk
         yield sse_chunk(make_delta_chunk(chunk_id, body.model, {"role": "assistant"}))
         yield sse_chunk(make_delta_chunk(chunk_id, body.model, {
-            "agent_status": _build_agent_status(
+            "agent_status": agent_status_event(
                 phase="swarm_starting",
                 label="Starting swarm pipeline...",
                 started_at=started_at,
@@ -6457,7 +6440,7 @@ async def swarm_endpoint(request: Request, body: SwarmRequest):
 
             # Structured swarm result as data event
             yield sse_chunk(make_delta_chunk(chunk_id, body.model, {
-                "agent_status": _build_agent_status(
+                "agent_status": agent_status_event(
                     phase="swarm_done",
                     label=f"Swarm {'approved' if success else 'needs changes'}",
                     started_at=started_at,
@@ -6466,15 +6449,14 @@ async def swarm_endpoint(request: Request, body: SwarmRequest):
 
             # Include the full result in a server_tool_event so the frontend can access it
             yield sse_chunk(make_delta_chunk(chunk_id, body.model, {
-                "server_tool_event": {
-                    "type": "swarm_result",
-                    "success": success,
-                    "verdict": verdict,
-                    "review_notes": review_notes,
-                    "staged_files": list(staged.keys()),
-                    "plan": plan,
-                    "elapsed_ms": elapsed_ms,
-                },
+                "server_tool_event": swarm_result_server_tool_event(
+                    success=success,
+                    verdict=verdict,
+                    review_notes=review_notes,
+                    staged_files=list(staged.keys()),
+                    plan=plan,
+                    elapsed_ms=elapsed_ms,
+                ),
             }))
             _mark_request_finished(
                 model=body.model,
@@ -6487,7 +6469,7 @@ async def swarm_endpoint(request: Request, body: SwarmRequest):
             error_text = f"\n\n**Swarm Pipeline Error:** {str(e)}\n"
             yield sse_chunk(make_delta_chunk(chunk_id, body.model, {"content": error_text}))
             yield sse_chunk(make_delta_chunk(chunk_id, body.model, {
-                "agent_status": _build_agent_status(
+                "agent_status": agent_status_event(
                     phase="swarm_error",
                     label=f"Pipeline error: {str(e)[:60]}",
                     started_at=started_at,

@@ -487,3 +487,271 @@ def callback_accepts_kwarg(cb: Optional[Callable], kwarg: str) -> bool:
     )
     _CALLBACK_KWARG_CACHE[key] = accepts
     return accepts
+
+
+# =====================================================================================
+# Custom event contract (spec Phase 1.1)
+#
+# Every custom SSE key the bridge emits is declared here as a Pydantic model.
+# These models are the single source of truth for the wire contract: item 1.2
+# generates `shared/hermes-events.schema.json` from them, and from that generates
+# the TypeScript types and zod validators the Node boundary validates against.
+#
+# Two deliberate choices, both so that a wire-shape change cannot slip through
+# unvalidated on the emit side:
+#
+# 1. The constructors below build plain dicts explicitly rather than returning
+#    `model_dump()`. The bridge's test suite runs with pydantic *stubbed out*
+#    globally (test_acp_repo_grounding imports test_main first, which installs a
+#    minimal BaseModel), so `model_dump()` and real validation are unavailable
+#    under test. Building dicts by hand keeps emit behavior byte-identical in
+#    tests and production, while the models stay the schema authority.
+#    Drift between a model and its constructor is caught by
+#    test_bridge_events_contract.py, which pins each constructor's output.
+#
+# 2. Events whose payload is owned by hermes-agent rather than the bridge
+#    (computer_use_frame, agent_notice, server_tool_event, fallback_switch) are
+#    typed as open objects. The bridge forwards them; it does not get to decide
+#    their fields, and rejecting an unknown field there would drop events the
+#    frontend needs.
+# =====================================================================================
+
+try:  # pragma: no cover - exercised via the suite's stub in tests
+    from pydantic import BaseModel, Field
+except ImportError:  # pragma: no cover
+    BaseModel = object  # type: ignore[assignment,misc]
+
+    def Field(default=None, default_factory=None, **kwargs):  # type: ignore[misc]
+        return default
+
+
+class ToolActivityEvent(BaseModel):
+    """A tool invocation becoming active or finishing. Legacy shape, still live.
+
+    Superseded in practice by tool_call_begin/delta/end, but the agent-loop
+    transport still emits it, so the contract keeps it.
+    """
+
+    tool: str
+    status: str = "running"
+    input: Any = None
+    output: Any = None
+
+
+class AgentStatusEvent(BaseModel):
+    """Progress heartbeat for the active turn (phase, elapsed time, iteration)."""
+
+    phase: str
+    label: str = ""
+    elapsed_ms: int = 0
+    source: str = "hermes-bridge"
+    iteration: Optional[int] = None
+
+
+class ComputerUseFrameEvent(BaseModel):
+    """One computer-use screenshot frame. Payload owned by hermes-agent."""
+
+    type: str = "computer_use_frame"
+    data: Optional[str] = None
+    metadata: Optional[dict] = None
+
+
+class AgentNoticeEvent(BaseModel):
+    """Structured notice from the real agent (credits, run budget).
+
+    Payload is open: hermes-agent owns the notice shape and adds notice kinds
+    without a bridge release.
+    """
+
+    key: Optional[str] = None
+    level: Optional[str] = None
+    message: Optional[str] = None
+    metadata: Optional[dict] = None
+
+
+class AgentNoticeClearEvent(BaseModel):
+    """Clears a previously emitted agent_notice by key."""
+
+    key: str
+
+
+class ServerToolEvent(BaseModel):
+    """Bridge-originated event surfaced on the same channel as agent events.
+
+    `type` is a discriminant: hermes_run, swarm_result, and others are emitted
+    from different transports, so the payload is open by design.
+    """
+
+    type: str
+    run_id: Optional[str] = None
+    conversation_id: Optional[str] = None
+    success: Optional[bool] = None
+    verdict: Optional[str] = None
+    review_notes: Optional[str] = None
+    staged_files: Optional[list] = None
+    plan: Optional[Any] = None
+    elapsed_ms: Optional[int] = None
+
+
+class FallbackSwitchEvent(BaseModel):
+    """The agent fell back to a different provider/model mid-turn."""
+
+    provider: str
+    model: str
+    reason: Optional[str] = None
+
+
+class TransportStatusEvent(BaseModel):
+    """The transport that will actually serve this request, and why it differs."""
+
+    requested: str
+    actual: str
+    reason: Optional[str] = None
+
+
+class UsageEvent(BaseModel):
+    """Token usage and cost for a completed turn."""
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    estimated_cost_usd: Optional[float] = None
+
+
+# Every custom event key the bridge may emit, mapped to its model. The event
+# name is what appears as a key inside a delta chunk.
+CUSTOM_EVENT_MODELS: dict[str, Any] = {
+    "tool_activity": ToolActivityEvent,
+    "agent_status": AgentStatusEvent,
+    "computer_use_frame": ComputerUseFrameEvent,
+    "agent_notice": AgentNoticeEvent,
+    "agent_notice_clear": AgentNoticeClearEvent,
+    "server_tool_event": ServerToolEvent,
+    "fallback_switch": FallbackSwitchEvent,
+    "transport_status": TransportStatusEvent,
+    "usage": UsageEvent,
+}
+
+# The six events that already had constructors here, for schema completeness.
+LEGACY_EVENT_MODELS: dict[str, Any] = {
+    "tool_call_begin": None,
+    "tool_call_delta": None,
+    "tool_call_end": None,
+    "stream_retry": None,
+    "plan_update": None,
+    "approval_request": None,
+}
+
+
+# --- Constructors -------------------------------------------------------------------
+# Thin, explicit builders. They intentionally do NOT coerce: a caller that passes
+# a non-string tool name gets the non-string name, exactly as before, rather than
+# a silently stringified value.
+
+
+def tool_activity_event(
+    tool: str,
+    status: str,
+    tool_input: Any = None,
+    tool_output: Any = None,
+) -> dict:
+    """A tool invocation starting or completing."""
+    return {
+        "tool": tool,
+        "status": status,
+        "input": tool_input if tool_input is not None else "",
+        "output": tool_output,
+    }
+
+
+def agent_status_event(
+    *,
+    phase: str,
+    label: str,
+    started_at: float,
+    source: str = "hermes-bridge",
+    iteration: Optional[int] = None,
+) -> dict:
+    """Progress heartbeat for the active turn.
+
+    Takes the monotonic start timestamp rather than a pre-computed elapsed value
+    so that the elapsed calculation lives with the contract instead of at each
+    call site — previously every caller recomputed it from `time.monotonic()`.
+    """
+    status: dict = {
+        "phase": phase,
+        "label": label,
+        "elapsed_ms": max(0, int((time.monotonic() - started_at) * 1000)),
+        "source": source,
+    }
+    if iteration is not None:
+        status["iteration"] = iteration
+    return status
+
+
+def agent_notice_clear_event(key: str) -> dict:
+    """Clear a previously emitted notice."""
+    return {"key": str(key)}
+
+
+def fallback_switch_event(provider: str, model: str, reason: Optional[str] = None) -> dict:
+    """Provider/model fallback mid-turn."""
+    event: dict = {"provider": provider, "model": model}
+    if reason:
+        event["reason"] = reason
+    return event
+
+
+def transport_status_event(requested: str, actual: str, reason: Optional[str] = None) -> dict:
+    """Which transport actually serves the request, and why it differs."""
+    event: dict = {"requested": requested, "actual": actual}
+    if reason:
+        event["reason"] = reason
+    return event
+
+
+def usage_event(
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+    total_tokens: int = 0,
+    estimated_cost_usd: Optional[float] = None,
+) -> dict:
+    """Token usage for a completed turn."""
+    event: dict = {
+        "prompt_tokens": int(prompt_tokens or 0),
+        "completion_tokens": int(completion_tokens or 0),
+        "total_tokens": int(total_tokens or 0),
+    }
+    if estimated_cost_usd is not None:
+        event["estimated_cost_usd"] = float(estimated_cost_usd)
+    return event
+
+
+def hermes_run_server_tool_event(run_id: str, conversation_id: str) -> dict:
+    """Bridge-originated event announcing a gateway /v1/runs run."""
+    return {
+        "type": "hermes_run",
+        "run_id": str(run_id),
+        "conversation_id": str(conversation_id),
+    }
+
+
+def swarm_result_server_tool_event(
+    *,
+    success: bool,
+    verdict: str,
+    review_notes: str,
+    staged_files: list,
+    plan: Any = None,
+    elapsed_ms: int = 0,
+) -> dict:
+    """Final outcome of an architect -> implementor -> reviewer swarm."""
+    return {
+        "type": "swarm_result",
+        "success": bool(success),
+        "verdict": verdict,
+        "review_notes": review_notes,
+        "staged_files": list(staged_files or []),
+        "plan": plan,
+        "elapsed_ms": int(elapsed_ms or 0),
+    }
