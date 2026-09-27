@@ -312,7 +312,7 @@ Every PR runs `npm run typecheck && npm run lint && npm test` plus `pytest herme
 | Phase | Status | Notes |
 |---|---|---|
 | 0 Correctness hotfixes | **Done** | All 9 defects fixed, each with a regression test. PR #52 + #53. |
-| 1 Event and error contract | **In progress** | 1.1–1.3 done (event contract, codegen, zod dispatch). 1.4–1.5 remain. |
+| 1 Event and error contract | **Done** | 1.1–1.5 landed. Error envelope + regex-free `ChatErrorBanner` + golden fixtures. |
 | 2 Single bridge client | Not started | |
 | 3 Lifecycle | Not started | |
 | 4 Transport parity and decomposition | Not started | |
@@ -327,8 +327,8 @@ Every PR runs `npm run typecheck && npm run lint && npm test` plus `pytest herme
 | 1.1 All custom SSE events into `bridge_events.py` | **Done** | 9 models + constructors; 33 inline payload literals removed from `main.py`; 26 contract tests |
 | 1.2 JSON Schema → TS types + zod codegen | **Done** | `shared/hermes-events.schema.json` + `server/lib/hermes-events.gen.ts`; `npm run gen:hermes-contract` / `check:`; new `hermes-contract` CI job |
 | 1.3 `normalizeHermesAgentLoopPayload` as a zod dispatch | **Done** | 110 lines → 38; `unknown` casts in `hermes.ts` 62 → 37; 17 new tests, 7 existing pass unmodified |
-| 1.4 Error envelope + regex-free `ChatErrorBanner` | Not started | Full-stack; the UI currently extracts model suggestions from a message string by regex, so the server must start supplying structured `details` |
-| 1.5 Golden SSE fixtures per transport | Not started | |
+| 1.4 Error envelope + regex-free `ChatErrorBanner` | **Done** | Closed 9-code enum generated Python→TS; banner has **0** regexes; suggestions now travel as `details.suggested_models` |
+| 1.5 Golden SSE fixtures per transport | **Done** | 4 fixtures, replayed by pytest and vitest; verified a corrupted fixture fails both |
 
 1.2 and 1.3 needed three corrections that only surfaced by testing, all recorded in
 their commit bodies: `json-schema-to-zod` does not resolve local `$ref`s (so every
