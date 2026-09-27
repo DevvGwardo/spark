@@ -69,6 +69,29 @@ def _reset_cache_stats():
     _cache_stats.update({"repo_file_hits": 0, "repo_file_misses": 0, "repo_tree_hits": 0, "repo_tree_misses": 0})
 
 
+def mask_secret(value: object, keep: int = 2) -> str:
+    """Render a secret safe for logs: length plus a short tail, never a prefix.
+
+    The previous preview was f"{api_key[:8]}...{api_key[-4:]}", which leaked the
+    first 8 characters of every provider key — enough to identify and correlate a
+    credential, and enough for short keys to be printed in full via repr(). This
+    reveals only the length and the final `keep` characters.
+
+    A prefix is worse than a suffix: provider keys are frequently
+    prefix-distinguishable (a shared project/org id), whereas the tail is the
+    part an operator already has to compare to identify which key is loaded.
+    """
+    if value is None:
+        return "<none>"
+    text = value if isinstance(value, str) else str(value)
+    if not text:
+        return "<empty>"
+    if len(text) <= keep:
+        # Too short to reveal any tail without revealing the whole thing.
+        return f"<redacted:len={len(text)}>"
+    return f"<redacted:len={len(text)}:tail={text[-keep:]}>"
+
+
 # ---------------------------------------------------------------------------
 # Import the real Hermes agent
 # ---------------------------------------------------------------------------
@@ -86,13 +109,39 @@ if _HERMES_AGENT_DIR not in sys.path:
 # Force import from hermes-agent dir — sys.path.insert(0) isn't enough if
 # run_agent was already imported from the bridge directory.
 import importlib.util
+
+
+def _load_run_agent_from_spec(spec):
+    """Execute a run_agent module spec, publishing it only once it fully loads.
+
+    The module used to be inserted into sys.modules *before* exec_module ran. If
+    the load then failed partway, a half-initialised `run_agent` stayed in
+    sys.modules — and because it was present, main.py's ImportError fallback
+    never fired and bound to the broken module instead of the bridge's own
+    run_agent.py.
+
+    On any failure the previous binding is restored (or the key removed), so a
+    failed hermes-agent load cannot poison the fallback import path.
+    """
+    module = importlib.util.module_from_spec(spec)
+    previous = sys.modules.get(spec.name)
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        if previous is not None:
+            sys.modules[spec.name] = previous
+        else:
+            sys.modules.pop(spec.name, None)
+        raise
+    sys.modules[spec.name] = module
+    return module
+
+
 _run_agent_spec = importlib.util.spec_from_file_location(
     "run_agent",
     os.path.join(_HERMES_AGENT_DIR, "run_agent.py"),
 )
-_run_agent_mod = importlib.util.module_from_spec(_run_agent_spec)
-sys.modules["run_agent"] = _run_agent_mod
-_run_agent_spec.loader.exec_module(_run_agent_mod)
+_run_agent_mod = _load_run_agent_from_spec(_run_agent_spec)
 RealAIAgent = _run_agent_mod.AIAgent
 
 # Reuse the tools.registry module already loaded by run_agent.py's import chain
@@ -1363,6 +1412,11 @@ class HermesAgentAdapter:
         workspace_id: Optional[str] = None,
         reasoning_effort: Optional[str] = None,
         provider_override: Optional[str] = None,
+        # Which Hermes profile's config.yaml to read. None means the default
+        # ~/.hermes. main.py resolves the active profile per request and passes
+        # the resulting home, so a non-default profile's provider/model config is
+        # no longer ignored in favour of whatever ~/.hermes happens to contain.
+        hermes_home: Optional[str] = None,
         # Plan mode: drop mutating toolsets (terminal, code_execution, shell)
         # so the real agent can only research / plan.
         plan_mode: bool = False,
@@ -1395,6 +1449,9 @@ class HermesAgentAdapter:
         # retries its upstream calls internally (no callback to hook).
         self.on_stream_retry = on_stream_retry
         self.workspace_id = workspace_id or None
+        # Active profile home. Resolved once here so the config lookup below does
+        # not re-derive it (and so tests can pin it).
+        self.hermes_home = str(hermes_home) if hermes_home else os.path.expanduser("~/.hermes")
         self.on_thinking: Optional[Callable] = None
         self.on_reasoning: Optional[Callable] = None
         self._streamed_text_chunks: list[str] = []
@@ -1551,24 +1608,27 @@ class HermesAgentAdapter:
                 provider = "together"
             elif "nousresearch" in _bu or "nous" in _bu:
                 provider = "nous"
-            # If base_url doesn't match known providers, check hermes config
+            # If base_url doesn't match known providers, check the active
+            # profile's hermes config. This used to read a hard-coded
+            # ~/.hermes/config.yaml, so a non-default profile silently inherited
+            # the default profile's provider.
             if not provider:
                 try:
                     import yaml
-                    cfg_path = os.path.expanduser("~/.hermes/config.yaml")
-                    with open(cfg_path) as f:
-                        cfg = yaml.safe_load(f) or {}
-                    cfg_provider = (cfg.get("model", {}) or {}).get("provider", "")
-                    if cfg_provider:
-                        provider = cfg_provider
+                    cfg_path = os.path.join(self.hermes_home, "config.yaml")
+                    if os.path.isfile(cfg_path):
+                        with open(cfg_path) as f:
+                            cfg = yaml.safe_load(f) or {}
+                        cfg_provider = (cfg.get("model", {}) or {}).get("provider", "")
+                        if cfg_provider:
+                            provider = cfg_provider
                 except Exception:
                     pass
 
             # Create the real AIAgent
-            key_preview = f"{api_key[:8]}...{api_key[-4:]}" if api_key and len(api_key) > 12 else repr(api_key)
             print(
                 f"[hermes-adapter] Creating agent: base_url={base_url} "
-                f"api_key={key_preview} provider={provider} model={model}",
+                f"api_key={mask_secret(api_key)} provider={provider} model={model}",
                 flush=True,
             )
             # Only pass parameters the real hermes-agent AIAgent actually accepts.

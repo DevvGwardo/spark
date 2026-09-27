@@ -5653,6 +5653,10 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
                 # Structured notices (credits/run-budget) — real-agent only.
                 agent_kwargs["on_notice"] = on_notice
                 agent_kwargs["on_notice_clear"] = on_notice_clear
+                # Real-agent only: run_agent.AIAgent's fallback signature does not
+                # accept this. Tells the adapter which profile's config.yaml to
+                # read instead of the hard-coded ~/.hermes (B9).
+                agent_kwargs["hermes_home"] = str(_resolve_hermes_home(request_profile))
                 if run_budget_seconds:
                     agent_kwargs["run_budget_seconds"] = run_budget_seconds
             if resolved_provider == MOA_PROVIDER_ID:
