@@ -551,6 +551,12 @@ class AgentStatusEvent(BaseModel):
 class ComputerUseFrameEvent(BaseModel):
     """One computer-use screenshot frame. Payload owned by hermes-agent."""
 
+    # extra="allow" makes "this payload is open" explicit in the generated JSON
+    # Schema (additionalProperties: true), which is what stops the Node-side zod
+    # validator from stripping fields hermes-agent adds. A closed object here
+    # would silently drop frame fields the frontend needs.
+    model_config = {"extra": "allow"}
+
     type: str = "computer_use_frame"
     data: Optional[str] = None
     metadata: Optional[dict] = None
@@ -562,6 +568,8 @@ class AgentNoticeEvent(BaseModel):
     Payload is open: hermes-agent owns the notice shape and adds notice kinds
     without a bridge release.
     """
+
+    model_config = {"extra": "allow"}
 
     key: Optional[str] = None
     level: Optional[str] = None
@@ -581,6 +589,8 @@ class ServerToolEvent(BaseModel):
     `type` is a discriminant: hermes_run, swarm_result, and others are emitted
     from different transports, so the payload is open by design.
     """
+
+    model_config = {"extra": "allow"}
 
     type: str
     run_id: Optional[str] = None

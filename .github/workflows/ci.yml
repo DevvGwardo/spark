@@ -91,6 +91,45 @@ jobs:
           cd hermes-bridge
           python3 -m unittest discover -p "test_*.py"
 
+  hermes-contract:
+    runs-on: ubuntu-latest
+    # Fails if the checked-in event contract is stale relative to the Pydantic
+    # models that define it. Without this, a field rename in
+    # hermes-bridge/bridge_events.py would silently change the wire format: the
+    # generated schema, the zod validators, and the TS types would all keep
+    # describing the old shape.
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          pip install -r hermes-bridge/requirements.txt
+
+      - name: Provision fake hermes-agent fixture
+        run: python3 hermes-bridge/ci/fixture_agent.py
+
+      - name: Check the generated event contract is current
+        run: npm run check:hermes-contract
+
+      - name: Replay contract fixtures on the Python side
+        run: |
+          cd hermes-bridge
+          python3 -m unittest discover -p "test_*.py"
+
+      - name: Replay contract fixtures on the TypeScript side
+        run: npx vitest run server/__tests__/hermes-events-contract.test.ts
+
   e2e-tests:
     runs-on: ubuntu-latest
     # KNOWN ISSUE: on headless Linux, Playwright's electronApp.close() can
