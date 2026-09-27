@@ -311,11 +311,72 @@ Every PR runs `npm run typecheck && npm run lint && npm test` plus `pytest herme
 
 | Phase | Status | Notes |
 |---|---|---|
-| 0 Correctness hotfixes | Not started | |
+| 0 Correctness hotfixes | **Done** | All 9 defects fixed, each with a regression test. See below. |
 | 1 Event and error contract | Not started | |
 | 2 Single bridge client | Not started | |
 | 3 Lifecycle | Not started | |
 | 4 Transport parity and decomposition | Not started | |
 | 5 Async hygiene | Not started | |
 | 6 Frontend data layer | Not started | |
-| 7 Tests, CI, and docs | Not started | |
+| 7 Tests, CI, and docs | In progress | 7.1/7.3/7.4 not started; see Phase 0 test inventory below |
+
+### Phase 0 outcome
+
+Shipped as 4 commits on `fix/hermes-bridge-correctness` (plus a leading WIP commit
+carrying pre-existing in-flight work — drop it before opening the PR, or cherry-pick
+the four Phase 0 commits onto a clean `main`).
+
+| Item | Defect | Commit | Regression test |
+|---|---|---|---|
+| 0.1 | B1 startup handlers never ran | `29b7f8f` | `test_bridge_lifespan.py::LifespanOwnsStartupTests` |
+| 0.2 | B2 brain RPC import cycle | `29b7f8f` | `test_bridge_lifespan.py::BrainModuleIdentityTests` |
+| 0.3 | B3 duplicate approval route | `e700b97` | `remote-access-gating.test.ts` (5 cases) |
+| 0.4 | B4 API key leaked into logs | `da52472` | `test_hermes_adapter_secrets_profile.py::MaskSecretTests` |
+| 0.5 | B5 hard-coded machine paths | `29b7f8f` | `test_bridge_lifespan.py::BrainDiscoveryTests` |
+| 0.6 | B6 `HERMES_HOME` env mutation | `5fe8177` | `test_hermes_profile_scoping.py::ScopedHermesHomeTests` |
+| 0.7 | B7 run-handle cleanup race | `5fe8177` | `test_hermes_profile_scoping.py::ActiveRunRegistryTests` |
+| 0.8 | B8 `sys.modules` before `exec_module` | `da52472` | `test_hermes_adapter_secrets_profile.py::RunAgentLoadTests` |
+| 0.9 | B9 hard-coded profile config | `da52472` | `test_hermes_adapter_secrets_profile.py::ProfileConfigTests` |
+| 0.10 | G13 ungated mutating routes | `98a5f64` | `remote-access-gating.test.ts` (5 cases) |
+
+Suite movement: bridge pytest 714 → 768 passing, vitest 1046 → 1057 passing.
+`npm run typecheck` and `npm run lint` (0 errors) clean.
+
+Every B-item was verified by reinstating the original code and confirming the
+new test fails, so the tests are not vacuous. The bridge was also booted as a real
+process: startup handlers now run (previously silent), brain-mcp absence is a
+logged skip, and SIGINT shuts down cleanly with no unretrieved-task warning.
+
+#### Deviations from the Phase 0 plan
+
+- **0.6 did not use a subprocess.** hermes-agent exposes
+  `hermes_constants.set_hermes_home_override` / `reset_hermes_home_override` on a
+  `ContextVar`, which `get_hermes_home()` consults ahead of the env var. That gives
+  per-thread and per-task isolation in-process, so the subprocess the spec proposed
+  was unnecessary. The env mutation survives only as a lock-guarded fallback for a
+  hermes-agent too old to expose the API.
+- **0.6 also dropped an `importlib.reload`.** Upstream now resolves the checkpoint
+  root per call, so the reload was not only unnecessary but was itself a race.
+  Consequently `_checkpoint_manager` became a context manager: the override must
+  stay in effect while the manager is *used*, not just built.
+- **0.1 also fixed a latent shutdown bug** carried over from the old lifespan:
+  `asyncio.CancelledError` is a `BaseException`, so the `except Exception` around
+  the awaited cancel never caught the cancellation it had just requested.
+- **0.1 also moved the bridge metric counters out of the brain startup block.**
+  They are bridge state, not brain state; with no brain installed, `start_time`
+  stayed `0.0` in `/diag` and in the published `bridge:metrics` payload.
+- **0.9 passes `hermes_home` only on the real-adapter path.** The
+  `run_agent.AIAgent` fallback has an explicit signature with no `**kwargs`, so
+  passing it unconditionally would `TypeError` the fallback. The cron path is
+  deliberately untouched: cron jobs carry no profile and that agent's `base_url`
+  is always OpenRouter, so the config lookup is unreachable there.
+- **`mask_secret` exists twice** — a new one in `hermes_adapter.py` (item 0.4) and
+  a pre-existing one in `hermes_ops.py` used for the credential-pool API. They have
+  different output contracts (HTTP API response vs. log line), so they were left
+  separate rather than unified under a shared helper. Worth folding together in a
+  later pass.
+- **0.2 could not use `TestClient`.** This suite deliberately runs with
+  fastapi and pydantic stubbed (`test_acp_repo_grounding.py` imports `test_main`
+  first), so `main.app` has no router. The lifespan tests drive the async generator
+  directly, which tests the startup/shutdown contract more precisely anyway.
+
