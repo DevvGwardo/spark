@@ -311,14 +311,36 @@ Every PR runs `npm run typecheck && npm run lint && npm test` plus `pytest herme
 
 | Phase | Status | Notes |
 |---|---|---|
-| 0 Correctness hotfixes | **Done** | All 9 defects fixed, each with a regression test. See below. |
-| 1 Event and error contract | Not started | |
+| 0 Correctness hotfixes | **Done** | All 9 defects fixed, each with a regression test. PR #52 + #53. |
+| 1 Event and error contract | **In progress** | 1.1 done (all 9 custom events contracted). 1.2–1.5 remain. |
 | 2 Single bridge client | Not started | |
 | 3 Lifecycle | Not started | |
 | 4 Transport parity and decomposition | Not started | |
 | 5 Async hygiene | Not started | |
 | 6 Frontend data layer | Not started | |
 | 7 Tests, CI, and docs | In progress | 7.1/7.3/7.4 not started; see Phase 0 test inventory below |
+
+### Phase 1 progress
+
+| Item | Status | Notes |
+|---|---|---|
+| 1.1 All custom SSE events into `bridge_events.py` | **Done** | 9 models + constructors; 33 inline payload literals removed from `main.py`; 26 contract tests |
+| 1.2 JSON Schema → TS types + zod codegen | Not started | Depends on 1.1's models, which now exist |
+| 1.3 `normalizeHermesAgentLoopPayload` as a zod dispatch | Not started | 180 lines, 62 `unknown` casts today |
+| 1.4 Error envelope + regex-free `ChatErrorBanner` | Not started | Touches every error path in the UI |
+| 1.5 Golden SSE fixtures per transport | Not started | |
+
+1.1 landed with two deliberate deviations, both recorded in the commit body: the
+constructors build plain dicts rather than returning `model_dump()` (the suite runs
+with pydantic stubbed, so validation is unavailable under test), and the three
+adapter-owned event types are open objects because hermes-agent owns their fields.
+
+Note on the spec's 1.1 exit criterion — `grep -n '"tool_activity"' main.py` only
+hits `bridge_events` imports. The key string still appears at the emission site,
+because it is the SSE field name inside the delta and has to. What is enforced
+instead, on the AST, is that no custom event's *payload* is a dict literal at the
+call site. That is the substance of the criterion.
+
 
 ### Phase 0 outcome
 
