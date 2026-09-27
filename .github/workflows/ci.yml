@@ -128,7 +128,10 @@ jobs:
           python3 -m unittest discover -p "test_*.py"
 
       - name: Replay contract fixtures on the TypeScript side
-        run: npx vitest run server/__tests__/hermes-events-contract.test.ts
+        run: |
+          npx vitest run server/__tests__/hermes-events-contract.test.ts \
+                            server/__tests__/hermes-errors-contract.test.ts \
+                            server/__tests__/hermes-event-fixtures.test.ts
 
   e2e-tests:
     runs-on: ubuntu-latest
