@@ -322,9 +322,15 @@ Every PR runs `npm run typecheck && npm run lint && npm test` plus `pytest herme
 
 ### Phase 0 outcome
 
-Shipped as 4 commits on `fix/hermes-bridge-correctness` (plus a leading WIP commit
-carrying pre-existing in-flight work — drop it before opening the PR, or cherry-pick
-the four Phase 0 commits onto a clean `main`).
+Shipped as a stacked pair of PRs:
+
+- **#52** `feat/pre-existing-wip` → `main` — the in-flight work that was uncommitted
+  in the tree when this started. **Must merge first:** `main` does not typecheck
+  (6 pre-existing errors in `src/hooks/useChat.ts` and `src/test/chat-handoff.test.ts`),
+  and this branch fixes all of them. Phase 0 adds no new typecheck errors but cannot
+  go green on a red `main`.
+- **#53** `fix/hermes-bridge-correctness` → `feat/pre-existing-wip` — the Phase 0 work,
+  7 commits, no unrelated changes mixed in.
 
 | Item | Defect | Commit | Regression test |
 |---|---|---|---|
@@ -346,6 +352,27 @@ Every B-item was verified by reinstating the original code and confirming the
 new test fails, so the tests are not vacuous. The bridge was also booted as a real
 process: startup handlers now run (previously silent), brain-mcp absence is a
 logged skip, and SIGINT shuts down cleanly with no unretrieved-task warning.
+
+#### Carry-over items for later phases
+
+- **`main` is red on typecheck** (6 errors, fixed by #52). Worth a CI gate so it
+  cannot regress again — see 7.4, which currently only covers the contract.
+- **The vitest suite has pre-existing load-related flakiness.** Failures surface in
+  whichever server-booting test is slowest on a given run, and move between files
+  between runs. Phase 0 amplified it by adding app boots to one file and then
+  removed that cost (`ee4d1be`), but the underlying sensitivity is not fixed.
+- **`hermes-bridge/.venv` python is a shim** that re-execs into the hermes tools
+  interpreter with a mutated `sys.path`. Single-file pytest runs intermittently die
+  with a bogus `ModuleNotFoundError: No module named 'pytest'`. Full-suite runs are
+  reliable; do not trust a red single-file run.
+- **Two `mask_secret` implementations** now exist — the new one in
+  `hermes_adapter.py` (log lines) and a pre-existing one in `hermes_ops.py` (HTTP
+  responses). Different output contracts, so they were left separate rather than
+  unified unasked. Worth folding together.
+- **`_hermes_agent_dir(hermes_home)` implies a per-profile `hermes-agent` checkout,
+  but `sys.path` can only hold one.** If profiles genuinely carry separate
+  checkouts, the first one imported wins process-wide. Not in the §2.1 defect list;
+  it is a real cross-talk risk that deserves its own investigation.
 
 #### Deviations from the Phase 0 plan
 
@@ -370,13 +397,9 @@ logged skip, and SIGINT shuts down cleanly with no unretrieved-task warning.
   passing it unconditionally would `TypeError` the fallback. The cron path is
   deliberately untouched: cron jobs carry no profile and that agent's `base_url`
   is always OpenRouter, so the config lookup is unreachable there.
-- **`mask_secret` exists twice** — a new one in `hermes_adapter.py` (item 0.4) and
-  a pre-existing one in `hermes_ops.py` used for the credential-pool API. They have
-  different output contracts (HTTP API response vs. log line), so they were left
-  separate rather than unified under a shared helper. Worth folding together in a
-  later pass.
 - **0.2 could not use `TestClient`.** This suite deliberately runs with
   fastapi and pydantic stubbed (`test_acp_repo_grounding.py` imports `test_main`
   first), so `main.app` has no router. The lifespan tests drive the async generator
   directly, which tests the startup/shutdown contract more precisely anyway.
+
 
