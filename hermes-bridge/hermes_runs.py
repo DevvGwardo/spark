@@ -281,11 +281,27 @@ def register_active_run(
         )
 
 
-def unregister_active_run(conversation_id: str) -> None:
+def unregister_active_run(conversation_id: str, run_id: Optional[str] = None) -> None:
+    """Drop a conversation's active-run handle, but only if it is still ours.
+
+    The handle is keyed by conversation, so a run that finishes late would
+    otherwise delete the handle belonging to a newer overlapping run on the same
+    conversation — leaving that run uncancellable. Comparing run_id makes the
+    delete conditional: the entry is removed only when it still belongs to the
+    run asking.
+
+    run_id is optional for call sites that genuinely mean "clear whatever is
+    there" (an explicit reset), but every completion path passes it.
+    """
     key = str(conversation_id or "").strip()
     if not key:
         return
     with _active_runs_lock:
+        if run_id is not None:
+            active = _active_runs.get(key)
+            if active is None or active.run_id != str(run_id).strip():
+                # A newer run owns this conversation now; leave its handle alone.
+                return
         _active_runs.pop(key, None)
 
 

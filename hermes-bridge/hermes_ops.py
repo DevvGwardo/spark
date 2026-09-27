@@ -8,7 +8,6 @@ JSON/text parse. Keep secrets out of responses.
 
 from __future__ import annotations
 
-import importlib
 import ipaddress
 import json
 import os
@@ -333,28 +332,46 @@ def _resolve_checkpoint_workdir(
     return None
 
 
+@contextmanager
 def _checkpoint_manager(hermes_home: Path):
-    """Load Hermes CheckpointManager with HERMES_HOME scoped to the profile."""
+    """Yield a Hermes CheckpointManager scoped to one profile, or None.
+
+    A context manager rather than a plain function on purpose: upstream resolves
+    the checkpoint root at *call* time (tools.checkpoint_manager's
+    _resolve_checkpoint_base calls hermes_constants.get_hermes_home()), so the
+    home override has to stay in effect while the manager is being used, not just
+    while it is constructed. Returning a manager and letting the caller use it
+    after the scope closes would resolve the wrong profile's store.
+
+    Replaces two process-global mutations:
+      - rewriting HERMES_HOME (see _scoped_hermes_home), and
+      - importlib.reload()ing tools.checkpoint_manager.
+
+    The reload is no longer needed at all: upstream now resolves the checkpoint
+    root per call precisely so that one multiplexed process can serve every
+    profile. Reloading a module object shared across threads was itself a race —
+    two concurrent profiles reloading the same module would interleave, and a
+    manager built during the other's reload could bind to the wrong store.
+
+    sys.path still has to carry the agent dir so `import tools...` resolves. That
+    is additive and identical for every profile, so it is not a cross-talk risk.
+    """
     agent_dir = _hermes_agent_dir(hermes_home)
     if not agent_dir.is_dir():
-        return None
-    prev_home = os.environ.get("HERMES_HOME")
-    os.environ["HERMES_HOME"] = str(hermes_home)
+        yield None
+        return
     agent_str = str(agent_dir)
     if agent_str not in sys.path:
         sys.path.insert(0, agent_str)
-    try:
-        import tools.checkpoint_manager as cm
+    with _scoped_hermes_home(hermes_home):
+        mgr = None
+        try:
+            import tools.checkpoint_manager as cm
 
-        importlib.reload(cm)
-        return cm.CheckpointManager(enabled=True)
-    except Exception:
-        return None
-    finally:
-        if prev_home is None:
-            os.environ.pop("HERMES_HOME", None)
-        else:
-            os.environ["HERMES_HOME"] = prev_home
+            mgr = cm.CheckpointManager(enabled=True)
+        except Exception:
+            mgr = None
+        yield mgr
 
 
 def _format_checkpoint_entries(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -395,24 +412,23 @@ def list_checkpoint_entries(
     if not resolved:
         return {"ok": False, "workdir": None, "entries": [], "error": "No working directory for checkpoints"}
 
-    mgr = _checkpoint_manager(home)
-    if mgr is None:
-        return {
-            "ok": False,
-            "workdir": resolved,
-            "entries": [],
-            "error": "checkpoint manager unavailable (hermes-agent not installed)",
-        }
-
-    try:
-        raw = mgr.list_checkpoints(resolved)
-    except Exception as exc:
-        return {
-            "ok": False,
-            "workdir": resolved,
-            "entries": [],
-            "error": str(exc)[:500],
-        }
+    with _checkpoint_manager(home) as mgr:
+        if mgr is None:
+            return {
+                "ok": False,
+                "workdir": resolved,
+                "entries": [],
+                "error": "checkpoint manager unavailable (hermes-agent not installed)",
+            }
+        try:
+            raw = mgr.list_checkpoints(resolved)
+        except Exception as exc:
+            return {
+                "ok": False,
+                "workdir": resolved,
+                "entries": [],
+                "error": str(exc)[:500],
+            }
 
     entries = _format_checkpoint_entries(raw)
     return {"ok": True, "workdir": resolved, "entries": entries, "error": None}
@@ -487,37 +503,39 @@ def restore_checkpoint(
     if not resolved:
         return {"ok": False, "error": "No working directory for checkpoints"}
 
-    mgr = _checkpoint_manager(home)
-    if mgr is None:
-        return {
-            "ok": False,
-            "error": "checkpoint manager unavailable (hermes-agent not installed)",
-        }
+    # The scope has to wrap the manager's use, not just its construction:
+    # upstream resolves the checkpoint root per call.
+    with _checkpoint_manager(home) as mgr:
+        if mgr is None:
+            return {
+                "ok": False,
+                "error": "checkpoint manager unavailable (hermes-agent not installed)",
+            }
 
-    try:
-        checkpoints = mgr.list_checkpoints(resolved)
-    except Exception as exc:
-        return {"ok": False, "error": str(exc)[:500]}
+        try:
+            checkpoints = mgr.list_checkpoints(resolved)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)[:500]}
 
-    if not checkpoints:
-        return {"ok": False, "error": "No checkpoints for this working directory", "workdir": resolved}
+        if not checkpoints:
+            return {"ok": False, "error": "No checkpoints for this working directory", "workdir": resolved}
 
-    if idx > len(checkpoints):
-        return {
-            "ok": False,
-            "error": f"Invalid checkpoint index. Use 1-{len(checkpoints)}.",
-            "workdir": resolved,
-        }
+        if idx > len(checkpoints):
+            return {
+                "ok": False,
+                "error": f"Invalid checkpoint index. Use 1-{len(checkpoints)}.",
+                "workdir": resolved,
+            }
 
-    target = checkpoints[idx - 1]
-    commit_hash = str(target.get("hash") or "").strip()
-    if not commit_hash:
-        return {"ok": False, "error": "Checkpoint hash missing", "workdir": resolved}
+        target = checkpoints[idx - 1]
+        commit_hash = str(target.get("hash") or "").strip()
+        if not commit_hash:
+            return {"ok": False, "error": "Checkpoint hash missing", "workdir": resolved}
 
-    try:
-        result = mgr.restore(resolved, commit_hash)
-    except Exception as exc:
-        return {"ok": False, "error": str(exc)[:500], "workdir": resolved, "index": idx}
+        try:
+            result = mgr.restore(resolved, commit_hash)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)[:500], "workdir": resolved, "index": idx}
 
     return {
         "ok": bool(result.get("success")),
@@ -2296,19 +2314,69 @@ _PORTAL_OAUTH_SESSION_TTL_SECONDS = 15 * 60
 _DEVICE_AUTH_POLL_INTERVAL_CAP_SECONDS = 1
 _portal_oauth_sessions: dict[str, dict[str, Any]] = {}
 _portal_oauth_sessions_lock = threading.Lock()
+# Only taken on the legacy env-var fallback path in _scoped_hermes_home, where
+# the home is process-global and must be serialized to stay coherent.
+_legacy_home_env_lock = threading.RLock()
+
+
+def _hermes_home_override_api(hermes_home: Optional[Path] = None):
+    """Return hermes-agent's context-local home override functions, or None.
+
+    hermes_constants.get_hermes_home() resolves, in order: a context-local
+    override, then the HERMES_HOME env var, then the platform default. The
+    override is a ContextVar, so it is isolated per thread and per asyncio task —
+    which is exactly the isolation a per-profile home needs.
+
+    Returns None on a hermes-agent old enough to predate the API, so callers can
+    fall back rather than fail.
+    """
+    agent_str = str(_hermes_agent_dir(hermes_home))
+    if agent_str not in sys.path:
+        sys.path.insert(0, agent_str)
+    try:
+        from hermes_constants import (
+            reset_hermes_home_override,
+            set_hermes_home_override,
+        )
+    except Exception:
+        return None
+    return set_hermes_home_override, reset_hermes_home_override
 
 
 @contextmanager
 def _scoped_hermes_home(hermes_home: Path):
-    prev_home = os.environ.get("HERMES_HOME")
-    os.environ["HERMES_HOME"] = str(hermes_home)
-    try:
-        yield
-    finally:
-        if prev_home is None:
-            os.environ.pop("HERMES_HOME", None)
-        else:
-            os.environ["HERMES_HOME"] = prev_home
+    """Scope the Hermes home to one profile for the current thread/task.
+
+    Previously this rewrote os.environ["HERMES_HOME"], which is process-global.
+    Two profiles served concurrently in worker threads therefore read each
+    other's home, so a chat turn could resolve — and write — another profile's
+    credentials and state.
+
+    Uses hermes-agent's own context-local override where available. The env
+    mutation remains only as a fallback for a hermes-agent too old to expose the
+    API, and takes a lock so that degraded path at least stays internally
+    consistent instead of interleaving.
+    """
+    api = _hermes_home_override_api(hermes_home)
+    if api is not None:
+        set_override, reset_override = api
+        token = set_override(hermes_home)
+        try:
+            yield
+        finally:
+            reset_override(token)
+        return
+
+    with _legacy_home_env_lock:
+        prev_home = os.environ.get("HERMES_HOME")
+        os.environ["HERMES_HOME"] = str(hermes_home)
+        try:
+            yield
+        finally:
+            if prev_home is None:
+                os.environ.pop("HERMES_HOME", None)
+            else:
+                os.environ["HERMES_HOME"] = prev_home
 
 
 def _load_nous_auth_helpers():

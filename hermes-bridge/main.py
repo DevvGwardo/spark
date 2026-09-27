@@ -5612,7 +5612,9 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
                         should_stop=lambda: _hermes_runs.is_run_cancelled(workspace_id),
                     )
                 finally:
-                    _hermes_runs.unregister_active_run(workspace_id)
+                    # Pass run_id so a late-finishing run cannot delete a newer
+                    # overlapping run's cancel handle for the same conversation.
+                    _hermes_runs.unregister_active_run(workspace_id, run_id)
                 print(f"[hermes-bridge] Gateway run completed. run_id={run_id}", flush=True)
                 _brain_pulse("working", "completed")
                 _update_bridge_metrics(success=True, decrement_active=True)
