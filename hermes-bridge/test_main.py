@@ -224,6 +224,7 @@ if "pydantic" not in sys.modules:
     sys.modules["pydantic"] = pydantic_stub
 
 import main
+import brain_client
 
 
 class _FakeRequest:
@@ -1222,7 +1223,15 @@ class SwarmCoordinatorTests(unittest.TestCase):
         return {}
 
     def _mock_brain(self, store):
-        """Patch main._brain_call_async and main._brain_rpc to use in-memory store."""
+        """Patch brain_client's RPC entry points to use an in-memory store.
+
+        These are patched on `brain_client`, not on `main`. The brain subprocess
+        handle and JSON-RPC layer moved to brain_client so that swarm_pattern.py
+        stops importing main (see the B2 notes in brain_client.py). Patching
+        `main._brain_*` here is what let the original double-module bug pass CI:
+        the tests injected a fake into a module object the running bridge never
+        used.
+        """
         async def fake_call_async(tool, args):
             if tool == "brain_set":
                 store[args["key"]] = args["value"]
@@ -1246,8 +1255,8 @@ class SwarmCoordinatorTests(unittest.TestCase):
             return None
 
         return (
-            patch.object(main, '_brain_call_async', side_effect=fake_call_async),
-            patch.object(main, '_brain_rpc', side_effect=fake_rpc),
+            patch.object(brain_client, '_brain_call_async', side_effect=fake_call_async),
+            patch.object(brain_client, '_brain_rpc', side_effect=fake_rpc),
         )
 
     def test_swarm_coordinator_stores_request_context(self):

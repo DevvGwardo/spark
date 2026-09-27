@@ -24,9 +24,15 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Optional
 
-# Local imports — brain MCP is accessed via the bridge's own _brain_* helpers.
-# Import them so this module can use the same RPC layer.
-import main
+# Local import — brain MCP is reached through brain_client, which owns the
+# subprocess handle and the JSON-RPC layer.
+#
+# This used to be `import main`. The bridge runs as `python main.py`, so that
+# import executed main.py a second time under a separate module object whose
+# _brain_proc was always None — so every brain call below returned None,
+# silently, for the whole life of a swarm run. brain_client depends on neither
+# main nor this module, so all three share one handle.
+import brain_client
 
 # ---------------------------------------------------------------------------------------
 # Types
@@ -164,14 +170,14 @@ class SwarmCoordinator:
         self._pulse_interval = 5  # pulse every 5 tool calls
 
     # -----------------------------------------------------------------------------------
-    # Brain helpers — all async, delegate to main.py's _brain_rpc / _brain_call_async
+    # Brain helpers — all async, delegate to brain_client's _brain_rpc / _brain_call_async
     # -----------------------------------------------------------------------------------
 
     async def _set(self, key: str, value: str, scope: str = "global"):
-        await main._brain_call_async("brain_set", {"key": key, "value": value, "scope": scope})
+        await brain_client._brain_call_async("brain_set", {"key": key, "value": value, "scope": scope})
 
     async def _get(self, key: str) -> Optional[str]:
-        result = await main._brain_call_async("brain_get", {"key": key})
+        result = await brain_client._brain_call_async("brain_get", {"key": key})
         if result and isinstance(result, dict):
             content = result.get("content") or result.get("value")
             # MCP tool results are wrapped in a content array
@@ -184,20 +190,20 @@ class SwarmCoordinator:
         return None
 
     async def _post(self, content: str, channel: str = "general"):
-        await main._brain_call_async("brain_post", {"content": content, "channel": channel})
+        await brain_client._brain_call_async("brain_post", {"content": content, "channel": channel})
 
     async def _pulse(self, status: str = "working", progress: str = ""):
-        await main._brain_call_async("brain_pulse", {"status": status, "progress": progress})
+        await brain_client._brain_call_async("brain_pulse", {"status": status, "progress": progress})
 
     async def _claim(self, resource: str, ttl: int = 120):
-        await main._brain_call_async("brain_claim", {"resource": resource, "ttl": ttl})
+        await brain_client._brain_call_async("brain_claim", {"resource": resource, "ttl": ttl})
 
     async def _release(self, resource: str):
-        await main._brain_call_async("brain_release", {"resource": resource})
+        await brain_client._brain_call_async("brain_release", {"resource": resource})
 
     async def _wake(self, name: str, task: str):
         """Spawn a named agent via brain_wake."""
-        await main._brain_rpc("tools/call", {
+        await brain_client._brain_rpc("tools/call", {
             "name": "brain_wake",
             "arguments": {"name": name, "task": task}
         })
