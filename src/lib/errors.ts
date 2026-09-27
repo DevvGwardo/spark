@@ -1,3 +1,8 @@
+import {
+  isHermesErrorEnvelope,
+  type HermesErrorEnvelopeShape,
+} from '../../server/lib/hermes-errors.gen';
+
 function formatPathLabel(path: unknown[]): string {
   if (path.length >= 2 && path[0] === 'changes' && typeof path[1] === 'number') {
     const changeNumber = path[1] + 1;
@@ -78,6 +83,45 @@ function parseToolValidationError(message: string): string | null {
   } catch {
     return `Invalid arguments for ${toolName}. The model sent malformed tool input.`;
   }
+}
+
+/**
+ * Pull a Hermes error envelope out of an error, if there is one.
+ *
+ * `getErrorMessage` flattens everything to a string, which is right for display
+ * but destroys the contract: the UI then has to guess what went wrong by matching
+ * message text. This walks the same chain getErrorMessage does and returns the
+ * envelope the first time it finds a valid one, so callers can switch on `code`.
+ *
+ * Returns null when the error predates the envelope, letting the caller fall back
+ * rather than guess.
+ */
+export function extractHermesErrorEnvelope(error: unknown): HermesErrorEnvelopeShape | null {
+  if (!error || typeof error !== 'object') return null;
+
+  const candidate = error as Record<string, unknown>;
+  if (isHermesErrorEnvelope(candidate)) return candidate;
+
+  for (const key of ['cause', 'error', 'data', 'body', 'response']) {
+    const nested = candidate[key];
+    if (nested !== undefined && nested !== error) {
+      const found = extractHermesErrorEnvelope(nested);
+      if (found) return found;
+    }
+  }
+
+  // A stringified envelope is common: the Node proxy sometimes forwards the raw
+  // response body as text.
+  const asText = typeof candidate.message === 'string' ? candidate.message : null;
+  if (asText && (asText.startsWith('{') || asText.startsWith('['))) {
+    try {
+      const parsed: unknown = JSON.parse(asText);
+      if (isHermesErrorEnvelope(parsed)) return parsed;
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 export function getErrorMessage(error: unknown): string {

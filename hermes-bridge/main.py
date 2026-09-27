@@ -2941,6 +2941,85 @@ async def _get_agent_models() -> list[dict]:
 
 app = FastAPI(title="Hermes Bridge", lifespan=_bridge_lifespan)
 
+
+# --- Error envelope (spec Phase 1.4) ------------------------------------------------
+# Every error leaving the bridge is {"error": {code, message, retryable, details?}}
+# with a closed code enum, so the UI switches on `code` instead of pattern-matching
+# message strings. Defined in bridge_errors.py, which also owns the enum; the
+# Python and TypeScript enums are kept in sync by a contract test.
+
+from bridge_errors import (  # noqa: E402
+    BRIDGE_AUTH,
+    BRIDGE_STARTING,
+    BRIDGE_UNREACHABLE,
+    INTERNAL,
+    PROVIDER_ERROR,
+    UPSTREAM_TIMEOUT,
+    VALIDATION,
+    BridgeError,
+    HermesErrorEnvelope,
+)
+
+
+@app.exception_handler(BridgeError)
+async def _handle_bridge_error(request: Request, exc: BridgeError):
+    """Emit a BridgeError's own envelope, verbatim."""
+    return JSONResponse(status_code=exc.status_code, content=exc.to_envelope())
+
+
+@app.exception_handler(HTTPException)
+async def _handle_http_exception(request: Request, exc: HTTPException):
+    """Map FastAPI's HTTPException onto the same envelope.
+
+    FastAPI raises this for 404s and validation failures, which would otherwise
+    reach the client as {"detail": ...} — a second, incompatible error shape.
+    """
+    # Map the status onto a code. A 401/403 is an auth failure; a 4xx that is not
+    # 401/403/404 is a client-side validation problem.
+    if exc.status_code in (401, 403):
+        code, retryable = BRIDGE_AUTH, False
+    elif exc.status_code == 404:
+        code, retryable = VALIDATION, False
+    elif exc.status_code == 503:
+        code, retryable = BRIDGE_STARTING, True
+    elif exc.status_code == 504:
+        code, retryable = UPSTREAM_TIMEOUT, True
+    elif 400 <= exc.status_code < 500:
+        code, retryable = VALIDATION, False
+    else:
+        code, retryable = (INTERNAL if exc.status_code >= 500 else PROVIDER_ERROR), (
+            exc.status_code >= 500
+        )
+    detail = exc.detail
+    message = detail if isinstance(detail, str) else str(detail)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": {"code": code, "message": message, "retryable": retryable}},
+    )
+
+
+@app.exception_handler(Exception)
+async def _handle_unexpected_error(request: Request, exc: Exception):
+    """Last resort: never leak a traceback or a bare {"detail"} to the client.
+
+    Registered as a catch-all so an unexpected failure still produces a
+    contract-shaped envelope. The traceback goes to the log, not the wire.
+    """
+    import traceback
+
+    print(f"[hermes-bridge] unhandled error: {exc!r}", file=sys.stderr)
+    traceback.print_exc()
+    envelope = BridgeError(INTERNAL, "The bridge hit an unexpected error.", retryable=False)
+    return JSONResponse(status_code=500, content=envelope.to_envelope())
+
+
+# Codes the bridge itself raises for transport-level conditions, re-exported so
+# callers (and tests) do not have to reach into bridge_errors for the common ones.
+BRIDGE_ERROR_CODES = frozenset({
+    BRIDGE_UNREACHABLE, BRIDGE_STARTING, BRIDGE_AUTH,
+    UPSTREAM_TIMEOUT, PROVIDER_ERROR, VALIDATION, INTERNAL,
+})
+
 # Origins the app UI may load from. The renderer talks to the bridge only via the
 # Express proxy (server-side fetch, no Origin header); browsers from any other
 # origin are rejected in the token guard below so webpages cannot drive the

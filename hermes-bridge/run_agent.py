@@ -23,6 +23,10 @@ from kanban_tools import (
     kanban_list, kanban_create, kanban_link, kanban_unblock,
 )
 from team_tools import TEAM_TOOL_DEFINITIONS, TEAM_TOOL_NAMES, team_delegate_to_agent, team_report_progress, team_query_context, team_publish_finding, team_request_help, team_signal_completion
+from bridge_errors import (
+    MODEL_INCOMPATIBLE,
+    BridgeError,
+)
 from bridge_events import (
     callback_accepts_kwarg,
     filter_tool_defs_for_plan_mode,
@@ -2273,10 +2277,19 @@ class AIAgent:
     ) -> dict:
         """Make a non-streaming chat completion request with retry and backoff."""
         if self.tools and self.model in KNOWN_UNSUPPORTED_TOOL_MODELS:
-            suggested_models = ", ".join(SUGGESTED_TOOL_MODELS)
-            raise RuntimeError(
+            # Raised as a BridgeError so the model and its suggestions travel as
+            # data. This was a bare RuntimeError whose only carrier was a sentence,
+            # which forced ChatErrorBanner to regex the suggested model names back
+            # out of it.
+            raise BridgeError(
+                MODEL_INCOMPATIBLE,
                 f"Model '{self.model}' is not compatible with Hermes tool calls on OpenRouter. "
-                f"Choose a tool-capable model like {suggested_models}."
+                f"Choose a tool-capable model like {', '.join(SUGGESTED_TOOL_MODELS)}.",
+                retryable=False,
+                details={
+                    "current_model": self.model,
+                    "suggested_models": list(SUGGESTED_TOOL_MODELS),
+                },
             )
 
         # Sanitize messages to fix orphaned tool results

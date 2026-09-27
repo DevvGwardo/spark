@@ -1,0 +1,163 @@
+{
+  "$defs": {
+    "HermesErrorBody": {
+      "description": "The inner body: what went wrong, and whether trying again could work.",
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "details": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HermesErrorDetails"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "retryable": {
+          "default": false,
+          "title": "Retryable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "HermesErrorBody",
+      "type": "object"
+    },
+    "HermesErrorDetails": {
+      "additionalProperties": true,
+      "description": "Structured extras a caller can act on.\n\nEvery field is optional because which ones are populated depends on the code.\nThey are typed as open objects rather than rejected when absent, because\nhermes-agent and the gateway can add context without a bridge release.",
+      "properties": {
+        "approval_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approval Id"
+        },
+        "bridge_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bridge Url"
+        },
+        "current_model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Current Model"
+        },
+        "provider_message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider Message"
+        },
+        "provider_status": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider Status"
+        },
+        "retry_after_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retry After Ms"
+        },
+        "suggested_models": {
+          "anyOf": [
+            {
+              "items": {},
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Suggested Models"
+        }
+      },
+      "title": "HermesErrorDetails",
+      "type": "object"
+    }
+  },
+  "$id": "https://spark.local/schemas/hermes-errors.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The wire shape: always wrapped in `error`.",
+  "properties": {
+    "error": {
+      "$ref": "#/$defs/HermesErrorBody"
+    }
+  },
+  "required": [
+    "error"
+  ],
+  "title": "HermesErrorEnvelope",
+  "type": "object",
+  "x-error-codes": [
+    "BRIDGE_UNREACHABLE",
+    "BRIDGE_STARTING",
+    "BRIDGE_AUTH",
+    "UPSTREAM_TIMEOUT",
+    "MODEL_INCOMPATIBLE",
+    "PROVIDER_ERROR",
+    "APPROVAL_EXPIRED",
+    "VALIDATION",
+    "INTERNAL"
+  ],
+  "x-generated-by": "hermes-bridge/generate_error_schema.py",
+  "x-retryable-codes": [
+    "BRIDGE_STARTING",
+    "BRIDGE_UNREACHABLE",
+    "PROVIDER_ERROR",
+    "UPSTREAM_TIMEOUT"
+  ]
+}

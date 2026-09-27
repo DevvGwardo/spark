@@ -3,13 +3,11 @@ import { AlertTriangle, ArrowUpRight, Copy, Sparkles, TerminalSquare, SlidersHor
 import { cn } from '@/lib/utils';
 import { getApiBaseUrl } from '@/lib/api';
 import { parseLocalProviderRuntimeError } from '@/lib/local-provider-runtime';
-
-interface HermesCompatibilityDetails {
-  currentModel: string;
-  suggestions: string[];
-}
+import type { HermesErrorEnvelopeShape } from '../../../server/lib/hermes-errors.gen';
 
 interface ChatErrorBannerProps {
+  /** The Hermes error envelope, when the failure came through one. */
+  hermesError?: HermesErrorEnvelopeShape | null;
   message: string;
   activeProvider: string;
   activeModel: string;
@@ -18,52 +16,34 @@ interface ChatErrorBannerProps {
   onSwitchModel: (model: string) => void;
 }
 
-function normalizeErrorMessage(message: string) {
-  return message.replace(/^\[Error:\s*/i, '').replace(/\]$/, '').trim();
+/**
+ * Hermes failures are classified by `code`, not by matching message text.
+ *
+ * The envelope is generated from hermes-bridge/bridge_errors.py, so a new code
+ * arrives here as a compile error rather than a silently unhandled string. The
+ * three regexes this replaced — including one that scraped suggested model names
+ * out of a sentence — are gone; suggestions now arrive as
+ * `details.suggested_models`.
+ */
+type HermesCode = HermesErrorEnvelopeShape['error']['code'];
+
+const HERMES_CODE_TITLES: Record<HermesCode, string> = {
+  BRIDGE_UNREACHABLE: 'Could not reach the Hermes bridge',
+  BRIDGE_STARTING: 'Hermes is still starting',
+  BRIDGE_AUTH: 'Hermes bridge rejected the request',
+  UPSTREAM_TIMEOUT: 'The model provider timed out',
+  MODEL_INCOMPATIBLE: 'That model cannot use Hermes tools',
+  PROVIDER_ERROR: 'The model provider returned an error',
+  APPROVAL_EXPIRED: 'That approval expired',
+  VALIDATION: 'The request was rejected',
+  INTERNAL: 'Hermes hit an unexpected error',
+};
+
+/** A stable, user-meaningful label for the code, used in the UI. */
+function titleForCode(code: HermesCode): string {
+  return HERMES_CODE_TITLES[code] ?? 'Hermes hit an unexpected error';
 }
 
-function isApiConnectionError(message: string) {
-  const normalized = normalizeErrorMessage(message);
-  return /failed after \d+ attempts\./i.test(normalized) && /cannot connect to api/i.test(normalized);
-}
-
-function formatApiConnectionMessage(message: string) {
-  const normalized = normalizeErrorMessage(message);
-  const withoutPrefix = normalized
-    .replace(/^Failed after \d+ attempts\.\s*Last error:\s*/i, '')
-    .trim();
-  const trimmedDetail = withoutPrefix.replace(/\s*:\s*$/, '').trim();
-
-  return {
-    summary: 'Spark could not reach the local API server.',
-    detail: trimmedDetail && !/^cannot connect to api$/i.test(trimmedDetail)
-      ? trimmedDetail
-      : 'The renderer lost its connection to the embedded API process, so requests never reached the provider.',
-    baseUrl: getApiBaseUrl(),
-  };
-}
-
-function parseHermesCompatibilityError(message: string): HermesCompatibilityDetails | null {
-  const normalized = normalizeErrorMessage(message);
-  const match = normalized.match(
-    /Model '([^']+)' is not compatible with Hermes tool calls on OpenRouter\.\s*Choose a tool-capable model like\s+(.+)$/i,
-  );
-
-  if (!match) {
-    return null;
-  }
-
-  const suggestions = match[2]
-    .replace(/[.\]]+$/, '')
-    .split(/\s*,\s*/)
-    .map((model) => model.trim())
-    .filter(Boolean);
-
-  return {
-    currentModel: match[1],
-    suggestions,
-  };
-}
 
 function getModelLabel(model: string) {
   return model.split('/').pop() || model;
@@ -90,6 +70,7 @@ function ErrorPill({ children, tone = 'default' }: { children: React.ReactNode; 
 }
 
 export const ChatErrorBanner: React.FC<ChatErrorBannerProps> = ({
+  hermesError,
   message,
   activeProvider,
   activeModel,
@@ -97,15 +78,35 @@ export const ChatErrorBanner: React.FC<ChatErrorBannerProps> = ({
   onOpenSettings,
   onSwitchModel,
 }) => {
-  const normalizedMessage = useMemo(() => normalizeErrorMessage(message), [message]);
-  const apiConnectionDetails = useMemo(
-    () => (isApiConnectionError(message) ? formatApiConnectionMessage(message) : null),
-    [message],
+  const normalizedMessage = useMemo(
+    () => (hermesError ? hermesError.error.message : message),
+    [hermesError, message],
   );
-  const hermesDetails = useMemo(
-    () => (activeProvider === 'hermes' ? parseHermesCompatibilityError(message) : null),
-    [activeProvider, message],
-  );
+  // Transport-level codes share the "could not reach the API" presentation.
+  const apiConnectionDetails = useMemo(() => {
+    if (!hermesError) return null;
+    const code = hermesError.error.code;
+    if (code !== 'BRIDGE_UNREACHABLE' && code !== 'BRIDGE_STARTING') return null;
+    return {
+      // Wording preserved from the pre-1.4 copy on purpose: this banner is about
+      // the renderer losing the local API, and the message is now the envelope's
+      // rather than a regex-stripped sentence.
+      summary: 'Spark could not reach the local API server.',
+      detail:
+        hermesError.error.message && hermesError.error.message.trim()
+          ? hermesError.error.message
+          : 'The renderer lost its connection to the embedded API process, so requests never reached the provider.',
+      baseUrl: getApiBaseUrl(),
+    };
+  }, [hermesError]);
+  const hermesDetails = useMemo(() => {
+    if (!hermesError || hermesError.error.code !== 'MODEL_INCOMPATIBLE') return null;
+    const details = hermesError.error.details;
+    return {
+      currentModel: details?.current_model ?? activeModel,
+      suggestions: Array.isArray(details?.suggested_models) ? details.suggested_models : [],
+    };
+  }, [hermesError, activeModel]);
   const localProviderRuntime = useMemo(
     () => parseLocalProviderRuntimeError(activeProvider, message),
     [activeProvider, message],
@@ -285,7 +286,7 @@ export const ChatErrorBanner: React.FC<ChatErrorBannerProps> = ({
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <ErrorPill>Local API</ErrorPill>
-                <ErrorPill tone="warning">Connection failed</ErrorPill>
+                <ErrorPill tone="warning">{titleForCode(hermesError?.error.code ?? 'BRIDGE_UNREACHABLE')}</ErrorPill>
               </div>
               <h3 className="mt-2 text-sm font-semibold tracking-tight text-foreground">
                 {apiConnectionDetails.summary}

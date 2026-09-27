@@ -20,7 +20,7 @@ import { ImplementPlanGate } from './ImplementPlanGate';
 import { BuddyComparisonPanel, type BuddyResponse } from './BuddyComparisonPanel';
 import { getProviderLabel } from '@/lib/providers';
 import type { Provider } from '@/stores/settings-store';
-import { getErrorMessage } from '@/lib/errors';
+import { extractHermesErrorEnvelope, getErrorMessage } from '@/lib/errors';
 import {
   buildIssueFixFollowUpPrompt,
   buildIssueUpdateFollowUpPrompt,
@@ -451,7 +451,12 @@ interface ChatAreaProps {
   handleRegenerate: () => void;
   isStreaming: boolean;
   isAnotherPanelStreamingSameProfile?: boolean;
-  error?: Error | null;
+  /**
+   * A thrown Error, or a Hermes error envelope. Widened from `Error` in
+   * Phase 1.4: the proxy can hand us a structured failure, and getErrorMessage
+   * already flattens either form for display.
+   */
+  error?: unknown;
   apiKeyModalOpen: boolean;
   setApiKeyModalOpen: (v: boolean) => void;
   activeProvider: Provider;
@@ -573,6 +578,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
   // Reset dismissed error when a new error comes in
   const errorMessage = error ? getErrorMessage(error) : null;
+  // The envelope, when the failure arrived as one. Lets the banner switch on
+  // `code` instead of matching message text.
+  const hermesError = useMemo(() => extractHermesErrorEnvelope(error), [error]);
   const showError = errorMessage && errorMessage !== dismissedError;
   const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
   const lastAssistantMessage = messages.findLast((msg) => msg.role === 'assistant');
@@ -1113,6 +1121,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
   const errorBanner = showError ? (
     <ChatErrorBanner
+      hermesError={hermesError}
       message={errorMessage}
       activeProvider={activeProvider}
       activeModel={activeModel}
