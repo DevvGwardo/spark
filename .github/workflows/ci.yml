@@ -4,7 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    # Stacked PRs target a feature branch rather than main. Without these globs a
+    # stacked PR gets no CI at all, so its checks only ever run after it has
+    # already been rebased onto main -- i.e. too late to catch anything.
+    branches: [main, 'feat/**', 'fix/**']
 
 jobs:
   lint-typecheck-build:
