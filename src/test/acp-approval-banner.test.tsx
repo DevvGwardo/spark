@@ -10,11 +10,10 @@ vi.mock('@/lib/hermes-api', async (importOriginal) => {
     ...actual,
     postServerApproval: vi.fn(async () => ({ ok: true })),
     postAcpApproval: vi.fn(async () => ({ ok: true })),
-    postBridgeAcpApprovalDirect: vi.fn(async () => true),
   };
 });
 
-import { postAcpApproval, postBridgeAcpApprovalDirect } from '@/lib/hermes-api';
+import { postAcpApproval, postServerApproval } from '@/lib/hermes-api';
 
 const legacyPayload = (overrides: Partial<AcpApprovalRequest> = {}): AcpApprovalRequest => ({
   approval_id: 'acp-1',
@@ -70,14 +69,36 @@ describe('AcpApprovalBanner', () => {
     await waitFor(() => expect(postAcpApproval).toHaveBeenCalledWith('acp-2', 'deny'));
   });
 
-  it('falls back to the direct bridge path when the server route rejects', async () => {
+  it('resolves through the single server route — server errors surface, no direct-bridge fallback', async () => {
+    // The merged /api/hermes/approvals/:id handles acp-* ids itself, so a
+    // rejection is terminal: the banner shows the error and keeps the
+    // approval pending instead of retrying against the bridge directly.
     seedApproval(legacyPayload());
     const { HermesApiError } = await import('@/lib/hermes-api');
     vi.mocked(postAcpApproval).mockRejectedValueOnce(new HermesApiError('unknown approval', 404));
     render(<AcpApprovalBanner />);
 
     fireEvent.click(screen.getByText('Approve once'));
-    await waitFor(() => expect(postBridgeAcpApprovalDirect).toHaveBeenCalledWith('acp-1', 'approved'));
+    await waitFor(() => expect(screen.getByText('unknown approval')).toBeInTheDocument());
+    expect(useHermesStore.getState().pendingAcpApprovals['acp-1']).toBeDefined();
+  });
+
+  it('sends unified ladder decisions through postServerApproval', async () => {
+    seedApproval(
+      legacyPayload({
+        approval_id: 'acp-u2',
+        available_decisions: ['approved', 'approved_for_session', 'denied'] as never,
+      }),
+    );
+    render(<AcpApprovalBanner />);
+
+    fireEvent.click(screen.getByText('Approve for session'));
+    await waitFor(() =>
+      expect(postServerApproval).toHaveBeenCalledWith('acp-u2', 'approved_for_session', undefined),
+    );
+    await waitFor(() =>
+      expect(useHermesStore.getState().pendingAcpApprovals['acp-u2']).toBeUndefined(),
+    );
   });
 
   it('queues concurrent approvals instead of clobbering the first', async () => {

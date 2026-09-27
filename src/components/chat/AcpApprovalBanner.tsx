@@ -2,9 +2,7 @@ import React, { useCallback, useState } from 'react';
 import { ShieldAlert } from 'lucide-react';
 import { useHermesStore } from '@/stores/hermes-store';
 import {
-  HermesApiError,
   postAcpApproval,
-  postBridgeAcpApprovalDirect,
   postServerApproval,
   type AcpApprovalDecision,
   type ServerApprovalDecision,
@@ -46,10 +44,10 @@ function commandPrefix(command: string | undefined, max = 40): string {
  * hermes-agent's ACP approvals (resolved by the bridge) and the new
  * server-side tool approvals (approval-engine, resolved by the Express
  * server). The ladder maps available_decisions onto buttons; the choice is
- * POSTed with the unified {decision, reason?} contract to
- * /api/hermes/approvals/{id}, falling back to the bridge's own
- * /v1/approvals/{id} (option_id contract) for ACP approvals the server
- * doesn't own.
+ * POSTed with the unified {decision, reason?} contract to the single
+ * /api/hermes/approvals/{id} route, which resolves engine-local ids itself
+ * and forwards acp-* ids to the bridge. Legacy ACP payloads (options only)
+ * go to the same route with the bridge's {option_id} contract.
  */
 export const AcpApprovalBanner: React.FC = () => {
   // Oldest pending request first — one banner at a time; concurrent prompts
@@ -74,25 +72,11 @@ export const AcpApprovalBanner: React.FC = () => {
         if (hasUnifiedContract) {
           const serverDecision: ServerApprovalDecision =
             decision === 'prefix' ? 'approved' : decision;
-          try {
-            await postServerApproval(
-              pending.approval_id,
-              serverDecision,
-              decision === 'prefix' ? 'prefix' : undefined,
-            );
-          } catch (err) {
-            // The server route only knows its own parked approvals. ACP
-            // payloads carry a session_id — deliver those straight to the
-            // bridge (option_id contract) via its own port.
-            const isBridgeAcp = typeof pending.session_id === 'string' && pending.session_id.length > 0;
-            if (!isBridgeAcp || !(err instanceof HermesApiError)) {
-              throw err;
-            }
-            const delivered = await postBridgeAcpApprovalDirect(pending.approval_id, decision);
-            if (!delivered) {
-              throw new Error('Approval could not be delivered to the agent (unknown or expired).');
-            }
-          }
+          await postServerApproval(
+            pending.approval_id,
+            serverDecision,
+            decision === 'prefix' ? 'prefix' : undefined,
+          );
         } else {
           // Legacy ACP payloads (options only) — existing bridge flow.
           // hermes-agent's ACP adapter accepts only allow_once/deny;
@@ -103,17 +87,7 @@ export const AcpApprovalBanner: React.FC = () => {
               ? 'approved'
               : decision;
           const optionId = legacyOptionIdForDecision(clampedDecision);
-          try {
-            await postAcpApproval(pending.approval_id, optionId);
-          } catch (err) {
-            if (!(err instanceof HermesApiError)) {
-              throw err;
-            }
-            const delivered = await postBridgeAcpApprovalDirect(pending.approval_id, clampedDecision);
-            if (!delivered) {
-              throw err;
-            }
-          }
+          await postAcpApproval(pending.approval_id, optionId);
         }
         // One-line assistant-side audit entry appended to the transcript by
         // the chat runtime (persisted like other messages).

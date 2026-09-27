@@ -1,6 +1,6 @@
 // @vitest-environment node
 import type { AddressInfo } from 'net'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 async function createTestServer(opts?: { serveFrontend?: boolean }) {
   const { createApp } = await import('../index')
@@ -100,6 +100,121 @@ describe('remote access endpoint gating', () => {
       expect(res.status).toBe(404)
     } finally {
       await apiOnly.close()
+    }
+  })
+})
+
+describe('merged hermes approval route (B3)', () => {
+  const actualFetch = globalThis.fetch
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  // Capture what the merged route forwards to the bridge. Stubbing fetch is
+  // deterministic: without it the acp-* cases would depend on whether a
+  // bridge happens to be listening on :3002 in this environment.
+  let forwardedBodies: Array<{ url: string; body: unknown }>
+
+  function stubBridgeOk() {
+    forwardedBodies = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url =
+          typeof input === 'string'
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url
+        if (url.includes('/v1/approvals/')) {
+          let body: unknown = null
+          try {
+            body = init?.body ? JSON.parse(String(init.body)) : null
+          } catch {
+            // keep null
+          }
+          forwardedBodies.push({ url, body })
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+        return actualFetch(input, init)
+      }),
+    )
+  }
+
+  async function postApproval(url: string, id: string, body: unknown) {
+    return actualFetch(`${url}/api/hermes/approvals/${id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  }
+
+  it('accepts { option_id } for acp-* ids (the shape postAcpApproval sends)', async () => {
+    stubBridgeOk()
+    const server = await createTestServer()
+    try {
+      const res = await postApproval(server.url, 'acp-test-1', { option_id: 'allow_once' })
+      // Before the merge this was always 400: chat.ts won the route and
+      // demanded a `decision` the caller never sent.
+      expect(res.status).toBe(200)
+      expect(forwardedBodies).toHaveLength(1)
+      expect(forwardedBodies[0]?.body).toEqual({ option_id: 'allow_once' })
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('accepts { decision } for acp-* ids and translates it to option_id', async () => {
+    stubBridgeOk()
+    const server = await createTestServer()
+    try {
+      const res = await postApproval(server.url, 'acp-test-2', { decision: 'approved' })
+      expect(res.status).toBe(200)
+      expect(forwardedBodies).toHaveLength(1)
+      expect(forwardedBodies[0]?.body).toEqual({ option_id: 'allow_once' })
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('rejects a body with neither decision nor option_id', async () => {
+    stubBridgeOk()
+    const server = await createTestServer()
+    try {
+      const res = await postApproval(server.url, 'acp-test-3', {})
+      expect(res.status).toBe(400)
+      expect(forwardedBodies).toHaveLength(0)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('rejects out-of-range decision and option_id values', async () => {
+    stubBridgeOk()
+    const server = await createTestServer()
+    try {
+      const badDecision = await postApproval(server.url, 'acp-test-4', { decision: 'bogus' })
+      expect(badDecision.status).toBe(400)
+      const badOption = await postApproval(server.url, 'acp-test-5', { option_id: 'bogus' })
+      expect(badOption.status).toBe(400)
+      expect(forwardedBodies).toHaveLength(0)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('resolves unknown engine-local ids as 404, not a shadowed 400', async () => {
+    stubBridgeOk()
+    const server = await createTestServer()
+    try {
+      const res = await postApproval(server.url, 'local-unknown-id', { decision: 'approved' })
+      expect(res.status).toBe(404)
+    } finally {
+      await server.close()
     }
   })
 })
