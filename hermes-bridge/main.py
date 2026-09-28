@@ -1508,7 +1508,45 @@ MINIMAX_KEY = os.environ.get("HERMES_MINIMAX_KEY", "")
 HERMES_BRIDGE_TOKEN = os.environ.get("HERMES_BRIDGE_TOKEN", "")
 HERMES_BRIDGE_VERSION = os.environ.get("HERMES_BRIDGE_VERSION", "dev")
 DEFAULT_TOOLSETS = os.environ.get("HERMES_TOOLSETS", "web,browser,terminal")
+# Paths that stay reachable without the token even from loopback.
+#
+# /health  — readiness and ownership polling; must answer before a caller can
+#            possibly have authenticated.
+# /diag    — the Electron supervisor's ownership check. It probes /diag precisely
+#            to decide whether a bridge process on the port is *its own*; gating
+#            that would make an un-authenticated prober unable to adopt or verify
+#            the process it launched, and it would then tear the bridge down as
+#            "unowned". The supervisor now also sends the token (see
+#            electron/bridge.ts), so this exemption is belt-and-braces and can be
+#            dropped once /diag stops being an adoption probe.
 _BRIDGE_AUTH_EXEMPT_PATHS = frozenset({"/health", "/diag"})
+
+# One-release escape hatch. Phase 2.4 tightened loopback to require the token,
+# which closes G2: the chat approval forward and the runs-cancel path had been
+# relying on loopback being open. If this locks out an external script or the
+# mobile path, set HERMES_BRIDGE_ALLOW_LOOPBACK_NOAUTH=1 to restore the old
+# behaviour. Every use is logged, so the hatch is visible rather than silent.
+_BRIDGE_ALLOW_LOOPBACK_NOAUTH = (
+    os.environ.get("HERMES_BRIDGE_ALLOW_LOOPBACK_NOAUTH", "").strip() == "1"
+)
+_warned_loopback_noauth = False
+
+
+def _loopback_noauth_allowed() -> bool:
+    """Escape-hatch check, warned about once per process on first use."""
+    global _warned_loopback_noauth
+    if not _BRIDGE_ALLOW_LOOPBACK_NOAUTH:
+        return False
+    if not _warned_loopback_noauth:
+        _warned_loopback_noauth = True
+        print(
+            "[hermes-bridge] WARNING: HERMES_BRIDGE_ALLOW_LOOPBACK_NOAUTH=1 is set — "
+            "loopback requests are being accepted without the bridge token. This "
+            "re-opens G2 and must be removed.",
+            file=sys.stderr,
+            flush=True,
+        )
+    return True
 
 
 def _is_loopback_host(host: Optional[str]) -> bool:
@@ -3041,6 +3079,14 @@ app.add_middleware(
 )
 
 
+def _auth_error(status_code: int, message: str, *, retryable: bool) -> JSONResponse:
+    """An auth rejection in the Phase 1.4 envelope, not a bare {"error": str}."""
+    return JSONResponse(
+        status_code=status_code,
+        content={"error": {"code": "BRIDGE_AUTH", "message": message, "retryable": retryable}},
+    )
+
+
 @app.middleware("http")
 async def bridge_token_guard(request: Request, call_next):
     """When HERMES_BRIDGE_TOKEN is set, require it for non-loopback clients.
@@ -3051,16 +3097,27 @@ async def bridge_token_guard(request: Request, call_next):
     """
     origin = request.headers.get("origin")
     if origin is not None and origin not in _BRIDGE_ALLOWED_ORIGINS:
-        return JSONResponse(status_code=403, content={"error": "Forbidden origin"})
+        return _auth_error(403, "Forbidden origin", retryable=False)
     if not HERMES_BRIDGE_TOKEN:
+        # No token configured at all: nothing to check. This is the local-dev
+        # default and is unchanged, so an unconfigured bridge still works.
         return await call_next(request)
     if request.url.path in _BRIDGE_AUTH_EXEMPT_PATHS:
         return await call_next(request)
+
     client_host = request.client.host if request.client else None
-    if _is_loopback_host(client_host):
+    if _is_loopback_host(client_host) and _loopback_noauth_allowed():
         return await call_next(request)
+
+    # Loopback is no longer exempt. A process on the same machine can reach every
+    # mutating bridge endpoint without a token otherwise (G2), which is what let
+    # the chat approval forward and runs-cancel skip it entirely.
     if not _bridge_token_matches(_extract_bridge_token(request)):
-        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+        return _auth_error(
+            401,
+            "Missing or invalid Hermes bridge token.",
+            retryable=False,
+        )
     return await call_next(request)
 
 
