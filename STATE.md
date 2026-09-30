@@ -18,6 +18,20 @@
 - A keepalive “fix” that switched ACP from tick-based (~3s) to wall-clock 60s exceeded the 30s proxy idle window and looked like “file write / approval is broken.”
 
 ## Last session
+2026-09-30 · Chat hardening pass (analyze → implement → tests):
+- Composer dead-ends fixed: Enter now falls through to send when the command filter is empty; outside-click closes the command popover; IME composition guard (`isComposing`) added; `contextRefIndex` clamped on async list re-filters. Added up-arrow send history (per-panel scope). `@file:`/`@folder:` search is debounced (250ms).
+- Per-token re-render churn killed in the transcript: `ChatArea` caches `MessageBubble` props per message keyed on object identity + content-shape signature + streaming/activity variant (survives in-place mutations and stream-flip affordances); Virtuoso gains `computeItemKey`; scroll/proposal/tool digests and `virtuosoContext` re-keyed on cheap signals (ids, lengths, activity char totals). `ToolInvocationDisplay`/`ToolOutputBlock` memoized with function-prop-ignoring comparers.
+- Scroll button no longer flickers per token: only toggles on genuine user scroll-away (wheel/touch), rendered as an absolute overlay above the list (no composer reflow). `followOutput` uses `auto` while streaming and honors `prefers-reduced-motion`.
+- Tool markers: generic start regex now excludes colons/spaces (prose like `**Note:**` survives) and the offset interleaver clamps stale offsets; bare `**terminal**` markers still strip (bridge emits both forms — see hermes_adapter/main lines "> **{display}**" and "— {detail}"). `getToolOutputMessage` treats `{ok}`/`{synthesized}`-only results as no output (kill JSON junk, restore Content-written preview). Dead `AgentActivity` render branch removed.
+- A11y: collapsed tool-card bodies get `aria-hidden` + `invisible` (out of tab order/AT); focus-visible rings added everywhere; hover-only action bars reveal on focus-within; transcript wrapper is a `role="log"` live region; suggestion popovers got combobox/listbox/option ARIA + `aria-activedescendant`; contrast raised to AA on `#2A2A2A` popovers; hardcoded light-theme artifact card switched to theme tokens; motion capped at 200ms with `motion-reduce:animate-none`.
+- Tests: 15 new/updated (chat-input-interactions, message-bubble regressions, scroll-test rewrites + wheel simulation). Full suite: 551 passed, 16 skipped; tsc 0; eslint 0 errors.
+
+## Lessons learned
+- The bridge emits BOTH `> **{display}**` (bare) and `> **{display}** — {detail}` markers (hermes_adapter.py:685-687, main.py:3153-3154). A "make the dash required" fix silently regresses bare raw-name markers; exclude colons and spaces in the bold label instead.
+- Message-props caching by object identity is unsound in this app: Hermes mutates proposal messages in place, and streaming-flip affordances (onEdit/onRegenerate) change without new objects. Key the cache on identity + content-shape signature + state variants or affordances go stale.
+- The old scroll-button logic (visible on any atBottom=false) was self-inflicted flicker _and_ layout shift: it mounted in-flow between list and composer. Gate on user scroll signals and overlay the button.
+
+## Last session (previous)
 2026-09-24 · Fixed UI loop stalling and ACP stream stealing:
 - Updated `stalledOnRepoRead` and pseudo tool parsing to recognize standard ACP file tools (`read_file`, `search_files`, `write_to_file`, `replace_file_content`). This prevents the chat loop from stalling mid-analysis or dropping implicit edit continuations when operating via MCP.
 - Fixed "stream stealing on concurrent prompts": `_AcpHandle` now uses an `asyncio.Lock` (`turn_lock`) to serialize concurrent `prompt()` calls against the same session, preventing mid-stream emit reassignment.

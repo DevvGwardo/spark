@@ -35,7 +35,6 @@ import { isRepoWriteMessage } from '@/lib/repo-intent';
 import { getToolInvocationKey } from '@/lib/tool-activity';
 import {
   findPendingProposal,
-  getProposalDigest,
   hasRepoContinuationAfterProposal,
   type PendingProposal,
   type ProposalToolInvocationLike,
@@ -73,6 +72,24 @@ interface ChatMessageLike {
   timestamp?: string;
   parts?: ChatPartLike[];
   toolInvocations?: ProposalToolInvocationLike[];
+}
+
+/** Tracks the OS reduced-motion preference (SSR-safe; no-op without matchMedia). */
+function usePrefersReducedMotion() {
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return;
+    }
+    const query = window.matchMedia('(prefers-reduced-motion: reduce)');
+    setPrefersReducedMotion(query.matches);
+    const onChange = (event: MediaQueryListEvent) => setPrefersReducedMotion(event.matches);
+    query.addEventListener('change', onChange);
+    return () => query.removeEventListener('change', onChange);
+  }, []);
+
+  return prefersReducedMotion;
 }
 
 const REPO_WRITE_TOOL_NAMES = new Set([
@@ -244,11 +261,16 @@ function allowPseudoRepoWritesForAssistant(messages: ChatMessageLike[], assistan
     return false;
   }
 
-  const previousUserMessage = messages.slice(0, assistantIndex).findLast((message) =>
-    message.role === 'user' && getMessageContent(message).trim().length > 0,
-  );
+  // Scan backwards from the assistant message for the previous user message
+  // without copying the array (slice allocates O(n) per itemContent call).
+  for (let i = assistantIndex - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message.role === 'user' && getMessageContent(message).trim().length > 0) {
+      return isRepoWriteMessage(getMessageContent(message));
+    }
+  }
 
-  return previousUserMessage ? isRepoWriteMessage(getMessageContent(previousUserMessage)) : false;
+  return false;
 }
 
 function IssueNextStepCallout({
@@ -344,6 +366,31 @@ interface ChatVirtuosoFooterState {
 
 interface ChatVirtuosoContext {
   footer: ChatVirtuosoFooterState;
+}
+
+/** Cached MessageBubble props for one message, keyed by message id in
+ *  ChatArea.messagePropsCacheRef. `src` pins the exact object the props were
+ *  built from so streaming's fresh message objects rebuild while unchanged
+ *  messages keep referentially-stable props. `sig` (content-shape) plus the
+ *  state variants catch in-place content mutation and affordance flips
+ *  (stream start/stop, new user message, activity/CallRecords updates) without
+ *  comparing the full message on every token. */
+interface CachedBubblePropsEntry {
+  src: ChatMessageLike;
+  sig: string;
+  streaming: boolean;
+  lastUserMessageId: string | undefined;
+  activity: unknown;
+  records: unknown;
+  props: React.ComponentProps<typeof MessageBubble>;
+}
+
+/** Cheap content-shape signature: grows whenever streamed text, parts, or tool
+ *  invocations grow, so in-place edits that change length are detected. */
+function messageContentSig(msg: ChatMessageLike): string {
+  const content = msg.content ?? '';
+  const contentLen = typeof content === 'string' ? content.length : String(content).length;
+  return `${contentLen}:${msg.parts?.length ?? 0}:${msg.toolInvocations?.length ?? 0}`;
 }
 
 const ChatVirtuosoFooter = React.memo(function ChatVirtuosoFooter({
@@ -529,22 +576,40 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const isAutoScroll = useRef(true);
   const isStreamingRef = useRef(false);
-  isStreamingRef.current = isStreaming;
   // True briefly while the user is actively wheel/touch scrolling, so we can
   // tell a real scroll-away from streamed content pushing the bottom down.
   const userScrollingRef = useRef(false);
   const [scrollerEl, setScrollerEl] = useState<HTMLElement | null>(null);
-  const pendingProposalCacheRef = useRef<{ digest: string; proposal: ReturnType<typeof findPendingProposal> }>({
-    digest: '',
-    proposal: null,
-  });
   const messageTimestampCacheRef = useRef<Record<string, string>>({});
   const messagesRef = useRef(messages);
-  messagesRef.current = messages;
   const conversationIdRef = useRef(conversationId);
   conversationIdRef.current = conversationId;
   const toolActivityMapRef = useRef(toolActivityMap);
-  toolActivityMapRef.current = toolActivityMap;
+
+  // Refs are synced after commit, never during render, so concurrent rendering
+  // can't race a render-phase write. Readers run in event/callback contexts
+  // (followOutput, atBottomStateChange, itemContent) where the ref is current.
+  useEffect(() => {
+    isStreamingRef.current = isStreaming;
+    messagesRef.current = messages;
+    toolActivityMapRef.current = toolActivityMap;
+  }, [isStreaming, messages, toolActivityMap]);
+
+  // MessageBubble props cached per message-object identity: streaming updates
+  // arrive as fresh objects, so unchanged messages keep referentially-stable
+  // props across tokens and React.memo(MessageBubble) can bail out.
+  const messagePropsCacheRef = useRef(new Map<string, CachedBubblePropsEntry>());
+  // Keep the cache bounded: drop entries whose message no longer exists
+  // (rewind/fork/compaction). O(n) per render; messages.length is small.
+  {
+    const liveIds = new Set<string>(messages.map((message) => message.id));
+    for (const cachedId of messagePropsCacheRef.current.keys()) {
+      if (!liveIds.has(cachedId)) {
+        messagePropsCacheRef.current.delete(cachedId);
+      }
+    }
+  }
+  const prefersReducedMotion = usePrefersReducedMotion();
   const [dismissedError, setDismissedError] = useState<string | null>(null);
   const [acceptingProposalId, setAcceptingProposalId] = useState<string | null>(null);
   const [approvalModalOpen, setApprovalModalOpen] = useState(false);
@@ -597,14 +662,43 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     isIssueExplainPrompt(getMessageContent(lastUserMessage)),
   );
   const showFooterActivity = isStreaming && !hasInlineAssistantActivity(lastAssistantMessage);
-  const proposalDigest = getProposalDigest(messages);
-  if (pendingProposalCacheRef.current.digest !== proposalDigest) {
-    pendingProposalCacheRef.current = {
-      digest: proposalDigest,
-      proposal: findPendingProposal(messages),
-    };
-  }
-  const pendingProposal = pendingProposalCacheRef.current.proposal;
+  // Cheap per-message keys (ids, content length, parts length) that only
+  // change when something that actually drives rendering/digests changes.
+  // Computed per render — O(n), messages.length is small — and consumed by
+  // value in the memos/effects below, so untouched conversations keep stable
+  // memo identities across every streamed token (and in-place mutations are
+  // still detected via the length components).
+  const messagesKey = messages.map((message) => message.id).join('|');
+  const messagesDigestKey = messages
+    .map((message) => `${message.id}:${getMessageContent(message).length}:${getAssistantParts(message).length}`)
+    .join('|');
+  const toolActivityKey = toolActivityMap
+    ? Object.keys(toolActivityMap)
+        .map((id) => `${id}:${toolActivityMap[id].length}`)
+        .join('|')
+    : '';
+
+  const activeToolActivity = (() => {
+    if (!toolActivityMap) return [];
+    if (lastMessage && toolActivityMap[lastMessage.id]) {
+      return toolActivityMap[lastMessage.id] || [];
+    }
+    return toolActivityMap.current || [];
+  })();
+
+  // Cheap content-shape signals, extracted so the memo dep arrays below are
+  // statically checkable. They only need to change when messages actually
+  // grow (per token), not on every render.
+  const pendingProposalDigestKey = messagesDigestKey;
+  const lastMessageContentLen = lastMessage ? getMessageContent(lastMessage).length : 0;
+  const lastMessagePartsLen = lastMessage ? getAssistantParts(lastMessage).length : 0;
+  const lastAssistantContentLen = lastAssistantMessage ? getMessageContent(lastAssistantMessage).length : 0;
+  const lastAssistantPartsLen = lastAssistantMessage ? getAssistantParts(lastAssistantMessage).length : 0;
+  const toolActivityChars = activeToolActivity
+    .reduce((bytes, event) => bytes + String(event.output ?? event.input ?? '').length, 0);
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- proposal presence only changes when ids/sizes change
+  const pendingProposal = useMemo(() => findPendingProposal(messages), [pendingProposalDigestKey]);
   const pendingProposalId = pendingProposal?.messageId ?? null;
   const proposalHasContinuation = pendingProposal
     ? hasRepoContinuationAfterProposal(messages, pendingProposal.messageId)
@@ -617,15 +711,18 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     !conversationAutoApproveEnabled,
   );
   const showInlineApprovalBanner = canShowProposalApproval && approvalModalOpen && !!pendingProposal;
-  const activeToolActivity = (() => {
-    if (!toolActivityMap) return [];
-    if (lastMessage && toolActivityMap[lastMessage.id]) {
-      return toolActivityMap[lastMessage.id] || [];
-    }
-    return toolActivityMap.current || [];
-  })();
-  const lastMessageDigest = getMessageScrollDigest(lastMessage);
-  const toolActivityDigest = getToolActivityDigest(activeToolActivity);
+  const lastMessageDigest = useMemo(
+    () => getMessageScrollDigest(lastMessage),
+    // Cheap shape signals: the digest must re-run only when the text/parts grow.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [lastMessage?.id, lastMessageContentLen, lastMessagePartsLen],
+  );
+  const toolActivityDigest = useMemo(
+    () => getToolActivityDigest(activeToolActivity),
+    // Cheap shape signals: growing tool payload chars re-trigger the scroll nudge.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeToolActivity.length, toolActivityChars],
+  );
   const lastAssistantIndex = lastAssistantMessage
     ? messages.findIndex((message) => message.id === lastAssistantMessage.id)
     : -1;
@@ -639,7 +736,15 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       activeToolActivity,
       lastAssistantAllowsPseudoRepoWrites,
     ),
-    [activeToolActivity, lastAssistantAllowsPseudoRepoWrites, lastAssistantMessage],
+    // Count only needs rebuilding when content grows or activity changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      activeToolActivity,
+      lastAssistantAllowsPseudoRepoWrites,
+      lastAssistantMessage?.id,
+      lastAssistantContentLen,
+      lastAssistantPartsLen,
+    ],
   );
 
   // Conversation-ordered tool activity for the composer task panel: per-message
@@ -653,7 +758,10 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     }
     if (toolActivityMap.current) ordered.push(...toolActivityMap.current);
     return ordered;
-  }, [toolActivityMap, messages]);
+    // Keyed on identity/shape signals; content growth is captured by the
+    // toolActivityKey char-total below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messagesKey, toolActivityKey]);
 
   // Start time of this conversation's active run. Prefers the server's start
   // time (background runs poll); falls back to the locally persisted stream
@@ -678,6 +786,10 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       // content-growth atBottom=false (no wheel/touch) is ignored so streaming
       // keeps following the output.
       isAutoScroll.current = false;
+    } else {
+      // Pure streaming content growth: keep auto-scroll AND the scroll button
+      // in their previous state — don't flash the button on content growth.
+      return;
     }
     setShowScrollButton((prev) => {
       const next = !atBottom;
@@ -687,7 +799,10 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
   // Grab the Virtuoso scroller element so we can watch for real user scrolling.
   const handleScrollerRef = useCallback((ref: HTMLElement | Window | null) => {
-    setScrollerEl(ref instanceof HTMLElement ? ref : null);
+    // Functional update dedupes the ref-callback double-fire in StrictMode so
+    // the identical element doesn't trigger an extra render.
+    const el = ref instanceof HTMLElement ? ref : null;
+    setScrollerEl((prev) => (prev === el ? prev : el));
   }, []);
 
   useEffect(() => {
@@ -751,11 +866,13 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     virtuosoRef.current?.scrollToIndex({
       index: messages.length - 1,
       align: 'end',
-      behavior: 'smooth',
+      // Match the reduced-motion preference; smooth and auto never fight
+      // mid-stream because the streaming nudge path always uses 'auto'.
+      behavior: prefersReducedMotion ? 'auto' : 'smooth',
     });
     isAutoScroll.current = true;
     setShowScrollButton(false);
-  }, [messages.length]);
+  }, [messages.length, prefersReducedMotion]);
 
   const handleSendWithScroll = useCallback(() => {
     isAutoScroll.current = true;
@@ -865,6 +982,18 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     handleApproveOnce,
   ]);
 
+  // Forget the auto-approval anchor when the conversation no longer contains
+  // the approved message (rewind/fork replaced the transcript), so a later
+  // policy match in the new conversation re-fires the auto-approval flow.
+  useEffect(() => {
+    const approvedId = autoApprovedProposalIdRef.current;
+    if (approvedId !== null && !messages.some((message) => message.id === approvedId)) {
+      autoApprovedProposalIdRef.current = null;
+    }
+    // Re-validate whenever the live message-id set changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messagesKey]);
+
   // Clear session-scope approval policies when the chat panel unmounts.
   useEffect(() => () => {
     clearSessionApprovalPolicies();
@@ -973,6 +1102,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     const isStreaming = isStreamingRef.current;
     const conversationId = conversationIdRef.current;
     const toolActivityMap = toolActivityMapRef.current;
+
     const isLastAssistantStreaming =
       isStreaming && msg.role === 'assistant' && index === messages.length - 1;
     const lastUserMessageId = messages.findLast((m) => m.role === 'user')?.id;
@@ -1006,43 +1136,74 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         (isLastAssistantStreaming ? effectiveToolCallRecords?.current : undefined))
       : undefined;
 
+    // Message props are cached per message: streamed updates arrive as fresh
+    // objects, so unchanged messages get referentially-stable props across
+    // tokens and React.memo(MessageBubble) can bail out instead of
+    // re-rendering the whole transcript on every token. The cache miss-check
+    // covers in-place content mutation (sig) and affordance flips (streaming,
+    // last user message, activity/call-record identity) without comparing the
+    // full message on every token.
+    const cached = messagePropsCacheRef.current.get(msg.id);
+    if (
+      cached &&
+      cached.src === msg &&
+      cached.sig === messageContentSig(msg) &&
+      cached.streaming === isLastAssistantStreaming &&
+      cached.lastUserMessageId === lastUserMessageId &&
+      cached.activity === messageToolActivity &&
+      cached.records === messageToolCallRecords
+    ) {
+      return (
+        <div className="max-w-[720px] mx-auto px-4 md:px-20 py-2.5">
+          <MessageBubble key={msg.id} {...cached.props} />
+        </div>
+      );
+    }
+
+    const props: React.ComponentProps<typeof MessageBubble> = {
+      message: {
+        id: msg.id,
+        conversationId: conversationId || '',
+        role: msg.role as 'user' | 'assistant',
+        content: messageContent,
+        timestamp: msg.timestamp || (messageTimestampCacheRef.current[msg.id] ??= new Date().toISOString()),
+      },
+      isStreaming: isLastAssistantStreaming,
+      streamingContent: isLastAssistantStreaming ? messageContent : undefined,
+      parts: displayParts as React.ComponentProps<typeof MessageBubble>['parts'],
+      reasoning,
+      isReasoningStreaming,
+      toolInvocations: toolInvocations as React.ComponentProps<typeof MessageBubble>['toolInvocations'],
+      toolActivity: messageToolActivity,
+      toolCallRecords: messageToolCallRecords,
+      onRetryTool: handleRetryToolAction,
+      allowPseudoRepoWrites,
+      onRegenerate:
+        msg.role === 'assistant' && index === messages.length - 1 && !isStreaming
+          ? handleRegenerate
+          : undefined,
+      onEdit:
+        msg.role === 'user' && msg.id === lastUserMessageId && !isStreaming
+          ? handleEditAction
+          : undefined,
+      onRewind:
+        msg.role === 'assistant' && !isLastAssistantStreaming && msg.id
+          ? handleRewind
+          : undefined,
+    };
+    messagePropsCacheRef.current.set(msg.id, {
+      src: msg,
+      sig: messageContentSig(msg),
+      streaming: isLastAssistantStreaming,
+      lastUserMessageId,
+      activity: messageToolActivity,
+      records: messageToolCallRecords,
+      props,
+    });
+
     return (
       <div className="max-w-[720px] mx-auto px-4 md:px-20 py-2.5">
-        <MessageBubble
-          key={msg.id}
-          message={{
-            id: msg.id,
-            conversationId: conversationId || '',
-            role: msg.role as 'user' | 'assistant',
-            content: messageContent,
-            timestamp: msg.timestamp || (messageTimestampCacheRef.current[msg.id] ??= new Date().toISOString()),
-          }}
-          isStreaming={isLastAssistantStreaming}
-          streamingContent={isLastAssistantStreaming ? messageContent : undefined}
-          parts={displayParts as React.ComponentProps<typeof MessageBubble>['parts']}
-          reasoning={reasoning}
-          isReasoningStreaming={isReasoningStreaming}
-          toolInvocations={toolInvocations as React.ComponentProps<typeof MessageBubble>['toolInvocations']}
-          toolActivity={messageToolActivity}
-          toolCallRecords={messageToolCallRecords}
-          onRetryTool={handleRetryToolAction}
-          allowPseudoRepoWrites={allowPseudoRepoWrites}
-          onRegenerate={
-            msg.role === 'assistant' && index === messages.length - 1 && !isStreaming
-              ? handleRegenerate
-              : undefined
-          }
-          onEdit={
-            msg.role === 'user' && msg.id === lastUserMessageId && !isStreaming
-              ? handleEditAction
-              : undefined
-          }
-          onRewind={
-            msg.role === 'assistant' && !isLastAssistantStreaming && msg.id
-              ? handleRewind
-              : undefined
-          }
-        />
+        <MessageBubble key={msg.id} {...props} />
       </div>
     );
   }, [effectiveToolCallRecords, handleEditAction, handleRegenerate, handleRetryToolAction, handleRewind]);
@@ -1073,6 +1234,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       toolActivity: toolActivityMap?.current,
       agentStatusLabel: agentStatus?.label,
     },
+    // Footer consumers only need identity/activity signals (not per-token
+    // content), so the context is keyed on cheap keys + reactive flags.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [
     acceptingProposalId,
     activeModel,
@@ -1087,15 +1251,15 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     handleQuickSend,
     isStreaming,
     issueContext,
-    lastAssistantMessage,
-    messages,
+    lastAssistantMessage?.id,
+    messagesKey,
     onUseBuddyResponse,
     pendingProposal,
     repoComposerLocked,
     showFooterActivity,
     showInlineApprovalBanner,
     showIssueNextStepCallout,
-    toolActivityMap,
+    toolActivityKey,
   ]);
 
   const hasMessages = messages.length > 0;
@@ -1225,30 +1389,40 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             <span>Plan Mode — read-only exploration, no file edits</span>
           </div>
         )}
-        <Virtuoso
-          ref={virtuosoRef}
-          scrollerRef={handleScrollerRef}
-          data={messages}
-          followOutput={() => isAutoScroll.current ? (isStreamingRef.current ? 'auto' : 'smooth') : false}
-          atBottomStateChange={handleAtBottomChange}
-          className="min-h-0 flex-1"
-          data-testid="virtuoso-scroller"
-          context={virtuosoContext}
-          itemContent={itemContent}
-          components={CHAT_VIRTUOSO_COMPONENTS}
-        />
-        {showScrollButton && (
-          <div className="flex justify-center py-1">
+        <div
+          role="log"
+          aria-live="polite"
+          aria-busy={isStreaming}
+          className="relative min-h-0 flex-1"
+        >
+          <Virtuoso
+            ref={virtuosoRef}
+            scrollerRef={handleScrollerRef}
+            data={messages}
+            computeItemKey={(_, msg) => msg.id}
+            followOutput={() => {
+              if (!isAutoScroll.current) return false;
+              if (isStreamingRef.current) return 'auto';
+              return prefersReducedMotion ? 'auto' : 'smooth';
+            }}
+            atBottomStateChange={handleAtBottomChange}
+            className="min-h-0 flex-1"
+            data-testid="virtuoso-scroller"
+            context={virtuosoContext}
+            itemContent={itemContent}
+            components={CHAT_VIRTUOSO_COMPONENTS}
+          />
+          {showScrollButton && (
             <button
               type="button"
               onClick={scrollToBottom}
-              className="flex h-8 w-8 items-center justify-center rounded-full border border-border/60 bg-background/90 text-muted-foreground shadow-md backdrop-blur-sm transition-opacity hover:text-foreground"
+              className="absolute bottom-3 right-4 z-20 flex h-8 w-8 items-center justify-center rounded-full border border-border/60 bg-background/90 text-muted-foreground shadow-md transition-opacity hover:text-foreground"
               aria-label="Scroll to bottom"
             >
               <ArrowDown className="h-4 w-4" />
             </button>
-          </div>
-        )}
+          )}
+        </div>
         <div className="px-4">
           {errorBanner}
           {transportStatusMessage ? (

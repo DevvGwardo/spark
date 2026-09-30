@@ -373,6 +373,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = React.memo(({
                   e.stopPropagation();
                   setMenuOpen((v) => !v);
                 }}
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                aria-label="Thread options"
                 className={cn(
                   'p-1 rounded transition-colors duration-100',
                   menuOpen
@@ -491,6 +494,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = React.memo(({
                   dockPanel(panelId, conversationId);
                 }}
                 className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors duration-100 shrink-0"
+                aria-label="Pop out to sidebar"
                 title="Pop out to sidebar"
               >
                 <PanelRight className="h-3 w-3" />
@@ -504,6 +508,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = React.memo(({
                 onClose(panelId);
               }}
               className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors duration-100 shrink-0"
+              aria-label="Close panel"
               title="Close panel"
             >
               <X className="h-3 w-3" />

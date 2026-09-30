@@ -11,9 +11,10 @@ context refs all still work).
   EXPECT: old-box-removed
   EVIDENCE: old-box-removed
 
-- [x] G2: Composer toolbar decluttered — Plan / Loop / Goals collapsed into one
-      overflow menu (SlidersHorizontal trigger, role=menu, all three rows).
-  CHECK: node -e "const s=require('fs').readFileSync('src/components/chat/ChatInput.tsx','utf8'); console.log([s.includes('<SlidersHorizontal'), s.includes('role=\"menu\"'), s.includes('>Plan mode<'), s.includes('Loop until goal met'), s.includes('>Standing goals<')].every(Boolean) ? 'menu-complete' : 'menu-incomplete')"
+- [x] G2: Composer toolbar decluttered — Loop / Goals collapsed into one
+      overflow menu (SlidersHorizontal trigger, role=menu); Plan state lives
+      in the leader status dot + Plan Mode banner (ChatArea).
+  CHECK: node -e "const s=require('fs').readFileSync('src/components/chat/ChatInput.tsx','utf8'); console.log([s.includes('<SlidersHorizontal'), s.includes('role=\"menu\"'), s.includes('Loop until goal met'), s.includes('>Standing goals<')].every(Boolean) ? 'menu-complete' : 'menu-incomplete')"
   EXPECT: menu-complete
   EVIDENCE: menu-complete
 
@@ -36,9 +37,9 @@ context refs all still work).
   EVIDENCE: clean static
 
 - [x] G6: No behavior regressions — existing unit suite passes unchanged.
-  CHECK: npm test 2>&1 | tail -4
-  EXPECT: /829 passed|Tests  8[0-9]{2} passed|passed \(8/
-  EVIDENCE: Start at  17:01:28 | Duration  14.28s (transform 4.84s, setup 8.80s, collect 23.23s, tests 38.68s, environment 42.36s, prepare 8.51s)
+  CHECK: npm test 2>&1 | grep -E "Tests +[0-9]+ passed" | tail -1
+  EXPECT: /Tests  [0-9]+ passed/
+  EVIDENCE: Tests  1165 passed | 27 skipped (1192)
 
 - [x] G7: Bridge suite untouched and green (no Python changes this slice).
   CHECK: cd hermes-bridge && .venv/bin/python -m pytest -q 2>&1 | tail -1

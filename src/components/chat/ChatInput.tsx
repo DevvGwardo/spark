@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useCallback, useState } from 'react';
+import React, { useRef, useEffect, useCallback, useState, useId } from 'react';
 import { ArrowUp, Square, Plus, ChevronDown, Mic, MicOff, CornerDownLeft, Bot, ShieldCheck, Check, Loader2, Repeat, X, Flag, SlidersHorizontal } from 'lucide-react';
 import { useHermesStore, DEFAULT_LOOP_STATE } from '@/stores/hermes-store';
 import { usePanelId, useChatScopeId } from '@/hooks/use-panel-context';
@@ -122,6 +122,11 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
   contextRefsEnabled = true,
 }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const historyRef = useRef<string[]>([]);
+  const historyIndexRef = useRef(-1);
+  const listboxBaseId = useId();
+  const commandListboxId = `${listboxBaseId}-command-listbox`;
+  const contextrefListboxId = `${listboxBaseId}-contextref-listbox`;
   const [showCommandSuggestions, setShowCommandSuggestions] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [contextRefQuery, setContextRefQuery] = useState<ContextRefQuery | null>(null);
@@ -158,6 +163,13 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
   const [goalsConfig, setGoalsConfig] = useState<GoalsConfig>({ max_turns: 20, enabled: true });
   const [goalsBusy, setGoalsBusy] = useState(false);
   const [showGoalsConfig, setShowGoalsConfig] = useState(false);
+
+  // Sent-message history is scoped to the current panel scope; reset it when
+  // the user switches to another repo/room.
+  useEffect(() => {
+    historyRef.current = [];
+    historyIndexRef.current = -1;
+  }, [scopeId]);
 
   // Close the goals popover on outside click (popover lives in the menu).
   useEffect(() => {
@@ -257,13 +269,26 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
   const setSidebarOpen = useUIStore((s) => s.setSidebarOpen);
   const setActiveTab = useUIStore((s) => s.setActiveTab);
 
+  // Auto-grow the composer; re-measure on width changes too so a resized panel
+  // can't leave the height stale. 0-height observations (hidden element) are ignored.
+  const resize = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el || el.scrollHeight <= 0) return;
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+  }, []);
+
+  useEffect(() => {
+    resize();
+  }, [value, resize]);
+
   useEffect(() => {
     const el = textareaRef.current;
-    if (el) {
-      el.style.height = 'auto';
-      el.style.height = Math.min(el.scrollHeight, 200) + 'px';
-    }
-  }, [value]);
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => resize());
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [resize]);
 
   // Load the installed hermes-agent's slash command catalog into the `/` menu.
   // Shared, deduped, and at-most-once per session across every panel — the
@@ -279,10 +304,13 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
   const showContextRefSuggestions = contextRefsActive && contextRefQuery !== null && contextRefSuggestions.length > 0;
 
   // Load context-ref file/folder suggestions when the user types a partial path.
+  // Searches are debounced so rapid typing doesn't fire one workspace scan per keystroke.
   useEffect(() => {
     if (!contextRefsActive || !contextRefQuery || contextRefQuery.kind === 'picker' || contextRefQuery.kind === 'diff') {
       if (contextRefQuery?.kind === 'picker') {
-        setContextRefSuggestions(buildPickerSuggestions(''));
+        const list = buildPickerSuggestions('');
+        setContextRefSuggestions(list);
+        setContextRefIndex((i) => Math.min(Math.max(0, i), Math.max(0, list.length - 1)));
       }
       return;
     }
@@ -299,9 +327,9 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
             paths = filterFileSuggestions(repoFileTree, contextRefQuery.query, 20);
           }
           if (!cancelled) {
-            setContextRefSuggestions(
-              paths.map((p) => ({ label: p, insert: `@file:${p} `, kind: 'file' as const })),
-            );
+            const list = paths.map((p) => ({ label: p, insert: `@file:${p} `, kind: 'file' as const }));
+            setContextRefSuggestions(list);
+            setContextRefIndex((i) => Math.min(Math.max(0, i), Math.max(0, list.length - 1)));
           }
         } else if (contextRefQuery.kind === 'folder') {
           let paths: string[] = [];
@@ -312,17 +340,17 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
             paths = filterFolderSuggestions(searched, contextRefQuery.query, 20);
           }
           if (!cancelled) {
-            setContextRefSuggestions(
-              paths.map((p) => ({ label: p || '.', insert: `@folder:${p} `, kind: 'folder' as const })),
-            );
+            const list = paths.map((p) => ({ label: p || '.', insert: `@folder:${p} `, kind: 'folder' as const }));
+            setContextRefSuggestions(list);
+            setContextRefIndex((i) => Math.min(Math.max(0, i), Math.max(0, list.length - 1)));
           }
         } else if (contextRefQuery.kind === 'url') {
           if (!cancelled) {
-            setContextRefSuggestions(
-              contextRefQuery.query
-                ? [{ label: contextRefQuery.query, insert: `@url:${contextRefQuery.query} `, kind: 'url' }]
-                : [{ label: 'https://', insert: '@url:https://', kind: 'url', hint: 'Paste a URL' }],
-            );
+            const list: ContextRefSuggestion[] = contextRefQuery.query
+              ? [{ label: contextRefQuery.query, insert: `@url:${contextRefQuery.query} `, kind: 'url' }]
+              : [{ label: 'https://', insert: '@url:https://', kind: 'url', hint: 'Paste a URL' }];
+            setContextRefSuggestions(list);
+            setContextRefIndex((i) => Math.min(Math.max(0, i), Math.max(0, list.length - 1)));
           }
         }
       } finally {
@@ -330,15 +358,21 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
       }
     };
 
-    void load();
+    const timer = setTimeout(() => {
+      void load();
+    }, 250);
+
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [activeRepo?.localPath, contextRefQuery, contextRefsActive, repoFileTree]);
 
   useEffect(() => {
     if (contextRefQuery?.kind === 'picker') {
-      setContextRefSuggestions(buildPickerSuggestions(''));
+      const list = buildPickerSuggestions('');
+      setContextRefSuggestions(list);
+      setContextRefIndex((i) => Math.min(Math.max(0, i), Math.max(0, list.length - 1)));
     }
   }, [contextRefQuery?.kind]);
 
@@ -540,11 +574,20 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
     const wasCommand = await executeCommand(safeValue);
     if (!wasCommand) {
       onSend();
+      // Record the sent message in the up-arrow history (dedupe consecutive
+      // repeats, cap at 50 entries).
+      const trimmed = safeValue.trim();
+      const history = historyRef.current;
+      if (history[history.length - 1] !== trimmed) {
+        history.push(trimmed);
+        if (history.length > 50) history.shift();
+      }
+      historyIndexRef.current = -1;
     }
   }, [safeValue, executeCommand, onSend, onSendContent, onChange, readyAttachmentPaths, hasUploadingAttachments]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       if (showContextRefSuggestions) {
         const item = contextRefSuggestions[contextRefIndex];
@@ -552,7 +595,15 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
         return;
       }
       if (showCommandSuggestions) {
-        handleCommandSelectAtIndex(selectedIndex);
+        const filtered = filterCommands(safeValue);
+        if (filtered.length === 0) {
+          // `/unknowncommand` + Enter falls through to a normal send.
+          if (safeValue.trim() || readyAttachmentPaths.length > 0) {
+            handleSendOrCommand();
+          }
+        } else {
+          handleCommandSelectAtIndex(selectedIndex);
+        }
       } else if (safeValue.trim() || readyAttachmentPaths.length > 0) {
         handleSendOrCommand();
       }
@@ -566,6 +617,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
       if (showContextRefSuggestions) {
         setContextRefQuery(null);
         setContextRefSuggestions([]);
+        setContextRefIndex(0);
         return;
       }
       setShowCommandSuggestions(false);
@@ -596,6 +648,31 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
         return;
       }
     }
+    // History navigation: empty composer with no popover open.
+    if (safeValue.trim() === '' && !showCommandSuggestions && !showContextRefSuggestions) {
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        const history = historyRef.current;
+        if (history.length === 0) return;
+        const idx = historyIndexRef.current < 0 ? history.length - 1 : Math.max(0, historyIndexRef.current - 1);
+        historyIndexRef.current = idx;
+        onChange(history[idx]);
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (historyIndexRef.current < 0) return;
+        const next = historyIndexRef.current + 1;
+        if (next >= historyRef.current.length) {
+          historyIndexRef.current = -1;
+          onChange('');
+        } else {
+          historyIndexRef.current = next;
+          onChange(historyRef.current[next]);
+        }
+        return;
+      }
+    }
   };
 
   // Select a command by index from the filtered list (used for Enter key + click)
@@ -622,7 +699,12 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
 
   // Select a command by name (used when clicking a suggestion)
   const handleCommandSelect = useCallback(async (name: string) => {
-    if (!name) return;
+    if (!name) {
+      // Outside-click signal from CommandSuggestions — close the popover.
+      setShowCommandSuggestions(false);
+      setSelectedIndex(0);
+      return;
+    }
     const cmd = findCommand(name);
     if (!cmd) return;
 
@@ -705,6 +787,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
                 visible={showContextRefSuggestions}
                 selectedIndex={contextRefIndex}
                 tokenEstimate={contextRefTokenEstimate}
+                listboxId={contextrefListboxId}
                 onSelect={insertContextRef}
                 onSelectIndex={setContextRefIndex}
                 onDismiss={() => {
@@ -722,6 +805,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
                 query={safeValue}
                 visible={showCommandSuggestions}
                 selectedIndex={selectedIndex}
+                listboxId={commandListboxId}
                 onSelect={handleCommandSelect}
                 onSelectIndex={setSelectedIndex}
               />
@@ -760,6 +844,17 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
             <textarea
               ref={textareaRef}
               value={safeValue}
+              role="combobox"
+              aria-expanded={showCommandSuggestions || showContextRefSuggestions}
+              aria-controls={showCommandSuggestions ? commandListboxId : showContextRefSuggestions ? contextrefListboxId : undefined}
+              aria-activedescendant={
+                showCommandSuggestions
+                  ? `${commandListboxId}-opt-${selectedIndex}`
+                  : showContextRefSuggestions
+                    ? `${contextrefListboxId}-opt-${contextRefIndex}`
+                    : undefined
+              }
+              enterKeyHint="send"
               onChange={(e) => {
                 const val = e.target.value;
                 if (typeof onChange === 'function') onChange(val);
@@ -1142,6 +1237,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
                   onClick={onStop}
                   className="h-[30px] w-[30px] shrink-0 flex items-center justify-center rounded-[8px] bg-primary text-primary-foreground hover:opacity-80 transition-opacity duration-100"
                   title="Stop generating"
+                  aria-label="Stop generating"
                 >
                   <Square className="h-3.5 w-3.5" />
                 </button>
@@ -1157,6 +1253,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
                     : "bg-muted text-muted-foreground"
                 )}
                 title="Send message"
+                aria-label="Send message"
               >
                 <ArrowUp className="h-3.5 w-3.5" />
               </button>

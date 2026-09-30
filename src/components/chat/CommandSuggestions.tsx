@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useMemo } from 'react';
 import { describeCommandExecution, filterCommands, commandTakesArgs } from '@/lib/hermes-commands';
 import { cn } from '@/lib/utils';
 
@@ -6,6 +6,7 @@ interface CommandSuggestionsProps {
   query: string;
   visible: boolean;
   selectedIndex: number;
+  listboxId?: string;
   onSelect: (command: string) => void;
   onSelectIndex: (index: number) => void;
 }
@@ -20,12 +21,13 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
   query,
   visible,
   selectedIndex,
+  listboxId,
   onSelect,
   onSelectIndex,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const filtered = filterCommands(query);
+  const filtered = useMemo(() => filterCommands(query), [query]);
 
   useEffect(() => {
     if (!visible) return;
@@ -53,13 +55,15 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
   return (
     <div
       ref={containerRef}
+      id={listboxId}
+      role="listbox"
       className="absolute bottom-full left-0 right-0 mb-1 mx-3 z-50 rounded-lg border border-[#3F3F3F] bg-[#2A2A2A] shadow-lg overflow-hidden"
     >
       <div className="px-3 py-1.5 border-b border-[#3F3F3F] flex items-center justify-between">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-[#666666]">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-[#9CA3AF]">
           Commands
         </span>
-        <span className="text-[10px] text-[#555555]">↑↓ navigate · ↵ select</span>
+        <span className="text-[10px] text-[#9CA3AF]">↑↓ navigate · ↵ select</span>
       </div>
 
       <div className="py-1 max-h-56 overflow-y-auto">
@@ -69,6 +73,9 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
           return (
             <button
               key={cmd.name}
+              role="option"
+              id={`${listboxId}-opt-${i}`}
+              aria-selected={i === selectedIndex}
               onMouseDown={(e) => {
                 e.preventDefault();
                 onSelect(cmd.name);
@@ -100,7 +107,7 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
                 </span>
                 <span className="ml-auto shrink-0 flex items-center gap-1.5">
                   {takesArgs && (
-                    <span className="text-[10px] text-[#555555] italic">needs args</span>
+                    <span className="text-[10px] text-[#9CA3AF] italic">needs args</span>
                   )}
                   <span
                     className={cn(
@@ -115,7 +122,7 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
               <span
                 className={cn(
                   'text-[10px] pl-20 truncate',
-                  i === selectedIndex ? 'text-white/40' : 'text-[#555555]'
+                  i === selectedIndex ? 'text-white/90' : 'text-[#9CA3AF]'
                 )}
               >
                 {cmd.usage}
@@ -123,7 +130,7 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
               <span
                 className={cn(
                   'text-[10px] pl-20',
-                  i === selectedIndex ? 'text-white/55' : 'text-[#666666]'
+                  i === selectedIndex ? 'text-white/90' : 'text-[#9CA3AF]'
                 )}
               >
                 {describeCommandExecution(cmd)}

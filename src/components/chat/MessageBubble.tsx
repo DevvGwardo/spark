@@ -8,7 +8,7 @@ import { usePreviewStore } from '@/stores/preview-store';
 import type { Message } from '@/lib/db';
 import { computeDiffLines, getChangeLineDelta, summarizeChangeLines } from '@/lib/change-diff';
 import { cn } from '@/lib/utils';
-import { AgentActivity, type ToolActivityEvent } from './AgentActivity';
+import type { ToolActivityEvent } from './AgentActivity';
 import { extractPseudoToolInvocations, extractTextFileEdits, getPseudoToolSourceText, stripPseudoToolInvocations } from '@/lib/pseudo-tool-calls';
 import { getLocalImageTarget } from '@/lib/local-images';
 import { getToolInvocationKey, parseToolActivityInput } from '@/lib/tool-activity';
@@ -120,7 +120,14 @@ function getToolOutputMessage(result: unknown): string | null {
       return r.result;
     }
     // If the result is an object but we can't find a text representation, show it as JSON
-    // but only if it's small enough to be useful
+    // but only if it's small enough to be useful. Empty or status-only payloads
+    // ({ ok: true }, { success: true }, { synthesized: true }) carry no readable
+    // output — report the "(no output)" sentinel so the hasOutput gate treats
+    // them as empty (and lets the card render its written-content preview).
+    const keys = Object.keys(r);
+    if (keys.length === 0 || keys.every((key) => key === 'ok' || key === 'success' || key === 'synthesized')) {
+      return '(no output)';
+    }
     try {
       const json = JSON.stringify(r, null, 2);
       if (json.length < 2000) return json;
@@ -227,11 +234,16 @@ function isHermesToolStartLine(line: string): boolean {
   const trimmed = line.trim();
   if (!trimmed.startsWith('>')) return false;
   const inner = trimmed.replace(/^>\s*/, '').trim();
-  // Generic bridge start shape: a fully-bold label, optionally "— <summary>"
-  // (e.g. "**terminal**", "**Reading file** — `path`"). Catches tools with no
-  // friendly display name (the bridge falls back to the raw tool name), which
-  // the explicit label list below would miss.
-  if (/^\*\*[^*\n]+\*\*(?:\s*[—–-]+\s+.+)?$/.test(inner)) return true;
+  // Generic bridge start shape: the bridge emits both a bare fully-bold label
+  // ("**terminal**") and a label with a dash + summary ("**Reading file** —
+  // `path`"), so both must match. To avoid mistaking bold blockquote prose
+  // for markers: colons are excluded from the bold text (kills "**Note:**"),
+  // spaces exclude multi-word headers ("**Final answer**"), and trailing
+  // content is only allowed after a dash separator ("**Important:** — verify"
+  // is excluded by the colon rule). Catches tools with no friendly display
+  // name (the bridge falls back to the raw tool name), which the explicit
+  // label list below would miss.
+  if (/^\*\*[^*\s:\n]+\*\*\s*(?:[—–-]+\s+.+)?$/.test(inner)) return true;
   const normalized = inner
     .replace(/[*_`]/g, '')
     .replace(/[“”]/g, '"')
@@ -337,9 +349,12 @@ function buildInterleavedByOffset(
 ): MessagePart[] | null {
   if (!rawContent || toolInvocations.length === 0) return null;
 
-  // Only use this path when at least one tool has a textOffset
+  // Only use this path when at least one tool has a textOffset. Offsets can
+  // go stale after a rewind/regenerate (the content is shorter than the
+  // recorded offset) — treat out-of-range offsets as invalid so those tools
+  // fall back to sequential appending below.
   const toolsWithOffset = toolInvocations.filter(
-    (t) => typeof t.textOffset === 'number',
+    (t) => typeof t.textOffset === 'number' && t.textOffset >= 0 && t.textOffset <= rawContent.length,
   );
   if (toolsWithOffset.length === 0) return null;
 
@@ -361,7 +376,9 @@ function buildInterleavedByOffset(
       }
     }
     result.push({ type: 'tool-invocation', toolInvocation: tool });
-    cursor = Math.max(cursor, offset);
+    // Clamp so a stale offset can never push the cursor past the end of the
+    // content and swallow the final text segment after the last tool.
+    cursor = Math.min(Math.max(cursor, offset), rawContent.length);
   }
 
   // Remaining text after the last tool
@@ -748,11 +765,11 @@ function FileEditPreview({ filePath }: { filePath: string }) {
       <div className="chat-code-block__body">
         <div
           ref={contentRef}
-          className="overflow-hidden transition-[max-height] duration-300 ease-in-out"
+          className="overflow-hidden transition-[max-height] duration-200 ease-in-out"
           style={{ maxHeight: expanded ? `${contentHeight ?? 2000}px` : `${COLLAPSED_HEIGHT}px` }}
         >
           <div className="chat-code-block__editor">
-            <pre aria-hidden="true" className="chat-code-block__gutter text-[12px] leading-[1.65] text-right pr-3 pl-2 font-mono text-gray-600">
+            <pre aria-hidden="true" className="chat-code-block__gutter text-[12px] leading-[1.65] text-right pr-3 pl-2 font-mono text-muted-foreground">
               {lineNumbers}
             </pre>
             <div className="chat-code-block__viewport">
@@ -800,7 +817,7 @@ function FileEditPreview({ filePath }: { filePath: string }) {
             <div className="chat-code-block__footer">
               <button
                 onClick={() => setExpanded(true)}
-                className="chat-code-block__toggle"
+                className="chat-code-block__toggle focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0"
               >
                 Show more
                 <ChevronDown className="h-3 w-3" />
@@ -814,7 +831,7 @@ function FileEditPreview({ filePath }: { filePath: string }) {
           <div className="chat-code-block__footer chat-code-block__footer--expanded">
             <button
               onClick={() => setExpanded(false)}
-              className="chat-code-block__toggle"
+              className="chat-code-block__toggle focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0"
             >
               Show less
               <ChevronDown className="h-3 w-3 rotate-180" />
@@ -831,7 +848,7 @@ function FileEditPreview({ filePath }: { filePath: string }) {
  *  win when the backend reports them. */
 const OUTPUT_COLLAPSE_THRESHOLD = 40;
 
-function ToolOutputBlock({
+const ToolOutputBlock = React.memo(function ToolOutputBlock({
   text,
   outputTruncated,
   outputTruncatedLines,
@@ -844,7 +861,9 @@ function ToolOutputBlock({
   outputExpanded: boolean;
   onToggleOutput: () => void;
 }) {
-  const split = splitToolOutputHeadTail(text);
+  // Split once per distinct text — the head/tail boundary is stable, so a
+  // memo keeps re-renders (e.g. the expand toggle) from re-scanning output.
+  const split = React.useMemo(() => splitToolOutputHeadTail(text), [text]);
   const serverHidden = outputTruncated ? Math.max(0, outputTruncatedLines ?? 0) : 0;
   const isLong = split.totalLines > OUTPUT_COLLAPSE_THRESHOLD;
   const hiddenLines = isLong ? Math.max(split.hiddenLines, serverHidden) : serverHidden;
@@ -864,22 +883,27 @@ function ToolOutputBlock({
         <button
           type="button"
           onClick={onToggleOutput}
-          className="mt-1 flex w-full items-center gap-1 rounded-md border border-border/30 bg-muted/20 px-2 py-1 text-[10px] font-mono text-muted-foreground/70 transition-colors duration-75 hover:bg-muted/40"
+          className="mt-1 flex w-full items-center gap-1 rounded-md border border-border/30 bg-muted/20 px-2 py-1 text-[10px] font-mono text-muted-foreground/80 transition-colors duration-75 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0"
         >
           <span>{outputExpanded ? 'Hide middle' : label}</span>
           <ChevronDown className={`h-3 w-3 transition-transform duration-100 ${outputExpanded ? 'rotate-180' : ''}`} />
         </button>
       ) : (
-        <div className="mt-1 px-2 py-1 text-[10px] font-mono text-muted-foreground/50">
+        <div className="mt-1 px-2 py-1 text-[10px] font-mono text-muted-foreground/80">
           {label} (truncated server-side)
         </div>
       )}
       {outputExpanded && hasTail && <pre className={preClass}>{split.tail}</pre>}
     </>
   );
-}
+}, (prev, next) =>
+  prev.text === next.text &&
+  prev.outputTruncated === next.outputTruncated &&
+  prev.outputTruncatedLines === next.outputTruncatedLines &&
+  prev.outputExpanded === next.outputExpanded
+);
 
-function ToolInvocationDisplay({
+const ToolInvocationDisplay = React.memo(function ToolInvocationDisplay({
   invocation,
   isLatest,
   toolCallRecords,
@@ -913,9 +937,18 @@ function ToolInvocationDisplay({
   // Pseudo-synthesized rows (parsed from text, not real executions) keep the
   // legacy "done" tag — the lifecycle verbs are for actual tool calls.
   const isSynthesizedPseudo = (invocation.result as { synthesized?: unknown } | null)?.synthesized === true;
-  const outputMessage: string | null = getToolOutputMessage(invocation.result);
+  // Per-card derivations are memoized on stable deps so internal state toggles
+  // (expand/output-expand) re-render cheaply; streaming stays reactive because
+  // a changing `result`/`invocation` reference re-runs these memos.
+  const outputMessage: string | null = React.useMemo(
+    () => getToolOutputMessage(invocation.result),
+    [invocation.result],
+  );
   const hasOutput = isComplete && !hasError && !!outputMessage && outputMessage !== '(no output)';
-  const renderOutputAsMarkdown = !!outputMessage && shouldRenderToolOutputAsMarkdown(outputMessage);
+  const renderOutputAsMarkdown = React.useMemo(
+    () => !!outputMessage && shouldRenderToolOutputAsMarkdown(outputMessage),
+    [outputMessage],
+  );
   const writtenContent: string | null = typeof invocation.args?.content === 'string' ? invocation.args.content : null;
   const oldString: string | undefined = typeof invocation.args?.old_string === 'string' ? invocation.args.old_string : undefined;
   const newString: string | undefined = typeof invocation.args?.new_string === 'string' ? invocation.args.new_string : undefined;
@@ -1007,10 +1040,10 @@ function ToolInvocationDisplay({
         )}
       >
         {/* Mini preview area */}
-        <div className="h-[120px] bg-white relative overflow-hidden">
+        <div className="h-[120px] bg-[hsl(var(--code-bg))] relative overflow-hidden">
           {fileContent ? (
             <div
-              className="absolute inset-0 p-3 text-[6px] leading-[8px] text-gray-800 font-mono overflow-hidden pointer-events-none select-none"
+              className="absolute inset-0 p-3 text-[6px] leading-[8px] text-foreground font-mono overflow-hidden pointer-events-none select-none"
               style={{ transform: 'scale(1)', transformOrigin: 'top left' }}
             >
               <pre className="whitespace-pre-wrap">{fileContent.slice(0, 800)}</pre>
@@ -1021,10 +1054,10 @@ function ToolInvocationDisplay({
             </div>
           )}
           {/* Fade overlay at bottom */}
-          <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-white to-transparent" />
+          <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-[hsl(var(--code-bg))] to-transparent" />
           {isInProgress && (
-            <div className="absolute inset-0 bg-white/60 flex items-center justify-center">
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            <div className="absolute inset-0 bg-background/60 flex items-center justify-center">
+              <Loader2 className="h-5 w-5 animate-spin motion-reduce:animate-none text-muted-foreground" />
             </div>
           )}
         </div>
@@ -1061,7 +1094,7 @@ function ToolInvocationDisplay({
       <button
         onClick={() => setExpanded(!expanded)}
         aria-expanded={expanded}
-        className="flex items-center gap-2 w-full px-3 py-1.5 text-left hover:bg-muted/40 transition-colors"
+        className="flex items-center gap-2 w-full px-3 py-1.5 text-left hover:bg-muted/40 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0"
       >
         <ChevronDown
           className={cn(
@@ -1083,7 +1116,7 @@ function ToolInvocationDisplay({
         </span>
         {toolTargetLabel && (
           <code
-            className="text-[11px] text-muted-foreground/70 bg-muted/40 px-1.5 py-0.5 rounded font-mono truncate min-w-0 max-w-[160px] sm:max-w-[300px]"
+            className="text-[11px] text-muted-foreground/80 bg-muted/40 px-1.5 py-0.5 rounded font-mono truncate min-w-0 max-w-[160px] sm:max-w-[300px]"
             title={toolTargetLabel}
           >
             {toolTargetLabel}
@@ -1098,7 +1131,7 @@ function ToolInvocationDisplay({
         {isInProgress && (
           <span className="ml-auto inline-flex items-center gap-1.5 flex-shrink-0 whitespace-nowrap text-[10px] font-medium text-primary/70">
             <span className="relative flex h-1.5 w-1.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary/50" />
+              <span className="animate-ping motion-reduce:animate-none absolute inline-flex h-full w-full rounded-full bg-primary/50" />
               <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary/80" />
             </span>
             {progressLabel}
@@ -1114,10 +1147,10 @@ function ToolInvocationDisplay({
           />
         )}
         {!isInProgress && isFailed && !isSynthesizedPseudo && (
-          <span className="ml-auto text-[10px] font-mono text-red-500/90 shrink-0">Failed {invocation.toolName}</span>
+          <span className="ml-auto text-[10px] font-mono text-red-400 shrink-0">Failed {invocation.toolName}</span>
         )}
         {!isInProgress && isComplete && !isFailed && !isSynthesizedPseudo && (
-          <span className="ml-auto text-[10px] font-mono text-muted-foreground/50 shrink-0">{invocation.toolName}</span>
+          <span className="ml-auto text-[10px] font-mono text-muted-foreground/80 shrink-0">{invocation.toolName}</span>
         )}
         {!isInProgress && isComplete && isSynthesizedPseudo && (
           <span className="ml-auto text-[10px] text-muted-foreground/60">done</span>
@@ -1126,7 +1159,7 @@ function ToolInvocationDisplay({
           <span className="text-[10px] font-mono text-red-500/90 shrink-0">✗ ({exitCode})</span>
         )}
         {!isInProgress && !isSynthesizedPseudo && durationMs !== null && (
-          <span className={cn('text-[10px] font-mono shrink-0', isFailed ? 'text-red-400/70' : 'text-muted-foreground/50')}>
+          <span className={cn('text-[10px] font-mono shrink-0', isFailed ? 'text-red-400/80' : 'text-muted-foreground/80')}>
             {formatToolDuration(durationMs)}
           </span>
         )}
@@ -1140,7 +1173,7 @@ function ToolInvocationDisplay({
           <button
             type="button"
             onClick={() => onRetryTool(invocation.toolName, invocation.toolCallId)}
-            className="inline-flex items-center gap-1 rounded-md border border-red-500/30 bg-red-500/5 px-2 py-0.5 text-[10px] font-medium text-red-400 transition-colors duration-100 hover:bg-red-500/10"
+            className="inline-flex items-center gap-1 rounded-md border border-red-500/30 bg-red-500/5 px-2 py-0.5 text-[10px] font-medium text-red-400 transition-colors duration-100 hover:bg-red-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0"
             title={`Retry ${invocation.toolName} with the same arguments`}
           >
             <RotateCcw className="h-2.5 w-2.5" />
@@ -1150,11 +1183,14 @@ function ToolInvocationDisplay({
       )}
 
       {/* Accordion body — slides open. grid-rows 0fr/1fr keeps the animation
-          without a fixed max-height, so long batch diffs are never clipped. */}
+          without a fixed max-height, so long batch diffs are never clipped.
+          `invisible` while collapsed keeps clipped-but-focusable content out
+          of the tab order and AT (WCAG 2.4.3). */}
       <div
+        aria-hidden={!expanded}
         className={cn(
-          'grid transition-[grid-template-rows,opacity] duration-200 ease-in-out',
-          expanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
+          'grid transition-[grid-template-rows,visibility,opacity] duration-200 ease-in-out',
+          expanded ? 'grid-rows-[1fr] opacity-100 visible' : 'grid-rows-[0fr] opacity-0 invisible'
         )}
       >
         <div className="overflow-hidden min-h-0">
@@ -1225,7 +1261,7 @@ function ToolInvocationDisplay({
                     <FileCode className="h-3 w-3 shrink-0" />
                     <code className="font-mono text-foreground/70 text-[11px] bg-muted/40 px-1 py-0.5 rounded truncate min-w-0">{p}</code>
                     {batchChanges?.[idx]?.action && (
-                      <span className="text-muted-foreground/50 text-[10px]">{batchChanges[idx].action}</span>
+                      <span className="text-muted-foreground/80 text-[10px]">{batchChanges[idx].action}</span>
                     )}
                     <FileChangeMetaBadge
                       filePath={p}
@@ -1245,7 +1281,11 @@ function ToolInvocationDisplay({
       </div>
     </div>
   );
-}
+}, (prev, next) =>
+  prev.invocation === next.invocation &&
+  prev.isLatest === next.isLatest &&
+  prev.toolCallRecords === next.toolCallRecords
+);
 
 // Lines that are exactly an image reference (local path, cloudchat-asset://,
 // or http(s) image URL) render as inline thumbnails in user bubbles — the
@@ -1261,13 +1301,16 @@ function getUserLineImageSrc(line: string): string | null {
 
 const UserMessageContent: React.FC<{ content: string }> = ({ content }) => {
   const lines = content.split('\n');
-  const hasImages = lines.some((line) => getUserLineImageSrc(line));
+  // Resolve each line's image src exactly once per render — the hasImages
+  // check and the map below share this instead of scanning every line twice.
+  const lineSrcs = lines.map((line) => getUserLineImageSrc(line));
+  const hasImages = lineSrcs.some(Boolean);
   if (!hasImages) return <>{content}</>;
 
   return (
     <>
       {lines.map((line, i) => {
-        const src = getUserLineImageSrc(line);
+        const src = lineSrcs[i];
         if (!src) {
           return <React.Fragment key={i}>{i > 0 ? '\n' : ''}{line}</React.Fragment>;
         }
@@ -1314,8 +1357,9 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function M
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content || '');
-  const [thinkingOpen, setThinkingOpen] = useState(false);
-  const prevReasoningStreamingRef = useRef(false);
+  // Per-part thinking open state — each reasoning part owns its own collapsed
+  // state (keyed by part index) so earlier parts close as later ones stream.
+  const [thinkingPartsOpen, setThinkingPartsOpen] = useState<Set<number>>(() => new Set());
   const copyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isUser = message.role === 'user';
 
@@ -1559,17 +1603,24 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function M
     [orderedParts],
   );
 
-  const showAgentActivity = Boolean(toolActivity?.length) && synthesizedToolInvocations.length === 0;
+  // Index of the most recent reasoning part — the one that is still live
+  // while reasoning streams (earlier parts are complete).
+  const lastReasoningIndex = React.useMemo(() => {
+    let last = -1;
+    orderedParts.forEach((part, index) => {
+      if (part.type === 'reasoning' && part.reasoning) last = index;
+    });
+    return last;
+  }, [orderedParts]);
 
-  // Auto-open thinking when reasoning starts streaming, auto-close when done
+  // Auto-open thinking while a reasoning part is streaming, auto-close when its
+  // stream ends. Per-part: a new reasoning part supersedes the previous one,
+  // which closes as the next part starts streaming.
   useEffect(() => {
-    if (effectiveReasoningStreaming && !prevReasoningStreamingRef.current) {
-      setThinkingOpen(true);
-    } else if (!effectiveReasoningStreaming && prevReasoningStreamingRef.current) {
-      setThinkingOpen(false);
-    }
-    prevReasoningStreamingRef.current = !!effectiveReasoningStreaming;
-  }, [effectiveReasoningStreaming]);
+    setThinkingPartsOpen(effectiveReasoningStreaming && lastReasoningIndex >= 0
+      ? new Set([lastReasoningIndex])
+      : new Set());
+  }, [effectiveReasoningStreaming, lastReasoningIndex]);
 
   const handleCopy = async () => {
     try {
@@ -1614,7 +1665,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function M
     <div className={cn('group', isUser && !editing && 'flex flex-col items-end')}>
       <div className={cn('relative min-w-0 overflow-hidden', isUser && !editing ? 'max-w-[85%]' : 'w-full')}>
         {formattedTime && !editing && (
-          <span className={cn('chat-hover-timestamp text-[10px] text-muted-foreground/50 mb-1 block opacity-0 group-hover:opacity-100 transition-opacity duration-150', isUser && 'text-right')}>
+          <span className={cn('chat-hover-timestamp text-[10px] text-muted-foreground/50 mb-1 block opacity-0 group-hover:opacity-100 focus-visible:opacity-100 group-focus-within:opacity-100 transition-opacity duration-150', isUser && 'text-right')}>
             {formattedTime}
           </span>
         )}
@@ -1636,10 +1687,10 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function M
               className="w-full min-h-[80px] p-3 rounded-md bg-background border border-input text-sm resize-none focus:outline-none focus:ring-1 focus:ring-ring font-sans"
             />
             <div className="flex gap-3 justify-end">
-              <button onClick={() => setEditing(false)} className="text-xs text-muted-foreground hover:text-foreground transition-colors duration-100">
+              <button onClick={() => setEditing(false)} className="text-xs text-muted-foreground hover:text-foreground transition-colors duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 rounded">
                 Cancel
               </button>
-              <button onClick={handleEditSubmit} className="text-xs text-foreground font-medium hover:text-muted-foreground transition-colors duration-100">
+              <button onClick={handleEditSubmit} className="text-xs text-foreground font-medium hover:text-muted-foreground transition-colors duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 rounded">
                 Save & Submit
               </button>
             </div>
@@ -1657,16 +1708,25 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function M
                 }
 
                 if (part.type === 'reasoning' && part.reasoning) {
+                  const reasoningOpen = thinkingPartsOpen.has(index);
+                  // A part counts as still streaming while it is the most
+                  // recent reasoning part and aggregate reasoning is live.
+                  const reasoningStreaming = effectiveReasoningStreaming && index === lastReasoningIndex;
                   return (
                     <div key={`reasoning-${index}`} className="mb-3">
                       <SlDetails
-                        open={thinkingOpen}
-                        onToggle={setThinkingOpen}
+                        open={reasoningOpen}
+                        onToggle={(open) => setThinkingPartsOpen((current) => {
+                          const next = new Set(current);
+                          if (open) next.add(index);
+                          else next.delete(index);
+                          return next;
+                        })}
                         className="thinking-details"
                         summary={
                           <div className="flex items-center gap-1.5 text-xs">
                             {effectiveReasoningStreaming && (
-                              <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                              <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none text-muted-foreground" />
                             )}
                             <span className="font-medium font-mono text-muted-foreground">
                               {effectiveReasoningStreaming ? 'Thinking...' : 'Thinking'}
@@ -1678,7 +1738,15 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function M
                           className="pl-3 border-l-2 border-muted-foreground/20 text-sm text-muted-foreground leading-relaxed"
                           style={{ fontSize: '0.78rem' }}
                         >
-                          <MarkdownRenderer content={part.reasoning} />
+                          {/* Render the merged reasoning (inline  thinking +
+                              structured reasoning parts) so nothing is dropped;
+                              gate markdown parsing on open/still-streaming so
+                              collapsed done parts aren't re-parsed per tick. */}
+                          {reasoningOpen || reasoningStreaming ? (
+                            <MarkdownRenderer content={effectiveReasoning || part.reasoning} streaming={reasoningStreaming} />
+                          ) : (
+                            <div className="whitespace-pre-wrap">{effectiveReasoning || part.reasoning}</div>
+                          )}
                         </div>
                       </SlDetails>
                     </div>
@@ -1739,9 +1807,6 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function M
                 return null;
               })
             )}
-            {showAgentActivity && toolActivity && toolActivity.length > 0 && (
-              <AgentActivity events={toolActivity} onRetryTool={onRetryTool} />
-            )}
           </>
         )}
 
@@ -1749,11 +1814,11 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function M
             messages) when regenerate/rewind are available even with no prose,
             e.g. a tool-only turn. */}
         {!editing && !isStreaming && (displayContent || (!isUser && (onRegenerate || onRewind))) && (
-          <div className={cn('chat-hover-actions flex items-center gap-1 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-100', isUser && 'justify-end')}>
+          <div className={cn('chat-hover-actions flex items-center gap-1 mt-2 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 group-focus-within:opacity-100 transition-opacity duration-100', isUser && 'justify-end')}>
             {displayContent && (
               <button
                 onClick={handleCopy}
-                className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors duration-100"
+                className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0"
                 title="Copy"
                 aria-label="Copy"
               >
@@ -1763,7 +1828,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function M
             {isUser && onEdit && (
               <button
                 onClick={() => setEditing(true)}
-                className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors duration-100"
+                className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0"
                 title="Edit"
                 aria-label="Edit"
               >
@@ -1773,7 +1838,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function M
             {!isUser && onRegenerate && (
               <button
                 onClick={onRegenerate}
-                className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors duration-100"
+                className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0"
                 title="Regenerate"
                 aria-label="Regenerate"
               >
@@ -1783,7 +1848,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(function M
             {!isUser && onRewind && (
               <button
                 onClick={() => onRewind(message.id)}
-                className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors duration-100"
+                className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0"
                 title="Rewind to here"
                 aria-label="Rewind to here"
               >

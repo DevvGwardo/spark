@@ -889,6 +889,111 @@ The optimized code for \`KanbanBoard.tsx\`, \`cards.ts\`, and \`gateway-client.t
     expect(rendered.textContent).not.toMatch(/terminal/i);
   });
 
+  it('treats status-only results ({ synthesized }, { ok }) as no output and shows the content-written preview', () => {
+    // The bridge synthesizes tool cards with `result: { synthesized: true }`;
+    // these must not render as JSON junk and must not suppress the
+    // "Content written:" preview on write_file cards.
+    render(
+      <PanelProvider value="panel-1">
+        <MessageBubble
+          message={{
+            id: 'assistant-synth',
+            conversationId: 'conv-1',
+            role: 'assistant',
+            content: '',
+            timestamp: new Date().toISOString(),
+          }}
+          toolInvocations={[
+            {
+              toolCallId: 'write-1',
+              toolName: 'write_file',
+              args: { path: 'src/new.ts', content: 'export const x = 1;' },
+              state: 'result',
+              result: { synthesized: true },
+            },
+          ]}
+        />
+      </PanelProvider>,
+    );
+
+    expect(screen.queryByText(/synthesized/i)).not.toBeInTheDocument();
+    expect(screen.getByText('Content written:')).toBeInTheDocument();
+    expect(screen.getByText('export const x = 1;')).toBeInTheDocument();
+  });
+
+  it('preserves bold blockquote prose like "**Note:**" while still stripping bare tool markers', () => {
+    // `**Note:** …` is prose, not a tool marker — it must not be deleted. Bare
+    // `**terminal**` / `*terminal — done*` markers (bridge raw-name fallback)
+    // must still be stripped.
+    render(
+      <PanelProvider value="panel-1">
+        <MessageBubble
+          message={{
+            id: 'assistant-note',
+            conversationId: 'conv-1',
+            role: 'assistant',
+            content: [
+              'Before.',
+              '',
+              '> **Note:** verify the diff before merging.',
+              '',
+              '> **terminal**',
+              '> *terminal — done*',
+              '',
+              'After.',
+            ].join('\n'),
+            timestamp: new Date().toISOString(),
+          }}
+        />
+      </PanelProvider>,
+    );
+
+    const rendered = screen.getByTestId('markdown-renderer');
+    expect(rendered.textContent).toContain('Note:');
+    expect(rendered.textContent).toContain('verify the diff before merging');
+    expect(rendered.textContent).not.toMatch(/terminal/i);
+  });
+
+  it('removes collapsed tool-card content from AT and tab order (aria-hidden + invisible)', () => {
+    const { container } = render(
+      <PanelProvider value="panel-1">
+        <MessageBubble
+          message={{
+            id: 'assistant-toolcard',
+            conversationId: 'conv-1',
+            role: 'assistant',
+            content: '',
+            timestamp: new Date().toISOString(),
+          }}
+          toolInvocations={[
+            {
+              toolCallId: 'run-1',
+              toolName: 'run_command',
+              args: { command: 'npm test' },
+              state: 'result',
+              result: 'All tests passed',
+            },
+          ]}
+        />
+      </PanelProvider>,
+    );
+
+    const header = container.querySelector('button[aria-expanded="false"]');
+    expect(header).not.toBeNull();
+    const card = header!.parentElement!;
+
+    // Collapsed by default: body is aria-hidden and visibility-hidden so
+    // keyboard focus and screen readers never land on clipped content.
+    const collapsedBody = card.querySelector('[aria-hidden="true"]');
+    expect(collapsedBody).not.toBeNull();
+    expect(collapsedBody!.className).toContain('invisible');
+
+    fireEvent.click(header!);
+    const expandedBody = card.querySelector('[aria-hidden="false"]');
+    expect(expandedBody).not.toBeNull();
+    expect(expandedBody!.className).toContain('visible');
+  });
+
   it('adds the streaming caret anchor to the last text run while streaming', () => {
     const { container, rerender } = render(
       <PanelProvider value="panel-1">

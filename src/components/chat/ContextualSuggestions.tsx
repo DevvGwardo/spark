@@ -18,9 +18,8 @@ export const ContextualSuggestions: React.FC<ContextualSuggestionsProps> = ({
   onSend,
 }) => {
   const scopeId = useChatScopeId();
-  const { getChangeset, getChangeCount } = useChangesetStore();
-  const { isRepoMode } = getChangeset(scopeId);
-  const changeCount = getChangeCount(scopeId);
+  const isRepoMode = useChangesetStore((s) => s.panelChangesets[scopeId]?.isRepoMode ?? false);
+  const changeCount = useChangesetStore((s) => s.getChangeCount(scopeId));
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
@@ -81,6 +80,13 @@ export const ContextualSuggestions: React.FC<ContextualSuggestionsProps> = ({
     el.scrollBy({ left: direction === 'left' ? -200 : 200, behavior: 'smooth' });
   };
 
+  const handleScrollKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    scroll(e.key === 'ArrowLeft' ? 'left' : 'right');
+    updateScrollState();
+  };
+
   const handleClick = (suggestion: ContextualSuggestion) => {
     setDismissed(true);
     setVisible(false);
@@ -90,13 +96,13 @@ export const ContextualSuggestions: React.FC<ContextualSuggestionsProps> = ({
   if (!visible || suggestions.length === 0) return null;
 
   return (
-    <div className="w-full max-w-[720px] mx-auto px-20 animate-fadeInUp">
+    <div className="w-full max-w-[720px] mx-auto px-20 animate-fadeInUp motion-reduce:animate-none">
       <div className="relative group">
         {/* Left scroll arrow */}
         {canScrollLeft && (
           <button
             onClick={() => scroll('left')}
-            className="absolute left-0 top-1/2 -translate-y-1/2 z-10 h-7 w-7 flex items-center justify-center rounded-full bg-background/90 border border-border/60 text-muted-foreground shadow-sm backdrop-blur-sm transition-opacity hover:text-foreground opacity-0 group-hover:opacity-100"
+            className="absolute left-0 top-1/2 -translate-y-1/2 z-10 h-7 w-7 flex items-center justify-center rounded-full bg-background/90 border border-border/60 text-muted-foreground shadow-sm transition-opacity hover:text-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 group-focus-within:opacity-100"
             aria-label="Scroll suggestions left"
           >
             <ChevronLeft className="h-3.5 w-3.5" />
@@ -107,6 +113,10 @@ export const ContextualSuggestions: React.FC<ContextualSuggestionsProps> = ({
         <div
           ref={scrollRef}
           onScroll={updateScrollState}
+          onKeyDown={handleScrollKeyDown}
+          tabIndex={0}
+          role="region"
+          aria-label="Contextual suggestions"
           className="flex gap-2 overflow-x-auto scrollbar-none pb-1 pt-0.5 px-0.5"
           style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
         >
@@ -131,7 +141,7 @@ export const ContextualSuggestions: React.FC<ContextualSuggestionsProps> = ({
         {canScrollRight && (
           <button
             onClick={() => scroll('right')}
-            className="absolute right-0 top-1/2 -translate-y-1/2 z-10 h-7 w-7 flex items-center justify-center rounded-full bg-background/90 border border-border/60 text-muted-foreground shadow-sm backdrop-blur-sm transition-opacity hover:text-foreground opacity-0 group-hover:opacity-100"
+            className="absolute right-0 top-1/2 -translate-y-1/2 z-10 h-7 w-7 flex items-center justify-center rounded-full bg-background/90 border border-border/60 text-muted-foreground shadow-sm transition-opacity hover:text-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 group-focus-within:opacity-100"
             aria-label="Scroll suggestions right"
           >
             <ChevronRight className="h-3.5 w-3.5" />

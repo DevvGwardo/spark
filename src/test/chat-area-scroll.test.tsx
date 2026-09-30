@@ -89,6 +89,7 @@ vi.mock('react-virtuoso', () => {
         atBottomStateChange,
         className,
         components,
+        scrollerRef,
         'data-testid': testId,
       }: {
         data: unknown[];
@@ -99,6 +100,7 @@ vi.mock('react-virtuoso', () => {
         atBottomStateChange?: (atBottom: boolean) => void;
         className?: string;
         components?: { Footer?: React.ComponentType<{ context?: unknown }> };
+        scrollerRef?: (el: HTMLElement | null) => void;
         'data-testid'?: string;
       },
       ref: React.Ref<{ scrollToIndex: (...args: unknown[]) => void }>,
@@ -122,6 +124,7 @@ vi.mock('react-virtuoso', () => {
 
       return (
         <div
+          ref={(el) => scrollerRef?.(el)}
           data-testid={testId ?? 'virtuoso-scroller'}
           className={className}
           style={{ overflowY: 'auto' }}
@@ -289,8 +292,10 @@ describe('ChatArea auto-scroll', () => {
       capturedAtBottomChange!(true);
     });
 
-    // Then simulate user scrolling away (Virtuoso reports not at bottom)
+    // Then the user scrolls away (wheel up — a real scroll signal), and
+    // Virtuoso reports not at bottom
     act(() => {
+      fireEvent.wheel(screen.getByTestId('virtuoso-scroller'), { deltaY: -100 });
       capturedAtBottomChange!(false);
     });
 
@@ -324,10 +329,12 @@ describe('ChatArea auto-scroll', () => {
     expect(screen.getByLabelText('Scroll to bottom')).toBeInTheDocument();
   });
 
-  it('keeps auto-scroll enabled when Virtuoso reports not at bottom during streaming', () => {
+  it('keeps auto-scroll enabled and hides the scroll button during streaming content growth', () => {
     // During streaming, in-place content growth (tool calls, parts) can push
     // the bottom below the viewport causing Virtuoso to fire atBottom=false.
-    // Auto-scroll should stay enabled so we keep following the stream.
+    // Auto-scroll should stay enabled so we keep following the stream, and the
+    // scroll button must NOT flash in — it used to mount/unmount (and shift
+    // the composer) on every streamed token.
     const scrollToIndexMock = vi.fn();
     capturedScrollToIndex = scrollToIndexMock;
 
@@ -364,8 +371,8 @@ describe('ChatArea auto-scroll', () => {
       capturedAtBottomChange!(false);
     });
 
-    // Scroll button appears (visual hint) but auto-scroll stays on
-    expect(screen.getByLabelText('Scroll to bottom')).toBeInTheDocument();
+    // No user-scroll signal: the button must stay hidden (regression test)
+    expect(screen.queryByLabelText('Scroll to bottom')).not.toBeInTheDocument();
 
     // Streaming content updates — auto-scroll should nudge to bottom
     act(() => {
@@ -434,8 +441,9 @@ describe('ChatArea auto-scroll', () => {
       </PanelProvider>,
     );
 
-    // Simulate user scrolling away
+    // The user scrolls away (wheel up), then Virtuoso reports not at bottom
     act(() => {
+      fireEvent.wheel(screen.getByTestId('virtuoso-scroller'), { deltaY: -100 });
       capturedAtBottomChange!(false);
     });
 
@@ -556,8 +564,9 @@ describe('ChatArea auto-scroll', () => {
       </PanelProvider>,
     );
 
-    // Simulate scrolling away from bottom
+    // The user scrolls away from the bottom (wheel up), then Virtuoso reports it
     act(() => {
+      fireEvent.wheel(screen.getByTestId('virtuoso-scroller'), { deltaY: -100 });
       capturedAtBottomChange!(false);
     });
     expect(screen.getByLabelText('Scroll to bottom')).toBeInTheDocument();
@@ -598,8 +607,9 @@ describe('ChatArea auto-scroll', () => {
       </PanelProvider>,
     );
 
-    // User scrolls away
+    // User scrolls away (wheel up), then Virtuoso reports not at bottom
     act(() => {
+      fireEvent.wheel(screen.getByTestId('virtuoso-scroller'), { deltaY: -100 });
       capturedAtBottomChange!(false);
     });
     expect(screen.getByLabelText('Scroll to bottom')).toBeInTheDocument();

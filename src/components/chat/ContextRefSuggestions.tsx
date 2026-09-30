@@ -22,6 +22,7 @@ interface ContextRefSuggestionsProps {
   visible: boolean;
   selectedIndex: number;
   tokenEstimate?: number;
+  listboxId?: string;
   onSelect: (insert: string) => void;
   onSelectIndex: (index: number) => void;
   onDismiss: () => void;
@@ -33,6 +34,7 @@ export const ContextRefSuggestions: React.FC<ContextRefSuggestionsProps> = ({
   visible,
   selectedIndex,
   tokenEstimate,
+  listboxId,
   onSelect,
   onSelectIndex,
   onDismiss,
@@ -71,13 +73,15 @@ export const ContextRefSuggestions: React.FC<ContextRefSuggestionsProps> = ({
   return (
     <div
       ref={containerRef}
+      id={listboxId}
+      role="listbox"
       className="absolute bottom-full left-0 right-0 mb-1 mx-3 z-50 rounded-lg border border-[#3F3F3F] bg-[#2A2A2A] shadow-lg overflow-hidden"
     >
       <div className="px-3 py-1.5 border-b border-[#3F3F3F] flex items-center justify-between gap-2">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-[#666666]">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-[#9CA3AF]">
           {header}
         </span>
-        <span className="text-[10px] text-[#555555] tabular-nums">
+        <span className="text-[10px] text-[#9CA3AF] tabular-nums">
           {tokenEstimate ? `~${formatTokenCount(tokenEstimate)} tok` : '↑↓ · ↵'}
         </span>
       </div>
@@ -89,6 +93,9 @@ export const ContextRefSuggestions: React.FC<ContextRefSuggestionsProps> = ({
             <button
               key={`${item.insert}-${i}`}
               type="button"
+              role="option"
+              id={`${listboxId}-opt-${i}`}
+              aria-selected={i === selectedIndex}
               onMouseDown={(e) => {
                 e.preventDefault();
                 onSelect(item.insert);
@@ -101,14 +108,14 @@ export const ContextRefSuggestions: React.FC<ContextRefSuggestionsProps> = ({
               {icon}
               <span className="font-mono text-foreground truncate">{item.label}</span>
               {item.hint && (
-                <span className="ml-auto text-[10px] text-[#666666] truncate max-w-[45%]">{item.hint}</span>
+                <span className="ml-auto text-[10px] text-[#9CA3AF] truncate max-w-[45%]">{item.hint}</span>
               )}
             </button>
           );
         })}
       </div>
       {query.kind === 'picker' && (
-        <div className="px-3 py-1 border-t border-[#3F3F3F] text-[10px] text-[#555555]">
+        <div className="px-3 py-1 border-t border-[#3F3F3F] text-[10px] text-[#9CA3AF]">
           Prefix required — won&apos;t collide with room @mentions
         </div>
       )}
