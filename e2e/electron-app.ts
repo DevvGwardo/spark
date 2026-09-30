@@ -45,6 +45,11 @@ export interface ElectronAPI {
     goForward: () => unknown
     reload: () => unknown
     getUrl: () => unknown
+    findInPage: (query: string, options?: { forward?: boolean; findNext?: boolean }) => unknown
+    stopFindInPage: (action?: 'clearSelection' | 'keepSelection') => unknown
+    onFoundInPage: (
+      cb: (r: { requestId: number; activeMatchOrdinal: number; matches: number; finalUpdate: boolean }) => void,
+    ) => () => void
   }
   terminal?: {
     spawn: (...a: unknown[]) => unknown

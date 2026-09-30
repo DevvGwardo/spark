@@ -160,7 +160,7 @@ export function HermesProjectsSwitcher() {
       </div>
 
       {error && (
-        <div className="border-t border-border/30 px-2.5 py-1.5 text-[10px] text-red-300">
+        <div className="border-t border-border/30 px-2.5 py-1.5 text-[10px] text-destructive">
           {error}
         </div>
       )}

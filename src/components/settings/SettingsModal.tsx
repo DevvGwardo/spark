@@ -28,6 +28,7 @@ import { HermesMcpSettingsPanel } from './HermesMcpSettingsPanel';
 import { useTour } from '@reactour/tour';
 import { prepareUiForTour } from '@/lib/tour-setup';
 import packageJson from '../../../package.json';
+import { OUTPUT_STYLE_IDS, getOutputStyleSpec, type OutputStyle } from '../../../shared/output-styles';
 
 const PROVIDER_COLORS: Partial<Record<Provider, string>> = {
   openai: '#10A37F',
@@ -86,6 +87,10 @@ const ProviderIcon: React.FC<{ provider: Provider; size?: 'sm' | 'card' }> = ({ 
 };
 
 const settingsCardClass = 'rounded-[10px] border border-[#2a2a2a] bg-white/[0.02]';
+// Thresholds offered in Settings → General → Assistant. Any value in
+// [MIN_COMPACTION_THRESHOLD, MAX_COMPACTION_THRESHOLD] is valid; these are the
+// ones worth putting in a dropdown.
+const COMPACTION_THRESHOLD_CHOICES = [0.75, 0.8, 0.85, 0.9, 0.95];
 const fieldLabelClass = 'text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80';
 const textInputClass = 'w-full rounded-[10px] border border-[#2a2a2a] bg-[#141414] px-3 py-2 text-sm text-foreground outline-none transition-colors duration-100 placeholder:text-muted-foreground focus:border-[#FF8400]/40 focus:ring-1 focus:ring-[#FF8400]/20';
 const selectInputClass = `${textInputClass} appearance-none pr-9 cursor-pointer font-mono`;
@@ -217,6 +222,12 @@ function GeneralTab() {
     setSoundNotifications,
     setAnalytics,
     removeApprovalPolicy,
+    outputStyle,
+    autoCompact,
+    autoCompactThreshold,
+    setOutputStyle,
+    setAutoCompact,
+    setAutoCompactThreshold,
   } = useSettingsStore();
   const sessionApprovalPolicies = useHermesStore((state) => state.sessionApprovalPolicies);
   const clearSessionApprovalPolicies = useHermesStore((state) => state.clearSessionApprovalPolicies);
@@ -560,6 +571,63 @@ function GeneralTab() {
         <ToggleRow label="Auto-save" description="Automatically save conversations as you type" enabled={autoSave} onChange={setAutoSave} />
         <ToggleRow label="Stream responses" description="Show responses as they're generated" enabled={streamResponses} onChange={setStreamResponses} />
         <ToggleRow label="Sound notifications" description="Play sound when a response is ready" enabled={soundNotifications} onChange={setSoundNotifications} />
+      </div>
+
+      <div className={settingsDividerClass} />
+
+      {/* ASSISTANT */}
+      <div className="space-y-3">
+        <p className={sectionLabelClass}>Assistant</p>
+
+        {/* Output style */}
+        <div className="flex items-center justify-between py-1">
+          <div className="min-w-0 flex-1 pr-4">
+            <p className="text-sm text-foreground">Output style</p>
+            <p className="text-xs text-[#666666]">{getOutputStyleSpec(outputStyle as OutputStyle).description}</p>
+          </div>
+          <div className="relative">
+            <select
+              value={outputStyle}
+              onChange={(e) => setOutputStyle(e.target.value)}
+              className={dropdownClass}
+            >
+              {OUTPUT_STYLE_IDS.map((id) => (
+                <option key={id} value={id}>{getOutputStyleSpec(id).label}</option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          </div>
+        </div>
+
+        <ToggleRow
+          label="Auto-compact context"
+          description="Summarize the conversation automatically when the context window fills up"
+          enabled={autoCompact}
+          onChange={setAutoCompact}
+        />
+
+        {autoCompact && (
+          <div className="flex items-center justify-between py-1">
+            <div className="min-w-0 flex-1 pr-4">
+              <p className="text-sm text-foreground">Compact at</p>
+              <p className="text-xs text-[#666666]">
+                Summarize once the context window is {Math.round(autoCompactThreshold * 100)}% full
+              </p>
+            </div>
+            <div className="relative">
+              <select
+                value={autoCompactThreshold}
+                onChange={(e) => setAutoCompactThreshold(Number(e.target.value))}
+                className={dropdownClass}
+              >
+                {COMPACTION_THRESHOLD_CHOICES.map((v) => (
+                  <option key={v} value={v}>{Math.round(v * 100)}%</option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            </div>
+          </div>
+        )}
       </div>
 
       <div className={settingsDividerClass} />

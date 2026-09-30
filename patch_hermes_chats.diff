@@ -1,0 +1,10 @@
+--- src/components/sidebar/HermesChatsPanel.tsx
++++ src/components/sidebar/HermesChatsPanel.tsx
+@@ -10,6 +10,7 @@
+ import { useProfilesStore, getActiveProfile } from '@/stores/profiles-store';
+ import { ToolMessageAccordion } from '../chat/ToolMessageAccordion';
+ import { MarkdownBlock } from '../chat/MarkdownBlock';
++import { getMessageContent } from '@/hooks/chat-utils';
+ 
+ const SIDEBAR_LONG_CONTENT_THRESHOLD = 2000;
+ 

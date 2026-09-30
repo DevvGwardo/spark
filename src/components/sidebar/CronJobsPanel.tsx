@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Plus, X, Pause, Play, PlayCircle, Trash2, Clock, AlertCircle, CheckCircle2,
   XCircle, Loader2, Zap, GitPullRequest, Shield, Activity, FileSearch,
@@ -545,8 +545,18 @@ export function CronJobsPanel({ conversationId = null, conversationTitle = null 
   const [prompt, setPrompt] = useState('');
   const [creating, setCreating] = useState(false);
   const [launchingTemplateId, setLaunchingTemplateId] = useState<string | null>(null);
-  const [_selectedJobId, _setSelectedJobId] = useState<string | null>(null);
   const [showAllJobs, setShowAllJobs] = useState(false);
+
+  // Expansion and the chat-pane run history are driven by the same
+  // `selectedCronJobId`, so a row click both reveals its detail here and opens
+  // its history in the main pane. This used to read a local `_selectedJobId`
+  // that nothing ever wrote, which made the inline expander permanently dead.
+  const selectedCronJobId = useUIStore((s) => s.selectedCronJobId);
+  const setSelectedCronJobId = useUIStore((s) => s.setSelectedCronJobId);
+  const toggleJob = useCallback(
+    (jobId: string) => setSelectedCronJobId(selectedCronJobId === jobId ? null : jobId),
+    [selectedCronJobId, setSelectedCronJobId],
+  );
 
   const scheduleHuman = useMemo(() => schedule ? cronToHuman(schedule) : null, [schedule]);
   const showingConversationScope = !!conversationId && !showAllJobs;
@@ -778,7 +788,7 @@ export function CronJobsPanel({ conversationId = null, conversationTitle = null 
 
       {/* Error */}
       {error && (
-        <div className="mx-3 mb-2 p-2 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center gap-2">
+        <div className="mx-3 mb-2 p-2 rounded-lg bg-destructive/10 border border-destructive/25 flex items-center gap-2">
           <AlertCircle className="h-3.5 w-3.5 text-red-400 flex-shrink-0" />
           <span className="text-[11px] text-red-400">{error}</span>
         </div>
@@ -838,9 +848,9 @@ export function CronJobsPanel({ conversationId = null, conversationTitle = null 
                   key={job.id}
                   job={job}
                   archived={showArchived}
-                  expanded={_selectedJobId === job.id}
+                  expanded={selectedCronJobId === job.id}
                   highlightConversation={!!conversationId && job.conversation_id === conversationId}
-                  onToggle={() => useUIStore.getState().setSelectedCronJobId(job.id)}
+                  onToggle={() => toggleJob(job.id)}
                 />
               ))}
             </div>

@@ -94,4 +94,3 @@ export function buildJourneyGraph(
   return { nodes: flowNodes, edges };
 }
 
-export { NODE_WIDTH, NODE_HEIGHT };

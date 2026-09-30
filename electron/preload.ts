@@ -62,6 +62,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
     show: () => ipcRenderer.invoke('browser:show'),
     hide: () => ipcRenderer.invoke('browser:hide'),
     getUrl: (): Promise<string | null> => ipcRenderer.invoke('browser:get-url'),
+    findInPage: (
+      query: string,
+      options?: { forward?: boolean; findNext?: boolean },
+    ): Promise<{ requestId: number } | null> =>
+      ipcRenderer.invoke('browser:find-in-page', query, options),
+    stopFindInPage: (action?: 'clearSelection' | 'keepSelection'): Promise<void> =>
+      ipcRenderer.invoke('browser:stop-find-in-page', action),
+    onFoundInPage: (
+      callback: (result: { requestId: number; activeMatchOrdinal: number; matches: number; finalUpdate: boolean }) => void,
+    ) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        result: { requestId: number; activeMatchOrdinal: number; matches: number; finalUpdate: boolean },
+      ) => callback(result);
+      ipcRenderer.on('browser:found-in-page', handler);
+      return () => { ipcRenderer.removeListener('browser:found-in-page', handler); };
+    },
     onForceResize: (callback: () => void) => {
       const handler = () => callback();
       ipcRenderer.on('browser:force-resize', handler);

@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
-import { Globe, ArrowLeft, ArrowRight, X, ExternalLink, PanelRight, ChevronRight, RotateCw, CornerDownLeft } from 'lucide-react';
+import { Globe, ArrowLeft, ArrowRight, X, ExternalLink, PanelRight, ChevronRight, RotateCw, CornerDownLeft, Search, ChevronUp, ChevronDown } from 'lucide-react';
 import { useUIStore } from '@/stores/ui-store';
 import { cn } from '@/lib/utils';
 import { rafThrottle } from '@/lib/raf';
@@ -22,6 +22,7 @@ const CURSOR_MAP: Record<ResizeDir, string> = {
 const MIN_WIDTH = 400;
 const MIN_HEIGHT = 250;
 const TOOLBAR_HEIGHT = 36;
+const FIND_BAR_HEIGHT = 34; // second toolbar row, only when find is open
 const EDGE_ZONE = 14; // px from edge to trigger resize
 
 function normalizeBrowserUrl(raw: string): string | null {
@@ -35,6 +36,7 @@ function normalizeBrowserUrl(raw: string): string | null {
 
 /** Shared chrome state for docked + floating toolbars. */
 function useMiniBrowserChrome() {
+  const miniBrowserOpen = useUIStore((s) => s.miniBrowserOpen);
   const miniBrowserUrl = useUIStore((s) => s.miniBrowserUrl);
   const setMiniBrowserUrl = useUIStore((s) => s.setMiniBrowserUrl);
   const setMiniBrowserOpen = useUIStore((s) => s.setMiniBrowserOpen);
@@ -46,6 +48,13 @@ function useMiniBrowserChrome() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
+
+  // In-page find (⌘F). Mirrors Claude Desktop's dedicated find_in_page surface:
+  // the renderer owns query/UI, the BrowserView reports match counts.
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState('');
+  const [findMatches, setFindMatches] = useState(0);
+  const [findActiveMatch, setFindActiveMatch] = useState(0);
 
   useEffect(() => {
     if (!urlFocused && miniBrowserUrl && miniBrowserUrl !== 'about:blank') {
@@ -68,6 +77,10 @@ function useMiniBrowserChrome() {
         setLoading(false);
       }),
       api.onNavigated?.(() => setLoadError(null)),
+      api.onFoundInPage?.((result) => {
+        setFindMatches(result.matches);
+        setFindActiveMatch(result.activeMatchOrdinal);
+      }),
     ];
 
     return () => {
@@ -118,6 +131,60 @@ function useMiniBrowserChrome() {
     setMiniBrowserDocked(!docked);
   }, [setMiniBrowserDocked]);
 
+  const runFind = useCallback((text: string, forward = true) => {
+    const api = window.electronAPI?.browser;
+    if (!api?.findInPage) return;
+    if (!text) {
+      setFindMatches(0);
+      setFindActiveMatch(0);
+      void api.stopFindInPage?.('clearSelection');
+      return;
+    }
+    // Always findNext:true. Electron 44 emits NO found-in-page result for
+    // findNext:false, so counts would never reach the bar. With findNext:true
+    // Chromium restarts at match 1 for a changed query and advances for a
+    // repeated one — both behaviours we want.
+    void api.findInPage(text, { forward, findNext: true });
+  }, []);
+
+  const openFind = useCallback(() => {
+    setFindOpen(true);
+    // Re-run the existing query so the bar reflects the current page immediately.
+    if (findQuery) runFind(findQuery, true);
+  }, [findQuery, runFind]);
+
+  const closeFind = useCallback(() => {
+    setFindOpen(false);
+    setFindMatches(0);
+    setFindActiveMatch(0);
+    void window.electronAPI?.browser?.stopFindInPage?.('clearSelection');
+  }, []);
+
+  const handleFindQueryChange = useCallback(
+    (value: string) => {
+      setFindQuery(value);
+      runFind(value, true);
+    },
+    [runFind],
+  );
+
+  const findNext = useCallback(() => runFind(findQuery, true), [findQuery, runFind]);
+  const findPrev = useCallback(() => runFind(findQuery, false), [findQuery, runFind]);
+
+  // ⌘F / Ctrl+F opens find — but only while the mini browser is open, so we
+  // never hijack ⌘F from the rest of the app. Escape is handled by the find
+  // input itself so it doesn't swallow Escape from other panels.
+  useEffect(() => {
+    if (!miniBrowserOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'f') return;
+      e.preventDefault();
+      openFind();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [miniBrowserOpen, openFind]);
+
   return {
     urlInput,
     setUrlInput,
@@ -135,6 +202,15 @@ function useMiniBrowserChrome() {
     handleOpenExternal,
     handleClose,
     handleToggleDock,
+    findOpen,
+    findQuery,
+    findMatches,
+    findActiveMatch,
+    openFind,
+    closeFind,
+    handleFindQueryChange,
+    findNext,
+    findPrev,
   };
 }
 
@@ -390,6 +466,15 @@ interface ToolbarProps {
   canGoForward: boolean;
   loading: boolean;
   loadError: string | null;
+  findOpen: boolean;
+  findQuery: string;
+  findMatches: number;
+  findActiveMatch: number;
+  onFindQueryChange: (v: string) => void;
+  onFindOpen: () => void;
+  onFindNext: () => void;
+  onFindPrev: () => void;
+  onFindClose: () => void;
 }
 
 const Toolbar: React.FC<ToolbarProps> = ({
@@ -397,6 +482,8 @@ const Toolbar: React.FC<ToolbarProps> = ({
   onBack, onForward, onReload, onOpenExternal, onToggleDock, onClose,
   onUrlInputMouseDown, onUrlInputFocus, onUrlInputBlur,
   miniBrowserDocked, canGoBack, canGoForward, loading, loadError,
+  findOpen, findQuery, findMatches, findActiveMatch,
+  onFindQueryChange, onFindOpen, onFindNext, onFindPrev, onFindClose,
 }) => (
   <div className="flex flex-col flex-shrink-0 bg-[#111] border-b border-border/30">
     <div className="flex items-center gap-1 h-9 px-1.5">
@@ -462,6 +549,20 @@ const Toolbar: React.FC<ToolbarProps> = ({
       </button>
 
       <button
+        onClick={findOpen ? onFindClose : onFindOpen}
+        onMouseDown={(e) => e.preventDefault()}
+        className={cn(
+          'inline-flex items-center justify-center h-6 w-6 rounded transition-colors ml-0.5',
+          findOpen
+            ? 'text-primary bg-primary/10 hover:bg-primary/20'
+            : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+        )}
+        title={findOpen ? 'Close find (Esc)' : 'Find in page (⌘F)'}
+      >
+        <Search className="h-3.5 w-3.5" />
+      </button>
+
+      <button
         onClick={onToggleDock}
         onMouseDown={(e) => e.preventDefault()}
         className={cn(
@@ -484,6 +585,61 @@ const Toolbar: React.FC<ToolbarProps> = ({
         <X className="h-3.5 w-3.5" />
       </button>
     </div>
+    {findOpen && (
+      <div className="flex items-center gap-1 h-[34px] px-1.5 border-t border-border/30">
+        <Search className="h-3 w-3 shrink-0 text-muted-foreground" />
+        <input
+          autoFocus
+          type="text"
+          value={findQuery}
+          onChange={(e) => onFindQueryChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              e.preventDefault();
+              onFindClose();
+            } else if (e.key === 'Enter') {
+              e.preventDefault();
+              if (e.shiftKey) onFindPrev();
+              else onFindNext();
+            }
+          }}
+          placeholder="Find in page..."
+          className="flex-1 min-w-0 h-6 px-2 rounded bg-[#1a1a1a] border border-border/40 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/40"
+        />
+        <span className="shrink-0 px-1 text-[10px] tabular-nums text-muted-foreground">
+          {findQuery ? `${findActiveMatch}/${findMatches}` : '0/0'}
+        </span>
+        <button
+          type="button"
+          onClick={onFindPrev}
+          onMouseDown={(e) => e.preventDefault()}
+          disabled={!findQuery || findMatches === 0}
+          className="inline-flex items-center justify-center h-6 w-6 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-30 disabled:pointer-events-none"
+          title="Previous match (⇧Enter)"
+        >
+          <ChevronUp className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={onFindNext}
+          onMouseDown={(e) => e.preventDefault()}
+          disabled={!findQuery || findMatches === 0}
+          className="inline-flex items-center justify-center h-6 w-6 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-30 disabled:pointer-events-none"
+          title="Next match (Enter)"
+        >
+          <ChevronDown className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={onFindClose}
+          onMouseDown={(e) => e.preventDefault()}
+          className="inline-flex items-center justify-center h-6 w-6 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+          title="Close find (Esc)"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    )}
     {loadError && (
       <div className="flex items-center gap-2 px-2 pb-1.5 text-[10px] text-red-400/90">
         <span className="truncate flex-1">{loadError}</span>
@@ -579,7 +735,7 @@ export const DockedMiniBrowser: React.FC = () => {
       window.removeEventListener('leave-html-full-screen', updateBounds);
       removeForceResize?.();
     };
-  }, [miniBrowserOpen, miniBrowserDocked, rightSidebarHidden, chrome.loadError]);
+  }, [miniBrowserOpen, miniBrowserDocked, rightSidebarHidden, chrome.loadError, chrome.findOpen]);
 
   const hideBrowserView = useCallback(() => {
     if (!browserViewHidden.current) {
@@ -687,6 +843,15 @@ export const DockedMiniBrowser: React.FC = () => {
             canGoForward={chrome.canGoForward}
             loading={chrome.loading}
             loadError={chrome.loadError}
+            findOpen={chrome.findOpen}
+            findQuery={chrome.findQuery}
+            findMatches={chrome.findMatches}
+            findActiveMatch={chrome.findActiveMatch}
+            onFindQueryChange={chrome.handleFindQueryChange}
+            onFindOpen={chrome.openFind}
+            onFindNext={chrome.findNext}
+            onFindPrev={chrome.findPrev}
+            onFindClose={chrome.closeFind}
           />
         </div>
       </div>
@@ -739,7 +904,7 @@ export const MiniBrowser: React.FC = () => {
     if (!miniBrowserOpen || miniBrowserDocked) return;
 
     const updateBoundsNow = () => {
-      const toolbarExtra = chrome.loadError ? 18 : 0;
+      const toolbarExtra = (chrome.loadError ? 18 : 0) + (chrome.findOpen ? FIND_BAR_HEIGHT : 0);
       const nextBounds = {
         x: Math.round(position.x),
         y: Math.round(position.y + TOOLBAR_HEIGHT + toolbarExtra),
@@ -781,7 +946,7 @@ export const MiniBrowser: React.FC = () => {
       window.removeEventListener('leave-html-full-screen', onWindowResize);
       removeForceResize?.();
     };
-  }, [miniBrowserOpen, miniBrowserDocked, position, size, chrome.loadError, clampPosition]);
+  }, [miniBrowserOpen, miniBrowserDocked, position, size, chrome.loadError, chrome.findOpen, clampPosition]);
 
   const hideBrowserView = useCallback(() => {
     if (!browserViewHidden.current) {
@@ -1034,6 +1199,15 @@ export const MiniBrowser: React.FC = () => {
           canGoForward={chrome.canGoForward}
           loading={chrome.loading}
           loadError={chrome.loadError}
+          findOpen={chrome.findOpen}
+          findQuery={chrome.findQuery}
+          findMatches={chrome.findMatches}
+          findActiveMatch={chrome.findActiveMatch}
+          onFindQueryChange={chrome.handleFindQueryChange}
+          onFindOpen={chrome.openFind}
+          onFindNext={chrome.findNext}
+          onFindPrev={chrome.findPrev}
+          onFindClose={chrome.closeFind}
         />
       </div>
 

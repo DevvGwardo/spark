@@ -652,8 +652,20 @@ export function hasRecoverablePseudoRepoWrites(
   return extractTextFileEdits(sourceText).length > 0;
 }
 
+export function getMessageContent(message: any): string {
+  if (!message) return '';
+  if (typeof message.content === 'string') return message.content;
+  if (Array.isArray(message.parts)) {
+    return message.parts
+      .filter((p: any) => p && p.type === 'text' && typeof p.text === 'string')
+      .map((p: any) => p.text)
+      .join('\n\n');
+  }
+  return '';
+}
+
 export function allowPseudoRepoWritesForAssistantMessage(
-  messages: Array<{ role: string; content: string }>,
+  messages: Array<{ role: string; content?: string; parts?: any[] }>,
   assistantIndex: number,
 ): boolean {
   if (assistantIndex <= 0) {
@@ -661,10 +673,10 @@ export function allowPseudoRepoWritesForAssistantMessage(
   }
 
   const previousUserMessage = messages.slice(0, assistantIndex).findLast((message) =>
-    message.role === 'user' && typeof message.content === 'string' && message.content.trim().length > 0,
+    message.role === 'user' && getMessageContent(message).trim().length > 0,
   );
 
-  return previousUserMessage ? isRepoWriteMessage(previousUserMessage.content) : false;
+  return previousUserMessage ? isRepoWriteMessage(getMessageContent(previousUserMessage)) : false;
 }
 
 /**

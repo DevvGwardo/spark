@@ -9,6 +9,8 @@ import {
 } from '@/lib/chat-backgrounds';
 import { isColorThemeId } from '@/lib/themes';
 import type { ApprovalPolicy } from '@/lib/approval-policy';
+import { DEFAULT_OUTPUT_STYLE, isOutputStyle } from '../../shared/output-styles';
+import { normalizeCompactionThreshold } from '../../shared/compaction';
 
 export type Provider =
   | 'openai' | 'anthropic' | 'google' | 'xai'
@@ -60,6 +62,12 @@ interface SettingsState {
   soundNotifications: boolean;
   analytics: boolean;
   approvalPolicies: ApprovalPolicy[];
+  /** Output style appended to the system prompt (see shared/output-styles.ts). */
+  outputStyle: string;
+  /** Summarize the conversation automatically when the context window fills. */
+  autoCompact: boolean;
+  /** Fraction of the context window at which auto-compaction fires (0.5–1). */
+  autoCompactThreshold: number;
 
   setActiveProvider: (p: Provider) => void;
   updateProviderConfig: (p: Provider, config: Partial<ProviderConfig>) => void;
@@ -84,6 +92,9 @@ interface SettingsState {
   setAnalytics: (enabled: boolean) => void;
   addApprovalPolicy: (policy: ApprovalPolicy) => void;
   removeApprovalPolicy: (key: string) => void;
+  setOutputStyle: (style: string) => void;
+  setAutoCompact: (enabled: boolean) => void;
+  setAutoCompactThreshold: (threshold: number) => void;
 }
 
 const DEFAULT_PROVIDER_MAX_TOKENS = 32_768;
@@ -236,7 +247,10 @@ export function normalizePersistedSettingsState(
   'setSoundNotifications' |
   'setAnalytics' |
   'addApprovalPolicy' |
-  'removeApprovalPolicy'
+  'removeApprovalPolicy' |
+  'setOutputStyle' |
+  'setAutoCompact' |
+  'setAutoCompactThreshold'
 > {
   const providers = cloneDefaultProviders();
 
@@ -289,6 +303,9 @@ export function normalizePersistedSettingsState(
             && typeof (p as ApprovalPolicy).createdAt === 'number',
         )
       : [],
+    outputStyle: isOutputStyle(persisted?.outputStyle) ? persisted.outputStyle : DEFAULT_OUTPUT_STYLE,
+    autoCompact: typeof persisted?.autoCompact === 'boolean' ? persisted.autoCompact : true,
+    autoCompactThreshold: normalizeCompactionThreshold(persisted?.autoCompactThreshold),
   };
 }
 
@@ -344,6 +361,10 @@ export const useSettingsStore = create<SettingsState>()(
         set((state) => ({
           approvalPolicies: state.approvalPolicies.filter((p) => p.key !== key),
         })),
+      setOutputStyle: (style) => set({ outputStyle: isOutputStyle(style) ? style : DEFAULT_OUTPUT_STYLE }),
+      setAutoCompact: (enabled) => set({ autoCompact: enabled }),
+      setAutoCompactThreshold: (threshold) =>
+        set({ autoCompactThreshold: normalizeCompactionThreshold(threshold) }),
     }),
     {
       name: 'cloudchat-settings',

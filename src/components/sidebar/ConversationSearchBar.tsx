@@ -63,12 +63,12 @@ export const ConversationSearchBar: React.FC<ConversationSearchBarProps> = ({ cl
           placeholder="Search conversations…"
           aria-label="Search conversations"
           aria-expanded={showDropdown}
-          className="h-8 w-full rounded-lg border border-[#2F2F2F] bg-[hsl(var(--card))]/70 pl-8 pr-3 text-[12px] text-foreground placeholder:text-muted-foreground/50 transition-colors duration-100 focus:border-[hsl(var(--ring))] focus:outline-none [&::-webkit-search-cancel-button]:hidden"
+          className="h-8 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))]/70 pl-8 pr-3 text-[12px] text-foreground placeholder:text-muted-foreground/50 transition-colors duration-100 focus:border-[hsl(var(--ring))] focus:outline-none [&::-webkit-search-cancel-button]:hidden"
         />
       </div>
 
       {showDropdown && (
-        <div className="absolute left-0 right-0 top-full z-50 mt-1.5 overflow-hidden rounded-lg border border-[#2F2F2F] bg-[hsl(var(--card))] shadow-xl">
+        <div className="absolute left-0 right-0 top-full z-50 mt-1.5 overflow-hidden rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] shadow-xl">
           {loading ? (
             <div className="flex items-center gap-2 px-3 py-2.5 text-[11px] text-muted-foreground">
               <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
@@ -118,7 +118,7 @@ export const ConversationSearchBar: React.FC<ConversationSearchBarProps> = ({ cl
             </ul>
           )}
           {!loading && !error && results.length > 0 && (
-            <div className="flex items-center gap-1.5 border-t border-[#2F2F2F] bg-[hsl(var(--muted))]/20 px-3 py-1.5 text-[10px] text-muted-foreground/60">
+            <div className="flex items-center gap-1.5 border-t border-[hsl(var(--border))] bg-[hsl(var(--muted))]/20 px-3 py-1.5 text-[10px] text-muted-foreground/60">
               <CornerDownLeft className="h-2.5 w-2.5" aria-hidden="true" />
               Enter to open the conversation
             </div>

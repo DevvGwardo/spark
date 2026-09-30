@@ -214,6 +214,7 @@ export async function startManagedBridge(): Promise<BridgeStartResult> {
         HERMES_PORT: String(getBridgePort()),
         HERMES_BRIDGE_HOST: process.env.HERMES_BRIDGE_HOST || '127.0.0.1',
         HERMES_BRIDGE_TOKEN: process.env.HERMES_BRIDGE_TOKEN,
+        HERMES_DISABLE_LAZY_INSTALLS: '1',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });

@@ -969,6 +969,17 @@ function attachMiniBrowserListeners(view: BrowserView) {
     })
     mainWindow?.webContents.send('browser:loading', false)
   })
+
+  // In-page find results. Mirrors the dedicated find_in_page surface Claude
+  // Desktop ships: the renderer owns the query/UI, the view reports matches.
+  wc.on('found-in-page', (_event, result) => {
+    mainWindow?.webContents.send('browser:found-in-page', {
+      requestId: result.requestId,
+      activeMatchOrdinal: result.activeMatchOrdinal,
+      matches: result.matches,
+      finalUpdate: result.finalUpdate,
+    })
+  })
 }
 
 trustedHandle('browser:create', (_event, url?: string) => {
@@ -1057,6 +1068,40 @@ trustedHandle('browser:reload', () => {
 
 trustedHandle('browser:get-url', () => {
   return miniBrowserView?.webContents.getURL() ?? null
+})
+
+/**
+ * In-page find over the mini browser's webContents.
+ * `forward` drives Next (Enter) and Previous (⇧Enter) without re-typing.
+ *
+ * `findNext` must stay true: `webContents.findInPage` returns only the
+ * requestId, and Electron 44 emits NO `found-in-page` result at all for
+ * `findNext: false` — the renderer would never learn the match count. With
+ * `findNext: true`, Chromium restarts at match 1 when the query changes and
+ * advances when it repeats, which is exactly the bar's behaviour.
+ */
+trustedHandle(
+  'browser:find-in-page',
+  (_event, query: string, options?: { forward?: boolean; findNext?: boolean }) => {
+    const wc = miniBrowserView?.webContents
+    if (!wc || wc.isDestroyed()) return null
+    const text = typeof query === 'string' ? query : ''
+    if (text.length === 0) {
+      wc.stopFindInPage('clearSelection')
+      return null
+    }
+    const requestId = wc.findInPage(text, {
+      forward: options?.forward !== false,
+      findNext: options?.findNext !== false,
+    })
+    return { requestId }
+  },
+)
+
+trustedHandle('browser:stop-find-in-page', (_event, action?: 'clearSelection' | 'keepSelection') => {
+  const wc = miniBrowserView?.webContents
+  if (!wc || wc.isDestroyed()) return
+  wc.stopFindInPage(action === 'keepSelection' ? 'keepSelection' : 'clearSelection')
 })
 
 trustedHandle('browser:close', () => {

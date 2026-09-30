@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { addTag, archiveConversation, db, removeTag, unarchiveConversation, type Conversation } from '@/lib/db';
+import { DEFAULT_PERMISSION_MODE, type PermissionMode } from '../../shared/permission-modes';
 
 /** One step of a plan emitted by the backend `plan_update` event. */
 export type PlanStep = {
@@ -15,6 +16,14 @@ export type StreamRetryInfo = {
 };
 
 interface ChatState {
+  /**
+   * Active permission mode. Supersedes the legacy `planMode` boolean: `plan` is
+   * the read-only mode, and the others tune which tool calls prompt for
+   * approval. Kept in sync with `planMode` so existing consumers keep working.
+   */
+  permissionMode: PermissionMode;
+  setPermissionMode: (mode: PermissionMode) => void;
+  /** Legacy read-only flag, derived from `permissionMode === 'plan'`. */
   planMode: boolean;
   setPlanMode: (enabled: boolean) => void;
   conversations: Conversation[];
@@ -50,8 +59,11 @@ interface ChatState {
 }
 
 export const useChatStore = create<ChatState>()((set, get) => ({
+  permissionMode: DEFAULT_PERMISSION_MODE,
+  setPermissionMode: (mode) => set({ permissionMode: mode, planMode: mode === 'plan' }),
   planMode: false,
-  setPlanMode: (enabled) => set({ planMode: enabled }),
+  setPlanMode: (enabled) =>
+    set({ permissionMode: enabled ? 'plan' : DEFAULT_PERMISSION_MODE, planMode: enabled }),
   conversations: [],
   archivedConversations: [],
   activeConversationId: null,

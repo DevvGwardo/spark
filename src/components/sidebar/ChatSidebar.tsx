@@ -1,7 +1,11 @@
 import React, { Suspense, useEffect, useRef, useState, useMemo } from 'react';
 import { useShallow } from 'zustand/shallow';
-import { Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork, ChevronRight, Zap, Clock, House, BookOpen, Sparkles, BarChart3, User, Network, Image, Download, Upload, Archive, ArchiveRestore, ChevronDown, Tag, X, Kanban, CornerDownLeft, ListChecks, Users, ScrollText, Server, Webhook, Link2 } from 'lucide-react';
-import { Github } from 'lucide-react';
+import {
+  Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork,
+  ChevronRight, ChevronDown, Zap, Clock, House, BookOpen, Sparkles, BarChart3, User,
+  Network, Plug, MessagesSquare, Image, Download, Upload, Archive, ArchiveRestore,
+  Tag, X, Kanban, CornerDownLeft, ListChecks, Users, Server, Github,
+} from 'lucide-react';
 import { GhostIcon } from '@/components/chat/GhostIcon';
 import { useChatStore } from '@/stores/chat-store';
 import { useUIStore } from '@/stores/ui-store';
@@ -14,6 +18,22 @@ import { getRepoAccessLabel } from '@/lib/repo-access';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { cn } from '@/lib/utils';
 import { SlotNumber } from '@/components/ui/SlotNumber';
+import { ConversationTreeOverlay } from '@/components/workflow/ConversationTreeOverlay';
+import type { Conversation } from '@/lib/db';
+import { exportConversationJson, exportConversationMarkdown, importConversationJson } from '@/lib/db';
+import { toast } from '@/lib/toast';
+import { handleDeepLinkNavigate, handleQuickCapture } from '@/lib/deep-link';
+import { tagColor } from '@/lib/tag-color';
+import type { SubTab } from '@/stores/ui-store';
+import { relativeTime } from '@/lib/relative-time';
+import { useChatQueueStore } from '@/stores/chat-queue-store';
+import { useRoomStore } from '@/stores/room-store';
+import { CreateRoomDialog } from '@/components/rooms/CreateRoomDialog';
+import { useProfilesStore } from '@/stores/profiles-store';
+import { ConversationSearchBar } from '@/components/sidebar/ConversationSearchBar';
+
+// Every sub-tab panel is code-split: the sidebar loads none of them until one
+// is actually opened.
 const CronJobsPanel = React.lazy(() => import('@/components/sidebar/CronJobsPanel').then((m) => ({ default: m.CronJobsPanel })));
 const HermesChatsPanel = React.lazy(() => import('@/components/sidebar/HermesChatsPanel').then((m) => ({ default: m.HermesChatsPanel })));
 const HermesOverviewPanel = React.lazy(() => import('@/components/sidebar/HermesOverviewPanel').then((m) => ({ default: m.HermesOverviewPanel })));
@@ -21,10 +41,7 @@ const HermesMemoriesPanel = React.lazy(() => import('@/components/sidebar/Hermes
 const ProfilesPanel = React.lazy(() => import('@/components/sidebar/ProfilesPanel').then((m) => ({ default: m.ProfilesPanel })));
 const HermesSkillsPanel = React.lazy(() => import('@/components/sidebar/HermesSkillsPanel').then((m) => ({ default: m.HermesSkillsPanel })));
 const HermesUsagePanel = React.lazy(() => import('@/components/sidebar/HermesUsagePanel').then((m) => ({ default: m.HermesUsagePanel })));
-const HermesLogsPanel = React.lazy(() => import('@/components/sidebar/HermesLogsPanel').then((m) => ({ default: m.HermesLogsPanel })));
 const HermesSystemPanel = React.lazy(() => import('@/components/sidebar/HermesSystemPanel').then((m) => ({ default: m.HermesSystemPanel })));
-const HermesWebhooksPanel = React.lazy(() => import('@/components/sidebar/HermesWebhooksPanel').then((m) => ({ default: m.HermesWebhooksPanel })));
-const HermesPairingPanel = React.lazy(() => import('@/components/sidebar/HermesPairingPanel').then((m) => ({ default: m.HermesPairingPanel })));
 const ImagesPanel = React.lazy(() => import('@/components/sidebar/ImagesPanel').then((m) => ({ default: m.ImagesPanel })));
 const KanbanPanel = React.lazy(() => import('@/components/sidebar/KanbanPanel').then((m) => ({ default: m.KanbanPanel })));
 const TaskQueuePanel = React.lazy(() => import('@/components/sidebar/TaskQueuePanel').then((m) => ({ default: m.TaskQueuePanel })));
@@ -39,20 +56,6 @@ const PanelFallback = () => (
     <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
   </div>
 );
-import { ConversationTreeOverlay } from '@/components/workflow/ConversationTreeOverlay';
-import type { Conversation } from '@/lib/db';
-import { exportConversationJson, exportConversationMarkdown, importConversationJson } from '@/lib/db';
-import { toast } from '@/lib/toast';
-import { handleDeepLinkNavigate, handleQuickCapture } from '@/lib/deep-link';
-import { tagColor } from '@/lib/tag-color';
-
-import type { SubTab } from '@/stores/ui-store';
-import { relativeTime } from '@/lib/relative-time';
-import { useChatQueueStore } from '@/stores/chat-queue-store';
-import { useRoomStore } from '@/stores/room-store';
-import { CreateRoomDialog } from '@/components/rooms/CreateRoomDialog';
-import { useProfilesStore } from '@/stores/profiles-store';
-import { ConversationSearchBar } from '@/components/sidebar/ConversationSearchBar';
 
 interface ConversationGroup {
   label: string;
@@ -103,27 +106,42 @@ function groupConversationsByProject(conversations: Conversation[]): Conversatio
   return groups;
 }
 
+// Ordered by how often each surface gets opened, not alphabetically. The first
+// `PRIMARY_TAB_COUNT` entries sit in the always-visible grid row; the rest are
+// behind the "More" toggle, which auto-expands when one of them is active.
+//
+// `logs`, `webhooks` and `pairing` used to live here, but every one of their
+// bridge endpoints returns 404, so each was a permanent error banner.
 const HERMES_SUB_TABS: Array<{ key: SubTab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
-  { key: 'overview', label: 'Overview', icon: House },
   { key: 'threads', label: 'Threads', icon: MessageSquare },
+  { key: 'overview', label: 'Overview', icon: House },
   { key: 'queue', label: 'Queue', icon: CornerDownLeft },
+  { key: 'kanban', label: 'Board', icon: Kanban },
   { key: 'chats', label: 'Sessions', icon: Zap },
-  { key: 'profiles', label: 'Profiles', icon: User },
-  { key: 'cron', label: 'Cron', icon: Clock },
   { key: 'memories', label: 'Memories', icon: BookOpen },
   { key: 'skills', label: 'Skills', icon: Sparkles },
-  { key: 'usage', label: 'Usage', icon: BarChart3 },
-  { key: 'logs', label: 'Logs', icon: ScrollText },
-  { key: 'images', label: 'Images', icon: Image },
-  { key: 'mcp', label: 'MCP', icon: Network },
-  { key: 'kanban', label: 'Board', icon: Kanban },
-  { key: 'tasks', label: 'Tasks', icon: ListChecks },
-  { key: 'rooms', label: 'Rooms', icon: Users },
+  { key: 'cron', label: 'Cron', icon: Clock },
+  { key: 'profiles', label: 'Profiles', icon: User },
+  { key: 'rooms', label: 'Rooms', icon: MessagesSquare },
   { key: 'teams', label: 'Teams', icon: Users },
-  { key: 'webhooks', label: 'Webhooks', icon: Webhook },
-  { key: 'pairing', label: 'Pairing', icon: Link2 },
+  { key: 'tasks', label: 'Tasks', icon: ListChecks },
+  { key: 'usage', label: 'Usage', icon: BarChart3 },
+  { key: 'mcp', label: 'MCP', icon: Plug },
+  { key: 'images', label: 'Images', icon: Image },
   { key: 'system', label: 'System', icon: Server },
 ];
+
+/**
+ * Tabs shown before the "More" toggle. Three plus the toggle fills one row of
+ * the 4-column grid exactly; four would strand the toggle alone on a second row.
+ */
+const PRIMARY_TAB_COUNT = 3;
+
+/** Shared chrome for every button in the sidebar's top action bar. */
+const TOOLBAR_BUTTON =
+  'inline-flex h-9 items-center justify-center rounded-[8px] border border-[hsl(var(--border))] ' +
+  'bg-[hsl(var(--card))] text-[13px] text-foreground transition-colors duration-150 ' +
+  'hover:bg-[hsl(var(--accent))]';
 
 export const ChatSidebar: React.FC = () => {
   const {
@@ -493,46 +511,24 @@ export const ChatSidebar: React.FC = () => {
         )}
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       >
-        {/* Shared SVG defs for animated rainbow gradient */}
-        <svg className="absolute h-0 w-0" aria-hidden="true">
-          <defs>
-            <linearGradient id="sidebar-rainbow" x1="0%" y1="0%" x2="100%" y2="100%" gradientUnits="userSpaceOnUse">
-              <stop offset="0%" stopColor="#ff6b6b">
-                <animate attributeName="stop-color" values="#ff6b6b;#ffd43b;#51cf66;#339af0;#cc5de8;#ff6b6b" dur="3s" repeatCount="indefinite" />
-              </stop>
-              <stop offset="25%" stopColor="#ffd43b">
-                <animate attributeName="stop-color" values="#ffd43b;#51cf66;#339af0;#cc5de8;#ff6b6b;#ffd43b" dur="3s" repeatCount="indefinite" />
-              </stop>
-              <stop offset="50%" stopColor="#51cf66">
-                <animate attributeName="stop-color" values="#51cf66;#339af0;#cc5de8;#ff6b6b;#ffd43b;#51cf66" dur="3s" repeatCount="indefinite" />
-              </stop>
-              <stop offset="75%" stopColor="#339af0">
-                <animate attributeName="stop-color" values="#339af0;#cc5de8;#ff6b6b;#ffd43b;#51cf66;#339af0" dur="3s" repeatCount="indefinite" />
-              </stop>
-              <stop offset="100%" stopColor="#cc5de8">
-                <animate attributeName="stop-color" values="#cc5de8;#ff6b6b;#ffd43b;#51cf66;#339af0;#cc5de8" dur="3s" repeatCount="indefinite" />
-              </stop>
-            </linearGradient>
-          </defs>
-        </svg>
-
-        {/* New thread button — primary action */}
+        {/* New thread button — primary action. The label is collapsed to an
+            icon at narrow widths but the accessible name stays "New thread". */}
         <button
           onClick={handleNew}
           className={cn(
-            'group/new relative flex h-9 items-center overflow-hidden rounded-[8px] border border-[#2F2F2F] bg-[hsl(var(--card))] text-[13px] font-normal text-[#e0e0e0] transition-colors duration-100 hover:bg-[hsl(var(--card))]/80',
-            isCompactHeader ? 'w-9 justify-center px-0' : 'flex-1 px-3.5'
+            TOOLBAR_BUTTON,
+            'group/new flex-1 px-3.5',
+            isCompactHeader && 'w-9 flex-none justify-center px-0',
           )}
           title="New thread"
           aria-label="New thread"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
           <Plus className={cn(
-            'h-3.5 w-3.5 text-[#888888] group-hover/new:[stroke:url(#sidebar-rainbow)]',
-            !isCompactHeader && 'mr-2 w-0 -ml-0.5 opacity-0 group-hover/new:w-3.5 group-hover/new:ml-0 group-hover/new:opacity-100 transition-all duration-200 ease-out'
+            'h-3.5 w-3.5 shrink-0 transition-all duration-150',
+            !isCompactHeader && 'mr-2 w-0 -ml-0.5 opacity-0 group-hover/new:w-3.5 group-hover/new:ml-0 group-hover/new:opacity-100',
           )} />
           {!isCompactHeader && 'New thread'}
-          <span className="pointer-events-none absolute inset-0 z-0 translate-x-[-120%] bg-[linear-gradient(115deg,transparent_0%,transparent_30%,hsl(var(--foreground)/0.12)_48%,transparent_62%,transparent_100%)] opacity-0 group-hover/new:animate-[sidebar-btn-glimmer_4s_ease-in-out_infinite] group-hover/new:opacity-100" />
         </button>
 
         {/* Secondary actions */}
@@ -550,47 +546,42 @@ export const ChatSidebar: React.FC = () => {
           />
           <button
             onClick={() => importInputRef.current?.click()}
-            className="group/imp relative inline-flex h-9 w-9 items-center justify-center overflow-hidden rounded-[8px] border border-[#2F2F2F] bg-[hsl(var(--card))] text-[#888888] transition-colors duration-100 hover:text-[hsl(var(--text-secondary))]"
+            className={TOOLBAR_BUTTON}
             title="Import conversation"
             aria-label="Import conversation"
             style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
           >
-            <Upload className="relative z-[1] h-4 w-4 group-hover/imp:[stroke:url(#sidebar-rainbow)]" />
-            <span className="pointer-events-none absolute inset-0 z-0 translate-x-[-120%] bg-[linear-gradient(115deg,transparent_0%,transparent_30%,hsl(var(--foreground)/0.12)_48%,transparent_62%,transparent_100%)] opacity-0 group-hover/imp:animate-[sidebar-btn-glimmer_4s_ease-in-out_infinite] group-hover/imp:opacity-100" />
+            <Upload className="h-4 w-4" />
           </button>
           <button
             onClick={() => setRepoBrowserOpen(true)}
-            className="group/gh relative inline-flex h-9 w-9 items-center justify-center overflow-hidden rounded-[8px] border border-[#2F2F2F] bg-[hsl(var(--card))] text-[#888888] transition-colors duration-100 hover:text-[hsl(var(--text-secondary))]"
+            className={TOOLBAR_BUTTON}
             title="Browse repo issues"
             aria-label="Browse repo issues"
             style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
           >
-            <Github className="relative z-[1] h-4 w-4 group-hover/gh:[stroke:url(#sidebar-rainbow)] group-hover/gh:drop-shadow-[0_0_4px_rgba(200,100,255,0.4)]" />
-            <span className="pointer-events-none absolute inset-0 z-0 translate-x-[-120%] bg-[linear-gradient(115deg,transparent_0%,transparent_30%,hsl(var(--foreground)/0.12)_48%,transparent_62%,transparent_100%)] opacity-0 group-hover/gh:animate-[sidebar-btn-glimmer_4s_ease-in-out_infinite] group-hover/gh:opacity-100" />
+            <Github className="h-4 w-4" />
           </button>
-
           <button
             onClick={() => setSettingsOpen(true)}
-            className="group/cog relative inline-flex h-9 w-9 items-center justify-center overflow-hidden rounded-[8px] border border-[#2F2F2F] bg-[hsl(var(--card))] text-[#888888] transition-colors duration-100 hover:text-[hsl(var(--text-secondary))]"
+            className={TOOLBAR_BUTTON}
             title="Settings"
             aria-label="Open settings"
             style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
           >
-            <Settings className="relative z-[1] h-4 w-4 group-hover/cog:animate-[cog-spin_3s_cubic-bezier(0.16,1,0.3,1)_infinite] group-hover/cog:[stroke:url(#sidebar-rainbow)]" />
-            <span className="pointer-events-none absolute inset-0 z-0 translate-x-[-120%] bg-[linear-gradient(115deg,transparent_0%,transparent_30%,hsl(var(--foreground)/0.12)_48%,transparent_62%,transparent_100%)] opacity-0 group-hover/cog:animate-[sidebar-btn-glimmer_4s_ease-in-out_infinite] group-hover/cog:opacity-100" />
+            <Settings className="h-4 w-4" />
           </button>
         </div>
       </div>
 
       {/* Sub-tab navigation (hermes only) */}
       {isHermes && (() => {
-        const PRIMARY_TAB_COUNT = 7;
         const overflowKeys = HERMES_SUB_TABS.slice(PRIMARY_TAB_COUNT).map((t) => t.key);
         // Keep the active tab reachable: auto-expand if it lives in the overflow.
         const expanded = showAllTabs || overflowKeys.includes(activeSubTab);
         const visibleTabs = expanded ? HERMES_SUB_TABS : HERMES_SUB_TABS.slice(0, PRIMARY_TAB_COUNT);
         return (
-        <div className="px-3 pb-3 pt-1" data-tour="subtab-nav">
+        <div className="px-3 pb-2 pt-1" data-tour="subtab-nav">
           <div className={cn(
             'grid gap-1',
             sidebarWidth <= 260 ? 'grid-cols-3' : 'grid-cols-4'
@@ -637,11 +628,11 @@ export const ChatSidebar: React.FC = () => {
           {/* Threads section header */}
           <div className="flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-1.5">
-          <span className="text-[11px] font-semibold uppercase tracking-[1px] text-[#666666]">Threads</span>
-          <SlotNumber value={conversations.length} className="text-[11px] font-mono text-[#555555]" />
+          <span className="text-[11px] font-semibold uppercase tracking-[1px] text-[hsl(var(--text-tertiary))]">Threads</span>
+          <SlotNumber value={conversations.length} className="text-[11px] font-mono text-[hsl(var(--text-dim))]" />
           {panels.length > 1 && (
             <span
-              className="ml-1 inline-flex items-center gap-1 rounded-full border border-[#2F2F2F] bg-[hsl(var(--card))]/70 px-1.5 py-0.5 text-[10px] font-mono text-[#888888]"
+              className="ml-1 inline-flex items-center gap-1 rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--card))]/70 px-1.5 py-0.5 text-[10px] font-mono text-[hsl(var(--text-secondary))]"
               title={`${panels.length} panels open`}
             >
               <Columns2 className="h-3 w-3" />
@@ -652,7 +643,7 @@ export const ChatSidebar: React.FC = () => {
         <div className="relative flex items-center gap-1.5">
           <button
             onClick={() => setShowTreeOverlay(true)}
-            className="rounded-md p-0.5 text-[#666666] transition-colors duration-100 hover:text-[hsl(var(--text-secondary))]"
+            className="rounded-md p-0.5 text-[hsl(var(--text-tertiary))] transition-colors duration-100 hover:text-[hsl(var(--text-secondary))]"
             title="Conversation tree"
             aria-label="Open conversation tree"
             disabled={conversations.length === 0}
@@ -661,14 +652,14 @@ export const ChatSidebar: React.FC = () => {
           </button>
           <button
             onClick={() => { setCleanupOpen(!cleanupOpen); setCleanupDays(null); }}
-            className="rounded-md p-0.5 text-[#666666] transition-colors duration-100 hover:text-[hsl(var(--text-secondary))]"
+            className="rounded-md p-0.5 text-[hsl(var(--text-tertiary))] transition-colors duration-100 hover:text-[hsl(var(--text-secondary))]"
             title="Clean up old threads"
             aria-label="Clean up old threads"
           >
             <Trash2 className="h-3.5 w-3.5" />
           </button>
           {cleanupOpen && (
-            <div className="absolute right-0 top-full z-50 mt-1 min-w-[160px] rounded-lg border border-[#2F2F2F] bg-[hsl(var(--card))] py-1 shadow-lg">
+            <div className="absolute right-0 top-full z-50 mt-1 min-w-[160px] rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] py-1 shadow-lg">
               {cleanupDays === null ? (
                 <>
                   <button
@@ -730,7 +721,7 @@ export const ChatSidebar: React.FC = () => {
               'rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors',
               selectedTags.length === 0
                 ? 'border-[hsl(var(--ring))] bg-[hsl(var(--muted))]/60 text-foreground'
-                : 'border-[#2F2F2F] text-muted-foreground hover:text-foreground'
+                : 'border-[hsl(var(--border))] text-muted-foreground hover:text-foreground'
             )}
           >
             All
@@ -776,7 +767,7 @@ export const ChatSidebar: React.FC = () => {
               <div key={group.label}>
                 <button
                   onClick={() => toggleGroup(group.label)}
-                  className="flex w-full items-center gap-1.5 px-4 pt-4 pb-1 text-[10px] font-semibold uppercase tracking-[1.2px] text-[#666666] transition-colors hover:text-[hsl(var(--text-secondary))]"
+                  className="flex w-full items-center gap-1.5 px-4 pt-4 pb-1 text-[10px] font-semibold uppercase tracking-[1.2px] text-[hsl(var(--text-tertiary))] transition-colors hover:text-[hsl(var(--text-secondary))]"
                   aria-expanded={!collapsed}
                 >
                   {collapsed ? <ChevronRight className="h-3 w-3 shrink-0" /> : <ChevronDown className="h-3 w-3 shrink-0" />}
@@ -804,7 +795,7 @@ export const ChatSidebar: React.FC = () => {
                       className={cn(
                         'group mb-1 flex cursor-pointer flex-col gap-0.5 rounded-[10px] px-4 py-2.5 text-[13px] transition-colors duration-100 focus:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--ring))]',
                         isFocused
-                          ? 'bg-[#FF840010] border-l-2 border-l-[#FF840020]'
+                          ? 'bg-primary/10 border-l-2 border-l-primary/20'
                           : isInAnotherPanel
                             ? 'bg-[hsl(var(--sidebar-active))]/50'
                             : 'hover:bg-[hsl(var(--sidebar-active))]/40'
@@ -960,10 +951,10 @@ export const ChatSidebar: React.FC = () => {
                                 </button>
                                 {exportMenuId === conv.id && (
                                   <div
-                                    className="absolute right-0 top-full z-50 mt-1 min-w-[140px] rounded-lg border border-[#2F2F2F] bg-[hsl(var(--card))] py-1 shadow-lg"
+                                    className="absolute right-0 top-full z-50 mt-1 min-w-[140px] rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] py-1 shadow-lg"
                                     onClick={(e) => e.stopPropagation()}
                                   >
-                                    <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-[1px] text-[#666666]">
+                                    <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-[1px] text-[hsl(var(--text-tertiary))]">
                                       Export as
                                     </div>
                                     <button
@@ -1044,7 +1035,7 @@ export const ChatSidebar: React.FC = () => {
                               setTagInput('');
                             }}
                             placeholder="Add tag…"
-                            className="w-full rounded-md border border-[#2F2F2F] bg-background/60 px-2 py-1 text-[11px] focus:border-[hsl(var(--ring))] focus:outline-none"
+                            className="w-full rounded-md border border-[hsl(var(--border))] bg-background/60 px-2 py-1 text-[11px] focus:border-[hsl(var(--ring))] focus:outline-none"
                             aria-label="Add tag"
                           />
                           <datalist id={`tag-suggestions-${conv.id}`}>
@@ -1076,7 +1067,7 @@ export const ChatSidebar: React.FC = () => {
               <div className="mt-3">
                 <button
                   onClick={() => setArchivedOpen((v) => !v)}
-                  className="flex w-full items-center gap-1.5 px-4 pt-4 pb-1 text-[10px] font-semibold uppercase tracking-[1.2px] text-[#666666] transition-colors hover:text-[hsl(var(--text-secondary))]"
+                  className="flex w-full items-center gap-1.5 px-4 pt-4 pb-1 text-[10px] font-semibold uppercase tracking-[1.2px] text-[hsl(var(--text-tertiary))] transition-colors hover:text-[hsl(var(--text-secondary))]"
                   aria-expanded={archivedOpen}
                   aria-label={`Archived (${archivedConversations.length})`}
                 >
@@ -1129,14 +1120,8 @@ export const ChatSidebar: React.FC = () => {
         <HermesSkillsPanel />
       ) : activeSubTab === 'usage' ? (
         <HermesUsagePanel />
-      ) : activeSubTab === 'logs' ? (
-        <HermesLogsPanel />
       ) : activeSubTab === 'system' ? (
         <HermesSystemPanel />
-      ) : activeSubTab === 'webhooks' ? (
-        <HermesWebhooksPanel />
-      ) : activeSubTab === 'pairing' ? (
-        <HermesPairingPanel />
       ) : activeSubTab === 'images' ? (
         <ImagesPanel />
       ) : activeSubTab === 'mcp' ? (
@@ -1169,8 +1154,8 @@ export const ChatSidebar: React.FC = () => {
           {/* Rooms list header */}
           <div className="flex items-center justify-between px-4 py-3">
             <div className="flex items-center gap-1.5">
-              <span className="text-[11px] font-semibold uppercase tracking-[1px] text-[#666666]">Rooms</span>
-              <span className="text-[11px] font-mono text-[#555555]">{rooms.length}</span>
+              <span className="text-[11px] font-semibold uppercase tracking-[1px] text-[hsl(var(--text-tertiary))]">Rooms</span>
+              <span className="text-[11px] font-mono text-[hsl(var(--text-dim))]">{rooms.length}</span>
             </div>
             <button
               onClick={() => setShowCreateDialog(true)}
@@ -1245,7 +1230,7 @@ export const ChatSidebar: React.FC = () => {
       <div
         data-tour="repo-footer"
         className={cn(
-          'flex shrink-0 items-center border-t border-[#2F2F2F] px-3 py-2',
+          'flex shrink-0 items-center border-t border-[hsl(var(--border))] px-3 py-2',
           isCompactFooter ? 'gap-1.5' : 'gap-2'
         )}
       >
@@ -1253,13 +1238,13 @@ export const ChatSidebar: React.FC = () => {
           <>
             <div
               className={cn(
-                'inline-flex h-7 shrink-0 items-center rounded-full border border-[#2F2F2F] bg-[hsl(var(--card))]/70 text-[11px] text-[#666666]',
+                'inline-flex h-7 shrink-0 items-center rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--card))]/70 text-[11px] text-[hsl(var(--text-tertiary))]',
                 isUltraCompactFooter ? 'px-2' : 'gap-1.5 px-2.5'
               )}
               title={accessStatusLabel}
               aria-label={accessStatusLabel}
             >
-              <Lock className="h-3 w-3 text-[#555555]" />
+              <Lock className="h-3 w-3 text-[hsl(var(--text-dim))]" />
               {permissionsLabel && <span className="truncate">{permissionsLabel}</span>}
             </div>
             <button
@@ -1278,7 +1263,7 @@ export const ChatSidebar: React.FC = () => {
         ) : (
           <button
             onClick={() => (githubPAT ? setRepoBrowserOpen(true) : setSettingsOpen(true, 'github'))}
-            className="flex h-7 w-full items-center justify-center gap-2 rounded-full border border-[#2F2F2F] bg-[hsl(var(--card))]/60 px-3 text-[11px] font-medium text-[#888888] transition-colors hover:border-primary/30 hover:bg-primary/[0.06] hover:text-[hsl(var(--text-secondary))]"
+            className="flex h-7 w-full items-center justify-center gap-2 rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--card))]/60 px-3 text-[11px] font-medium text-[hsl(var(--text-secondary))] transition-colors hover:border-primary/30 hover:bg-primary/[0.06] hover:text-[hsl(var(--text-secondary))]"
             title={githubPAT ? 'Attach a repository to this thread' : 'Connect your GitHub account'}
             style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
           >

@@ -57,7 +57,9 @@ const STATUS_CONFIG: Record<string, { icon: React.ReactNode; dot: string; label:
 };
 
 function ElapsedTimer({ startedAt }: { startedAt: number }) {
-  const [_now, setNow] = useState(Date.now());
+  // The value is never read — it exists purely to re-render once a second so
+  // `elapsed` recomputes. `setNow` is the real effect here.
+  const [, setNow] = useState(Date.now());
   const idRef = useRef<ReturnType<typeof setInterval>>();
   useEffect(() => {
     idRef.current = setInterval(() => setNow(Date.now()), 1000);
@@ -80,7 +82,7 @@ function TaskItem({ task }: { task: QueuedTask }) {
         task.status === 'running' && 'border-amber-500/20 bg-amber-500/[0.03]',
         task.status === 'queued' && 'border-blue-500/20 bg-blue-500/[0.02]',
         task.status === 'done' && 'border-emerald-500/15 bg-emerald-500/[0.02]',
-        task.status === 'blocked' && 'border-red-500/20 bg-red-500/[0.03]',
+        task.status === 'blocked' && 'border-destructive/25 bg-destructive/10',
         task.status === 'review' && 'border-purple-500/20 bg-purple-500/[0.03]',
         !['running', 'queued', 'done', 'blocked', 'review'].includes(task.status) && 'border-border/30 bg-background/30',
         expanded && 'border-primary/30',
@@ -196,7 +198,6 @@ export function TaskQueuePanel() {
     dispatchNow,
   } = useTaskOrchestratorStore();
 
-  const [_cancelling, _setCancelling] = useState<string | null>(null);
   const [queueState, setQueueState] = useState<QueueState | null>(null);
   const [queueLoading, setQueueLoading] = useState(false);
 
@@ -280,7 +281,7 @@ export function TaskQueuePanel() {
       </div>
 
       {error && (
-        <div className="mx-3 mb-2 rounded-lg border border-red-500/20 bg-red-500/10 px-2.5 py-2 text-[10px] leading-relaxed text-red-300">
+        <div className="mx-3 mb-2 rounded-lg border border-destructive/25 bg-destructive/10 px-2.5 py-2 text-[10px] leading-relaxed text-destructive">
           {error}
         </div>
       )}

@@ -12,7 +12,7 @@ import {
 } from '@/lib/hermes-api';
 import { relativeTime } from '@/lib/relative-time';
 import { cn } from '@/lib/utils';
-import { filterSkills } from './hermesSidebarUtils';
+import { filterSkills, formatBytes } from './hermesSidebarUtils';
 
 type SkillsTab = 'installed' | 'hub';
 
@@ -25,12 +25,6 @@ const HUB_SOURCE_LABELS: Record<HubSkill['source'], string> = {
   anthropic: 'Anthropic',
   lobehub: 'LobeHub',
 };
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 function formatTokens(tokens: number): string {
   if (tokens < 1000) return `${tokens}`;
@@ -296,7 +290,7 @@ export function HermesSkillsPanel() {
           </div>
 
           {installedError && (
-            <div className="mx-3 mb-2 rounded-xl border border-red-500/20 bg-red-500/10 p-2 text-[11px] text-red-300">
+            <div className="mx-3 mb-2 rounded-xl border border-destructive/25 bg-destructive/10 p-2 text-[11px] text-destructive">
               {installedError}
             </div>
           )}
@@ -433,7 +427,7 @@ export function HermesSkillsPanel() {
           </div>
 
           {hubError && (
-            <div className="mx-3 mb-2 rounded-xl border border-red-500/20 bg-red-500/10 p-2 text-[11px] text-red-300">
+            <div className="mx-3 mb-2 rounded-xl border border-destructive/25 bg-destructive/10 p-2 text-[11px] text-destructive">
               {hubError}
             </div>
           )}

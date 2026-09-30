@@ -1,9 +1,16 @@
 # Mobile Hermes Control — Spec
 
-**Status**: Draft
+**Status**: Superseded
 **Owner**: @DevGwardo
 **Created**: 2026-05-21
-**Related**: `docs/mobile-access.md`, commit `edbfef9` (QR + tunnel), commit `607cb62` (room chat + swarm panel)
+**Related**: `docs/mobile-access.md`
+
+> **Superseded.** The public-tunnel transport and the revival actions
+> (Wake-on-LAN, ping-bridge, smart-plug power cycle) described below were
+> removed. Remote access now runs over the user's own Tailscale tailnet, which
+> reaches the host directly — so there is nothing to "revive" and no public URL
+> to defend. Kept for historical context; see `docs/mobile-access.md` for the
+> current design.
 
 ---
 

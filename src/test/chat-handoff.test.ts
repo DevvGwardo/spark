@@ -50,7 +50,7 @@ const apiMocks = vi.hoisted(() => ({
   fetchRepoFileTreeResult: vi.fn(),
 }));
 
-let latestUseChatOptions: Record<string, unknown> | null = null;
+let latestUseChatOptions: Record<string, any> | null = null;
 
 // v5+ moved the request plumbing (base body, fetch, per-send body builder) off
 // the hook options and onto the transport instance. These accessors keep the
