@@ -337,6 +337,33 @@ except Exception as e:
             f"[cron] Hermes cron backend unavailable, falling back to bridge-local store: {detail}",
             flush=True,
         )
+        # Stubs so the names main.py imports always exist. With the Hermes
+        # backend unavailable these routes are guarded by _HERMES_CRON_AVAILABLE
+        # and never call them, but the import itself must not raise.
+        _hermes_create_job = lambda **kwargs: (_ for _ in ()).throw(
+            RuntimeError("Hermes cron backend unavailable")
+        )
+        _hermes_get_job = lambda job_id: (_ for _ in ()).throw(
+            RuntimeError("Hermes cron backend unavailable")
+        )
+        _hermes_list_jobs = lambda include_disabled=False: (_ for _ in ()).throw(
+            RuntimeError("Hermes cron backend unavailable")
+        )
+        _hermes_pause_job = lambda job_id: (_ for _ in ()).throw(
+            RuntimeError("Hermes cron backend unavailable")
+        )
+        _hermes_remove_job = lambda job_id: (_ for _ in ()).throw(
+            RuntimeError("Hermes cron backend unavailable")
+        )
+        _hermes_resume_job = lambda job_id: (_ for _ in ()).throw(
+            RuntimeError("Hermes cron backend unavailable")
+        )
+        _hermes_trigger_job = lambda job_id: (_ for _ in ()).throw(
+            RuntimeError("Hermes cron backend unavailable")
+        )
+        _hermes_cron_tick = lambda verbose=False: (_ for _ in ()).throw(
+            RuntimeError("Hermes cron backend unavailable")
+        )
 
 
 def _cron_query_value(request: Request, key: str) -> Optional[str]:
