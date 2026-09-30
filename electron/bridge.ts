@@ -183,7 +183,13 @@ async function isOwnedBridge(): Promise<boolean> {
   try {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 1500)
-    const res = await fetch(BRIDGE_DIAG_URL, { signal: controller.signal })
+    // The token is sent even though /diag is currently exempt: the ownership
+    // check is what decides whether this supervisor may adopt the process, and
+    // it should not depend on an exemption that Phase 2.4 documents as temporary.
+    const res = await fetch(BRIDGE_DIAG_URL, {
+      signal: controller.signal,
+      headers: { 'X-Hermes-Bridge-Token': BRIDGE_TOKEN },
+    })
     clearTimeout(timeout)
     if (!res.ok) {
       return false

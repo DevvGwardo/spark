@@ -11,6 +11,7 @@ import {
 import { getOpenClawModels } from '../openclaw';
 import { sendJson, validateKeyRateLimiter, getClientIp } from '../lib/helpers';
 import { getUnknownErrorMessage, normalizeLocalProviderError } from '../lib/github-utils';
+import { bridge } from '../lib/bridge-client';
 
 // ─── /functions/v1/validate-key ──────────────────────────────────────────────
 
@@ -33,13 +34,15 @@ app.post('/functions/v1/validate-key', async (req, res) => {
       // Helper: fetch models from bridge's /v1/models endpoint
       async function fetchBridgeModels(bridgeUrl: string): Promise<string[]> {
         try {
-          const modelsUrl = `${bridgeUrl}/models`;
-          const mr = await fetch(modelsUrl, { signal: AbortSignal.timeout(5000) });
-          if (mr.ok) {
-            const md = await mr.json() as { data?: Array<{ id?: string }> };
-            const ids = (md.data ?? []).map(m => m.id).filter((id): id is string => !!id);
-            if (ids.length > 0) return ids;
-          }
+          const md = await bridge.json<{ data?: Array<{ id?: string }> }>(
+            `${bridgeUrl}/models`,
+            {},
+            { timeoutMs: 5_000, retryUntilReady: false },
+          );
+          const ids = (md?.data ?? [])
+            .map((m: { id?: string }) => m.id)
+            .filter((id: string | undefined): id is string => !!id);
+          if (ids.length > 0) return ids;
         } catch { /* fall through */ }
         // Fallback to hardcoded list
         return [...HERMES_TOOL_CAPABLE_MODELS];
@@ -49,9 +52,12 @@ app.post('/functions/v1/validate-key', async (req, res) => {
       async function fetchBridgeDefaultModel(bridgeUrl: string): Promise<string | undefined> {
         try {
           const healthUrl = `${bridgeUrl.replace('/v1', '')}/health`;
-          const hr = await fetch(healthUrl, { signal: AbortSignal.timeout(3000) });
-          if (hr.ok) {
-            const hd = await hr.json() as { hermes_default_model?: string };
+          const hd = await bridge.json<{ hermes_default_model?: string }>(
+            healthUrl,
+            {},
+            { timeoutMs: 3_000, retryUntilReady: false },
+          );
+          if (hd) {
             return hd.hermes_default_model;
           }
         } catch { /* ignore */ }
@@ -64,7 +70,7 @@ app.post('/functions/v1/validate-key', async (req, res) => {
         const bridgeUrl = OPENAI_COMPATIBLE.hermes;
         try {
           const healthUrl = `${bridgeUrl.replace('/v1', '')}/health`;
-          const healthResponse = await fetch(healthUrl, {
+          const healthResponse = await bridge.request(healthUrl, {
             method: 'GET',
             signal: AbortSignal.timeout(5000),
           });

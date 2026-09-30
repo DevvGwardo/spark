@@ -170,7 +170,11 @@ describe('Hermes admin route', () => {
     }
   })
 
-  it('preserves JSON bridge errors from admin proxy routes', async () => {
+  // These two used to assert the legacy `{ error: "<string>" }` shape was passed
+  // through verbatim. Phase 1.4 replaced that: every bridge failure now leaves as
+  // the contract envelope, whatever the bridge actually sent, so the UI can switch
+  // on `code` instead of pattern-matching a message. The status is still mirrored.
+  it('wraps a legacy JSON bridge error in the contract envelope', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
       if (url.includes('/api/hermes/workspace/overview')) {
@@ -190,13 +194,15 @@ describe('Hermes admin route', () => {
       const data = await response.json()
 
       expect(response.status).toBe(502)
-      expect(data).toEqual({ error: 'Bridge workspace failed' })
+      expect(data.error.code).toBe('PROVIDER_ERROR')
+      expect(data.error.message).toBe('Bridge workspace failed')
+      expect(data.error.retryable).toBe(true)
     } finally {
       await server.close()
     }
   })
 
-  it('preserves plain-text bridge errors from admin proxy routes', async () => {
+  it('wraps a plain-text bridge error in the contract envelope', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
       if (url.includes('/api/hermes/workspace/overview')) {
@@ -216,7 +222,8 @@ describe('Hermes admin route', () => {
       const data = await response.json()
 
       expect(response.status).toBe(500)
-      expect(data).toEqual({ error: 'Bridge exploded badly' })
+      expect(data.error.code).toBe('PROVIDER_ERROR')
+      expect(data.error.message).toBe('Bridge exploded badly')
     } finally {
       await server.close()
     }

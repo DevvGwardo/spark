@@ -116,7 +116,14 @@ async function isBridgeReachable(): Promise<boolean> {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 1500);
-    const res = await fetch(healthUrl(), { signal: controller.signal });
+    // Through the shared client so the token is attached; this probe previously
+    // sent none and relied on the bridge's loopback exemption.
+    const res = await fetch(healthUrl(), {
+      signal: controller.signal,
+      headers: process.env.HERMES_BRIDGE_TOKEN
+        ? { 'X-Hermes-Bridge-Token': process.env.HERMES_BRIDGE_TOKEN.trim() }
+        : {},
+    });
     clearTimeout(timeout);
     return res.ok;
   } catch {

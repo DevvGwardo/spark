@@ -313,12 +313,47 @@ Every PR runs `npm run typecheck && npm run lint && npm test` plus `pytest herme
 |---|---|---|
 | 0 Correctness hotfixes | **Done** | All 9 defects fixed, each with a regression test. PR #52 + #53. |
 | 1 Event and error contract | **Done** | 1.1–1.5 landed. Error envelope + regex-free `ChatErrorBanner` + golden fixtures. |
-| 2 Single bridge client | Not started | |
+| 2 Single bridge client | **Done** | `BridgeClient` owns every bridge request; loopback now token-gated. PR #56. |
 | 3 Lifecycle | Not started | |
 | 4 Transport parity and decomposition | Not started | |
 | 5 Async hygiene | Not started | |
 | 6 Frontend data layer | Not started | |
 | 7 Tests, CI, and docs | In progress | 7.1/7.3/7.4 not started; see Phase 0 test inventory below |
+
+### Phase 2 outcome
+
+PR #56, stacked on #55. All five items; 2.5 needed no work because item 0.3 had
+already removed the fallback it referenced.
+
+| Item | Status | Notes |
+|---|---|---|
+| 2.1 `bridge-client.ts` | **Done** | Token (unconditional), profile, one readiness budget, 15s default timeout, stream idle timeout, disconnect abort, 10s read cache, error-envelope mapping. 24 tests |
+| 2.2 Port `proxyTo` | **Done** | 101 call sites → `bridge.proxy`; `proxyTo`, `fetchWithBridgeReadinessRetry` and the local token helper deleted |
+| 2.3 Port the remaining layers | **Done** | hermes.ts −85 duplicated lines; ACP approval forward, startup probe, health probes, room-coordinator, bridge-manager |
+| 2.4 Token required on loopback | **Done** | Hatch `HERMES_BRIDGE_ALLOW_LOOPBACK_NOAUTH=1`, logged on first use, loopback-scoped |
+| 2.5 Delete the direct-bridge fallback | **Done** | Already removed in Phase 0 item 0.3 |
+
+`hermes-admin.ts` alone went −447 lines; net −219 across 2.1–2.3.
+
+Three deviations, each recorded in the commit bodies:
+
+- **`/diag` stays auth-exempt** alongside `/health`. The spec said "except
+  /health", but `/diag` is the Electron supervisor's *ownership* check; gating it
+  would make an unauthenticated prober unable to verify the process it launched,
+  and the supervisor would then tear the bridge down as unowned. The supervisor now
+  also sends the token, so the exemption can go once `/diag` stops being an
+  adoption probe.
+- **One raw fetch remains outside the client**, in `lib/bridge-manager.ts`, for its
+  liveness probe — it runs before the HTTP stack serves, and routing it through the
+  client would have it share the readiness cache it populates. Its missing token is
+  attached.
+- **2.4 leaves the no-token-configured case fully open**, so local dev is
+  unaffected.
+
+2.4 is the one behavioural change in Phase 2 that can affect a running desktop
+app: a setup relying on loopback being open now gets 401s. The hatch exists for
+that, and its first use is logged. It wants a manual smoke test of chat, approvals
+and Stop before merge.
 
 ### Phase 1 progress
 

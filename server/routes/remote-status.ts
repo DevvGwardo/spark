@@ -2,6 +2,7 @@ import { logger } from '../lib/logger';
 import type { Express } from 'express';
 import { sendJson } from '../lib/helpers';
 import { getHermesBridgeRoot } from '../lib/hermes-bridge-url';
+import { bridge } from '../lib/bridge-client';
 
 // ─── Remote status probe ────────────────────────────────────────────────────
 // Read-only: reports whether the local Hermes bridge is reachable, so the
@@ -12,15 +13,20 @@ import { getHermesBridgeRoot } from '../lib/hermes-bridge-url';
 // /health lives at the bridge root, not under /v1 (which only serves chat).
 // Strip a trailing /v1 so the probe works whether the env var carries it or not.
 const HERMES_BRIDGE_URL = getHermesBridgeRoot();
-const HEALTH_URL = `${HERMES_BRIDGE_URL}/health`;
 
 let lastSeenCache: { timestamp: string; host: string; profile?: string } | null = null;
 
 async function probeHealth(): Promise<{ online: boolean; host: string; profile?: string }> {
   try {
-    const resp = await fetch(HEALTH_URL, { signal: AbortSignal.timeout(5000) });
-    if (!resp.ok) return { online: false, host: HERMES_BRIDGE_URL };
-    const body = (await resp.json()) as Record<string, unknown>;
+    // Through the shared client: attaches the token (this probe previously sent
+    // none) and maps failures to the contract envelope.
+    const body = await bridge.json<Record<string, unknown>>(
+      '/health',
+      {},
+      // No readiness wait: this endpoint's whole job is to report the bridge's
+      // current state, so blocking for 30s would defeat the purpose.
+      { timeoutMs: 5_000, retryUntilReady: false },
+    );
     return {
       online: true,
       host: HERMES_BRIDGE_URL,

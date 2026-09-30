@@ -16,7 +16,7 @@ import {
 import { bindClientDisconnect } from '../http-disconnect';
 import { buildCorsHeaders } from './helpers';
 import { getChatStore } from '../chat-store';
-import { getHermesBridgeRoot } from './hermes-bridge-url';
+import { bridge } from './bridge-client';
 import { HERMES_EVENT_SCHEMAS, type HermesEventKey } from './hermes-events.gen';
 import { randomUUID } from 'crypto';
 
@@ -33,7 +33,6 @@ const activeAgentRuns = new Map<string, {
   useRuns?: boolean;
 }>();
 
-const HERMES_BRIDGE_ROOT = getHermesBridgeRoot();
 
 /** Usable Hermes bridge auth + provider pin headers.
  * Never send empty/placeholder Authorization — it confuses OpenRouter key
@@ -61,11 +60,13 @@ function hermesBridgeAuthHeaders(
 
 async function stopHermesGatewayRun(conversationId: string): Promise<void> {
   try {
-    await fetch(`${HERMES_BRIDGE_ROOT}/v1/runs/cancel`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ conversation_id: conversationId }),
-    });
+    // Through the shared client, which attaches the token this path never sent
+    // (G2). Fire-and-forget: a failed cancel must not break caller cleanup.
+    await bridge.json(
+      '/v1/runs/cancel',
+      { method: 'POST', body: JSON.stringify({ conversation_id: conversationId }) },
+      { timeoutMs: 5_000, retryUntilReady: false },
+    );
   } catch (error) {
     logger.warn(
       `[chat] Failed to stop gateway run for conversation=${conversationId}: ${
@@ -578,89 +579,21 @@ export function normalizeCompatibleProviderPayload(provider: string, payload: st
 
 // Health URL: strip trailing /v1 from the hermes base URL to reach /health.
 // The bridge exposes GET /health at the root, not under /v1.
-const HERMES_HEALTH_URL = `${OPENAI_COMPATIBLE.hermes.replace(/\/v1\/?$/, '')}/health`;
-
-// Bridge-readiness backstop. The Electron main process already polls /health
-// for up to 30s at startup (see electron/bridge.ts waitForOwnedBridge), but
-// chat requests can fire before that completes. Instead of pre-checking on
-// every request (adds latency), we only poll when a fetch actually fails
-// with a connection error — almost always a startup-race false negative.
-const HERMES_READY_POLL_INTERVAL_MS = 300;
-const HERMES_READY_POLL_TIMEOUT_MS = 15_000;
-const HERMES_HEALTH_PROBE_TIMEOUT_MS = 1_000;
-
-function isLikelyBridgeConnectionError(error: unknown): boolean {
-  if (!error || typeof error !== 'object') return false;
-  const err = error as { name?: string; code?: string; message?: string; cause?: { code?: string; name?: string } };
-  const CONN_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'UND_ERR_SOCKET']);
-  if (err.code && CONN_CODES.has(err.code)) return true;
-  if (err.cause?.code && CONN_CODES.has(err.cause.code)) return true;
-  // undici wraps low-level socket errors in a TypeError('fetch failed').
-  // In practice undici always populates `cause` with the underlying error;
-  // requiring it prevents test mocks (bare TypeError) from triggering the
-  // 15-second readiness poll.
-  if (err.name === 'TypeError' && (err.cause || err.message?.includes('fetch failed'))) return true;
-  return false;
-}
-
-async function isHermesBridgeReachable(): Promise<boolean> {
-  try {
-    const res = await fetch(HERMES_HEALTH_URL, {
-      method: 'GET',
-      signal: AbortSignal.timeout(HERMES_HEALTH_PROBE_TIMEOUT_MS),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
-async function waitForHermesBridgeReady(abortSignal: AbortSignal): Promise<boolean> {
-  const deadline = Date.now() + HERMES_READY_POLL_TIMEOUT_MS;
-  while (!abortSignal.aborted && Date.now() < deadline) {
-    if (await isHermesBridgeReachable()) return true;
-    if (abortSignal.aborted) return false;
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, HERMES_READY_POLL_INTERVAL_MS);
-      const onAbort = () => {
-        clearTimeout(timer);
-        resolve();
-      };
-      if (abortSignal.aborted) {
-        onAbort();
-      } else {
-        abortSignal.addEventListener('abort', onAbort, { once: true });
-      }
-    });
-  }
-  return false;
-}
-
 /**
- * Fetches the Hermes bridge with a one-shot readiness retry on connection
- * errors. Guards against the cold-start race where a chat request fires
- * before hermes-bridge/main.py has finished booting. Happy path adds no
- * overhead — only kicks in when the initial fetch rejects with a connection
- * error. If the bridge never becomes reachable within the poll budget, the
- * original error propagates so the caller's "not reachable" message surfaces.
+ * A streaming bridge POST for the chat paths.
+ *
+ * The readiness retry and the abort wiring used to live in a private
+ * fetchHermesWithReadinessRetry that duplicated the admin proxy's copy with a
+ * different budget (15s here, 30s there). Both now come from the shared client;
+ * this wrapper only carries the chat-specific defaults so the call sites below
+ * read the same as before.
  */
-async function fetchHermesWithReadinessRetry(
+async function postBridgeStream(
   url: string,
   init: RequestInit,
   abortSignal: AbortSignal,
 ): Promise<Response> {
-  try {
-    return await fetch(url, init);
-  } catch (error) {
-    if (abortSignal.aborted) throw error;
-    if (!isLikelyBridgeConnectionError(error)) throw error;
-
-    logger.info('[chat] Hermes bridge fetch failed (connection error); polling /health up to %dms for readiness…', HERMES_READY_POLL_TIMEOUT_MS);
-    const ready = await waitForHermesBridgeReady(abortSignal);
-    if (!ready) throw error;
-    logger.info('[chat] Hermes bridge became reachable; retrying fetch.');
-    return await fetch(url, init);
-  }
+  return bridge.stream(url, init, { signal: abortSignal, retryUntilReady: true })
 }
 
 export async function proxyHermesAgentLoopToDataStream(input: {
@@ -745,7 +678,7 @@ export async function proxyHermesAgentLoopToDataStream(input: {
     logger.info(
       `[chat] Hermes agent-loop bridge fetch start. model=${input.model} repo=${repoLabel} toolsets=${input.hermesToolsets || '-'} runs=${input.hermesUseRuns ? '1' : '0'} t=${startedAt}`,
     );
-    bridgeResponse = await fetchHermesWithReadinessRetry(bridgeUrl, {
+    bridgeResponse = await postBridgeStream(bridgeUrl, {
       method: 'POST',
       headers: {
         ...hermesBridgeAuthHeaders(input.apiKey, input.hermesProvider),
@@ -944,7 +877,7 @@ async function judgeLoopIterationOnce(input: {
   systemPrompt?: string;
   signal: AbortSignal;
 }): Promise<{ met: boolean; feedback: string }> {
-  const response = await fetchHermesWithReadinessRetry(`${OPENAI_COMPATIBLE.hermes}/chat/completions`, {
+  const response = await postBridgeStream(`${OPENAI_COMPATIBLE.hermes}/chat/completions`, {
     method: 'POST',
     headers: {
       // Omit empty Bearer — placeholders break custom CLI demotion / key detection.
@@ -1118,7 +1051,7 @@ export async function proxyHermesLoopToDataStream(input: {
 
       const startedAt = Date.now();
       logger.info(`[chat] Hermes loop iteration ${iteration}/${maxIterations} start. model=${input.model}`);
-      const bridgeResponse = await fetchHermesWithReadinessRetry(`${OPENAI_COMPATIBLE.hermes}/chat/completions`, {
+      const bridgeResponse = await postBridgeStream(`${OPENAI_COMPATIBLE.hermes}/chat/completions`, {
         method: 'POST',
         headers: {
           ...hermesBridgeAuthHeaders(input.apiKey, input.hermesProvider),
@@ -1292,7 +1225,7 @@ export async function proxyHermesSwarmToDataStream(input: {
     logger.info(
       `[chat] Hermes swarm bridge fetch start. model=${input.model} repo=${repoLabel} toolsets=${input.hermesToolsets || '-'} t=${startedAt}`,
     );
-    bridgeResponse = await fetchHermesWithReadinessRetry(bridgeUrl, {
+    bridgeResponse = await postBridgeStream(bridgeUrl, {
       method: 'POST',
       headers: {
         // Same empty-key hygiene as agent-loop (no placeholder Bearer).

@@ -6,9 +6,9 @@ import type { RoomMember } from './room-store';
 import { resolveHermesHome } from './lib/hermes-profiles';
 import fs from 'node:fs';
 import path from 'node:path';
+import { bridge } from './lib/bridge-client';
 
 const HERMES_BRIDGE_URL = `${OPENAI_COMPATIBLE.hermes}/chat/completions`;
-const HERMES_BRIDGE_BASE = OPENAI_COMPATIBLE.hermes.replace(/\/v1\/?$/, '');
 const AGENT_TIMEOUT_MS = 120_000;
 const MAX_ROOM_HISTORY = 20;
 const MAX_AGENT_CHAIN_DEPTH = 1;
@@ -107,7 +107,10 @@ async function fetchAgentSoul(profileName: string, displayName: string): Promise
   if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
 
   try {
-    const res = await fetch(`${HERMES_BRIDGE_BASE}/workspace/files/soul`, { headers, signal: AbortSignal.timeout(5000) });
+    const res = await bridge.request('/workspace/files/soul', {
+      headers,
+      signal: AbortSignal.timeout(5000),
+    });
     if (!res.ok) {
       soulCache.set(profileName, { excerpt: '', expiresAt: Date.now() + SOUL_CACHE_TTL_MS });
       return { profileName, displayName, excerpt: '' };
@@ -234,7 +237,9 @@ async function triggerAgent(
   // here overrides the bridge's per-profile routing and causes 401s.
 
   try {
-    const response = await fetch(HERMES_BRIDGE_URL, {
+    // Through the shared client: attaches the bridge token this path never sent,
+    // and keeps the readiness retry so a cold bridge does not lose the turn.
+    const response = await bridge.request(HERMES_BRIDGE_URL, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
