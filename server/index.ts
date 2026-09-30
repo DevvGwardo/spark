@@ -19,6 +19,7 @@ import { registerHermesUpdateRoute } from './routes/hermes-update';
 import { registerProfilesRoutes } from './routes/profiles';
 import { registerKanbanRoutes } from './routes/kanban';
 import { registerOrchestratorRoutes } from './routes/orchestrator';
+import { registerRalphRoutes } from './routes/ralph';
 import { registerTeamRoutes } from './routes/team';
 import { registerTranscribeRoute } from './routes/transcribe';
 import { registerImagesRoute } from './routes/images';
@@ -204,6 +205,7 @@ export function createApp(opts?: { serveFrontend?: boolean }) {
   registerProfilesRoutes(app);
   registerKanbanRoutes(app);
   registerOrchestratorRoutes(app);
+  registerRalphRoutes(app);
   registerTeamRoutes(app);
   registerTranscribeRoute(app);
   registerImagesRoute(app);

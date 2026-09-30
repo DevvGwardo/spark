@@ -4,7 +4,7 @@ import {
   Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork,
   ChevronRight, ChevronDown, Zap, Clock, House, BookOpen, Sparkles, BarChart3, User,
   Network, Plug, MessagesSquare, Image, Download, Upload, Archive, ArchiveRestore,
-  Tag, X, Kanban, CornerDownLeft, ListChecks, Users, Server, Github,
+  Tag, X, Kanban, CornerDownLeft, ListChecks, Users, Server, Github, Repeat,
 } from 'lucide-react';
 import { GhostIcon } from '@/components/chat/GhostIcon';
 import { useChatStore } from '@/stores/chat-store';
@@ -44,6 +44,7 @@ const HermesUsagePanel = React.lazy(() => import('@/components/sidebar/HermesUsa
 const HermesSystemPanel = React.lazy(() => import('@/components/sidebar/HermesSystemPanel').then((m) => ({ default: m.HermesSystemPanel })));
 const ImagesPanel = React.lazy(() => import('@/components/sidebar/ImagesPanel').then((m) => ({ default: m.ImagesPanel })));
 const KanbanPanel = React.lazy(() => import('@/components/sidebar/KanbanPanel').then((m) => ({ default: m.KanbanPanel })));
+const RalphPanel = React.lazy(() => import('@/components/sidebar/RalphPanel').then((m) => ({ default: m.RalphPanel })));
 const TaskQueuePanel = React.lazy(() => import('@/components/sidebar/TaskQueuePanel').then((m) => ({ default: m.TaskQueuePanel })));
 const TeamPanel = React.lazy(() => import('@/components/sidebar/TeamPanel').then((m) => ({ default: m.TeamPanel })));
 const HermesQueuePanel = React.lazy(() => import('@/components/sidebar/HermesQueuePanel').then((m) => ({ default: m.HermesQueuePanel })));
@@ -117,6 +118,7 @@ const HERMES_SUB_TABS: Array<{ key: SubTab; label: string; icon: React.Component
   { key: 'overview', label: 'Overview', icon: House },
   { key: 'queue', label: 'Queue', icon: CornerDownLeft },
   { key: 'kanban', label: 'Board', icon: Kanban },
+  { key: 'ralph', label: 'Ralph', icon: Repeat },
   { key: 'chats', label: 'Sessions', icon: Zap },
   { key: 'memories', label: 'Memories', icon: BookOpen },
   { key: 'skills', label: 'Skills', icon: Sparkles },
@@ -1128,6 +1130,8 @@ export const ChatSidebar: React.FC = () => {
         <HermesMCPPanel />
       ) : activeSubTab === 'kanban' ? (
         <KanbanPanel />
+      ) : activeSubTab === 'ralph' ? (
+        <RalphPanel />
       ) : activeSubTab === 'tasks' ? (
         <TaskQueuePanel />
       ) : activeSubTab === 'teams' ? (

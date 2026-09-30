@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
 export type AppTab = 'chat' | 'github' | 'analyzer' | 'knowledge';
-export type SubTab = 'overview' | 'threads' | 'queue' | 'chats' | 'cron' | 'memories' | 'skills' | 'usage' | 'profiles' | 'images' | 'mcp' | 'kanban' | 'tasks' | 'rooms' | 'teams' | 'system';
+export type SubTab = 'overview' | 'threads' | 'queue' | 'chats' | 'cron' | 'memories' | 'skills' | 'usage' | 'profiles' | 'images' | 'mcp' | 'kanban' | 'ralph' | 'tasks' | 'rooms' | 'teams' | 'system';
 export type SettingsSection = 'providers' | 'messaging' | 'cursor-composer' | 'github' | 'knowledge' | 'general';
 
 export interface PendingPanelPrompt {
