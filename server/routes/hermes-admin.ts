@@ -1,65 +1,17 @@
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { logger } from '../lib/logger';
-import type { Express, NextFunction, Request, Response } from 'express';
-import { isSocketLoopback, sendJson } from '../lib/helpers';
+import type { Express, Request, Response } from 'express';
+import { sendJson } from '../lib/helpers';
+import { requireLocalHermesMutation } from '../lib/hermes-op-gate';
 import { getProfileFromRequest } from '../lib/hermes-profiles';
 import { getHermesBridgeRoot } from '../lib/hermes-bridge-url';
+import { approvalPolicyStore } from '../approval-engine';
 
 // Admin/health endpoints live at the bridge root, not under /v1 (which only
 // serves OpenAI-compatible chat). Strip a trailing /v1 so these proxies work
 // whether HERMES_BRIDGE_URL is configured with or without it.
 const HERMES_BRIDGE_URL = getHermesBridgeRoot();
-
-const DESTRUCTIVE_PREFIXES = [
-  '/api/hermes/moa',
-  '/api/hermes/fallback',
-  '/api/hermes/goals',
-  '/api/hermes/tool-search',
-  '/api/hermes/checkpoints',
-  '/api/hermes/curator',
-  '/api/hermes/computer-use',
-  '/api/hermes/pets',
-  '/api/hermes/bundles',
-  '/api/hermes/plugins',
-  '/api/hermes/claw',
-  '/api/hermes/kanban',
-  '/api/hermes/projects',
-  '/api/hermes/auth',
-  '/api/hermes/portal',
-  '/api/hermes/workspace/skills',
-  '/api/hermes/workspace/mcp-servers',
-  '/api/hermes/workspace/files',
-  '/api/hermes/messaging/platforms',
-  '/api/hermes/sessions',
-  '/api/hermes/cron',
-];
-
-function isDestructiveHermesOp(method: string, path: string): boolean {
-  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
-    return false;
-  }
-  return DESTRUCTIVE_PREFIXES.some((p) => path === p || path.startsWith(p + '/'));
-}
-
-function requireLocalHermesMutation(req: Request, res: Response, next: NextFunction): void {
-  // Express 4 has strict routing off, so `POST /api/hermes/kanban/swarm/`
-  // (trailing slash) matches the route but yields a req.path with the slash,
-  // which would bypass the exact-match set below. Normalize before lookup.
-  const normalizedPath = req.path.length > 1 ? req.path.replace(/\/+$/, '') : req.path;
-  if (!isDestructiveHermesOp(req.method, normalizedPath)) {
-    next();
-    return;
-  }
-  // Tunnel traffic terminates on loopback after the Host-based token gate in
-  // createApp. LAN clients connecting directly have a non-loopback socket.
-  if (isSocketLoopback(req)) {
-    next();
-    return;
-  }
-  logger.warn(`[hermes-admin] blocked non-local mutating request: ${req.method} ${normalizedPath}`);
-  sendJson(res, 403, { error: 'This Hermes operation is only available from the local app or an authenticated tunnel.' });
-}
 
 function bridgeAuthHeaders(): Record<string, string> {
   const token = (process.env.HERMES_BRIDGE_TOKEN || '').trim();
@@ -306,19 +258,91 @@ export function registerHermesAdminRoute(app: Express) {
     await proxyTo(req, res, '/bridges/cursor-composer');
   });
 
-  // ACP approval decisions: forward the UI's choice (once/session/always/deny)
-  // to the bridge, which resolves the hermes-agent's pending permission
-  // request. Body: {"option_id": "allow_once" | "allow_session" | "allow_always" | "deny"}.
+  // Single approval route (B3): accepts BOTH body shapes. Engine-local ids
+  // (server-side approval-engine, anything not starting with "acp-") resolve
+  // locally via {decision}; bridge ACP ids ("acp-*") forward to the bridge,
+  // either by translating {decision} or by forwarding {option_id} verbatim.
+  // Body: {"decision": "approved" | "approved_for_session" | "denied", "reason"?: string}
+  //    or {"option_id": "allow_once" | "allow_session" | "allow_always" | "deny"}.
   app.post('/api/hermes/approvals/:approvalId', async (req: Request, res: Response) => {
     const { approvalId } = req.params;
     if (!approvalId) {
-      sendJson(res, 400, { error: { message: 'approvalId is required' } });
+      sendJson(res, 400, { error: 'approvalId is required' });
       return;
     }
-    await proxyTo(req, res, `/v1/approvals/${encodeURIComponent(approvalId)}`, {
-      method: 'POST',
-      body: JSON.stringify(req.body ?? {}),
-    });
+    const body = (req.body ?? {}) as { decision?: unknown; option_id?: unknown; reason?: unknown };
+    const { decision, option_id: optionId } = body;
+    const VALID_DECISIONS = ['approved', 'approved_for_session', 'denied'];
+    const VALID_OPTION_IDS = ['allow_once', 'allow_session', 'allow_always', 'deny'];
+    if (decision === undefined && optionId === undefined) {
+      sendJson(res, 400, { error: 'body must include "decision" or "option_id"' });
+      return;
+    }
+    if (decision !== undefined && (typeof decision !== 'string' || !VALID_DECISIONS.includes(decision))) {
+      sendJson(res, 400, {
+        error: 'decision must be one of: "approved", "approved_for_session", "denied"',
+      });
+      return;
+    }
+    if (optionId !== undefined && (typeof optionId !== 'string' || !VALID_OPTION_IDS.includes(optionId))) {
+      sendJson(res, 400, {
+        error: 'option_id must be one of: "allow_once", "allow_session", "allow_always", "deny"',
+      });
+      return;
+    }
+    if (approvalId.startsWith('acp-')) {
+      const DECISION_TO_OPTION_ID: Record<string, string> = {
+        approved: 'allow_once',
+        approved_for_session: 'allow_session',
+        denied: 'deny',
+      };
+      const outgoingOptionId = typeof optionId === 'string' ? optionId : DECISION_TO_OPTION_ID[decision as string];
+      if (
+        typeof optionId === 'string' &&
+        typeof decision === 'string' &&
+        DECISION_TO_OPTION_ID[decision] !== optionId
+      ) {
+        logger.warn(`[approvals] Conflicting decision=${decision} with option_id=${optionId} for ${approvalId} — preferring option_id`);
+      }
+      try {
+        const upstream = await fetch(`${HERMES_BRIDGE_URL}/v1/approvals/${encodeURIComponent(approvalId)}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...bridgeAuthHeaders(),
+          },
+          body: JSON.stringify({ option_id: outgoingOptionId }),
+        });
+        const payload = await upstream.json().catch(() => ({}));
+        if (!upstream.ok) {
+          const upstreamError = isObjectRecord(payload)
+            && typeof payload.error === 'object'
+            && payload.error !== null
+            && 'message' in payload.error
+            ? String((payload.error as Record<string, unknown>).message)
+            : `Bridge returned ${upstream.status}`;
+          return sendJson(res, upstream.status, { error: upstreamError });
+        }
+        logger.info(`[approvals] Forwarded ACP approval ${approvalId} to bridge option_id=${outgoingOptionId}`);
+        return sendJson(res, 200, { ok: true, approval_id: approvalId, decision: decision ?? optionId });
+      } catch (err) {
+        logger.warn(`[approvals] Bridge forward failed for ${approvalId}: ${err instanceof Error ? err.message : err}`);
+        return sendJson(res, 502, { error: 'Bridge unreachable for ACP approval' });
+      }
+    }
+    if (typeof decision !== 'string') {
+      sendJson(res, 400, {
+        error: 'decision must be one of: "approved", "approved_for_session", "denied"',
+      });
+      return;
+    }
+    const reason = typeof body.reason === 'string' && body.reason.length > 0 ? body.reason : undefined;
+    const delivered = approvalPolicyStore.resolveApproval(approvalId, decision as 'approved' | 'approved_for_session' | 'denied', reason);
+    if (delivered) {
+      logger.info(`[approvals] Resolved approval ${approvalId} decision=${decision}`);
+      return sendJson(res, 200, { ok: true, approval_id: approvalId, decision });
+    }
+    return sendJson(res, 404, { error: `Unknown or expired approval: ${approvalId}` });
   });
 
   // ─── Providers ────────────────────────────────────────────────────────────

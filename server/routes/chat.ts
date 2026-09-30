@@ -49,7 +49,6 @@ import { ensureProfileExists, getProfileFromRequest } from '../lib/hermes-profil
 import { approvalPolicyStore } from '../approval-engine';
 import { buildUsageEvent } from '../lib/usage-events';
 import { coreToolsToOpenAiFunctions } from '../lib/tool-schema';
-import { getHermesBridgeRoot } from '../lib/hermes-bridge-url';
 
 // ─── /functions/v1/chat ──────────────────────────────────────────────────────
 
@@ -311,66 +310,6 @@ function formatCachedFilesForPrompt(cache: Record<string, unknown>): string {
 }
 
 export function registerChatRoute(app: Express) {
-
-// Resolve a pending server-side tool approval (approval-engine). Mirrors the
-// bridge's /v1/approvals/{id} contract so the client can use one flow for
-// both ACP approvals (bridge) and streamText-path tool approvals (server).
-// Bridge root + auth for ACP approval forwarding (mirrors hermes-admin.ts).
-const HERMES_BRIDGE_ROOT = getHermesBridgeRoot();
-function hermesBridgeTokenHeader(): Record<string, string> {
-  const token = (process.env.HERMES_BRIDGE_TOKEN || '').trim();
-  return token ? { 'X-Hermes-Bridge-Token': token } : {};
-}
-
-app.post('/api/hermes/approvals/:id', async (req, res) => {
-  const { id } = req.params;
-  const body = (req.body ?? {}) as { decision?: unknown; reason?: unknown };
-  const decision = body.decision;
-  if (decision !== 'approved' && decision !== 'approved_for_session' && decision !== 'denied') {
-    return sendJson(res, 400, {
-      error: 'decision must be one of: "approved", "approved_for_session", "denied"',
-    });
-  }
-  const reason = typeof body.reason === 'string' && body.reason.length > 0 ? body.reason : undefined;
-  const delivered = approvalPolicyStore.resolveApproval(id, decision, reason);
-  if (delivered) {
-    logger.info(`[approvals] Resolved approval ${id} decision=${decision}`);
-    return sendJson(res, 200, { ok: true, approval_id: id, decision });
-  }
-  // Not a server-engine approval — bridge ACP payloads (acp-* ids) park in
-  // the Python bridge, so forward there. The route above this one only knows
-  // its own approvals; without this forward, browser contexts (no
-  // electronAPI fallback) can never resolve an ACP tool permission.
-  if (id.startsWith('acp-')) {
-    const optionId = decision === 'approved'
-      ? 'allow_once'
-      : decision === 'approved_for_session'
-        ? 'allow_session'
-        : 'deny';
-    try {
-      const upstream = await fetch(`${HERMES_BRIDGE_ROOT}/v1/approvals/${encodeURIComponent(id)}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(hermesBridgeTokenHeader()),
-        },
-        body: JSON.stringify({ option_id: optionId }),
-      });
-      const payload = await upstream.json().catch(() => ({}));
-      if (!upstream.ok) {
-        return sendJson(res, upstream.status, {
-          error: payload?.error?.message || `Bridge returned ${upstream.status}`,
-        });
-      }
-      logger.info(`[approvals] Forwarded ACP approval ${id} to bridge decision=${decision}`);
-      return sendJson(res, 200, { ok: true, approval_id: id, decision });
-    } catch (err) {
-      logger.warn(`[approvals] Bridge forward failed for ${id}: ${err instanceof Error ? err.message : err}`);
-      return sendJson(res, 502, { error: 'Bridge unreachable for ACP approval' });
-    }
-  }
-  return sendJson(res, 404, { error: `Unknown or expired approval: ${id}` });
-});
 
 // Explicit cancel for a background-capable hermes run. The UI Stop button
 // calls this — a plain client disconnect (window closed) intentionally does

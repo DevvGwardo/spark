@@ -4,6 +4,7 @@ import { promisify } from 'util';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { sendJson } from '../lib/helpers';
+import { requireLocalHermesMutation } from '../lib/hermes-op-gate';
 import { logger } from '../lib/logger';
 
 const execFileAsync = promisify(execFile);
@@ -170,7 +171,7 @@ export function registerHermesUpdateRoute(app: Express) {
   });
 
   // POST /api/hermes/update — trigger the update
-  app.post('/api/hermes/update', async (_req, res) => {
+  app.post('/api/hermes/update', requireLocalHermesMutation, async (_req, res) => {
     if (updateInProgress) {
       return sendJson(res, 409, { error: 'Update already in progress' });
     }

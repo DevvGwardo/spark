@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from 'express';
 import { sendJson } from '../lib/helpers';
+import { requireLocalHermesMutation } from '../lib/hermes-op-gate';
 import { logger } from '../lib/logger';
 import {
   getBridgeStatus,
@@ -21,7 +22,7 @@ export function registerBridgeRoutes(app: Express) {
     }
   });
 
-  app.post('/api/bridge/start', async (_req: Request, res: Response) => {
+  app.post('/api/bridge/start', requireLocalHermesMutation, async (_req: Request, res: Response) => {
     try {
       sendJson(res, 200, await startManagedBridge());
     } catch (err) {
@@ -29,7 +30,7 @@ export function registerBridgeRoutes(app: Express) {
     }
   });
 
-  app.post('/api/bridge/install-deps', async (_req: Request, res: Response) => {
+  app.post('/api/bridge/install-deps', requireLocalHermesMutation, async (_req: Request, res: Response) => {
     try {
       // pip output is logged server-side; the response carries the final result.
       const result = await installBridgeDeps((line) => logger.info('[bridge:install] ' + line));

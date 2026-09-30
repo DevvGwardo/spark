@@ -1372,461 +1372,124 @@ def _run_hermes_tick_now():
         print(f"[cron] Hermes tick failed: {e}", flush=True)
 
 # --- Brain MCP integration ---
-# Uses MCP Python SDK to spawn brain-mcp server as a stdio subprocess.
-# All brain calls are fire-and-forget — bridge continues if brain is unavailable.
-try:
-    from mcp.client.stdio import StdioServerParameters, stdio_client
-    from mcp import ClientSession
+# The brain subprocess handle and the JSON-RPC layer live in brain_client.py, not
+# here. swarm_pattern.py needs the same RPC layer and used to reach it through
+# `import main` — but the bridge runs as `python main.py` (scripts/start-bridge.sh),
+# so that import loaded a SECOND copy of this file whose _brain_proc was always
+# None. Every brain RPC made from a swarm therefore returned None, silently, while
+# the real bridge instance kept a healthy handle in its own copy. Both modules now
+# depend on brain_client; brain_client depends on neither, so there is no cycle.
+#
+# These names are re-exported into main's namespace because callers (and tests)
+# patch them here — patch.object(main, "_brain_set", ...) must keep working.
+import brain_client
+from brain_client import (
+    _brain_call_async,
+    _brain_claim,
+    _brain_contract_check,
+    _brain_contract_get,
+    _brain_contract_set,
+    _brain_dm,
+    _brain_get,
+    _brain_post,
+    _brain_pulse,
+    _brain_release,
+    _brain_rpc,
+    _brain_set,
+    _claimed_resources,
+    _claimed_resources_lock,
+)
 
-    _brain_session: Optional[ClientSession] = None
-    _brain_initialized = False
-    _brain_ctx_stack = None  # holds the raw context manager object
 
-    # --- Raw JSON-RPC over subprocess (bypasses MCP SDK's broken stdio transport) ---
-    _brain_proc: asyncio.subprocess.Process = None
-    _brain_reader_task: asyncio.Task = None
-    _brain_pending: dict[int, asyncio.Future] = {}
-    _brain_msg_id: int = 0
-    _main_event_loop: Optional[asyncio.AbstractEventLoop] = None
-    _heartbeat_task: Optional[asyncio.Task] = None
-    _claimed_resources: set = set()
-    _claimed_resources_lock = threading.Lock()
+def _bridge_metrics_snapshot() -> dict:
+    """Sample the bridge counters for brain_client's heartbeat.
 
-    async def _brain_reader():
-        """Read JSON-RPC responses from brain-mcp and resolve pending futures."""
-        import json
-        while True:
-            try:
-                line = await _brain_proc.stdout.readline()
-            except Exception:
-                # Stream failure — treat as end of stream and disable brain.
-                break
-            if not line:
-                # EOF — the brain process closed its stdout.
-                break
-            try:
-                msg = json.loads(line.decode())
-            except Exception as e:
-                # A single malformed line must not kill the reader for the
-                # process lifetime (previously: `except Exception: break`,
-                # which left _brain_initialized True and made every _brain_rpc
-                # hang for its 10s timeout). Skip the line and keep reading.
-                print(f"[hermes-bridge] brain: skipping malformed line: {e}", flush=True)
-                continue
-            mid = msg.get("id")
-            if mid is not None and mid in _brain_pending:
-                fut = _brain_pending.pop(mid)
-                if not fut.done():
-                    fut.set_result(msg)
-        # Process/stream ended — mark brain unavailable so callers stop
-        # retrying instead of hanging on 10s timeouts.
-        global _brain_initialized
-        _brain_initialized = False
-        print("[hermes-bridge] brain: reader exited (process/stream ended); brain calls disabled", flush=True)
+    Reads main's globals at call time so rebinding them is picked up live.
+    """
+    return {
+        "start_time": _bridge_start_time,
+        "active_requests": _bridge_active_requests,
+        "total_requests": _bridge_total_requests,
+        "error_count": _bridge_error_count,
+    }
 
-    async def _brain_rpc(method: str, params: dict) -> dict:
-        """Send a JSON-RPC request and wait for response. Returns the result dict."""
-        import json
-        global _brain_msg_id
-        if _brain_proc is None or _brain_proc.returncode is not None:
-            return None
-        mid = _brain_msg_id
-        _brain_msg_id += 1
-        msg = json.dumps({"jsonrpc": "2.0", "id": mid, "method": method, "params": params}) + "\n"
-        fut: asyncio.Future = asyncio.Future()
-        _brain_pending[mid] = fut
-        try:
-            _brain_proc.stdin.write(msg.encode())
-            await _brain_proc.stdin.drain()
-            result = await asyncio.wait_for(fut, timeout=10)
-            return result.get("result")
-        except Exception:
-            _brain_pending.pop(mid, None)
-            return None
 
-    async def _bridge_heartbeat():
-        """Background task: pulse brain with bridge health every 30 seconds."""
-        while True:
-            try:
-                await asyncio.sleep(30)
-                uptime = int(time.time() - _bridge_start_time) if _bridge_start_time > 0 else 0
-                # Use a local lock to snapshot active count for the pulse message
-                with _claimed_resources_lock:
-                    active = _bridge_active_requests
-                    claimed = len(_claimed_resources)
-                pulse_msg = f"uptime={uptime}s active={active} claimed={claimed}"
-                _brain_pulse("working", pulse_msg)
-                health = {
-                    "uptime": uptime,
-                    "active_requests": _bridge_active_requests,
-                    "total_requests": _bridge_total_requests,
-                    "error_count": _bridge_error_count,
-                    "claimed_resources": claimed,
-                }
-                _brain_set("bridge:health", json.dumps(health))
-            except asyncio.CancelledError:
-                break
-            except Exception:
-                pass  # Silently continue on errors
+brain_client.set_metrics_provider(_bridge_metrics_snapshot)
 
-    async def _brain_lifespan(app):
-        """FastAPI lifespan — spawns brain-mcp as async subprocess, shuts down cleanly."""
-        global _brain_proc, _brain_reader_task, _brain_initialized, _bridge_start_time, _bridge_total_requests, _bridge_error_count
-        try:
-            brain_path = os.path.expanduser("~/brain-mcp/dist/index.js")
-            if not os.path.exists(brain_path):
-                brain_path = "/Users/devgwardo/brain-mcp/dist/index.js"
-            _brain_proc = await asyncio.create_subprocess_exec(
-                "/opt/homebrew/bin/node", brain_path,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env={
-                    "BRAIN_ROOM": os.path.expanduser("~"),
-                    "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
-                },
+
+async def _bridge_lifespan(app):
+    """FastAPI lifespan — bring up brain, cron and telemetry, then tear them down.
+
+    Ordering is load-bearing. Brain is an optional integration whose startup can
+    legitimately fail (no `node`, no brain-mcp checkout), so it goes first and is
+    fully isolated. Cron and MCP telemetry are NOT optional and must come up
+    whether or not brain connected.
+    """
+    global _bridge_start_time, _bridge_total_requests, _bridge_error_count
+    global _bridge_iterations_total, _bridge_request_count, _cron_scheduler_task
+
+    # These are bridge counters, not brain state. Previously they were only
+    # initialized inside the brain startup block, so when brain was unavailable
+    # _bridge_start_time stayed 0.0 and both /diag and the published
+    # bridge:metrics reported a zero start_time. Initialize them unconditionally.
+    _bridge_start_time = time.time()
+    _bridge_total_requests = 0
+    _bridge_error_count = 0
+    _bridge_iterations_total = 0
+    _bridge_request_count = 0
+
+    try:
+        await brain_client.start_brain(
+            brain_client.BrainConfig(
+                port=HERMES_PORT,
+                model=DEFAULT_MODEL,
+                toolsets=DEFAULT_TOOLSETS,
+                max_iterations=MAX_AGENT_ITERATIONS,
             )
-            _brain_reader_task = asyncio.create_task(_brain_reader())
-            # Initialize MCP session
-            await _brain_rpc("initialize", {
-                "protocolVersion": "2025-03-26",
-                "capabilities": {},
-                "clientInfo": {"name": "hermes-bridge", "version": "1.0"},
-            })
-            # Register and set initial state
-            await _brain_rpc("tools/call", {"name": "brain_register", "arguments": {"name": "hermes-bridge"}})
-            await _brain_rpc("tools/call", {"name": "brain_set", "arguments": {"key": "hermes-bridge:active_sessions", "value": "0", "scope": "global"}})
-            await _brain_rpc("tools/call", {"name": "brain_set", "arguments": {"key": "hermes-bridge:model", "value": DEFAULT_MODEL, "scope": "global"}})
-            await _brain_rpc("tools/call", {"name": "brain_set", "arguments": {"key": "hermes-bridge:toolsets", "value": DEFAULT_TOOLSETS, "scope": "global"}})
-            # Publish bridge health metadata
-            import platform, sys
-            health_meta = json.dumps({
-                "port": HERMES_PORT,
-                "model": DEFAULT_MODEL,
-                "toolsets": DEFAULT_TOOLSETS,
-                "max_iterations": MAX_AGENT_ITERATIONS,
-                "python": f"{sys.version_info.major}.{sys.version_info.minor}",
-                "platform": platform.platform(),
-            })
-            await _brain_rpc("tools/call", {"name": "brain_set", "arguments": {"key": "bridge:health", "value": health_meta, "scope": "global"}})
-            # Publish bridge contracts (inter-agent interface agreements)
-            _bridge_start_time = time.time()
-            _bridge_total_requests = 0
-            _bridge_error_count = 0
-            _bridge_iterations_total = 0
-            _bridge_request_count = 0
-            contracts = json.dumps({
-                "hermes-bridge:v1": {
-                    "description": "Hermes agent bridge — OpenAI-compatible /v1/chat/completions proxy with repo tools",
-                    "port": HERMES_PORT,
-                    "model": DEFAULT_MODEL,
-                    "toolsets": DEFAULT_TOOLSETS,
-                    "max_iterations": MAX_AGENT_ITERATIONS,
-                    "endpoints": ["/health", "/v1/models", "/v1/chat/completions", "/v1/swarm"],
-                    "headers": {
-                        "x-hermes-toolsets": "comma-separated toolset list",
-                        "x-hermes-execution-mode": "agent-loop | passthrough | swarm",
-                        "x-hermes-repo-owner": "GitHub repo owner (for repo mode)",
-                        "x-hermes-repo-name": "GitHub repo name (for repo mode)",
-                        "x-hermes-github-pat": "GitHub PAT for repo operations",
-                        "x-hermes-repo-edit-intent": "1 to enable edit-mode tools",
-                        "x-hermes-worktree": "1 to run in an isolated git worktree",
-                        "x-hermes-repo-root": "Local git repo root for worktree creation",
-                    },
-                },
-            })
-            await _brain_rpc("tools/call", {"name": "brain_contract_set", "arguments": {"key": "hermes-bridge:contracts", "value": contracts, "scope": "global"}})
-            metrics_contract = json.dumps({
-                "description": "Bridge operational metrics published by hermes-bridge",
-                "keys": {
-                    "bridge:health": "JSON — port, model, toolsets, platform info",
-                    "bridge:metrics": "JSON — api_calls, estimated_cost_usd, active_requests, error_rate, uptime, start_time",
-                    "hermes-bridge:active_request": "Current request metadata (owner/repo/model/toolsets)",
-                    "hermes-bridge:active_sessions": "Number of active sessions (global counter)",
-                },
-            })
-            await _brain_rpc("tools/call", {"name": "brain_contract_set", "arguments": {"key": "bridge:metrics:contract", "value": metrics_contract, "scope": "global"}})
-            # Publish swarm pattern contracts (3-phase pipeline interface)
-            swarm_contract = json.dumps({
-                "description": "Architect → Implementor → Reviewer swarm pipeline for hermes-bridge",
-                "modules": {
-                    "hermes-bridge/swarm_pattern.py": {
-                        "SwarmCoordinator": {
-                            "run_phase_architect": {"phase": "architect", "brain_keys": {"writes": ["request:<id>:ctx"], "polls": ["plan:<id>"]}},
-                            "run_phase_implementor": {"phase": "implementor", "brain_keys": {"writes": ["request:<id>:phase", "staging:<id>:<filepath>"], "polls": ["request:<id>:staging_keys"]}},
-                            "run_phase_reviewer": {"phase": "reviewer", "brain_keys": {"writes": ["request:<id>:verdict"], "polls": ["request:<id>:staging_keys"]}},
-                            "_finish": {"phase": "done", "brain_keys": {"writes": ["request:<id>:status"], "polls": ["request:<id>:phase"]}},
-                        },
-                        "run_swarm": {
-                            "params": ["user_message", "conversation_history", "enabled_toolsets", "repo_mode", "repo_owner", "repo_name", "github_pat"],
-                            "returns": {"success": "bool", "verdict": "str", "review_notes": "str", "staged_files": "dict", "elapsed_ms": "int"},
-                        },
-                    },
-                },
-            })
-            await _brain_rpc("tools/call", {"name": "brain_contract_set", "arguments": {"key": "swarm:contracts", "value": swarm_contract, "scope": "global"}})
-            # Publish initial health metrics with uptime tracking
-            health_metrics = json.dumps({
-                "active_requests": 0,
-                "error_rate": 0.0,
-                "uptime": 0.0,
-                "start_time": _bridge_start_time,
-                "port": HERMES_PORT,
-                "model": DEFAULT_MODEL,
-                "toolsets": DEFAULT_TOOLSETS,
-                "platform": platform.platform(),
-                "python": f"{sys.version_info.major}.{sys.version_info.minor}",
-            })
-            await _brain_rpc("tools/call", {"name": "brain_set", "arguments": {"key": "bridge:metrics", "value": health_metrics, "scope": "global"}})
-            # Verify contracts are readable (contract check on self)
-            try:
-                result = await _brain_rpc("tools/call", {"name": "brain_contract_check", "arguments": {}})
-                if result:
-                    print(f"[hermes-bridge] Contract check passed: {result}", flush=True)
-            except Exception:
-                pass
-            _brain_initialized = True
-            # Capture the running event loop for thread-safe brain calls
-            global _main_event_loop
-            _main_event_loop = asyncio.get_running_loop()
-            # Start background heartbeat task
-            global _heartbeat_task
-            _heartbeat_task = asyncio.create_task(_bridge_heartbeat())
-            print(f"[hermes-bridge] Brain MCP connected PID={_brain_proc.pid}", flush=True)
+        )
+    except Exception as e:
+        # start_brain already swallows its own failures; this is belt-and-braces so
+        # a malformed config can never stop the bridge from serving.
+        print(f"[hermes-bridge] brain startup failed: {e}", flush=True)
+
+    # These used to be @app.on_event("startup") handlers. FastAPI ignores on_event
+    # entirely when `lifespan=` is supplied, which this app does — so neither ever
+    # ran and the cron scheduler never ticked.
+    try:
+        _init_mcp_telemetry()
+    except Exception as e:
+        print(f"[mcp-telemetry] startup init failed: {e}", flush=True)
+    _cron_scheduler_task = _start_cron_scheduler()
+
+    yield
+
+    # Tear down in reverse order. Cancellation is awaited so shutdown does not
+    # leave orphaned tasks behind the ACP children.
+    #
+    # asyncio.CancelledError inherits BaseException, not Exception, so an
+    # `except Exception` here does NOT catch the cancellation we just requested
+    # and the error escapes the lifespan, breaking shutdown.
+    if _cron_scheduler_task:
+        _cron_scheduler_task.cancel()
+        try:
+            await _cron_scheduler_task
+        except asyncio.CancelledError:
+            pass  # expected — we just cancelled it
         except Exception as e:
-            print(f"[hermes-bridge] Brain MCP init failed: {e}", flush=True)
-            _brain_initialized = False
+            print(f"[cron] scheduler shutdown error: {e}", flush=True)
+    _cron_scheduler_task = None
 
-        yield
+    await brain_client.stop_brain()
 
-        if _heartbeat_task:
-            _heartbeat_task.cancel()
-            try:
-                await asyncio.wait_for(_heartbeat_task, timeout=2)
-            except Exception:
-                pass
-        if _brain_reader_task:
-            _brain_reader_task.cancel()
-        if _brain_proc:
-            try:
-                _brain_proc.terminate()
-                await asyncio.wait_for(_brain_proc.wait(), timeout=3)
-            except Exception:
-                pass
-        _brain_initialized = False
+    # Shut down ACP sessions so spawned hermes-acp children don't outlive
+    # the bridge on restart. Safe no-op when the SDK/transport is absent.
+    try:
+        import acp_transport
 
-        # Shut down ACP sessions so spawned hermes-acp children don't outlive
-        # the bridge on restart. Safe no-op when the SDK/transport is absent.
-        try:
-            import acp_transport
-
-            await acp_transport.shutdown_all()
-        except Exception:
-            pass
-
-    async def _brain_call_async(tool: str, args: dict):
-        """Make a brain tool call, returns result dict or None."""
-        return await _brain_rpc("tools/call", {"name": tool, "arguments": args})
-
-    def _brain_get(key: str, scope: str = "global") -> Optional[str]:
-        """Helper to read brain state text. Thread-safe via run_coroutine_threadsafe."""
-        if not _brain_initialized or _brain_proc is None:
-            return None
-        try:
-            if _main_event_loop and _main_event_loop.is_running():
-                # Use run_coroutine_threadsafe to schedule on the main event loop
-                future = asyncio.run_coroutine_threadsafe(
-                    _brain_call_async("brain_get", {"key": key, "scope": scope}),
-                    _main_event_loop,
-                )
-                result = future.result(timeout=5)
-            else:
-                result = None
-        except Exception:
-            return None
-        if isinstance(result, dict):
-            content = result.get("content") or result.get("value")
-            if isinstance(content, list):
-                for item in content:
-                    if isinstance(item, dict) and item.get("type") == "text":
-                        return item.get("text")
-            if isinstance(content, str):
-                return content
-        return None
-
-    def _brain_set(key: str, value: str, scope: str = "global"):
-        """Helper to set brain state. Thread-safe via run_coroutine_threadsafe."""
-        if not _brain_initialized or _brain_proc is None:
-            return
-        try:
-            if _main_event_loop and _main_event_loop.is_running():
-                asyncio.run_coroutine_threadsafe(
-                    _brain_call_async("brain_set", {"key": key, "value": value, "scope": scope}),
-                    _main_event_loop,
-                )
-        except Exception:
-            pass
-
-    def _brain_post(content: str, channel: str = "general"):
-        """Helper to post to brain channel. Thread-safe via run_coroutine_threadsafe."""
-        if not _brain_initialized or _brain_proc is None:
-            return
-        try:
-            if _main_event_loop and _main_event_loop.is_running():
-                asyncio.run_coroutine_threadsafe(
-                    _brain_call_async("brain_post", {"content": content, "channel": channel}),
-                    _main_event_loop,
-                )
-        except Exception:
-            pass
-
-    def _brain_pulse(status: str = "working", progress: str = ""):
-        """Helper to send brain pulse. Thread-safe via run_coroutine_threadsafe."""
-        if not _brain_initialized or _brain_proc is None:
-            return
-        try:
-            if _main_event_loop and _main_event_loop.is_running():
-                asyncio.run_coroutine_threadsafe(
-                    _brain_call_async("brain_pulse", {"status": status, "progress": progress}),
-                    _main_event_loop,
-                )
-        except Exception:
-            pass
-
-    def _brain_claim(resource: str, ttl: int = 60):
-        """Helper to claim a brain resource. Thread-safe via run_coroutine_threadsafe.
-        Also tracks the resource in _claimed_resources for bulk cleanup."""
-        if not _brain_initialized or _brain_proc is None:
-            return None
-        try:
-            with _claimed_resources_lock:
-                _claimed_resources.add(resource)
-            if _main_event_loop and _main_event_loop.is_running():
-                asyncio.run_coroutine_threadsafe(
-                    _brain_call_async("brain_claim", {"resource": resource, "ttl": ttl}),
-                    _main_event_loop,
-                )
-                return True  # Fire-and-forget from threads; claim will auto-expire via TTL
-        except Exception:
-            return None
-        return None
-
-    def _brain_release(resource: str):
-        """Helper to release a brain resource. Thread-safe via run_coroutine_threadsafe."""
-        if not _brain_initialized or _brain_proc is None:
-            return
-        try:
-            with _claimed_resources_lock:
-                _claimed_resources.discard(resource)
-            if _main_event_loop and _main_event_loop.is_running():
-                asyncio.run_coroutine_threadsafe(
-                    _brain_call_async("brain_release", {"resource": resource}),
-                    _main_event_loop,
-                )
-        except Exception:
-            pass
-
-    def _brain_dm(target: str, content: str):
-        """Helper to send a direct message to another agent via brain DM. Thread-safe."""
-        if not _brain_initialized or _brain_proc is None:
-            return
-        try:
-            if _main_event_loop and _main_event_loop.is_running():
-                asyncio.run_coroutine_threadsafe(
-                    _brain_call_async("brain_dm", {"target": target, "content": content}),
-                    _main_event_loop,
-                )
-        except Exception:
-            pass
-
-    def _brain_contract_set(key: str, value: str, scope: str = "global"):
-        """Helper to publish a bridge contract. Thread-safe."""
-        if not _brain_initialized or _brain_proc is None:
-            return
-        try:
-            if _main_event_loop and _main_event_loop.is_running():
-                asyncio.run_coroutine_threadsafe(
-                    _brain_call_async("brain_contract_set", {"key": key, "value": value, "scope": scope}),
-                    _main_event_loop,
-                )
-        except Exception:
-            pass
-
-    def _brain_contract_get(key: str, scope: str = "global") -> Optional[str]:
-        """Helper to read a published contract, returns value or None. Thread-safe."""
-        if not _brain_initialized or _brain_proc is None:
-            return None
-        try:
-            if _main_event_loop and _main_event_loop.is_running():
-                future = asyncio.run_coroutine_threadsafe(
-                    _brain_call_async("brain_contract_get", {"key": key, "scope": scope}),
-                    _main_event_loop,
-                )
-                result = future.result(timeout=5)
-            else:
-                result = None
-        except Exception:
-            return None
-        if isinstance(result, dict):
-            content = result.get("content") or result.get("value")
-            if isinstance(content, list):
-                for item in content:
-                    if isinstance(item, dict) and item.get("type") == "text":
-                        return item.get("text")
-            if isinstance(content, str):
-                return content
-        return None
-
-    def _brain_contract_check(key: str, expected: str) -> bool:
-        """Check that a published contract matches expected value. Returns True if match or brain unavailable."""
-        val = _brain_contract_get(key)
-        if val is None:
-            return True  # brain unavailable — assume match
-        return val == expected
-
-except ImportError:
-    # mcp package not available, bridge runs without brain integration
-    _brain_session = None
-    _brain_initialized = False
-    _brain_ctx_stack = None
-    _brain_proc = None
-    _brain_reader_task = None
-    _brain_pending = {}
-    _brain_msg_id = 0
-    _bridge_start_time: float = 0.0
-    _bridge_total_requests: int = 0
-    _bridge_error_count: int = 0
-
-    async def _brain_rpc(method: str, params: dict):
-        return None
-    async def _brain_reader():
+        await acp_transport.shutdown_all()
+    except Exception:
         pass
-    async def _brain_lifespan(app):
-        yield
-    async def _brain_call_async(*args, **kwargs):
-        return None
-    def _brain_get(*args, **kwargs):
-        return None
-    def _brain_set(*args, **kwargs):
-        pass
-    def _brain_post(*args, **kwargs):
-        pass
-    def _brain_pulse(*args, **kwargs):
-        pass
-    def _brain_claim(*args, **kwargs):
-        return None
-    def _brain_release(*args, **kwargs):
-        pass
-    def _brain_dm(*args, **kwargs):
-        pass
-    def _brain_contract_set(*args, **kwargs):
-        pass
-    def _brain_contract_get(*args, **kwargs):
-        return None
-    def _brain_contract_check(*args, **kwargs):
-        return True
-    def _update_bridge_metrics(*args, **kwargs):
-        pass
+
 
 HERMES_PORT = int(os.environ.get("HERMES_PORT", "3002"))
 # Default to loopback so LAN clients cannot reach mutating ops. Override with
@@ -3268,7 +2931,7 @@ async def _get_agent_models() -> list[dict]:
     print(f"[bridge] Using fallback model list ({len(_model_cache)} models)", file=sys.stderr)
     return _model_cache
 
-app = FastAPI(title="Hermes Bridge", lifespan=_brain_lifespan)
+app = FastAPI(title="Hermes Bridge", lifespan=_bridge_lifespan)
 
 # Origins the app UI may load from. The renderer talks to the bridge only via the
 # Express proxy (server-side fetch, no Origin header); browsers from any other
@@ -3443,7 +3106,7 @@ async def health(request: Request):
         "default_model_credentialed": _default_model_credentialed(profile_home),
         "cursor_composer_bridge": cursor_composer,
         "launch_token_present": bool(HERMES_BRIDGE_TOKEN),
-        "brain_initialized": _brain_initialized,
+        "brain_initialized": brain_client._brain_initialized,
         "active_requests": _bridge_active_requests,
         # Read ~/.hermes/config.yaml on every call so the Electron app observes
         # `hermes model` CLI changes without requiring a bridge restart. Falls
@@ -5949,7 +5612,9 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
                         should_stop=lambda: _hermes_runs.is_run_cancelled(workspace_id),
                     )
                 finally:
-                    _hermes_runs.unregister_active_run(workspace_id)
+                    # Pass run_id so a late-finishing run cannot delete a newer
+                    # overlapping run's cancel handle for the same conversation.
+                    _hermes_runs.unregister_active_run(workspace_id, run_id)
                 print(f"[hermes-bridge] Gateway run completed. run_id={run_id}", flush=True)
                 _brain_pulse("working", "completed")
                 _update_bridge_metrics(success=True, decrement_active=True)
@@ -5990,6 +5655,10 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
                 # Structured notices (credits/run-budget) — real-agent only.
                 agent_kwargs["on_notice"] = on_notice
                 agent_kwargs["on_notice_clear"] = on_notice_clear
+                # Real-agent only: run_agent.AIAgent's fallback signature does not
+                # accept this. Tells the adapter which profile's config.yaml to
+                # read instead of the hard-coded ~/.hermes (B9).
+                agent_kwargs["hermes_home"] = str(_resolve_hermes_home(request_profile))
                 if run_budget_seconds:
                     agent_kwargs["run_budget_seconds"] = run_budget_seconds
             if resolved_provider == MOA_PROVIDER_ID:
@@ -8350,9 +8019,13 @@ async def _cron_scheduler_loop():
         await asyncio.sleep(30)
 
 
-@app.on_event("startup")
-async def _init_mcp_telemetry():
-    """Restore persisted MCP dashboard telemetry so metrics survive restarts."""
+def _init_mcp_telemetry():
+    """Restore persisted MCP dashboard telemetry so metrics survive restarts.
+
+    Called from the lifespan, not from @app.on_event("startup"): FastAPI skips
+    on_event handlers entirely whenever `lifespan=` is supplied, so the decorated
+    version of this function never ran.
+    """
     try:
         db_path = _HERMES_HOME / "mcp-telemetry.db"
         ok = mcp_telemetry.init_persistence(db_path)
@@ -8361,8 +8034,13 @@ async def _init_mcp_telemetry():
         print(f"[mcp-telemetry] startup init failed: {e}", flush=True)
 
 
-@app.on_event("startup")
-async def _start_cron_scheduler():
+def _start_cron_scheduler() -> asyncio.Task:
+    """Start the cron scheduler loop and return its task handle.
+
+    Returns the task so the lifespan can cancel and await it on shutdown — the
+    old fire-and-forget create_task() left the loop running past app teardown, and
+    gave tests no way to assert the scheduler was actually alive.
+    """
     if _HERMES_CRON_AVAILABLE:
         try:
             job_count = len(_hermes_list_jobs(include_disabled=True))
@@ -8370,8 +8048,7 @@ async def _start_cron_scheduler():
             job_count = 0
             print(f"[cron] Failed to inspect Hermes jobs on startup: {e}", flush=True)
         print(f"[cron] Hermes-backed scheduler starting with {job_count} jobs", flush=True)
-        asyncio.create_task(_cron_scheduler_loop())
-        return
+        return asyncio.create_task(_cron_scheduler_loop())
 
     # Load persisted cron data from disk
     _load_cron_data()
@@ -8382,10 +8059,25 @@ async def _start_cron_scheduler():
     if _cron_jobs:
         _save_cron_jobs()
     print(f"[cron] Scheduler starting with {len(_cron_jobs)} jobs", flush=True)
-    asyncio.create_task(_cron_scheduler_loop())
+    return asyncio.create_task(_cron_scheduler_loop())
+
+
+# Handle for the running cron scheduler, owned by the lifespan so shutdown can
+# cancel it and tests can assert it is alive. None means "not started".
+_cron_scheduler_task: Optional[asyncio.Task] = None
 
 
 if __name__ == "__main__":
+    # Belt-and-braces for the module-identity problem. Running `python main.py`
+    # binds this file to the `__main__` object, so any `import main` elsewhere
+    # would execute it a second time under a second module object with its own,
+    # disconnected globals. Registering this module under the name "main" means
+    # such an import resolves here instead of re-executing.
+    #
+    # brain_client.py is the real fix — nothing needs to import main any more —
+    # but this keeps any third-party or legacy `import main` honest.
+    sys.modules.setdefault("main", sys.modules["__main__"])
+
     import uvicorn
     try:
         print(

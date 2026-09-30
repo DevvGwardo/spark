@@ -311,11 +311,95 @@ Every PR runs `npm run typecheck && npm run lint && npm test` plus `pytest herme
 
 | Phase | Status | Notes |
 |---|---|---|
-| 0 Correctness hotfixes | Not started | |
+| 0 Correctness hotfixes | **Done** | All 9 defects fixed, each with a regression test. See below. |
 | 1 Event and error contract | Not started | |
 | 2 Single bridge client | Not started | |
 | 3 Lifecycle | Not started | |
 | 4 Transport parity and decomposition | Not started | |
 | 5 Async hygiene | Not started | |
 | 6 Frontend data layer | Not started | |
-| 7 Tests, CI, and docs | Not started | |
+| 7 Tests, CI, and docs | In progress | 7.1/7.3/7.4 not started; see Phase 0 test inventory below |
+
+### Phase 0 outcome
+
+Shipped as a stacked pair of PRs:
+
+- **#52** `feat/pre-existing-wip` → `main` — the in-flight work that was uncommitted
+  in the tree when this started. **Must merge first:** `main` does not typecheck
+  (6 pre-existing errors in `src/hooks/useChat.ts` and `src/test/chat-handoff.test.ts`),
+  and this branch fixes all of them. Phase 0 adds no new typecheck errors but cannot
+  go green on a red `main`.
+- **#53** `fix/hermes-bridge-correctness` → `feat/pre-existing-wip` — the Phase 0 work,
+  7 commits, no unrelated changes mixed in.
+
+| Item | Defect | Commit | Regression test |
+|---|---|---|---|
+| 0.1 | B1 startup handlers never ran | `29b7f8f` | `test_bridge_lifespan.py::LifespanOwnsStartupTests` |
+| 0.2 | B2 brain RPC import cycle | `29b7f8f` | `test_bridge_lifespan.py::BrainModuleIdentityTests` |
+| 0.3 | B3 duplicate approval route | `e700b97` | `remote-access-gating.test.ts` (5 cases) |
+| 0.4 | B4 API key leaked into logs | `da52472` | `test_hermes_adapter_secrets_profile.py::MaskSecretTests` |
+| 0.5 | B5 hard-coded machine paths | `29b7f8f` | `test_bridge_lifespan.py::BrainDiscoveryTests` |
+| 0.6 | B6 `HERMES_HOME` env mutation | `5fe8177` | `test_hermes_profile_scoping.py::ScopedHermesHomeTests` |
+| 0.7 | B7 run-handle cleanup race | `5fe8177` | `test_hermes_profile_scoping.py::ActiveRunRegistryTests` |
+| 0.8 | B8 `sys.modules` before `exec_module` | `da52472` | `test_hermes_adapter_secrets_profile.py::RunAgentLoadTests` |
+| 0.9 | B9 hard-coded profile config | `da52472` | `test_hermes_adapter_secrets_profile.py::ProfileConfigTests` |
+| 0.10 | G13 ungated mutating routes | `98a5f64` | `remote-access-gating.test.ts` (5 cases) |
+
+Suite movement: bridge pytest 714 → 768 passing, vitest 1046 → 1057 passing.
+`npm run typecheck` and `npm run lint` (0 errors) clean.
+
+Every B-item was verified by reinstating the original code and confirming the
+new test fails, so the tests are not vacuous. The bridge was also booted as a real
+process: startup handlers now run (previously silent), brain-mcp absence is a
+logged skip, and SIGINT shuts down cleanly with no unretrieved-task warning.
+
+#### Carry-over items for later phases
+
+- **`main` is red on typecheck** (6 errors, fixed by #52). Worth a CI gate so it
+  cannot regress again — see 7.4, which currently only covers the contract.
+- **The vitest suite has pre-existing load-related flakiness.** Failures surface in
+  whichever server-booting test is slowest on a given run, and move between files
+  between runs. Phase 0 amplified it by adding app boots to one file and then
+  removed that cost (`ee4d1be`), but the underlying sensitivity is not fixed.
+- **`hermes-bridge/.venv` python is a shim** that re-execs into the hermes tools
+  interpreter with a mutated `sys.path`. Single-file pytest runs intermittently die
+  with a bogus `ModuleNotFoundError: No module named 'pytest'`. Full-suite runs are
+  reliable; do not trust a red single-file run.
+- **Two `mask_secret` implementations** now exist — the new one in
+  `hermes_adapter.py` (log lines) and a pre-existing one in `hermes_ops.py` (HTTP
+  responses). Different output contracts, so they were left separate rather than
+  unified unasked. Worth folding together.
+- **`_hermes_agent_dir(hermes_home)` implies a per-profile `hermes-agent` checkout,
+  but `sys.path` can only hold one.** If profiles genuinely carry separate
+  checkouts, the first one imported wins process-wide. Not in the §2.1 defect list;
+  it is a real cross-talk risk that deserves its own investigation.
+
+#### Deviations from the Phase 0 plan
+
+- **0.6 did not use a subprocess.** hermes-agent exposes
+  `hermes_constants.set_hermes_home_override` / `reset_hermes_home_override` on a
+  `ContextVar`, which `get_hermes_home()` consults ahead of the env var. That gives
+  per-thread and per-task isolation in-process, so the subprocess the spec proposed
+  was unnecessary. The env mutation survives only as a lock-guarded fallback for a
+  hermes-agent too old to expose the API.
+- **0.6 also dropped an `importlib.reload`.** Upstream now resolves the checkpoint
+  root per call, so the reload was not only unnecessary but was itself a race.
+  Consequently `_checkpoint_manager` became a context manager: the override must
+  stay in effect while the manager is *used*, not just built.
+- **0.1 also fixed a latent shutdown bug** carried over from the old lifespan:
+  `asyncio.CancelledError` is a `BaseException`, so the `except Exception` around
+  the awaited cancel never caught the cancellation it had just requested.
+- **0.1 also moved the bridge metric counters out of the brain startup block.**
+  They are bridge state, not brain state; with no brain installed, `start_time`
+  stayed `0.0` in `/diag` and in the published `bridge:metrics` payload.
+- **0.9 passes `hermes_home` only on the real-adapter path.** The
+  `run_agent.AIAgent` fallback has an explicit signature with no `**kwargs`, so
+  passing it unconditionally would `TypeError` the fallback. The cron path is
+  deliberately untouched: cron jobs carry no profile and that agent's `base_url`
+  is always OpenRouter, so the config lookup is unreachable there.
+- **0.2 could not use `TestClient`.** This suite deliberately runs with
+  fastapi and pydantic stubbed (`test_acp_repo_grounding.py` imports `test_main`
+  first), so `main.app` has no router. The lifespan tests drive the async generator
+  directly, which tests the startup/shutdown contract more precisely anyway.
+
+

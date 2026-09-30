@@ -146,7 +146,9 @@ class HermesOpsTests(unittest.TestCase):
         mgr.list_checkpoints.return_value = [
             {"hash": "deadbeef", "short_hash": "deadbee", "timestamp": "now", "reason": "auto"},
         ]
-        mock_mgr_factory.return_value = mgr
+        # _checkpoint_manager is a context manager: the home override has to stay
+        # in effect while the manager is used, not just while it is built.
+        mock_mgr_factory.return_value.__enter__.return_value = mgr
 
         out = hermes_ops.list_checkpoint_entries(
             "/tmp/project",
@@ -169,7 +171,9 @@ class HermesOpsTests(unittest.TestCase):
             "restored_to": "222",
             "reason": "newer",
         }
-        mock_mgr_factory.return_value = mgr
+        # _checkpoint_manager is a context manager: the home override must stay
+        # in effect while the manager is used, not just while it is built.
+        mock_mgr_factory.return_value.__enter__.return_value = mgr
 
         out = hermes_ops.restore_checkpoint(
             2,
@@ -184,7 +188,9 @@ class HermesOpsTests(unittest.TestCase):
     def test_restore_checkpoint_rejects_invalid_index(self, mock_mgr_factory):
         mgr = MagicMock()
         mgr.list_checkpoints.return_value = [{"hash": "111"}]
-        mock_mgr_factory.return_value = mgr
+        # _checkpoint_manager is a context manager: the home override must stay
+        # in effect while the manager is used, not just while it is built.
+        mock_mgr_factory.return_value.__enter__.return_value = mgr
 
         out = hermes_ops.restore_checkpoint(
             9,
