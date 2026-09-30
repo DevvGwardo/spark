@@ -1,0 +1,6 @@
+{"id":"c3","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+{"id":"c3","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"transport_status":{"requested":"agent-loop","actual":"acp","reason":"x-acp-transport: 1"}},"finish_reason":null}]}
+{"id":"c3","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"approval_request":{"request_id":"acp-1","tool_name":"edit_repo_file","option_id":"allow_once","available_decisions":["approved","denied"]}},"finish_reason":null}]}
+{"id":"c3","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"fallback_switch":{"provider":"openrouter","model":"gpt-x","reason":"429"}},"finish_reason":null}]}
+{"id":"c3","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"agent_notice_clear":{"key":"credits"}},"finish_reason":null}]}
+{"id":"c3","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"acp done"},"finish_reason":"stop"}],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}

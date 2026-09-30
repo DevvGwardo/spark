@@ -1,0 +1,4 @@
+{"id":"c2","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+{"id":"c2","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"server_tool_event":{"type":"hermes_run","run_id":"run-1","conversation_id":"conv-1"}},"finish_reason":null}]}
+{"id":"c2","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"agent_status":{"phase":"running","label":"runs","elapsed_ms":900,"source":"hermes-bridge","iteration":2}},"finish_reason":null}]}
+{"id":"c2","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"gateway output"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}

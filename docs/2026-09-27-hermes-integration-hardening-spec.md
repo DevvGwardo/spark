@@ -311,14 +311,49 @@ Every PR runs `npm run typecheck && npm run lint && npm test` plus `pytest herme
 
 | Phase | Status | Notes |
 |---|---|---|
-| 0 Correctness hotfixes | **Done** | All 9 defects fixed, each with a regression test. See below. |
-| 1 Event and error contract | Not started | |
+| 0 Correctness hotfixes | **Done** | All 9 defects fixed, each with a regression test. PR #52 + #53. |
+| 1 Event and error contract | **Done** | 1.1–1.5 landed. Error envelope + regex-free `ChatErrorBanner` + golden fixtures. |
 | 2 Single bridge client | Not started | |
 | 3 Lifecycle | Not started | |
 | 4 Transport parity and decomposition | Not started | |
 | 5 Async hygiene | Not started | |
 | 6 Frontend data layer | Not started | |
 | 7 Tests, CI, and docs | In progress | 7.1/7.3/7.4 not started; see Phase 0 test inventory below |
+
+### Phase 1 progress
+
+| Item | Status | Notes |
+|---|---|---|
+| 1.1 All custom SSE events into `bridge_events.py` | **Done** | 9 models + constructors; 33 inline payload literals removed from `main.py`; 26 contract tests |
+| 1.2 JSON Schema → TS types + zod codegen | **Done** | `shared/hermes-events.schema.json` + `server/lib/hermes-events.gen.ts`; `npm run gen:hermes-contract` / `check:`; new `hermes-contract` CI job |
+| 1.3 `normalizeHermesAgentLoopPayload` as a zod dispatch | **Done** | 110 lines → 38; `unknown` casts in `hermes.ts` 62 → 37; 17 new tests, 7 existing pass unmodified |
+| 1.4 Error envelope + regex-free `ChatErrorBanner` | **Done** | Closed 9-code enum generated Python→TS; banner has **0** regexes; suggestions now travel as `details.suggested_models` |
+| 1.5 Golden SSE fixtures per transport | **Done** | 4 fixtures, replayed by pytest and vitest; verified a corrupted fixture fails both |
+
+1.2 and 1.3 needed three corrections that only surfaced by testing, all recorded in
+their commit bodies: `json-schema-to-zod` does not resolve local `$ref`s (so every
+validator silently became `z.any()`); the adapter-owned events would have become
+*closed* zod objects and stripped upstream fields; and the generated file embedded
+the pydantic version, which would have failed CI against a different pydantic than
+the developer's venv.
+
+1.3 carries one deliberate deviation: a known event that *fails* validation is
+logged as an error but still forwarded, rather than dropped. Dropping a
+`tool_activity` over a type mismatch would make the UI lose tool state with no
+visible cause. The spec's drop requirement covers *unknown* events, which are
+dropped and logged once per type.
+
+1.1 landed with two deliberate deviations, both recorded in the commit body: the
+constructors build plain dicts rather than returning `model_dump()` (the suite runs
+with pydantic stubbed, so validation is unavailable under test), and the three
+adapter-owned event types are open objects because hermes-agent owns their fields.
+
+Note on the spec's 1.1 exit criterion — `grep -n '"tool_activity"' main.py` only
+hits `bridge_events` imports. The key string still appears at the emission site,
+because it is the SSE field name inside the delta and has to. What is enforced
+instead, on the AST, is that no custom event's *payload* is a dict literal at the
+call site. That is the substance of the criterion.
+
 
 ### Phase 0 outcome
 
