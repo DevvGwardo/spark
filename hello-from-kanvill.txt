@@ -1,0 +1,1 @@
+kanban-bridge e2e ok
