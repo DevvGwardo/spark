@@ -635,15 +635,27 @@ async def _spawn_session(
     # never deadlock the stdio pipe, and failures are debuggable. The
     # conversation id is client-controlled — sanitize it before it goes
     # into a filename.
-    import tempfile
+    # Write ACP stderr logs to a managed directory under HERMES_HOME instead
+    # of /tmp. This makes logs discoverable and prevents /tmp accumulation.
+    # Logs are opened in append mode and truncated if they exceed 5MB.
+    _ACP_LOG_MAX_BYTES = 5 * 1024 * 1024
+    _hermes_home = os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes"))
+    _acp_log_dir = os.path.join(_hermes_home, "logs", "acp")
+    os.makedirs(_acp_log_dir, exist_ok=True)
 
     stderr_path = os.path.join(
-        tempfile.gettempdir(),
+        _acp_log_dir,
         f"hermes-acp-{_safe_conversation_id(conversation_id)}.log",
     )
     stderr_file = None
     proc = None
     try:
+        # Truncate oversized logs to prevent unbounded disk growth.
+        try:
+            if os.path.getsize(stderr_path) > _ACP_LOG_MAX_BYTES:
+                open(stderr_path, "wb").close()  # truncate
+        except OSError:
+            pass  # file doesn't exist yet — fine
         stderr_file = open(stderr_path, "ab", buffering=0)
         proc = await asyncio.create_subprocess_exec(
             *cmd,

@@ -1,6 +1,7 @@
 import os
 os.environ["HERMES_DISABLE_LAZY_INSTALLS"] = "1"
 import os
+from bridge_logger import log as _log
 import re
 import json
 import asyncio
@@ -36,6 +37,52 @@ from bridge_events import (
     transport_status_event,
     usage_event,
 )
+import cron_manager as _cron_mod
+from cron_manager import (
+    _HERMES_AGENT_DIR,
+    _HERMES_CRON_HELPER_PYTHON,
+    _HERMES_CRON_RESULT_PREFIX,
+    _HERMES_CRON_OUTPUT_DIR,
+    _HERMES_SKILLS_HUB_RESULT_PREFIX,
+    _HERMES_CRON_AVAILABLE,
+    _HERMES_CRON_IMPORT_ERROR,
+    _HERMES_CRON_HELPER_CODE,
+    _HERMES_SKILLS_HUB_HELPER_CODE,
+    _run_hermes_cron_helper,
+    _run_hermes_skills_hub_helper,
+    _cron_query_value,
+    _cloudchat_origin_from_body,
+    _hermes_schedule_input,
+    _map_hermes_job,
+    _local_tz,
+    _history_timestamp_from_output,
+    _history_sort_key,
+    _iso_timestamp,
+    _run_matches_last,
+    _extract_history_error,
+    _excerpt_history_output,
+    MAX_RUN_HISTORY,
+    _JOB_ID_RE,
+    _run_hermes_tick_now,
+    _cron_jobs,
+    _cron_job_count,
+    _hermes_create_job,
+    _hermes_get_job,
+    _hermes_list_jobs,
+    _hermes_pause_job,
+    _hermes_remove_job,
+    _hermes_resume_job,
+    _hermes_trigger_job,
+    _hermes_cron_tick,
+)
+
+
+def _build_hermes_run_history(job_id: str) -> list[dict]:
+    """Wrapper: sync patchable state from main into cron_manager before calling."""
+    _cron_mod._HERMES_CRON_AVAILABLE = _HERMES_CRON_AVAILABLE
+    _cron_mod._HERMES_CRON_OUTPUT_DIR = _HERMES_CRON_OUTPUT_DIR
+    _cron_mod._hermes_get_job = _hermes_get_job
+    return _cron_mod._build_hermes_run_history(job_id)
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -62,18 +109,21 @@ def _acp_sse_heartbeat_seconds() -> float:
 ACP_SSE_HEARTBEAT_SECONDS = _acp_sse_heartbeat_seconds()
 
 # --- Session tracking for Hermes Chats view ---
-_sessions: dict[str, dict] = {}
-_sessions_lock = threading.Lock()
-_MAX_SESSION_CHAT_MESSAGES = 200
-_MAX_SESSION_MESSAGE_CHARS = 12000
-
-
-def _iso_to_unix(iso_str: str) -> float:
-    """Convert ISO timestamp string to unix seconds."""
-    try:
-        return datetime.fromisoformat(iso_str).timestamp()
-    except Exception:
-        return datetime.now(timezone.utc).timestamp()
+from session_tracker import (
+    _sessions,
+    _sessions_lock,
+    _MAX_SESSION_CHAT_MESSAGES,
+    _MAX_SESSION_MESSAGE_CHARS,
+    _iso_to_unix,
+    _now_iso,
+    _trim_session_message_content,
+    _message_field,
+    _normalize_message_role,
+    _normalize_message_content,
+    _normalize_chat_messages,
+    _append_session_chat_chunk,
+    _session_summary,
+)
 
 
 def _save_session_to_db(session: dict) -> None:
@@ -110,110 +160,7 @@ def _save_session_to_db(session: dict) -> None:
         pass  # Best-effort; don't break request handling
 
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
-
-def _trim_session_message_content(content: str) -> str:
-    if len(content) <= _MAX_SESSION_MESSAGE_CHARS:
-        return content
-    head = _MAX_SESSION_MESSAGE_CHARS // 2
-    tail = _MAX_SESSION_MESSAGE_CHARS - head
-    return (
-        content[:head]
-        + "\n\n...[session message truncated]...\n\n"
-        + content[-tail:]
-    )
-
-
-def _message_field(message, field: str):
-    if isinstance(message, dict):
-        return message.get(field)
-    return getattr(message, field, None)
-
-
-def _normalize_message_role(message) -> str:
-    role = str(_message_field(message, "role") or "").strip().lower()
-    if role in {"system", "user", "assistant", "tool"}:
-        return role
-    return "assistant"
-
-
-def _normalize_message_content(message, strip_images: bool = False) -> str:
-    content = _message_field(message, "content")
-    if content is None:
-        return ""
-    if isinstance(content, list):
-        text_parts = []
-        for part in content:
-            if isinstance(part, dict):
-                part_type = part.get("type", "")
-                if part_type == "text":
-                    text_parts.append(str(part.get("text", "")))
-                elif strip_images and part_type in ("image", "image_url"):
-                    pass
-        return " ".join(text_parts)
-    if strip_images and isinstance(content, str):
-        import re
-
-        content = re.sub(r"!\[.*?\]\(.*?\)", "", content)
-        content = re.sub(r"data:image/[^;]+;base64,", "[image]", content)
-    return str(content)
-
-
-def _normalize_chat_messages(messages, model: str = None, strip_images: bool = False) -> list[dict]:
-    if strip_images and model and not _model_supports_vision(model):
-        strip_images = True
-    else:
-        strip_images = False
-    normalized: list[dict] = []
-    for message in messages or []:
-        normalized.append(
-            {
-                "role": _normalize_message_role(message),
-                "content": _normalize_message_content(message, strip_images=strip_images),
-            }
-        )
-    return normalized
-
-
-def _append_session_chat_chunk(session_id: str, role: str, text: str):
-    if not text:
-        return
-
-    with _sessions_lock:
-        session = _sessions.get(session_id)
-        if not session:
-            return
-
-        chat = session.setdefault("chat", [])
-        if (
-            role == "assistant"
-            and chat
-            and chat[-1].get("role") == "assistant"
-        ):
-            merged = f"{chat[-1].get('content', '')}{text}"
-            chat[-1]["content"] = _trim_session_message_content(merged)
-        else:
-            chat.append(
-                {
-                    "role": role,
-                    "content": _trim_session_message_content(text),
-                }
-            )
-
-        if len(chat) > _MAX_SESSION_CHAT_MESSAGES:
-            session["chat"] = chat[-_MAX_SESSION_CHAT_MESSAGES:]
-
-        session["messages"] = len(session.get("chat", []))
-        session["updated_at"] = _now_iso()
-
-
-def _session_summary(session: dict) -> dict:
-    summary = dict(session)
-    summary.pop("chat", None)
-    summary.pop("profile", None)
-    return summary
 
 
 # --- Hermes workspace inspection/editing ---
@@ -566,16 +513,6 @@ def _install_hub_skill(skill_name: str, *, hermes_home: Optional[Path] = None) -
     }
 
 
-def _cron_job_count() -> int:
-    if _HERMES_CRON_AVAILABLE:
-        try:
-            return len(_hermes_list_jobs(include_disabled=True) or [])
-        except Exception:
-            pass
-
-    return len(_cron_jobs)
-
-
 def _workspace_overview_payload(*, hermes_home: Path, profile_name: str) -> dict:
     totals = _query_state_db_row(
         """
@@ -829,556 +766,6 @@ class HermesHubSkillInstallRequest(BaseModel):
     name: str = Field(default="")
 
 
-# --- Hermes cron backend integration ---
-_HERMES_AGENT_DIR = os.environ.get(
-    "HERMES_AGENT_DIR",
-    os.path.expanduser("~/.hermes/hermes-agent"),
-)
-_HERMES_CRON_HELPER_PYTHON = os.environ.get(
-    "HERMES_CRON_PYTHON",
-    os.path.join(os.path.dirname(__file__), ".venv", "bin", "python"),
-)
-_HERMES_CRON_RESULT_PREFIX = "__HERMES_CRON_RESULT__="
-_HERMES_CRON_OUTPUT_DIR = (
-    Path(os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes")))
-    / "cron"
-    / "output"
-)
-_HERMES_SKILLS_HUB_RESULT_PREFIX = "__HERMES_SKILLS_HUB_RESULT__="
-
-if _HERMES_AGENT_DIR not in sys.path:
-    sys.path.insert(0, _HERMES_AGENT_DIR)
-
-_HERMES_CRON_AVAILABLE = False
-_HERMES_CRON_IMPORT_ERROR: Optional[str] = None
-
-_HERMES_CRON_HELPER_CODE = f"""
-import json
-import sys
-
-agent_dir = sys.argv[1]
-action = sys.argv[2]
-payload = json.loads(sys.argv[3]) if len(sys.argv) > 3 else {{}}
-if agent_dir not in sys.path:
-    sys.path.insert(0, agent_dir)
-
-from cron.jobs import create_job, get_job, list_jobs, pause_job, remove_job, resume_job, trigger_job
-from cron.scheduler import tick
-
-if action == "list_jobs":
-    result = list_jobs(**payload)
-elif action == "create_job":
-    result = create_job(**payload)
-elif action == "get_job":
-    result = get_job(**payload)
-elif action == "pause_job":
-    result = pause_job(**payload)
-elif action == "remove_job":
-    result = remove_job(**payload)
-elif action == "resume_job":
-    result = resume_job(**payload)
-elif action == "trigger_job":
-    result = trigger_job(**payload)
-elif action == "tick":
-    tick(**payload)
-    result = True
-else:
-    raise ValueError(f"unsupported Hermes cron action: {{action}}")
-
-print("{_HERMES_CRON_RESULT_PREFIX}" + json.dumps({{"result": result}}, default=str))
-"""
-
-_HERMES_SKILLS_HUB_HELPER_CODE = f"""
-import json
-import os
-import sys
-from pathlib import Path
-
-agent_dir = sys.argv[1]
-payload = json.loads(sys.argv[2]) if len(sys.argv) > 2 else {{}}
-hermes_home = payload.get("hermes_home") or os.environ.get("HERMES_HOME") or str(Path.home() / ".hermes")
-if agent_dir not in sys.path:
-    sys.path.insert(0, agent_dir)
-os.environ["HERMES_HOME"] = hermes_home
-
-from tools.skills_hub import GitHubAuth, create_source_router, parallel_search_sources
-
-_TRUST_RANK = {{"builtin": 3, "trusted": 2, "community": 1}}
-_PER_SOURCE_LIMIT = {{
-    "official": 200,
-    "skills-sh": 200,
-    "well-known": 50,
-    "github": 200,
-    "clawhub": 500,
-    "claude-marketplace": 100,
-    "lobehub": 500,
-}}
-
-def _parse_frontmatter_name(skill_md: Path) -> str:
-    try:
-        content = skill_md.read_text(encoding="utf-8")
-    except Exception:
-        return skill_md.parent.name
-
-    if not content.startswith("---"):
-        return skill_md.parent.name
-
-    end_marker = content.find("\\n---\\n", 4)
-    if end_marker == -1:
-        return skill_md.parent.name
-
-    try:
-        import yaml
-        parsed = yaml.safe_load(content[4:end_marker])
-    except Exception:
-        return skill_md.parent.name
-
-    if isinstance(parsed, dict):
-        name = parsed.get("name")
-        if isinstance(name, str) and name.strip():
-            return name.strip()
-
-    return skill_md.parent.name
-
-def _installed_skill_names(home: str) -> set[str]:
-    names: set[str] = set()
-    skills_dir = Path(home) / "skills"
-    if not skills_dir.exists():
-        return names
-
-    for skill_md in skills_dir.rglob("SKILL.md"):
-        if ".hub" in skill_md.parts or "__pycache__" in skill_md.parts:
-            continue
-        names.add(skill_md.parent.name.strip().lower())
-        parsed_name = _parse_frontmatter_name(skill_md)
-        if parsed_name:
-            names.add(parsed_name.lower())
-
-    return names
-
-def _skill_category(meta) -> str:
-    extra = getattr(meta, "extra", {{}}) or {{}}
-    category = extra.get("category")
-    if isinstance(category, str) and category.strip():
-        return category.strip()
-
-    path = getattr(meta, "path", None)
-    if isinstance(path, str) and path.strip():
-        parts = [part for part in path.replace("\\\\", "/").split("/") if part]
-        if len(parts) >= 2:
-            return parts[-2]
-        if len(parts) == 1:
-            return parts[0]
-
-    identifier = str(getattr(meta, "identifier", "") or "")
-    parts = [part for part in identifier.split("/") if part]
-    if len(parts) >= 2:
-        return parts[-2]
-
-    return "general"
-
-def _skill_source(meta) -> str:
-    source = str(getattr(meta, "source", "") or "").strip().lower()
-    if source == "official":
-        return "optional"
-    if source == "claude-marketplace":
-        return "anthropic"
-    if source == "lobehub":
-        return "lobehub"
-    if source == "builtin":
-        return "built-in"
-    return "community"
-
-auth = GitHubAuth()
-sources = create_source_router(auth)
-all_results, _, _ = parallel_search_sources(
-    sources,
-    query="",
-    per_source_limits=_PER_SOURCE_LIMIT,
-    source_filter="all",
-    overall_timeout=15,
-)
-
-seen = {{}}
-for result in all_results:
-    name = str(getattr(result, "name", "") or "").strip()
-    if not name:
-        continue
-    rank = _TRUST_RANK.get(str(getattr(result, "trust_level", "") or "").strip().lower(), 0)
-    current = seen.get(name.lower())
-    current_rank = -1
-    if current is not None:
-        current_rank = _TRUST_RANK.get(
-            str(getattr(current, "trust_level", "") or "").strip().lower(),
-            0,
-        )
-    if current is None or rank > current_rank:
-        seen[name.lower()] = result
-
-installed_names = _installed_skill_names(hermes_home)
-skills = []
-for result in sorted(
-    seen.values(),
-    key=lambda item: (
-        -_TRUST_RANK.get(str(getattr(item, "trust_level", "") or "").strip().lower(), 0),
-        str(getattr(item, "source", "") or "").strip().lower() != "official",
-        str(getattr(item, "name", "") or "").strip().lower(),
-    ),
-):
-    name = str(getattr(result, "name", "") or "").strip()
-    if not name:
-        continue
-    skills.append(
-        {{
-            "name": name,
-            "description": str(getattr(result, "description", "") or "").strip(),
-            "category": _skill_category(result),
-            "source": _skill_source(result),
-            "installed": name.lower() in installed_names,
-        }}
-    )
-
-print("{_HERMES_SKILLS_HUB_RESULT_PREFIX}" + json.dumps({{"skills": skills}}, ensure_ascii=False))
-"""
-
-
-def _run_hermes_cron_helper(action: str, payload: Optional[dict] = None):
-    try:
-        completed = subprocess.run(
-            [
-                _HERMES_CRON_HELPER_PYTHON,
-                "-c",
-                _HERMES_CRON_HELPER_CODE,
-                _HERMES_AGENT_DIR,
-                action,
-                json.dumps(payload or {}),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=30,
-        )
-    except subprocess.TimeoutExpired:
-        raise RuntimeError(
-            f"Hermes cron helper timed out after 30s for {action}"
-        )
-    if completed.returncode != 0:
-        stderr = completed.stderr.strip()
-        stdout = completed.stdout.strip()
-        raise RuntimeError(
-            stderr or stdout or f"Hermes cron helper failed for {action}"
-        )
-
-    for line in reversed((completed.stdout or "").splitlines()):
-        if line.startswith(_HERMES_CRON_RESULT_PREFIX):
-            payload_text = line[len(_HERMES_CRON_RESULT_PREFIX):]
-            return json.loads(payload_text).get("result")
-
-    raise RuntimeError(f"Hermes cron helper returned no result for {action}")
-
-
-def _run_hermes_skills_hub_helper(hermes_home: Path) -> dict:
-    completed = subprocess.run(
-        [
-            _HERMES_CRON_HELPER_PYTHON,
-            "-c",
-            _HERMES_SKILLS_HUB_HELPER_CODE,
-            _HERMES_AGENT_DIR,
-            json.dumps({"hermes_home": str(hermes_home)}),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=30,
-    )
-    if completed.returncode != 0:
-        stderr = completed.stderr.strip()
-        stdout = completed.stdout.strip()
-        raise RuntimeError(
-            stderr or stdout or "Hermes skills hub helper failed"
-        )
-
-    for line in reversed((completed.stdout or "").splitlines()):
-        if line.startswith(_HERMES_SKILLS_HUB_RESULT_PREFIX):
-            payload_text = line[len(_HERMES_SKILLS_HUB_RESULT_PREFIX):]
-            result = json.loads(payload_text)
-            return result if isinstance(result, dict) else {}
-
-    raise RuntimeError("Hermes skills hub helper returned no result")
-
-try:
-    from cron.jobs import (
-        create_job as _hermes_create_job,
-        get_job as _hermes_get_job,
-        list_jobs as _hermes_list_jobs,
-        pause_job as _hermes_pause_job,
-        remove_job as _hermes_remove_job,
-        resume_job as _hermes_resume_job,
-        trigger_job as _hermes_trigger_job,
-        OUTPUT_DIR as _HERMES_CRON_OUTPUT_DIR,
-    )
-    from cron.scheduler import tick as _hermes_cron_tick
-    _HERMES_CRON_AVAILABLE = True
-except Exception as e:
-    _HERMES_CRON_IMPORT_ERROR = str(e)
-    helper_error = None
-    if os.path.exists(_HERMES_CRON_HELPER_PYTHON):
-        try:
-            _run_hermes_cron_helper("list_jobs", {"include_disabled": True})
-            _hermes_create_job = lambda **kwargs: _run_hermes_cron_helper("create_job", kwargs)
-            _hermes_get_job = lambda job_id: _run_hermes_cron_helper("get_job", {"job_id": job_id})
-            _hermes_list_jobs = lambda include_disabled=False: _run_hermes_cron_helper(
-                "list_jobs",
-                {"include_disabled": include_disabled},
-            )
-            _hermes_pause_job = lambda job_id: _run_hermes_cron_helper("pause_job", {"job_id": job_id})
-            _hermes_remove_job = lambda job_id: _run_hermes_cron_helper("remove_job", {"job_id": job_id})
-            _hermes_resume_job = lambda job_id: _run_hermes_cron_helper("resume_job", {"job_id": job_id})
-            _hermes_trigger_job = lambda job_id: _run_hermes_cron_helper("trigger_job", {"job_id": job_id})
-            _hermes_cron_tick = lambda verbose=False: _run_hermes_cron_helper("tick", {"verbose": verbose})
-            _HERMES_CRON_AVAILABLE = True
-            print(
-                f"[cron] Hermes cron backend enabled via helper interpreter {_HERMES_CRON_HELPER_PYTHON}",
-                flush=True,
-            )
-        except Exception as helper_exc:
-            helper_error = str(helper_exc)
-
-    if not _HERMES_CRON_AVAILABLE:
-        detail = (
-            f"{e}; helper {_HERMES_CRON_HELPER_PYTHON} failed: {helper_error}"
-            if helper_error
-            else str(e)
-        )
-        print(
-            f"[cron] Hermes cron backend unavailable, falling back to bridge-local store: {detail}",
-            flush=True,
-        )
-
-
-def _cron_query_value(request: Request, key: str) -> Optional[str]:
-    query_params = getattr(request, "query_params", None)
-    if query_params is None:
-        return None
-    value = query_params.get(key)
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
-
-
-def _cloudchat_origin_from_body(body: dict) -> Optional[dict]:
-    conversation_id = str(body.get("conversation_id") or "").strip()
-    if not conversation_id:
-        return None
-
-    title = str(body.get("conversation_title") or "").strip() or None
-    origin = {
-        "platform": "cloud-chat-hub",
-        "chat_id": conversation_id,
-    }
-    if title:
-        origin["chat_name"] = title
-    return origin
-
-
-def _hermes_schedule_input(job: dict) -> str:
-    schedule = job.get("schedule")
-    if not isinstance(schedule, dict):
-        return str(job.get("schedule_display") or "")
-
-    kind = schedule.get("kind")
-    if kind == "cron":
-        return str(schedule.get("expr") or job.get("schedule_display") or "")
-    if kind == "interval":
-        minutes = schedule.get("minutes")
-        return f"every {minutes}m" if minutes else str(job.get("schedule_display") or "")
-    if kind == "once":
-        return str(schedule.get("run_at") or job.get("schedule_display") or "")
-
-    return str(job.get("schedule_display") or "")
-
-
-def _map_hermes_job(job: dict) -> dict:
-    origin = job.get("origin") if isinstance(job.get("origin"), dict) else {}
-    origin_platform = str(origin.get("platform") or "").strip() or None
-    conversation_id = None
-    conversation_title = None
-    if origin_platform == "cloud-chat-hub":
-        conversation_id = str(origin.get("chat_id") or "").strip() or None
-        conversation_title = str(origin.get("chat_name") or "").strip() or None
-
-    state = str(job.get("state") or "").strip() or (
-        "scheduled" if job.get("enabled", True) else "paused"
-    )
-    if state == "paused":
-        status = "paused"
-    elif state == "completed":
-        status = "completed"
-    elif job.get("enabled", True):
-        status = "active"
-    else:
-        status = "paused"
-
-    schedule = _hermes_schedule_input(job)
-
-    return {
-        "id": job["id"],
-        "name": job.get("name") or job["id"],
-        "schedule": schedule,
-        "schedule_display": job.get("schedule_display") or schedule,
-        "prompt": job.get("prompt") or "",
-        "status": status,
-        "state": state,
-        "created_at": job.get("created_at"),
-        "last_run": job.get("last_run_at"),
-        "next_run": job.get("next_run_at"),
-        "last_status": job.get("last_status"),
-        "last_error": job.get("last_error"),
-        "conversation_id": conversation_id,
-        "conversation_title": conversation_title,
-        "origin_platform": origin_platform,
-    }
-
-
-def _local_tz():
-    return datetime.now().astimezone().tzinfo or timezone.utc
-
-
-def _history_timestamp_from_output(path: Path) -> str:
-    try:
-        dt = datetime.strptime(path.stem, "%Y-%m-%d_%H-%M-%S").replace(tzinfo=_local_tz())
-        return dt.isoformat()
-    except ValueError:
-        return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
-
-
-def _history_sort_key(path: Path) -> float:
-    try:
-        return datetime.strptime(path.stem, "%Y-%m-%d_%H-%M-%S").replace(
-            tzinfo=_local_tz()
-        ).timestamp()
-    except ValueError:
-        try:
-            return path.stat().st_mtime
-        except OSError:
-            return 0.0
-
-
-def _iso_timestamp(value: Optional[str]) -> Optional[float]:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value).timestamp()
-    except Exception:
-        return None
-
-
-def _run_matches_last(run_started_at: Optional[str], last_run_at: Optional[str]) -> bool:
-    run_ts = _iso_timestamp(run_started_at)
-    last_ts = _iso_timestamp(last_run_at)
-    if run_ts is None or last_ts is None:
-        return False
-    return abs(run_ts - last_ts) < 120
-
-
-def _extract_history_error(output: str) -> Optional[str]:
-    if "## Error" not in output:
-        return None
-    error_block = output.split("## Error", 1)[1].strip()
-    if error_block.startswith("```"):
-        error_block = error_block.strip("`\n")
-    error_block = error_block.strip()
-    return error_block[:500] or None
-
-
-def _excerpt_history_output(output: str, limit: int = 500) -> Optional[str]:
-    # If the output has a "## Response" section, extract from there to skip
-    # system hints and metadata (e.g. from cron job output files).
-    if "## Response" in output:
-        response_section = output.split("## Response", 1)[1]
-    else:
-        response_section = output
-    lines = [line.rstrip() for line in response_section.splitlines()]
-    cleaned = "\n".join(line for line in lines if line).strip()
-    if not cleaned:
-        return None
-    return cleaned[:limit]
-
-
-MAX_RUN_HISTORY = 20
-
-# Client-controlled cron job ids must be validated before they are used to
-# build filesystem paths (output_dir = OUTPUT_DIR / job_id) — otherwise a
-# crafted id could traverse directories. Mirror of acp_transport._SAFE_ID_RE.
-_JOB_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
-
-
-def _build_hermes_run_history(job_id: str) -> list[dict]:
-    if not _HERMES_CRON_AVAILABLE or not _JOB_ID_RE.match(job_id or ""):
-        return []
-
-    runs: list[dict] = []
-    output_dir = Path(_HERMES_CRON_OUTPUT_DIR) / job_id
-    output_files = []
-    if output_dir.exists():
-        output_files = sorted(
-            output_dir.glob("*.md"),
-            key=_history_sort_key,
-            reverse=True,
-        )[:MAX_RUN_HISTORY]
-
-    for path in output_files:
-        try:
-            output = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-
-        started_at = _history_timestamp_from_output(path)
-        completed_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
-        error = _extract_history_error(output)
-        status = "error" if error or "(FAILED)" in output else "success"
-        runs.append({
-            "run_id": path.stem,
-            "job_id": job_id,
-            "started_at": started_at,
-            "completed_at": completed_at,
-            "status": status,
-            "output": _excerpt_history_output(output),
-            "error": error,
-            "tool_log": [],
-            "duration_ms": None,
-        })
-
-    job = _hermes_get_job(job_id)
-    if job and job.get("last_run_at") and not any(
-        _run_matches_last(run.get("started_at"), job.get("last_run_at"))
-        for run in runs
-    ):
-        status = "error" if job.get("last_status") == "error" else "success"
-        runs.insert(0, {
-            "run_id": f"{job_id}:{job.get('last_run_at')}",
-            "job_id": job_id,
-            "started_at": job.get("last_run_at"),
-            "completed_at": job.get("last_run_at"),
-            "status": status,
-            "output": None,
-            "error": job.get("last_error"),
-            "tool_log": [],
-            "duration_ms": None,
-        })
-
-    return runs[:MAX_RUN_HISTORY]
-
-
-def _run_hermes_tick_now():
-    if not _HERMES_CRON_AVAILABLE:
-        return
-    try:
-        _hermes_cron_tick(verbose=False)
-    except Exception as e:
-        print(f"[cron] Hermes tick failed: {e}", flush=True)
-
 # --- Brain MCP integration ---
 # The brain subprocess handle and the JSON-RPC layer live in brain_client.py, not
 # here. swarm_pattern.py needs the same RPC layer and used to reach it through
@@ -1458,7 +845,7 @@ async def _bridge_lifespan(app):
     except Exception as e:
         # start_brain already swallows its own failures; this is belt-and-braces so
         # a malformed config can never stop the bridge from serving.
-        print(f"[hermes-bridge] brain startup failed: {e}", flush=True)
+        _log.error("brain", "brain startup failed", error=str(e))
 
     # These used to be @app.on_event("startup") handlers. FastAPI ignores on_event
     # entirely when `lifespan=` is supplied, which this app does — so neither ever
@@ -1771,13 +1158,22 @@ def _cli_custom_provider_row(cfg: dict, hermes_home: Optional[Path] = None) -> O
 _cli_model_config = _load_cli_model_config()
 _cli_default_model = _cli_model_config.get("default")
 DEFAULT_MODEL = os.environ.get("HERMES_DEFAULT_MODEL", _cli_default_model or "meta-llama/llama-4-maverick")
-MOA_PROVIDER_ID = "moa"
-MOA_PROVIDER_NAME = "Mixture of Agents"
-MOA_NATIVE_REQUIRED_CODE = "MOA_NATIVE_REQUIRED"
-MOA_NATIVE_REQUIRED_MESSAGE = (
-    "MoA presets require the native Hermes agent adapter (HermesAgentAdapter). "
-    "The bridge fell back to legacy run_agent, which cannot run MoA. "
-    "Install or update Hermes Agent and restart the bridge."
+from moa_config import (
+    MOA_PROVIDER_ID,
+    MOA_PROVIDER_NAME,
+    MOA_NATIVE_REQUIRED_CODE,
+    MOA_NATIVE_REQUIRED_MESSAGE,
+    _read_config_yaml,
+    _coerce_moa_model_ref,
+    _coerce_optional_float,
+    _coerce_optional_int,
+    _coerce_moa_fanout,
+    _normalize_moa_preset,
+    _normalize_moa_config,
+    _load_moa_config,
+    _enabled_moa_preset_names,
+    _preset_to_yaml,
+    _save_moa_config,
 )
 
 
@@ -1787,7 +1183,7 @@ def _resolve_chat_agent_class():
         from hermes_adapter import HermesAgentAdapter as AIAgent
         return AIAgent, True
     except Exception as adapter_err:
-        print(f"[hermes-bridge] Adapter import failed: {adapter_err}", flush=True)
+        _log.warning("adapter", "adapter import failed, using legacy run_agent", error=str(adapter_err))
         from run_agent import AIAgent
         return AIAgent, False
 
@@ -1815,603 +1211,27 @@ def _moa_native_adapter_required_error(
     )
 
 
-def _read_config_yaml(hermes_home: Optional[Path] = None) -> dict:
-    """Best-effort YAML config reader used for rich config sections."""
-    config_path = (hermes_home or Path.home() / ".hermes") / "config.yaml"
-    if not config_path.is_file():
-        return {}
-    try:
-        import yaml
-        with open(config_path) as f:
-            data = yaml.safe_load(f)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
-
-
-def _coerce_moa_model_ref(raw) -> Optional[dict]:
-    if isinstance(raw, str) and raw.strip():
-        return {"provider": "", "model": raw.strip()}
-    if not isinstance(raw, dict):
-        return None
-    model = raw.get("model")
-    if not isinstance(model, str) or not model.strip():
-        return None
-    provider = raw.get("provider")
-    return {
-        "provider": provider.strip() if isinstance(provider, str) else "",
-        "model": model.strip(),
-    }
-
-
-def _coerce_optional_float(raw):
-    if raw is None:
-        return None
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return None
-    return value if value >= 0 else None
-
-
-def _coerce_optional_int(raw):
-    if raw is None:
-        return None
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        return None
-    return value if value > 0 else None
-
-
-def _coerce_moa_fanout(raw) -> str:
-    mode = str(raw or "").strip().lower()
-    return mode if mode in {"per_iteration", "user_turn"} else "per_iteration"
-
-
-def _normalize_moa_preset(name: str, raw) -> Optional[dict]:
-    if not isinstance(raw, dict):
-        return None
-
-    aggregator = _coerce_moa_model_ref(raw.get("aggregator"))
-    references_raw = raw.get("reference_models") or raw.get("references") or []
-    references = []
-    if isinstance(references_raw, list):
-        for item in references_raw:
-            ref = _coerce_moa_model_ref(item)
-            if ref:
-                references.append(ref)
-
-    if not aggregator or not references:
-        return None
-
-    # Block recursive MoA slots (aggregator/reference must not be provider=moa)
-    if str(aggregator.get("provider") or "").strip().lower() == MOA_PROVIDER_ID:
-        return None
-    references = [
-        ref for ref in references
-        if str(ref.get("provider") or "").strip().lower() != MOA_PROVIDER_ID
-    ]
-    if not references:
-        return None
-
-    return {
-        "name": name,
-        "enabled": raw.get("enabled") is not False,
-        "reference_models": references,
-        "aggregator": aggregator,
-        "reference_temperature": _coerce_optional_float(raw.get("reference_temperature")),
-        "aggregator_temperature": _coerce_optional_float(raw.get("aggregator_temperature")),
-        "max_tokens": _coerce_optional_int(raw.get("max_tokens")),
-        "reference_max_tokens": _coerce_optional_int(raw.get("reference_max_tokens")),
-        "fanout": _coerce_moa_fanout(raw.get("fanout")),
-    }
-
-
-def _normalize_moa_config(raw) -> dict:
-    """Normalize Hermes `moa:` config into the shape CloudChat needs."""
-    result = {"default_preset": "default", "presets": {}}
-    if not isinstance(raw, dict):
-        return result
-
-    moa_cfg = raw.get("moa") if "moa" in raw else raw
-    if not isinstance(moa_cfg, dict):
-        return result
-
-    default_preset = moa_cfg.get("default_preset")
-    if isinstance(default_preset, str) and default_preset.strip():
-        result["default_preset"] = default_preset.strip()
-
-    raw_presets = moa_cfg.get("presets")
-    if not isinstance(raw_presets, dict):
-        return result
-
-    presets = {}
-    for raw_name, raw_preset in raw_presets.items():
-        name = str(raw_name).strip()
-        if not name:
-            continue
-        preset = _normalize_moa_preset(name, raw_preset)
-        if preset:
-            presets[name] = preset
-
-    result["presets"] = presets
-    if result["default_preset"] not in presets and presets:
-        result["default_preset"] = next(iter(presets.keys()))
-    return result
-
-
-def _load_moa_config(hermes_home: Optional[Path] = None) -> dict:
-    return _normalize_moa_config(_read_config_yaml(hermes_home))
-
-
-def _enabled_moa_preset_names(moa_config: dict) -> list[str]:
-    presets = moa_config.get("presets")
-    if not isinstance(presets, dict):
-        return []
-    return [
-        name for name, preset in presets.items()
-        if isinstance(preset, dict) and preset.get("enabled") is not False
-    ]
-
-
-def _preset_to_yaml(preset: dict) -> dict:
-    """Serialize a normalized preset into the Hermes config.yaml shape."""
-    out: dict = {
-        "enabled": preset.get("enabled") is not False,
-        "reference_models": [
-            {"provider": r.get("provider") or "", "model": r.get("model") or ""}
-            for r in (preset.get("reference_models") or [])
-            if isinstance(r, dict) and r.get("model")
-        ],
-        "aggregator": {
-            "provider": (preset.get("aggregator") or {}).get("provider") or "",
-            "model": (preset.get("aggregator") or {}).get("model") or "",
-        },
-        "fanout": _coerce_moa_fanout(preset.get("fanout")),
-    }
-    for key in ("reference_temperature", "aggregator_temperature", "max_tokens", "reference_max_tokens"):
-        value = preset.get(key)
-        if value is not None:
-            out[key] = value
-    return out
-
-
-def _save_moa_config(body: dict, hermes_home: Optional[Path] = None) -> dict:
-    """Merge a MoA config payload into config.yaml and return the normalized result.
-
-    Accepts either a full `{ default_preset, presets }` object or a single
-    `{ preset: {name, ...} }` upsert. Never writes recursive moa slots.
-    """
-    home = hermes_home or (Path.home() / ".hermes")
-    dump, data = _load_hermes_config_editable(Path(home))
-    if not isinstance(data, dict):
-        data = {}
-
-    current = _normalize_moa_config({"moa": data.get("moa")} if isinstance(data.get("moa"), dict) else data.get("moa") or {})
-    presets = dict(current.get("presets") or {})
-    default_preset = current.get("default_preset") or "default"
-
-    if isinstance(body.get("presets"), dict):
-        # Full replace of named presets (only valid ones kept)
-        incoming = body["presets"]
-        rebuilt = {}
-        for raw_name, raw_preset in incoming.items():
-            name = str(raw_name).strip()
-            if not name or not isinstance(raw_preset, dict):
-                continue
-            # Accept both normalized and raw hermes shapes
-            candidate = dict(raw_preset)
-            if "name" not in candidate:
-                candidate["name"] = name
-            normalized = _normalize_moa_preset(name, candidate)
-            if normalized:
-                rebuilt[name] = normalized
-        if not rebuilt:
-            raise ValueError("At least one valid MoA preset with reference_models and aggregator is required")
-        presets = rebuilt
-    elif isinstance(body.get("preset"), dict):
-        raw_preset = body["preset"]
-        name = str(raw_preset.get("name") or body.get("name") or "").strip()
-        if not name:
-            raise ValueError("preset.name is required")
-        if body.get("delete") is True or raw_preset.get("delete") is True:
-            presets.pop(name, None)
-            if not presets:
-                raise ValueError("Cannot delete the last MoA preset")
-        else:
-            normalized = _normalize_moa_preset(name, raw_preset)
-            if not normalized:
-                raise ValueError(
-                    f"Invalid preset '{name}': needs at least one non-moa reference model and a non-moa aggregator"
-                )
-            presets[name] = normalized
-
-    if isinstance(body.get("default_preset"), str) and body["default_preset"].strip():
-        default_preset = body["default_preset"].strip()
-    if default_preset not in presets and presets:
-        default_preset = next(iter(presets.keys()))
-
-    yaml_presets = {name: _preset_to_yaml(p) for name, p in presets.items()}
-    active = presets.get(default_preset) or next(iter(presets.values()))
-    data["moa"] = {
-        "default_preset": default_preset,
-        "active_preset": "",
-        "presets": yaml_presets,
-        # Flattened compat view for older Hermes readers / dashboard
-        "reference_models": list(active.get("reference_models") or []),
-        "aggregator": dict(active.get("aggregator") or {}),
-        "reference_temperature": active.get("reference_temperature"),
-        "aggregator_temperature": active.get("aggregator_temperature"),
-        "max_tokens": active.get("max_tokens") or 4096,
-        "reference_max_tokens": active.get("reference_max_tokens"),
-        "fanout": active.get("fanout") or "per_iteration",
-        "enabled": active.get("enabled") is not False,
-    }
-    dump()
-    return _normalize_moa_config({"moa": data["moa"]})
 
 # ------------------------------------------------------------------
-# Circuit breaker for upstream API calls
-# ------------------------------------------------------------------
-class CircuitBreaker:
-    """Prevents cascading failures by opening the circuit after consecutive errors."""
-
-    def __init__(self, failure_threshold: int = 5, recovery_timeout: float = 30.0):
-        self.failure_threshold = failure_threshold
-        self.recovery_timeout = recovery_timeout
-        self.failures = 0
-        self.last_failure_time: Optional[float] = None
-        self.state = "closed"  # closed | open | half-open
-
-    def record_success(self):
-        self.failures = 0
-        self.state = "closed"
-
-    def record_failure(self):
-        self.failures += 1
-        self.last_failure_time = time.monotonic()
-        if self.failures >= self.failure_threshold:
-            self.state = "open"
-
-    def is_available(self) -> bool:
-        if self.state == "closed":
-            return True
-        if self.state == "open":
-            if self.last_failure_time and (time.monotonic() - self.last_failure_time) >= self.recovery_timeout:
-                self.state = "half-open"
-                return True
-            return False
-        # half-open: allow one attempt
-        return True
-
-    def get_state(self) -> str:
-        return self.state
-
-
-# Circuit breakers per upstream provider (created lazily below)
-_provider_circuits: dict[str, CircuitBreaker] = {}
-_brain_circuit = CircuitBreaker(failure_threshold=3, recovery_timeout=15.0)
-
-def _get_circuit(provider: str) -> CircuitBreaker:
-    """Get or create a circuit breaker for a provider."""
-    if provider not in _provider_circuits:
-        _provider_circuits[provider] = CircuitBreaker(failure_threshold=5, recovery_timeout=30.0)
-    return _provider_circuits[provider]
-
-# Backward-compatible circuit references (evaluated at each use via _get_circuit)
-_openrouter_circuit_ref = "openrouter"
-_minimax_circuit_ref = "minimax"
-_nous_circuit_ref = "nous"
-
-# ── Provider base URL registry ──────────────────────────────────────────────
-# Mirrors the hermes-agent PROVIDER_REGISTRY in hermes_cli/auth.py.
-# Each entry maps a provider_id → (base_url, description, model_prefixes).
-# Model prefixes are used for automatic routing when the model name starts with
-# one of these prefixes (e.g. "anthropic/" → Anthropic, "deepseek/" → DeepSeek).
-# OpenRouter handles everything else as the universal fallback.
-import os
-MINIMAX_BASE_URL = os.environ.get("MINIMAX_BASE_URL", "https://api.minimax.io/anthropic")
-
-_PROVIDER_CONFIG: dict[str, dict] = {
-    "openrouter": {
-        "base_url": "https://openrouter.ai/api/v1",
-        "name": "OpenRouter",
-        "model_prefixes": [],  # Default — handles everything not explicitly routed
-        "auth_json_provider": "openrouter",
-        "env_var": "HERMES_OPENROUTER_KEY",
-    },
-    "minimax": {
-        "base_url": MINIMAX_BASE_URL,
-        "name": "MiniMax",
-        "model_prefixes": ["MiniMax-", "minimax-"],
-        "auth_json_provider": "minimax",
-        "env_var": "HERMES_MINIMAX_KEY",
-    },
-    "nous": {
-        "base_url": "https://inference-api.nousresearch.com/v1",
-        "name": "Nous Research",
-        "model_prefixes": ["nousresearch/", "nous/"],
-        "auth_json_provider": "nous",
-    },
-    "anthropic": {
-        "base_url": "https://api.anthropic.com",
-        "name": "Anthropic",
-        "model_prefixes": ["anthropic/", "claude-"],
-        "auth_json_provider": "anthropic",
-        "env_var": "ANTHROPIC_API_KEY",
-    },
-    "deepseek": {
-        "base_url": "https://api.deepseek.com",
-        "name": "DeepSeek",
-        "model_prefixes": ["deepseek/"],
-        "auth_json_provider": "deepseek",
-        "env_var": "DEEPSEEK_API_KEY",
-    },
-    "google": {
-        "base_url": "https://generativelanguage.googleapis.com/v1beta",
-        "name": "Google AI Studio",
-        "model_prefixes": ["google/", "gemini-"],
-        "auth_json_provider": "google",
-        "env_var": "GOOGLE_API_KEY",
-    },
-    "openai": {
-        "base_url": "https://api.openai.com/v1",
-        "name": "OpenAI",
-        "model_prefixes": ["openai/", "gpt-", "o1-", "o3-", "o4-"],
-        "auth_json_provider": "openai",
-        "env_var": "OPENAI_API_KEY",
-    },
-    "xai": {
-        "base_url": "https://api.x.ai/v1",
-        "name": "xAI (Grok)",
-        "model_prefixes": ["xai/", "grok-"],
-        "auth_json_provider": "xai",
-        "env_var": "XAI_API_KEY",
-    },
-    "groq": {
-        "base_url": "https://api.groq.com/openai/v1",
-        "name": "Groq",
-        "model_prefixes": ["groq/"],
-        "auth_json_provider": "groq",
-        "env_var": "GROQ_API_KEY",
-    },
-    "mistral": {
-        "base_url": "https://api.mistral.ai/v1",
-        "name": "Mistral",
-        "model_prefixes": ["mistral/", "mistral-", "mistralai/", "codestral/", "codestral-"],
-        "auth_json_provider": "mistral",
-        "env_var": "MISTRAL_API_KEY",
-    },
-    "kimi": {
-        "base_url": "https://api.moonshot.ai/v1",
-        "name": "Kimi / Moonshot",
-        "model_prefixes": ["kimi/", "kimi-", "moonshot/", "moonshotai/"],
-        "auth_json_provider": "kimi-coding",
-        "env_var": "KIMI_API_KEY",
-    },
-    "zai": {
-        "base_url": "https://api.z.ai/api/paas/v4",
-        "name": "Z.AI / GLM",
-        "model_prefixes": ["z-ai/", "glm-", "z.ai/"],
-        "auth_json_provider": "zai",
-        "env_var": "GLM_API_KEY",
-    },
-    "alibaba": {
-        "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-        "name": "Alibaba DashScope",
-        "model_prefixes": ["alibaba/", "qwen/"],
-        "auth_json_provider": "alibaba",
-        "env_var": "DASHSCOPE_API_KEY",
-    },
-    "huggingface": {
-        "base_url": "https://api-inference.huggingface.co/v1",
-        "name": "Hugging Face",
-        "model_prefixes": ["huggingface/", "hf/"],
-        "auth_json_provider": "huggingface",
-        "env_var": "HF_TOKEN",
-    },
-    "kilocode": {
-        "base_url": "https://api.kilocode.ai/v1",
-        "name": "Kilo Code",
-        "model_prefixes": ["kilocode/"],
-        "auth_json_provider": "kilocode",
-        "env_var": "KILOCODE_API_KEY",
-    },
-    "cerebras": {
-        "base_url": "https://api.cerebras.ai/v1",
-        "name": "Cerebras",
-        "model_prefixes": ["cerebras/"],
-        "auth_json_provider": "cerebras",
-        "env_var": "CEREBRAS_API_KEY",
-    },
-    "together": {
-        "base_url": "https://api.together.xyz/v1",
-        "name": "Together AI",
-        "model_prefixes": ["together/", "together_ai/"],
-        "auth_json_provider": "together",
-        "env_var": "TOGETHER_API_KEY",
-    },
-    "cursor-composer": {
-        "base_url": os.environ.get("CURSOR_COMPOSER_BRIDGE_URL", "http://127.0.0.1:8790/v1"),
-        "name": "Cursor Composer (local bridge)",
-        "model_prefixes": ["composer-"],
-        "auth_json_provider": "custom:Cursor-Composer",
-        "env_var": "CURSOR_API_KEY",
-    },
-    # --- Providers synced from hermes-agent's PROVIDER_REGISTRY (hermes_cli/auth.py) ---
-    # Sync check:
-    #   python3 -c "import re;auth=open('~/.hermes/hermes-agent/hermes_cli/auth.py').read();\
-    #   ids=set(re.findall(r'id=\"([a-z0-9_]+)\"',auth));main=open('hermes-bridge/main.py').read();\
-    #   m=re.search(r'_PROVIDER_CONFIG[^=]*=\s*\{',main);keys=set(re.findall(r'\"([a-z0-9_]+)\":\s*\{',main[m.end():]));\
-    #   print(sorted(ids-keys))"
-    "xiaomi": {
-        "base_url": "https://api.xiaomimimo.com/v1",
-        "name": "Xiaomi MiMo",
-        "model_prefixes": ["xiaomi/", "mimo"],
-        "auth_json_provider": "xiaomi",
-        "env_var": "XIAOMI_API_KEY",
-    },
-    "gemini": {
-        # Distinct registry id upstream; same endpoint as google/ai-studio.
-        "base_url": "https://generativelanguage.googleapis.com/v1beta",
-        "name": "Google AI Studio (gemini)",
-        "model_prefixes": ["gemini/"],
-        "auth_json_provider": "gemini",
-        "env_var": "GEMINI_API_KEY",
-    },
-    "lmstudio": {
-        "base_url": "http://127.0.0.1:1234/v1",
-        "name": "LM Studio (local)",
-        "model_prefixes": ["lmstudio/"],
-        "auth_json_provider": "lmstudio",
-        "env_var": "LM_API_KEY",
-    },
-    "copilot": {
-        "base_url": "https://api.githubcopilot.com",
-        "name": "GitHub Copilot",
-        "model_prefixes": ["copilot/"],
-        "auth_json_provider": "copilot",
-        "env_var": "COPILOT_GITHUB_TOKEN",
-    },
-    "stepfun": {
-        "base_url": "https://api.stepfun.ai/step_plan/v1",
-        "name": "StepFun Step Plan",
-        "model_prefixes": ["stepfun/"],
-        "auth_json_provider": "stepfun",
-        "env_var": "STEPFUN_API_KEY",
-    },
-    "arcee": {
-        "base_url": "https://api.arcee.ai/api/v1",
-        "name": "Arcee AI",
-        "model_prefixes": ["arcee/"],
-        "auth_json_provider": "arcee",
-        "env_var": "ARCEEAI_API_KEY",
-    },
-    "gmi": {
-        "base_url": "https://api.gmi-serving.com/v1",
-        "name": "GMI Cloud",
-        "model_prefixes": ["gmi/"],
-        "auth_json_provider": "gmi",
-        "env_var": "GMI_API_KEY",
-    },
-    "actual": {
-        "base_url": "https://api.actual.inc/v1",
-        "name": "Actual Computer",
-        "model_prefixes": ["actual/"],
-        "auth_json_provider": "actual",
-        "env_var": "ACTUAL_API_KEY",
-    },
-    "nvidia": {
-        "base_url": "https://integrate.api.nvidia.com/v1",
-        "name": "NVIDIA NIM",
-        "model_prefixes": ["nvidia/", "nvidia-nim/"],
-        "auth_json_provider": "nvidia",
-        "env_var": "NVIDIA_API_KEY",
-    },
-    # aws_sdk / vertex auth types — no bearer-token proxying via the bridge;
-    # registered so model-prefix routing and /health credential reporting
-    # recognize them instead of falling through to OpenRouter with a wrong key.
-    "bedrock": {
-        "base_url": "https://bedrock-runtime.us-east-1.amazonaws.com",
-        "name": "AWS Bedrock (no bridge proxying — SDK auth)",
-        "model_prefixes": ["bedrock/"],
-        "auth_json_provider": "bedrock",
-    },
-    "vertex": {
-        "base_url": "",
-        "name": "Google Vertex AI (no bridge proxying — ADC auth)",
-        "model_prefixes": ["vertex/"],
-        "auth_json_provider": "vertex",
-    },
-}
-
-# Build a reverse lookup: model_prefix → provider_id
-_MODEL_PREFIX_TO_PROVIDER: dict[str, str] = {}
-for _pid, _cfg in _PROVIDER_CONFIG.items():
-    for _pfx in _cfg.get("model_prefixes", []):
-        _MODEL_PREFIX_TO_PROVIDER[_pfx] = _pid
-
-# Known hosts for custom base_url detection
-def _known_host_label(hostname: str) -> str:
-    """Collapse a provider's public host to its matchable form.
-
-    Strips only a LEADING ``api.`` / ``www.`` label. ``str.replace`` also
-    mangled hosts where those labels appear mid-name — e.g. Nous's
-    ``inference-api.nousresearch.com`` became ``inference-nousresearch.com``,
-    an entry that never substring-matches the real base_url, so the native
-    nous config was misclassified as a custom endpoint (bogus synthetic
-    ``custom:<host>`` provider row + stale UI pins routing to OpenRouter).
-    """
-    for prefix in ("api.", "www."):
-        if hostname.startswith(prefix):
-            return hostname[len(prefix):]
-    return hostname
-
-
-_KNOWN_HOSTS: tuple[str, ...] = tuple(
-    # Filter empty strings: a provider entry with base_url "" (e.g. vertex,
-    # resolved at request time) would otherwise yield "" as a host and
-    # `"" in url` is always True — silently marking every base_url "known"
-    # and killing the cli_is_custom passthrough path.
-    h
-    for h in {
-        _known_host_label(u.split("://")[-1].split("/")[0])
-        for u in [_c["base_url"] for _c in _PROVIDER_CONFIG.values()]
-    }
-    if h
+from provider_config import (
+    MINIMAX_BASE_URL,
+    _PROVIDER_CONFIG,
+    _MODEL_PREFIX_TO_PROVIDER,
+    _known_host_label,
+    _KNOWN_HOSTS,
+    MINIMAX_MODEL_PREFIX,
+    NOUS_MODEL_PREFIX, 
+    NOUS_BASE_URL,
+    _VISION_CAPABLE_MODELS,
+    _model_supports_vision,
+    CircuitBreaker,
+    _provider_circuits,
+    _brain_circuit,
+    _get_circuit,
+    _openrouter_circuit_ref,
+    _minimax_circuit_ref,
+    _nous_circuit_ref,
 )
-
-# Backward-compatible constants
-MINIMAX_MODEL_PREFIX = "MiniMax-"
-NOUS_MODEL_PREFIX = "nousresearch/"
-NOUS_BASE_URL = _PROVIDER_CONFIG["nous"]["base_url"]
-
-# Vision-capable models — these support image input (base64, URLs, or multimodal content)
-# Models NOT in this list will have image content stripped before being sent upstream
-_VISION_CAPABLE_MODELS: set[str] = {
-    # MiniMax models with vision support
-    "MiniMax-M2.7",
-    "MiniMax-M2.7-highspeed",
-    # Claude Opus 4 and Sonnet 4 support vision
-    "anthropic/claude-opus-4-5",
-    "anthropic/claude-sonnet-4-5",
-    "claude-opus-4-5",
-    "claude-sonnet-4-5",
-    # Gemini 2.x flash variants support vision
-    "google/gemini-2.0-flash-exp",
-    "google/gemini-3.1-flash-preview",
-    "gemini-2.0-flash-exp",
-    "gemini-3.1-flash-preview",
-    # GPT-4o and vision models
-    "openai/gpt-4o",
-    "openai/gpt-4o-mini",
-    "gpt-4o",
-    "gpt-4o-mini",
-    # Nous Hermès variants with multimodal
-    "nousresearch/hermes-3-llama-3.3-70b",
-}
-
-
-def _model_supports_vision(model: str) -> bool:
-    """Check if a model supports image/vision input."""
-    if model in _VISION_CAPABLE_MODELS:
-        return True
-    model_lower = model.lower()
-    for capable in _VISION_CAPABLE_MODELS:
-        if capable.lower() in model_lower or model_lower in capable.lower():
-            return True
-    if model_lower.startswith("claude") and "sonnet" in model_lower:
-        return True
-    if model_lower.startswith("gpt-4o"):
-        return True
-    if "gemini-2" in model_lower or "gemini-3" in model_lower:
-        return True
-    if "minimax-m2" in model_lower:
-        return True
-    return False
-
-# ------------------------------------------------------------------
 # Retry helper for brain gateway calls
 # ------------------------------------------------------------------
 def _retry_brain_call(func, *args, retries: int = 2, backoff: float = 0.5, **kwargs):
@@ -4551,10 +3371,13 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
     except Exception as e:
         import traceback as _tb
         tb_str = _tb.format_exc()
-        print(f"[hermes-bridge] UNHANDLED ERROR in chat_completions: {e}\n{tb_str}", flush=True)
+        _log.error("chat", "unhandled error in chat_completions", error=str(e), traceback=tb_str)
+        # Never leak tracebacks to clients — log full context server-side,
+        # return only a structured error code and sanitized message.
+        safe_message = str(e) if len(str(e)) < 500 else f"{str(e)[:497]}..."
         return JSONResponse(
             status_code=500,
-            content={"error": {"message": str(e), "traceback": tb_str}},
+            content={"error": {"message": safe_message, "code": "INTERNAL_ERROR"}},
         )
 
 
@@ -6627,7 +5450,6 @@ async def swarm_endpoint(request: Request, body: SwarmRequest):
 # ------------------------------------------------------------------
 # Cron job storage (persistent JSON file + in-memory cache)
 # ------------------------------------------------------------------
-_cron_jobs: dict[str, dict] = {}
 _cron_run_history: dict[str, list[dict]] = {}  # job_id -> list of run records
 MAX_RUN_HISTORY = 20
 
