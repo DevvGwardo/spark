@@ -47,7 +47,7 @@ const bridge = {
   healthDelayMs: 0,
 }
 
-const fakeFetch = vi.fn(async (input: string | URL | Request) => {
+const fakeFetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
   const url = String(input)
   if (!bridge.up) throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } })
   if (url.endsWith('/health')) {
@@ -55,7 +55,10 @@ const fakeFetch = vi.fn(async (input: string | URL | Request) => {
     return new Response('{}', { status: bridge.healthOk ? 200 : 503 })
   }
   if (url.endsWith('/diag')) {
-    return new Response(JSON.stringify(bridge.diagToken === undefined ? { pid: 1 } : { pid: 1, token: bridge.diagToken }), {
+    // Mirrors main.py /diag: never echoes the token, only whether ours matched.
+    const presented = new Headers(init?.headers).get('X-Hermes-Bridge-Token')
+    const tokenMatches = bridge.diagToken !== undefined && presented === bridge.diagToken
+    return new Response(JSON.stringify({ pid: 1, launch_token_present: bridge.diagToken !== undefined, token_matches: tokenMatches }), {
       status: 200,
     })
   }
@@ -201,7 +204,7 @@ describe('bridge supervisor: ownership check via /diag', () => {
     expect(sup.isRunning()).toBe(false)
   })
 
-  it('treats a /diag without a token (non-loopback view) as unowned', async () => {
+  it('treats a bridge launched without a token as unowned', async () => {
     bridge.up = true
     bridge.diagToken = undefined
     const sup = makeSupervisor()

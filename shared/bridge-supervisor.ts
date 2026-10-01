@@ -14,8 +14,9 @@
  * SIGKILL), respawn with backoff, the readiness state machine, and logging to
  * the rotating `~/.hermes/logs/spark-bridge.log`.
  *
- * Ownership: `/diag` returns the bridge's launch token to loopback callers. A
- * running bridge is adopted only when that token equals ours; anything else on
+ * Ownership: we send our launch token to `/diag`, which answers only whether it
+ * matches (it never discloses the token). A running bridge is adopted only on a
+ * match; anything else on
  * the port is "unowned" and handled by the injected policy, never silently
  * adopted.
  */
@@ -386,8 +387,7 @@ export class BridgeSupervisor {
   /** True only when the bridge on our port reports our launch token via /diag. */
   async isOwned(): Promise<boolean> {
     const r = await this.probe('/diag', 1_500);
-    const token = (r.body as { token?: unknown } | null | undefined)?.token;
-    return r.ok && typeof token === 'string' && token.length > 0 && token === this.token;
+    return r.ok && (r.body as { token_matches?: unknown } | null | undefined)?.token_matches === true;
   }
 
   // ── Deps / status / install ──────────────────────────────────────────────
