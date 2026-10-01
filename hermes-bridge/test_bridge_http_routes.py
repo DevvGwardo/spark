@@ -18,6 +18,7 @@ import sqlite3
 import sys
 import time
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -141,11 +142,17 @@ class SessionRouteTests(RealBridgeTestCase):
         self.sessions.clear()
         self.addCleanup(lambda: (self.sessions.clear(), self.sessions.update(saved)))
 
-    def _add_memory_session(self, sid, *, created_at, profile="default", status="active", **extra):
+    def _add_memory_session(self, sid, *, created_at, profile="default", status="active",
+                            updated_at=None, **extra):
+        # The tracker is TTL-bounded on updated_at (spec 5.5), so fixtures are
+        # "recently updated" unless a test says otherwise; created_at drives
+        # the list ordering.
+        if updated_at is None:
+            updated_at = datetime.now(timezone.utc).isoformat()
         self.sessions[sid] = {
             "id": sid,
             "created_at": created_at,
-            "updated_at": created_at,
+            "updated_at": updated_at,
             "messages": 1,
             "model": extra.pop("model", "anthropic/claude"),
             "status": status,
@@ -156,6 +163,15 @@ class SessionRouteTests(RealBridgeTestCase):
             "profile": profile,
             **extra,
         }
+
+    def test_stale_finished_sessions_age_out_of_the_list(self):
+        # Phase 5 bound: finished entries expire `ttl` after their last update,
+        # pruned on the next insert. The durable copy is state.db.
+        stale = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+        self._add_memory_session("old", created_at=stale, updated_at=stale, status="completed")
+        self._add_memory_session("new", created_at="2026-09-01T00:00:00+00:00")
+        ids = [s["id"] for s in self.client.get("/sessions").json()["sessions"]]
+        self.assertEqual(ids, ["new"])
 
     def test_list_is_empty_with_counts_when_there_is_nothing(self):
         r = self.client.get("/sessions")
@@ -519,60 +535,130 @@ class McpInstallTests(RealBridgeTestCase):
 # ---------------------------------------------------------------------------
 
 
-class CronLocalStoreTests(RealBridgeTestCase):
-    """The bridge-local JSON store used when hermes-agent's cron is absent."""
+class _FakeHermesCron:
+    """In-memory stand-in for hermes-agent's cron.jobs API (the only backend)."""
+
+    def __init__(self):
+        self.jobs: dict[str, dict] = {}
+        self.created = []
+        self._n = 0
+
+    def create_job(self, *, prompt, schedule, name, deliver, origin):
+        self._n += 1
+        job_id = f"job{self._n}"
+        job = {"id": job_id, "prompt": prompt, "schedule": schedule, "name": name or job_id,
+               "deliver": deliver, "origin": origin, "enabled": True,
+               "created_at": f"2026-09-{self._n:02d}T00:00:00+00:00",
+               "conversation_id": (origin or {}).get("conversation_id") if isinstance(origin, dict) else None}
+        self.jobs[job_id] = job
+        self.created.append(job)
+        return dict(job)
+
+    def list_jobs(self, include_disabled=False):
+        return [dict(j) for j in self.jobs.values() if include_disabled or j["enabled"]]
+
+    def get_job(self, job_id):
+        job = self.jobs.get(job_id)
+        return dict(job) if job else None
+
+    def remove_job(self, job_id):
+        return self.jobs.pop(job_id, None) is not None
+
+    def _set_enabled(self, job_id, enabled):
+        job = self.jobs.get(job_id)
+        if not job:
+            return None
+        job["enabled"] = enabled
+        return dict(job)
+
+    def pause_job(self, job_id):
+        return self._set_enabled(job_id, False)
+
+    def resume_job(self, job_id):
+        return self._set_enabled(job_id, True)
+
+    def trigger_job(self, job_id):
+        job = self.jobs.get(job_id)
+        if not job:
+            return None
+        job["triggered"] = True
+        return dict(job)
+
+
+class CronRouteTests(RealBridgeTestCase):
+    """/cron delegates to hermes-agent's cron (spec 5.6: the only implementation)."""
 
     def setUp(self):
         super().setUp()
         self.cron = self.kit.mod("routes.cron")
-        data = self.hermes_home / "bridge-data"
-        self.jobs_file = data / "cron_jobs.json"
-        self.history_file = data / "cron_history.json"
-        self.patch_object(self.cron, "_HERMES_CRON_AVAILABLE", False)
-        self.patch_object(self.cron, "_CRON_DATA_DIR", str(data))
-        self.patch_object(self.cron, "_CRON_JOBS_FILE", str(self.jobs_file))
-        self.patch_object(self.cron, "_CRON_HISTORY_FILE", str(self.history_file))
-        self.patch_object(self.cron, "_cron_jobs", {})
-        self.patch_object(self.cron, "_cron_run_history", {})
-        self.agent = MagicMock()
-        self.patch_object(self.cron, "_run_cron_agent", self.agent)
+        self.fake = _FakeHermesCron()
+        self.patch_object(self.cron, "_HERMES_CRON_AVAILABLE", True)
+        self.patch_object(
+            self.cron, "_map_hermes_job",
+            lambda job: {"mapped": True, "status": "active" if job.get("enabled") else "paused", **job},
+        )
+        for route_name, fake_name in (
+            ("_hermes_create_job", "create_job"),
+            ("_hermes_list_jobs", "list_jobs"),
+            ("_hermes_get_job", "get_job"),
+            ("_hermes_remove_job", "remove_job"),
+            ("_hermes_pause_job", "pause_job"),
+            ("_hermes_resume_job", "resume_job"),
+            ("_hermes_trigger_job", "trigger_job"),
+        ):
+            self.patch_object(self.cron, route_name, getattr(self.fake, fake_name))
+        self.tick = MagicMock()
+        self.patch_object(self.cron, "_run_hermes_tick_now", self.tick)
+        self.history = MagicMock(return_value=[{"run_id": "r1", "status": "completed"}])
+        self.patch_object(self.cron, "_build_hermes_run_history", self.history)
 
     def _create(self, **body):
-        body = {"schedule": "*/5 * * * *", "prompt": "check CI", **body}
+        body = {"schedule": "every 1h", "prompt": "check CI", **body}
         r = self.client.post("/cron", json=body)
         self.assertEqual(r.status_code, 201, r.text)
         return r.json()["job"]
 
-    def test_crud_round_trip_persists_to_disk(self):
+    def test_crud_round_trip(self):
         self.assertEqual(self.client.get("/cron").json(), {"jobs": []})
         job = self._create(name="nightly")
+        self.assertTrue(job["mapped"])
         self.assertEqual(job["name"], "nightly")
-        self.assertEqual(job["status"], "active")
-        self.assertEqual(json.loads(self.jobs_file.read_text())[job["id"]]["prompt"], "check CI")
-
         self.assertEqual([j["id"] for j in self.client.get("/cron").json()["jobs"]], [job["id"]])
 
         r = self.client.post(f"/cron/{job['id']}/pause")
-        self.assertEqual(r.json()["job"]["status"], "paused")
-        self.assertEqual(json.loads(self.jobs_file.read_text())[job["id"]]["status"], "paused")
+        self.assertEqual((r.status_code, r.json()["job"]["status"]), (200, "paused"))
+        # Paused jobs are still listed (include_disabled=True).
+        self.assertEqual(len(self.client.get("/cron").json()["jobs"]), 1)
         r = self.client.post(f"/cron/{job['id']}/resume")
-        self.assertEqual(r.json()["job"]["status"], "active")
+        self.assertEqual((r.status_code, r.json()["job"]["status"]), (200, "active"))
 
-        r = self.client.delete(f"/cron/{job['id']}")
-        self.assertEqual(r.json(), {"ok": True})
-        self.assertEqual(json.loads(self.jobs_file.read_text()), {})
+        self.assertEqual(self.client.delete(f"/cron/{job['id']}").json(), {"ok": True})
+        self.assertEqual(self.fake.jobs, {})
         self.assertEqual(self.client.get("/cron").json(), {"jobs": []})
 
-    def test_default_name_is_derived_from_the_id(self):
-        job = self._create()
-        self.assertEqual(job["name"], f"job-{job['id']}")
+    def test_create_delegates_with_local_delivery_and_trimmed_name(self):
+        self._create(name="   ")
+        created = self.fake.created[-1]
+        self.assertEqual(created["deliver"], "local")
+        self.assertEqual((created["prompt"], created["schedule"]), ("check CI", "every 1h"))
+        self.assertEqual(created["name"], created["id"])  # blank name -> None -> backend default
 
     def test_create_validation(self):
         self.assertEqual(self.client.post("/cron", json={"prompt": "x"}).status_code, 400)
         self.assertEqual(self.client.post("/cron", json={"schedule": "* * * * *"}).status_code, 400)
         r = self.client.post("/cron", content=b"{not json", headers={"content-type": "application/json"})
         self.assertEqual(r.status_code, 400)
-        self.assertFalse(self.jobs_file.exists())
+        self.assertEqual(self.fake.created, [])
+
+    def test_list_is_newest_first_and_filters_by_conversation(self):
+        self.fake.jobs = {
+            "a1": {"id": "a1", "conversation_id": "c1", "created_at": "2026-09-01", "enabled": True},
+            "b2": {"id": "b2", "conversation_id": "c2", "created_at": "2026-09-02", "enabled": False},
+        }
+        body = self.client.get("/cron").json()
+        self.assertEqual([j["id"] for j in body["jobs"]], ["b2", "a1"])
+        body = self.client.get("/cron", params={"conversation_id": "c1"}).json()
+        self.assertEqual([j["id"] for j in body["jobs"]], ["a1"])
 
     def test_unknown_job_is_404_everywhere(self):
         for method, path in (
@@ -584,73 +670,77 @@ class CronLocalStoreTests(RealBridgeTestCase):
         ):
             r = getattr(self.client, method)(path)
             self.assertEqual(r.status_code, 404, path)
+        self.tick.assert_not_called()
+        self.history.assert_not_called()
 
     def test_history_rejects_an_invalid_job_id(self):
         r = self.client.get("/cron/bad%20id/history")
         self.assertEqual(r.status_code, 422)
+        self.history.assert_not_called()
 
-    def test_run_records_history_and_starts_the_agent(self):
+    def test_run_queues_the_job_and_kicks_a_tick(self):
         job = self._create()
         r = self.client.post(f"/cron/{job['id']}/run")
         self.assertEqual(r.status_code, 200)
-        run = r.json()
-        self.assertEqual(run["status"], "running")
-        # The agent runs on a daemon thread; give it a moment to be called.
+        body = r.json()
+        self.assertEqual((body["ok"], body["status"]), (True, "queued"))
+        self.assertTrue(body["job"]["triggered"])
+        # The tick runs on a daemon thread; give it a moment.
         deadline = time.monotonic() + 5
-        while not self.agent.called and time.monotonic() < deadline:
+        while not self.tick.called and time.monotonic() < deadline:
             time.sleep(0.01)
-        self.agent.assert_called_once()
+        self.tick.assert_called_once()
 
-        history = self.client.get(f"/cron/{job['id']}/history").json()
-        self.assertEqual(history["job_id"], job["id"])
-        self.assertEqual([h["run_id"] for h in history["runs"]], [run["run_id"]])
-        self.assertIsNotNone(self.client.get("/cron").json()["jobs"][0]["last_run"])
-        self.assertIn(job["id"], json.loads(self.history_file.read_text()))
-
-    def test_delete_drops_history_too(self):
+    def test_history_comes_from_the_hermes_run_records(self):
         job = self._create()
-        self.client.post(f"/cron/{job['id']}/run")
-        self.client.delete(f"/cron/{job['id']}")
-        self.assertNotIn(job["id"], json.loads(self.history_file.read_text()))
+        r = self.client.get(f"/cron/{job['id']}/history")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json(), {"job_id": job["id"], "runs": [{"run_id": "r1", "status": "completed"}]})
+        self.history.assert_called_once_with(job["id"])
 
 
-class CronHermesBackendTests(RealBridgeTestCase):
-    """When hermes-agent's cron is importable the routes delegate to it."""
+class CronUnavailableTests(RealBridgeTestCase):
+    """Without hermes-agent cron every /cron route is a retryable 503 envelope."""
 
     def setUp(self):
         super().setUp()
         self.cron = self.kit.mod("routes.cron")
-        self.patch_object(self.cron, "_HERMES_CRON_AVAILABLE", True)
-        self.patch_object(self.cron, "_map_hermes_job", lambda job: {"mapped": True, **job})
-        self.jobs = [
-            {"id": "a1", "conversation_id": "c1", "created_at": "2026-09-01"},
-            {"id": "b2", "conversation_id": "c2", "created_at": "2026-09-02"},
-        ]
-        self.patch_object(self.cron, "_hermes_list_jobs", MagicMock(return_value=self.jobs))
-        self.create = MagicMock(return_value={"id": "new"})
-        self.patch_object(self.cron, "_hermes_create_job", self.create)
-        self.patch_object(self.cron, "_hermes_remove_job", MagicMock(side_effect=lambda j: j == "a1"))
-        self.patch_object(self.cron, "_hermes_pause_job", MagicMock(return_value=None))
+        self.patch_object(self.cron, "_HERMES_CRON_AVAILABLE", False)
+        self.patch_object(self.cron, "_HERMES_CRON_IMPORT_ERROR", "No module named 'cron'")
+        self.backend = MagicMock(side_effect=AssertionError("backend must not be called"))
+        for name in ("_hermes_create_job", "_hermes_list_jobs", "_hermes_get_job",
+                     "_hermes_remove_job", "_hermes_pause_job", "_hermes_resume_job",
+                     "_hermes_trigger_job", "_run_hermes_tick_now"):
+            self.patch_object(self.cron, name, self.backend)
 
-    def test_list_is_newest_first_and_filters_by_conversation(self):
-        body = self.client.get("/cron").json()
-        self.assertEqual([j["id"] for j in body["jobs"]], ["b2", "a1"])
-        self.assertTrue(all(j["mapped"] for j in body["jobs"]))
-        body = self.client.get("/cron", params={"conversation_id": "c1"}).json()
-        self.assertEqual([j["id"] for j in body["jobs"]], ["a1"])
+    def test_every_route_is_503_with_the_import_error(self):
+        for method, path, kwargs in (
+            ("get", "/cron", {}),
+            ("post", "/cron", {"json": {"schedule": "every 1h", "prompt": "p"}}),
+            ("delete", "/cron/job1", {}),
+            ("post", "/cron/job1/pause", {}),
+            ("post", "/cron/job1/resume", {}),
+            ("post", "/cron/job1/run", {}),
+            ("get", "/cron/job1/history", {}),
+        ):
+            r = getattr(self.client, method)(path, **kwargs)
+            self.assertEqual(r.status_code, 503, path)
+            error = r.json()["error"]
+            self.assertEqual(error["code"], "BRIDGE_STARTING", path)
+            self.assertTrue(error["retryable"], path)
+            self.assertIn("No module named 'cron'", error["message"], path)
+        self.backend.assert_not_called()
 
-    def test_create_delegates_with_local_delivery(self):
-        r = self.client.post("/cron", json={"schedule": "every 1h", "prompt": "p", "name": "  "})
-        self.assertEqual(r.status_code, 201)
-        self.assertEqual(r.json()["job"], {"mapped": True, "id": "new"})
-        kwargs = self.create.call_args.kwargs
-        self.assertEqual(kwargs["deliver"], "local")
-        self.assertEqual((kwargs["prompt"], kwargs["schedule"], kwargs["name"]), ("p", "every 1h", None))
+    def test_request_validation_still_wins_over_503(self):
+        # Bad input is the caller's bug whether or not cron is up.
+        self.assertEqual(self.client.post("/cron", json={"prompt": "x"}).status_code, 400)
+        self.assertEqual(self.client.get("/cron/bad%20id/history").status_code, 422)
 
-    def test_delete_and_pause_map_missing_jobs_to_404(self):
-        self.assertEqual(self.client.delete("/cron/a1").status_code, 200)
-        self.assertEqual(self.client.delete("/cron/zz").status_code, 404)
-        self.assertEqual(self.client.post("/cron/a1/pause").status_code, 404)
+    def test_message_has_a_default_when_no_import_error_was_recorded(self):
+        self.patch_object(self.cron, "_HERMES_CRON_IMPORT_ERROR", None)
+        r = self.client.get("/cron")
+        self.assertEqual(r.status_code, 503)
+        self.assertIn("not importable", r.json()["error"]["message"])
 
 
 # ---------------------------------------------------------------------------
