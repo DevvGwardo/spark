@@ -16,7 +16,7 @@ export type Provider =
   | 'openai' | 'anthropic' | 'google' | 'xai'
   | 'groq' | 'deepseek' | 'mistral' | 'together'
   | 'minimax' | 'minimax-payg' | 'kimi' | 'kimi-coding' | 'openclaw'
-  | 'cerebras' | 'openrouter' | 'sambanova' | 'z-ai' | 'hermes';
+  | 'cerebras' | 'openrouter' | 'sambanova' | 'z-ai' | 'hermes' | 'nub';
 
 export type ReasoningEffort = 'low' | 'medium' | 'high';
 export type ThemeMode = 'light' | 'dark' | 'system';
@@ -139,6 +139,7 @@ const defaultProviders: Record<Provider, ProviderConfig> = {
   sambanova: makeDefault('Meta-Llama-3.3-70B-Instruct'),
   'z-ai': makeDefault('glm-5-plus'),
   hermes: makeDefault(HERMES_DEFAULT_MODEL),
+  nub: makeDefault('glm-5.3-flash'),
 };
 
 const DEFAULT_SYSTEM_PROMPT = 'You are a helpful assistant.';

@@ -14,6 +14,11 @@ export interface ProviderInfo {
   supportsOrchestrator?: boolean;
   iconLetter: string;
   iconColor: string;
+  /**
+   * Set when the key comes from a sign-in flow instead of being pasted
+   * (the UI shows a sign-in button in place of the key field).
+   */
+  signIn?: 'nub';
 }
 
 export const HERMES_RECOMMENDED_MODELS = [
@@ -75,6 +80,19 @@ export const CATEGORY_LABELS: Record<ProviderCategory, string> = {
 };
 
 export const PROVIDERS: Record<Provider, ProviderInfo> = {
+  nub: {
+    id: 'nub',
+    label: 'Nub',
+    description: 'Sign in with your nub agent account — no API key',
+    needsApiKey: true,
+    signIn: 'nub',
+    category: 'featured',
+    badge: 'Sign in',
+    iconLetter: 'N',
+    iconColor: '#5AA2EF',
+    models: ['glm-5.3-flash'],
+    defaultModel: 'glm-5.3-flash',
+  },
   openai: {
     id: 'openai',
     label: 'OpenAI',
@@ -364,7 +382,7 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
 
 // Ordered list for UI display
 export const PROVIDER_ORDER: Provider[] = [
-  'hermes', 'openai', 'anthropic', 'google', 'xai',
+  'hermes', 'nub', 'openai', 'anthropic', 'google', 'xai',
   'groq', 'cerebras', 'openrouter', 'sambanova',
   'deepseek', 'mistral', 'together', 'minimax', 'minimax-payg', 'kimi', 'kimi-coding', 'z-ai',
   'openclaw',

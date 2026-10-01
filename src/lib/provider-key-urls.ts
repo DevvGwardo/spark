@@ -18,4 +18,5 @@ export const PROVIDER_KEY_URLS: Partial<Record<Provider, string>> = {
   openrouter: 'https://openrouter.ai/keys',
   sambanova: 'https://cloud.sambanova.ai/apis',
   hermes: 'https://openrouter.ai/keys',
+  nub: 'https://www.maiavm.com',
 };
