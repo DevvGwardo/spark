@@ -322,7 +322,7 @@ class ActiveRunRegistryTests(unittest.TestCase):
 
     def test_main_passes_run_id_on_the_completion_path(self):
         """Pin the call site, or the fix is inert."""
-        main_src = Path(__file__).with_name("main.py").read_text()
+        main_src = Path(__file__).with_name("chat_impl.py").read_text()  # moved from main.py (spec 4.1)
         self.assertIn("unregister_active_run(workspace_id, run_id)", main_src)
 
 

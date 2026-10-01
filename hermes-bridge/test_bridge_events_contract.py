@@ -17,6 +17,20 @@ from pathlib import Path
 import bridge_events as be
 
 MAIN = Path(__file__).with_name("main.py")
+# main.py was split into routers and helper modules (spec 4.1). The event
+# contract below applies to every module that used to live in it.
+BRIDGE_SOURCES = [MAIN] + [
+    Path(__file__).with_name(name)
+    for name in (
+        "bridge_config.py",
+        "bridge_state.py",
+        "bridge_workspace.py",
+        "bridge_providers.py",
+        "chat_common.py",
+        "chat_impl.py",
+        "acp_chat.py",
+    )
+] + sorted(Path(__file__).with_name("routes").glob("*.py"))
 
 
 class ConstructorShapeTests(unittest.TestCase):
@@ -229,8 +243,11 @@ class MainUsesConstructorsTests(unittest.TestCase):
         "usage",
     }
 
-    def _ast(self):
-        return ast.parse(MAIN.read_text())
+    def _ast(self, path=MAIN):
+        return ast.parse(path.read_text())
+
+    def _all_text(self):
+        return "\n".join(path.read_text() for path in BRIDGE_SOURCES)
 
     def test_no_inline_payload_dicts_for_custom_events(self):
         """A custom event's payload must never be a dict literal.
@@ -241,18 +258,19 @@ class MainUsesConstructorsTests(unittest.TestCase):
         call site, which is exactly the drift this contract exists to stop.
         """
         offenders = []
-        for node in ast.walk(self._ast()):
-            if not isinstance(node, ast.Dict):
-                continue
-            for key, value in zip(node.keys, node.values):
-                if not (
-                    isinstance(key, ast.Constant)
-                    and isinstance(key.value, str)
-                    and key.value in self.EVENT_KEYS
-                ):
+        for path in BRIDGE_SOURCES:
+            for node in ast.walk(self._ast(path)):
+                if not isinstance(node, ast.Dict):
                     continue
-                if isinstance(value, ast.Dict):
-                    offenders.append(f"{key.value} at line {value.lineno}")
+                for key, value in zip(node.keys, node.values):
+                    if not (
+                        isinstance(key, ast.Constant)
+                        and isinstance(key.value, str)
+                        and key.value in self.EVENT_KEYS
+                    ):
+                        continue
+                    if isinstance(value, ast.Dict):
+                        offenders.append(f"{key.value} at {path.name}:{value.lineno}")
         self.assertEqual(
             offenders, [],
             f"custom event payloads still built inline in main.py: {offenders}",
@@ -264,7 +282,7 @@ class MainUsesConstructorsTests(unittest.TestCase):
         Their payloads belong to hermes-agent, so the bridge forwards the object it
         received rather than reconstructing a field list it does not own.
         """
-        src = MAIN.read_text()
+        src = self._all_text()
         for key, var in (
             ("computer_use_frame", "frame"),
             ("agent_notice", "notice"),
@@ -277,32 +295,35 @@ class MainUsesConstructorsTests(unittest.TestCase):
             )
 
     def test_main_imports_the_constructors_it_uses(self):
-        src = MAIN.read_text()
-        tree = self._ast()
-        used = {
-            node.func.id
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id in {
-                "tool_activity_event",
-                "agent_status_event",
-                "transport_status_event",
-                "fallback_switch_event",
-                "agent_notice_clear_event",
-                "usage_event",
-                "hermes_run_server_tool_event",
-                "swarm_result_server_tool_event",
+        any_used = set()
+        for path in BRIDGE_SOURCES:
+            src = path.read_text()
+            tree = self._ast(path)
+            used = {
+                node.func.id
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in {
+                    "tool_activity_event",
+                    "agent_status_event",
+                    "transport_status_event",
+                    "fallback_switch_event",
+                    "agent_notice_clear_event",
+                    "usage_event",
+                    "hermes_run_server_tool_event",
+                    "swarm_result_server_tool_event",
+                }
             }
-        }
-        self.assertTrue(used, "expected main.py to call the new constructors")
-        for name in sorted(used):
-            self.assertIn(name, src.split("from bridge_events import", 1)[-1].split(")", 1)[0],
-                          f"{name} is called but not imported from bridge_events")
+            any_used |= used
+            for name in sorted(used):
+                self.assertIn(name, src.split("from bridge_events import", 1)[-1].split(")", 1)[0],
+                              f"{name} is called but not imported from bridge_events")
+        self.assertTrue(any_used, "expected main.py to call the new constructors")
 
     def test_local_agent_status_builder_is_gone(self):
         self.assertNotIn(
-            "def _build_agent_status", MAIN.read_text(),
+            "def _build_agent_status", self._all_text(),
             "the local builder should be replaced by the contract constructor",
         )
 

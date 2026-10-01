@@ -82,8 +82,8 @@ class LoopbackAuthTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_loopback_without_a_token_is_rejected(self):
         """The G2 fix: loopback is no longer a free pass."""
-        with patch.object(main, "HERMES_BRIDGE_TOKEN", TOKEN), \
-             patch.object(main, "_BRIDGE_ALLOW_LOOPBACK_NOAUTH", False):
+        with patch("bridge_config.HERMES_BRIDGE_TOKEN", TOKEN), \
+             patch("bridge_config._BRIDGE_ALLOW_LOOPBACK_NOAUTH", False):
             status, body = await _run_guard(
                 _request("/v1/chat/completions", host="127.0.0.1", token=None)
             )
@@ -92,24 +92,24 @@ class LoopbackAuthTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(body["error"]["retryable"])
 
     async def test_loopback_with_the_wrong_token_is_rejected(self):
-        with patch.object(main, "HERMES_BRIDGE_TOKEN", TOKEN), \
-             patch.object(main, "_BRIDGE_ALLOW_LOOPBACK_NOAUTH", False):
+        with patch("bridge_config.HERMES_BRIDGE_TOKEN", TOKEN), \
+             patch("bridge_config._BRIDGE_ALLOW_LOOPBACK_NOAUTH", False):
             status, _ = await _run_guard(
                 _request("/v1/chat/completions", host="127.0.0.1", token="wrong")
             )
         self.assertEqual(status, 401)
 
     async def test_loopback_with_the_right_token_passes(self):
-        with patch.object(main, "HERMES_BRIDGE_TOKEN", TOKEN), \
-             patch.object(main, "_BRIDGE_ALLOW_LOOPBACK_NOAUTH", False):
+        with patch("bridge_config.HERMES_BRIDGE_TOKEN", TOKEN), \
+             patch("bridge_config._BRIDGE_ALLOW_LOOPBACK_NOAUTH", False):
             status, _ = await _run_guard(
                 _request("/v1/chat/completions", host="127.0.0.1", token=TOKEN)
             )
         self.assertEqual(status, 200)
 
     async def test_loopback_via_ipv6_loopback_also_requires_the_token(self):
-        with patch.object(main, "HERMES_BRIDGE_TOKEN", TOKEN), \
-             patch.object(main, "_BRIDGE_ALLOW_LOOPBACK_NOAUTH", False):
+        with patch("bridge_config.HERMES_BRIDGE_TOKEN", TOKEN), \
+             patch("bridge_config._BRIDGE_ALLOW_LOOPBACK_NOAUTH", False):
             status, _ = await _run_guard(
                 _request("/v1/chat/completions", host="::1", token=None)
             )
@@ -117,8 +117,8 @@ class LoopbackAuthTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_health_stays_open_without_a_token(self):
         """Readiness must answer before a caller can have authenticated."""
-        with patch.object(main, "HERMES_BRIDGE_TOKEN", TOKEN), \
-             patch.object(main, "_BRIDGE_ALLOW_LOOPBACK_NOAUTH", False):
+        with patch("bridge_config.HERMES_BRIDGE_TOKEN", TOKEN), \
+             patch("bridge_config._BRIDGE_ALLOW_LOOPBACK_NOAUTH", False):
             status, _ = await _run_guard(_request("/health", host="127.0.0.1", token=None))
         self.assertEqual(status, 200)
 
@@ -129,14 +129,14 @@ class LoopbackAuthTests(unittest.IsolatedAsyncioTestCase):
         process it launched, and it would then tear the bridge down as unowned.
         The supervisor now also sends the token, so this can tighten later.
         """
-        with patch.object(main, "HERMES_BRIDGE_TOKEN", TOKEN), \
-             patch.object(main, "_BRIDGE_ALLOW_LOOPBACK_NOAUTH", False):
+        with patch("bridge_config.HERMES_BRIDGE_TOKEN", TOKEN), \
+             patch("bridge_config._BRIDGE_ALLOW_LOOPBACK_NOAUTH", False):
             status, _ = await _run_guard(_request("/diag", host="127.0.0.1", token=None))
         self.assertEqual(status, 200)
 
     async def test_non_loopback_behaviour_is_unchanged(self):
-        with patch.object(main, "HERMES_BRIDGE_TOKEN", TOKEN), \
-             patch.object(main, "_BRIDGE_ALLOW_LOOPBACK_NOAUTH", False):
+        with patch("bridge_config.HERMES_BRIDGE_TOKEN", TOKEN), \
+             patch("bridge_config._BRIDGE_ALLOW_LOOPBACK_NOAUTH", False):
             denied, _ = await _run_guard(
                 _request("/v1/chat/completions", host="192.168.1.50", token=None)
             )
@@ -148,8 +148,8 @@ class LoopbackAuthTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_no_token_configured_means_no_auth_at_all(self):
         """Local dev, unchanged: an unconfigured bridge stays open."""
-        with patch.object(main, "HERMES_BRIDGE_TOKEN", ""), \
-             patch.object(main, "_BRIDGE_ALLOW_LOOPBACK_NOAUTH", False):
+        with patch("bridge_config.HERMES_BRIDGE_TOKEN", ""), \
+             patch("bridge_config._BRIDGE_ALLOW_LOOPBACK_NOAUTH", False):
             status, _ = await _run_guard(
                 _request("/v1/chat/completions", host="127.0.0.1", token=None)
             )
@@ -159,16 +159,16 @@ class LoopbackAuthTests(unittest.IsolatedAsyncioTestCase):
         """The guard accepts either header form; clients should not care which."""
         request = _request("/v1/chat/completions", host="127.0.0.1", token=None)
         request.headers["Authorization"] = f"Bearer {TOKEN}"
-        with patch.object(main, "HERMES_BRIDGE_TOKEN", TOKEN), \
-             patch.object(main, "_BRIDGE_ALLOW_LOOPBACK_NOAUTH", False):
+        with patch("bridge_config.HERMES_BRIDGE_TOKEN", TOKEN), \
+             patch("bridge_config._BRIDGE_ALLOW_LOOPBACK_NOAUTH", False):
             status, _ = await _run_guard(request)
         self.assertEqual(status, 200)
 
     async def test_forbidden_origin_still_wins_and_is_an_envelope(self):
         request = _request("/v1/chat/completions", host="127.0.0.1", token=TOKEN)
         request.headers["Origin"] = "https://evil.example"
-        with patch.object(main, "HERMES_BRIDGE_TOKEN", TOKEN), \
-             patch.object(main, "_BRIDGE_ALLOW_LOOPBACK_NOAUTH", False):
+        with patch("bridge_config.HERMES_BRIDGE_TOKEN", TOKEN), \
+             patch("bridge_config._BRIDGE_ALLOW_LOOPBACK_NOAUTH", False):
             status, body = await _run_guard(request)
         self.assertEqual(status, 403)
         self.assertEqual(body["error"]["code"], BRIDGE_AUTH)
@@ -178,8 +178,8 @@ class EscapeHatchTests(unittest.IsolatedAsyncioTestCase):
     """HERMES_BRIDGE_ALLOW_LOOPBACK_NOAUTH=1 restores the old behaviour."""
 
     async def test_hatch_allows_loopback_without_a_token(self):
-        with patch.object(main, "HERMES_BRIDGE_TOKEN", TOKEN), \
-             patch.object(main, "_BRIDGE_ALLOW_LOOPBACK_NOAUTH", True):
+        with patch("bridge_config.HERMES_BRIDGE_TOKEN", TOKEN), \
+             patch("bridge_config._BRIDGE_ALLOW_LOOPBACK_NOAUTH", True):
             status, _ = await _run_guard(
                 _request("/v1/chat/completions", host="127.0.0.1", token=None)
             )
@@ -187,8 +187,8 @@ class EscapeHatchTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_hatch_still_does_not_open_up_non_loopback(self):
         """The hatch is scoped to loopback on purpose."""
-        with patch.object(main, "HERMES_BRIDGE_TOKEN", TOKEN), \
-             patch.object(main, "_BRIDGE_ALLOW_LOOPBACK_NOAUTH", True):
+        with patch("bridge_config.HERMES_BRIDGE_TOKEN", TOKEN), \
+             patch("bridge_config._BRIDGE_ALLOW_LOOPBACK_NOAUTH", True):
             status, _ = await _run_guard(
                 _request("/v1/chat/completions", host="192.168.1.50", token=None)
             )
@@ -215,8 +215,11 @@ class TestDiagNeverDisclosesToken(unittest.IsolatedAsyncioTestCase):
 
     async def _diag(self, presented):
         req = _request("/diag", host="127.0.0.1", token=presented, method="GET")
-        with patch.object(main, "HERMES_BRIDGE_TOKEN", "secret-launch-token"):
-            return await main.diag(req)
+        import bridge_config
+        from routes import health
+
+        with patch.object(bridge_config, "HERMES_BRIDGE_TOKEN", "secret-launch-token"):
+            return await health.diag(req)
 
     async def test_loopback_without_token_gets_no_token(self):
         payload = await self._diag(None)
@@ -253,8 +256,8 @@ class ChatOverNonLoopbackTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_authorized_non_loopback_request_is_allowed(self):
         """The shape the client actually sends, from a non-loopback client."""
-        with patch.object(main, "HERMES_BRIDGE_TOKEN", TOKEN), \
-             patch.object(main, "_BRIDGE_ALLOW_LOOPBACK_NOAUTH", False):
+        with patch("bridge_config.HERMES_BRIDGE_TOKEN", TOKEN), \
+             patch("bridge_config._BRIDGE_ALLOW_LOOPBACK_NOAUTH", False):
             status, _ = await _run_guard(
                 _request(
                     "/v1/chat/completions",
@@ -265,8 +268,8 @@ class ChatOverNonLoopbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status, 200)
 
     async def test_unauthorized_non_loopback_request_is_denied(self):
-        with patch.object(main, "HERMES_BRIDGE_TOKEN", TOKEN), \
-             patch.object(main, "_BRIDGE_ALLOW_LOOPBACK_NOAUTH", False):
+        with patch("bridge_config.HERMES_BRIDGE_TOKEN", TOKEN), \
+             patch("bridge_config._BRIDGE_ALLOW_LOOPBACK_NOAUTH", False):
             status, body = await _run_guard(
                 _request("/v1/chat/completions", host="10.0.0.5", token=None)
             )
@@ -279,8 +282,8 @@ class ChatOverNonLoopbackTests(unittest.IsolatedAsyncioTestCase):
         request = _request("/v1/chat/completions", host="127.0.0.1", token=None)
         request.headers["Content-Type"] = headers["Content-Type"]
         request.headers["X-Hermes-Bridge-Token"] = headers["X-Hermes-Bridge-Token"]
-        with patch.object(main, "HERMES_BRIDGE_TOKEN", TOKEN), \
-             patch.object(main, "_BRIDGE_ALLOW_LOOPBACK_NOAUTH", False):
+        with patch("bridge_config.HERMES_BRIDGE_TOKEN", TOKEN), \
+             patch("bridge_config._BRIDGE_ALLOW_LOOPBACK_NOAUTH", False):
             status, _ = await _run_guard(request)
         self.assertEqual(
             status, 200,
@@ -293,8 +296,11 @@ class TestDiagNeverDisclosesToken(unittest.IsolatedAsyncioTestCase):
 
     async def _diag(self, presented):
         req = _request("/diag", host="127.0.0.1", token=presented, method="GET")
-        with patch.object(main, "HERMES_BRIDGE_TOKEN", "secret-launch-token"):
-            return await main.diag(req)
+        import bridge_config
+        from routes import health
+
+        with patch.object(bridge_config, "HERMES_BRIDGE_TOKEN", "secret-launch-token"):
+            return await health.diag(req)
 
     async def test_loopback_without_token_gets_no_token(self):
         payload = await self._diag(None)

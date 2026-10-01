@@ -319,7 +319,7 @@ class ProfileConfigTests(unittest.TestCase):
 
     def test_main_threads_the_resolved_profile_into_the_adapter(self):
         """main.py must actually pass hermes_home, or the parameter is inert."""
-        src = Path(__file__).with_name("main.py").read_text()
+        src = Path(__file__).with_name("chat_impl.py").read_text()  # moved from main.py (spec 4.1)
         self.assertIn('agent_kwargs["hermes_home"]', src)
         self.assertIn("_resolve_hermes_home(request_profile)", src)
 
