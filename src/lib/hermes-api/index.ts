@@ -5,7 +5,7 @@
  * The transport internals in `./core` (`hermesFetch`, `abortAfter`,
  * `coalesceHermesFetch`) are deliberately not re-exported.
  */
-import { abortAfter, hermesFetch } from './core';
+import { hermesFetch } from './core';
 
 export { HermesApiError, HERMES_FETCH_TIMEOUT_MS } from './core';
 export * from './approvals';
@@ -14,6 +14,7 @@ export * from './portal';
 export * from './cron';
 export * from './sessions';
 export * from './workspace';
+export * from './usage';
 
 export interface HermesSkillSummary {
   id: string;
@@ -37,38 +38,6 @@ export interface HubSkill {
   category: string;
   source: 'built-in' | 'optional' | 'community' | 'anthropic' | 'lobehub';
   installed: boolean;
-}
-
-export interface HermesUsageModelBreakdown {
-  model: string;
-  session_count: number;
-  input_tokens: number;
-  output_tokens: number;
-  total_tokens: number;
-  cost_usd: number;
-}
-
-export interface HermesUsageDay {
-  day: string;
-  session_count: number;
-  input_tokens: number;
-  output_tokens: number;
-  total_tokens: number;
-}
-
-export interface HermesUsageOverview {
-  state_db_available: boolean;
-  session_count: number;
-  message_count: number;
-  tool_call_count: number;
-  input_tokens: number;
-  output_tokens: number;
-  total_tokens: number;
-  cost_usd: number;
-  first_session_started_at: string | null;
-  last_session_started_at: string | null;
-  top_models: HermesUsageModelBreakdown[];
-  recent_days: HermesUsageDay[];
 }
 
 export interface CheckpointProject {
@@ -311,12 +280,6 @@ export async function updateGoalsConfig(body: Partial<GoalsConfig>): Promise<Goa
     max_turns: typeof data.max_turns === 'number' ? data.max_turns : 20,
     enabled: data.enabled !== false,
   };
-}
-
-export async function fetchInsights(days = 7): Promise<{ ok: boolean; days: number; report: string }> {
-  return hermesFetch(`/insights?days=${days}`, {
-    signal: abortAfter(60_000),
-  });
 }
 
 // ─── Journey / learning graph ─────────────────────────────────────────────
@@ -699,10 +662,6 @@ export async function createKanbanSwarm(input: {
     method: 'POST',
     body: JSON.stringify(input),
   });
-}
-
-export async function fetchHermesWorkspaceUsage(): Promise<HermesUsageOverview> {
-  return hermesFetch<HermesUsageOverview>('/workspace/usage');
 }
 
 export async function fetchHermesSkills(): Promise<HermesSkillSummary[]> {
