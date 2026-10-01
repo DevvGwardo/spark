@@ -15,8 +15,8 @@ import {
   stopBridge,
   getBridgeSetupStatus,
   installBridgeDeps,
-  installHermesAgent,
 } from './bridge'
+import { installHermesAgent } from './hermes-agent-install'
 import { startOpenRouterOAuth } from './oauth-openrouter'
 import { parseSparkUrl } from './deep-links'
 import { McpWorkerManager } from './mcp-worker-manager'
@@ -1436,11 +1436,10 @@ app.on('before-quit', () => {
   }
   terminals.clear()
   // Tear down the Hermes bridge cleanly
-  try {
-    stopBridge()
-  } catch (err) {
+  // SIGINT goes out synchronously; the supervisor escalates to SIGKILL after 5s.
+  void stopBridge().catch((err) => {
     console.warn('[electron] stopBridge failed:', err)
-  }
+  })
   void mcpWorkerManager.dispose()
   // Notify embedded server stores to close DBs without going through pino.
   try {
