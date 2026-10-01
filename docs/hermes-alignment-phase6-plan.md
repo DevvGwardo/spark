@@ -54,7 +54,11 @@ This plan closes those disconnects and adds the Hermes 0.18 surfaces that matter
 
 ### Already good (do not rebuild)
 
-MoA end-to-end, fallback/goals editors, native kanban.db UI, journey/memory/curator/bundles/CU/pets/OpenClaw ops, delegation toggle, teams durability, skills/cron/webhooks/pairing.
+MoA end-to-end, fallback/goals editors, native kanban.db UI, journey/memory/curator/bundles/CU/pets/OpenClaw ops, delegation toggle, teams durability, skills/cron.
+
+> **Correction (2026-10):** webhooks and pairing were listed here, but those panels (and the logs
+> panel) have since been deleted from the sidebar because their bridge endpoints all returned 404.
+> They are not shipped surfaces.
 
 ---
 
