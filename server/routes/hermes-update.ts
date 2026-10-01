@@ -1,13 +1,33 @@
-import type { Express } from 'express';
+import type { Express, Response } from 'express';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { getActiveBridgeSupervisor, hermesAgentPython } from '../../shared/bridge-supervisor';
+import {
+  HERMES_AGENT_PATCH_NAME,
+  HERMES_AGENT_VERSION_TAG,
+  findHermesPatch,
+  hermesAgentBin,
+} from '../../shared/hermes-agent';
 import { sendJson } from '../lib/helpers';
 import { requireLocalHermesMutation } from '../lib/hermes-op-gate';
+import {
+  detectCheckout,
+  gitRunner,
+  listRemoteReleaseTags,
+  moveToTag,
+  planPinnedUpdate,
+  restartBridgeAndVerify,
+  type BridgeRestartReport,
+} from '../lib/hermes-agent-update';
 import { logger } from '../lib/logger';
 
 const execFileAsync = promisify(execFile);
+const exec = (file: string, args: string[], opts: { cwd?: string; timeout?: number; env?: NodeJS.ProcessEnv } = {}) =>
+  execFileAsync(file, args, { ...opts, encoding: 'utf8' });
 
 // os.homedir() is crash-safe when HOME is unset (falls back to the OS user
 // database); process.env.HOME + ... would produce a broken "/.hermes/…" path.
@@ -16,7 +36,42 @@ if (!HERMES_HOME) {
   logger.warn('[hermes-update] os.homedir() returned empty — Hermes paths may be incorrect');
 }
 const HERMES_DIR = join(HERMES_HOME, '.hermes', 'hermes-agent');
-const HERMES_BIN = join(HERMES_HOME, '.hermes', 'hermes-agent', 'venv', 'bin', 'hermes');
+const HERMES_BIN = hermesAgentBin(HERMES_DIR);
+const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+/** The runs-parity patch: Electron resources, the repo's patches/, or cwd. */
+function resolvePatchPath(): string | null {
+  const resources = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  return findHermesPatch([
+    ...(resources ? [join(resources, 'patches', HERMES_AGENT_PATCH_NAME)] : []),
+    join(PROJECT_ROOT, 'patches', HERMES_AGENT_PATCH_NAME),
+    join(process.cwd(), 'patches', HERMES_AGENT_PATCH_NAME),
+  ]);
+}
+
+/**
+ * Reinstall hermes-agent into its own venv for the new checkout. Installs
+ * without that venv (Electron's pip --target layout) are left alone.
+ */
+async function reinstallAgentDeps(): Promise<void> {
+  const python = hermesAgentPython();
+  if (!python) return;
+  const editable = existsSync(join(HERMES_DIR, 'pyproject.toml')) || existsSync(join(HERMES_DIR, 'setup.py'));
+  const reqs = join(HERMES_DIR, 'requirements.txt');
+  if (!editable && !existsSync(reqs)) return;
+  await exec(python, ['-m', 'pip', 'install', '--upgrade', ...(editable ? ['-e', HERMES_DIR] : ['-r', reqs])], {
+    cwd: HERMES_DIR,
+    timeout: 300_000,
+  });
+}
+
+function restartBridge(expectTag: string | null): Promise<BridgeRestartReport> {
+  return restartBridgeAndVerify(getActiveBridgeSupervisor(), expectTag).catch((err: unknown) => ({
+    attempted: true,
+    ok: false,
+    message: err instanceof Error ? err.message : String(err),
+  }));
+}
 
 // Track if an update is currently running
 let updateInProgress = false;
@@ -25,6 +80,31 @@ let updateInProgress = false;
 // hit the network (and trip .git/index.lock) on every request.
 const STATUS_FETCH_TTL_MS = 20_000;
 let lastStatusFetchAt = 0;
+// Pinned checkouts poll `ls-remote` for release tags instead; same TTL.
+let remoteTagsCache: { at: number; tags: string[] } | null = null;
+
+async function remoteReleaseTags(force = false): Promise<string[]> {
+  const now = Date.now();
+  if (!force && remoteTagsCache && now - remoteTagsCache.at < STATUS_FETCH_TTL_MS) return remoteTagsCache.tags;
+  const tags = await listRemoteReleaseTags(gitRunner(exec, HERMES_DIR, 15_000));
+  remoteTagsCache = { at: Date.now(), tags };
+  return tags;
+}
+
+async function hermesVersion(): Promise<string> {
+  try {
+    const { stdout } = await exec(HERMES_BIN, ['--version'], {
+      timeout: 10000,
+      env: { ...process.env, NO_COLOR: '1' },
+    });
+    // Parse "Hermes Agent v0.9.0 (2026.4.13)" from first line
+    const match = stdout.split('\n')[0].match(/Hermes Agent (v[\d.]+)/);
+    if (match) return match[1];
+  } catch {
+    // intentionally ignored
+  }
+  return 'unknown';
+}
 
 // Progress of the current (or last) update, polled by the UI modal
 interface UpdateProgress {
@@ -37,7 +117,7 @@ interface UpdateProgress {
   newVersion: string | null;
 }
 
-const TOTAL_STEPS = 6;
+const TOTAL_STEPS = 7;
 
 let updateProgress: UpdateProgress = {
   step: 0,
@@ -68,11 +148,83 @@ function finishProgress(success: boolean, error: string | null, newVersion: stri
 // Conflict markers in `git status --porcelain` output
 const CONFLICT_RE = /^(U[AUD]|A[UA]|D[UA])/m;
 
+/**
+ * POST body `{ tag }` may pick any published release tag (e.g. the app's
+ * pinned HERMES_AGENT_VERSION_TAG); the default is the latest release.
+ */
+async function handlePinnedUpdate(currentTag: string, requested: unknown, res: Response): Promise<void> {
+  const tags = await remoteReleaseTags(true);
+  let targetTag: string | null;
+  if (requested !== undefined && requested !== null && requested !== '') {
+    if (typeof requested !== 'string' || !tags.includes(requested)) {
+      finishProgress(false, 'Unknown release tag');
+      return sendJson(res, 400, { success: false, error: `Unknown hermes-agent release tag: ${String(requested).slice(0, 64)}` });
+    }
+    targetTag = requested === currentTag ? null : requested;
+  } else {
+    targetTag = planPinnedUpdate(currentTag, tags).targetTag;
+  }
+  if (!targetTag) {
+    finishProgress(false, `Already at ${currentTag}`);
+    return sendJson(res, 409, { success: false, error: `hermes-agent is already at ${currentTag}`, currentTag });
+  }
+
+  const moved = await moveToTag(
+    { agentDir: HERMES_DIR, exec, patchPath: resolvePatchPath(), reinstallDeps: reinstallAgentDeps, onStep: setProgress },
+    currentTag,
+    targetTag,
+  );
+  if (!moved.ok) {
+    logger.warn(`[hermes-update] move ${currentTag} → ${targetTag} failed: ${moved.error}`);
+    finishProgress(false, moved.error ?? 'Update failed');
+    return sendJson(res, 500, { success: false, error: moved.error, rolledBack: moved.rolledBack, currentTag, targetTag });
+  }
+
+  setProgress(7, 'Restarting bridge...');
+  const bridgeRestart = await restartBridge(targetTag);
+  finishProgress(true, null, targetTag);
+  sendJson(res, 200, {
+    success: true,
+    newVersion: targetTag,
+    previousTag: currentTag,
+    patchApplied: moved.patchApplied,
+    bridgeRestart,
+  });
+}
+
 export function registerHermesUpdateRoute(app: Express) {
 
   // GET /api/hermes/update/status — check for available updates
   app.get('/api/hermes/update/status', async (_req, res) => {
     try {
+      // A pinned install (detached at a release tag, as electron's installer
+      // creates it) is offered "move to tag vX", never a main fast-forward.
+      const checkout = await detectCheckout(gitRunner(exec, HERMES_DIR, 10_000));
+      if (checkout.pinned && checkout.tag) {
+        const { stdout: statusOut } = await exec('git', ['status', '--porcelain'], { cwd: HERMES_DIR, timeout: 10000 });
+        const hasConflicts = CONFLICT_RE.test(statusOut);
+        const { latestTag, targetTag } = planPinnedUpdate(checkout.tag, updateInProgress ? (remoteTagsCache?.tags ?? []) : await remoteReleaseTags());
+        const blockedReason = hasConflicts
+          ? 'Hermes repo has unresolved merge conflicts. Resolve manually in ~/.hermes/hermes-agent.'
+          : null;
+        return sendJson(res, 200, {
+          commitsBehind: 0,
+          updateAvailable: targetTag !== null && blockedReason === null,
+          currentVersion: await hermesVersion(),
+          updateInProgress,
+          currentBranch: 'HEAD',
+          dirty: statusOut.trim().length > 0,
+          hasConflicts,
+          stashCount: 0,
+          blockedReason,
+          pinned: true,
+          currentTag: checkout.tag,
+          latestTag,
+          targetTag,
+          pinnedTag: HERMES_AGENT_VERSION_TAG,
+        });
+      }
+
       // Check git for commits behind. The fetch is network-bound and can
       // collide with an in-flight update's own fetch (index.lock), so cache
       // it ~20s and skip it entirely while an update is running.
@@ -131,22 +283,10 @@ export function registerHermesUpdateRoute(app: Express) {
         }
       }
 
-      // Get current version from hermes --version
-      let currentVersion = 'unknown';
-      try {
-        const { stdout: versionOut } = await execFileAsync(HERMES_BIN, ['--version'], {
-          timeout: 10000,
-          env: { ...process.env, NO_COLOR: '1' },
-        });
-        // Parse "Hermes Agent v0.9.0 (2026.4.13)" from first line
-        const firstLine = versionOut.split('\n')[0];
-        const match = firstLine.match(/Hermes Agent (v[\d.]+)/);
-        if (match) currentVersion = match[1];
-      } catch {
-        // intentionally ignored
-      }
+      const currentVersion = await hermesVersion();
 
       sendJson(res, 200, {
+        pinned: false,
         commitsBehind,
         updateAvailable: commitsBehind > 0 && blockedReason === null,
         currentVersion,
@@ -171,7 +311,7 @@ export function registerHermesUpdateRoute(app: Express) {
   });
 
   // POST /api/hermes/update — trigger the update
-  app.post('/api/hermes/update', requireLocalHermesMutation, async (_req, res) => {
+  app.post('/api/hermes/update', requireLocalHermesMutation, async (req, res) => {
     if (updateInProgress) {
       return sendJson(res, 409, { error: 'Update already in progress' });
     }
@@ -188,8 +328,13 @@ export function registerHermesUpdateRoute(app: Express) {
     };
 
     try {
-      // Step 0: refuse if not on main or local-main — we will not create merge commits onto other branches
       setProgress(1, 'Checking repository state...');
+      const checkout = await detectCheckout(gitRunner(exec, HERMES_DIR, 10_000));
+      if (checkout.pinned && checkout.tag) {
+        return await handlePinnedUpdate(checkout.tag, (req.body as { tag?: unknown } | undefined)?.tag, res);
+      }
+
+      // Step 0: refuse if not on main or local-main — we will not create merge commits onto other branches
       const { stdout: branchOut } = await execFileAsync(
         'git',
         ['rev-parse', '--abbrev-ref', 'HEAD'],
@@ -309,23 +454,17 @@ export function registerHermesUpdateRoute(app: Express) {
           env: { ...process.env, NO_COLOR: '1' },
         });
 
-        // Get new version
-        let newVersion = 'unknown';
-        try {
-          const { stdout } = await execFileAsync(HERMES_BIN, ['--version'], {
-            timeout: 10000,
-            env: { ...process.env, NO_COLOR: '1' },
-          });
-          const match = stdout.split('\n')[0].match(/Hermes Agent (v[\d.]+)/);
-          if (match) newVersion = match[1];
-        } catch {
-          // intentionally ignored
-        }
+        const newVersion = await hermesVersion();
+
+        // Step 7: the running bridge still has the old agent loaded.
+        setProgress(7, 'Restarting bridge...');
+        const bridgeRestart = await restartBridge(null);
 
         finishProgress(true, null, newVersion);
         sendJson(res, 200, {
           success: true,
           newVersion,
+          bridgeRestart,
           output: updateResult.stdout.slice(-500), // last 500 chars of output
         });
       } catch (err: unknown) {

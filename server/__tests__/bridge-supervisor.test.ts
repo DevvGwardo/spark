@@ -368,6 +368,53 @@ describe('bridge supervisor: respawn', () => {
   })
 })
 
+describe('bridge supervisor: restart', () => {
+  it('awaits the stop, spawns a fresh child, and does not count it as a crash', async () => {
+    const sup = makeSupervisor({ timing: { healthPollMs: 50, maxAttempts: 1 } })
+    await startAndSettle(sup)
+    const first = children[0]!
+    const seen: string[] = []
+    sup.onReadiness((r) => seen.push(r.state))
+
+    const p = sup.restart()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(await p).toEqual({ status: 'started' })
+
+    expect(first.kill).toHaveBeenCalledWith('SIGINT')
+    expect(fakeSpawn).toHaveBeenCalledTimes(2)
+    expect(seen).toEqual(['stopped', 'starting', 'ready'])
+    expect(sup.readiness()).toMatchObject({ state: 'ready', attempt: 0, lastError: null })
+
+    // The restart consumed no respawn attempt: one real crash still respawns
+    // even with maxAttempts = 1.
+    children[1]!.exit(1)
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(fakeSpawn).toHaveBeenCalledTimes(3)
+    await sup.stop()
+  })
+
+  it('restarts an adopted owned bridge by evicting it, and exposes /diag', async () => {
+    bridge.up = true
+    bridge.diagToken = 'tok-ours'
+    const killed: number[] = []
+    const sup = makeSupervisor({
+      killPid: (pid) => {
+        killed.push(pid)
+        bridge.up = false
+      },
+    })
+    expect(await startAndSettle(sup)).toEqual({ status: 'reused-existing' })
+    expect(await sup.diag()).toMatchObject({ token_matches: true })
+
+    const p = sup.restart()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(await p).toEqual({ status: 'started' })
+    expect(killed).toEqual([999])
+    expect(fakeSpawn).toHaveBeenCalledTimes(1)
+    await sup.stop()
+  })
+})
+
 describe('bridge supervisor: waitForReady', () => {
   it('resolves true on ready and false on crashed', async () => {
     const sup = makeSupervisor({ timing: { healthPollMs: 50, maxAttempts: 1 } })
