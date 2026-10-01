@@ -555,10 +555,10 @@ if (isEntry) {
     // Stop team-agent subprocesses so a `npm run server` exit doesn't orphan
     // run-kanban-agent.py children.
     shutdownTeamCoordinator();
-    if (process.env.MANAGE_BRIDGE === 'true') {
-      stopManagedBridge();
-    }
-    process.exit(0);
+    // Await the bridge stop (SIGINT → 5s → SIGKILL) so it isn't orphaned.
+    void stopManagedBridge()
+      .catch(() => undefined)
+      .finally(() => process.exit(0));
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);

@@ -7,6 +7,7 @@ import {
   startManagedBridge,
   installBridgeDeps,
 } from '../lib/bridge-manager';
+import { currentBridgeReadiness } from '../lib/bridge-client';
 
 /**
  * Bridge management endpoints for the web/headless path (no Electron IPC).
@@ -19,6 +20,17 @@ export function registerBridgeRoutes(app: Express) {
       sendJson(res, 200, await getBridgeStatus());
     } catch (err) {
       sendJson(res, 500, { error: err instanceof Error ? err.message : 'status failed' });
+    }
+  });
+
+  // Read-only, so not in the loopback gate: remote (tunnel) clients need it to
+  // render the same starting/reconnecting/offline gate as the local app.
+  app.get('/api/bridge/readiness', async (_req: Request, res: Response) => {
+    try {
+      res.setHeader('Cache-Control', 'no-store');
+      sendJson(res, 200, await currentBridgeReadiness());
+    } catch (err) {
+      sendJson(res, 500, { error: err instanceof Error ? err.message : 'readiness failed' });
     }
   });
 

@@ -1943,18 +1943,18 @@ async def bridge_token_guard(request: Request, call_next):
 
 @app.get("/diag")
 async def diag(request: Request):
-    # Only expose the launch token to loopback callers (Electron ownership check).
-    # Non-loopback clients get a boolean presence flag only.
-    payload = {
+    # Ownership check for the supervisor. /diag is auth-exempt, so it must never
+    # disclose the launch token itself (any local process could read it and then
+    # pass the loopback token gate). Instead the caller proves it holds the token
+    # and gets back only whether it matched (constant-time compare).
+    presented = request.headers.get("x-hermes-bridge-token", "")
+    return {
         "pid": os.getpid(),
-        "home": os.path.expanduser("~"),
         "bridge_version": HERMES_BRIDGE_VERSION,
         "launch_token_present": bool(HERMES_BRIDGE_TOKEN),
+        "token_matches": bool(HERMES_BRIDGE_TOKEN) and bool(presented)
+        and hmac.compare_digest(presented.encode(), HERMES_BRIDGE_TOKEN.encode()),
     }
-    client_host = request.client.host if request.client else None
-    if _is_loopback_host(client_host):
-        payload["token"] = HERMES_BRIDGE_TOKEN
-    return payload
 
 
 def _provider_has_native_credentials(pid: str) -> bool:
