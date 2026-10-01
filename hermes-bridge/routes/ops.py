@@ -539,10 +539,17 @@ async def get_gateway_capabilities(request: Request):
     return await _ops_thread(hermes_ops.probe_gateway_capabilities, base_url=base)
 
 
+@router.post("/v1/chat/cancel")
 @router.post("/v1/runs/cancel")
-async def cancel_gateway_run(request: Request):
-    """Stop the active gateway /v1/runs job for a conversation (Spark Stop button)."""
-    import hermes_runs as _hermes_runs
+async def cancel_chat_turn(request: Request):
+    """Stop a conversation's in-flight turn on any transport (spec 4.4).
+
+    The Stop button. Every transport registers its turn in
+    ``active_runs.REGISTRY``: agent-loop interrupts the agent, ACP sends
+    ``session/cancel``, gateway runs get ``POST /v1/runs/{id}/stop``.
+    ``/v1/runs/cancel`` is the original (runs-only) path, kept as an alias.
+    """
+    from active_runs import REGISTRY
 
     try:
         body = await request.json()
@@ -553,7 +560,7 @@ async def cancel_gateway_run(request: Request):
     conversation_id = str(body.get("conversation_id") or "").strip()
     if not conversation_id:
         return JSONResponse(status_code=400, content={"error": "conversation_id is required"})
-    cancelled = await _hermes_runs.cancel_active_run_async(conversation_id)
+    cancelled = await REGISTRY.cancel(conversation_id)
     return JSONResponse(status_code=200, content={"cancelled": cancelled})
 
 

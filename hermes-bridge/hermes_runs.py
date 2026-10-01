@@ -16,13 +16,13 @@ import logging
 import os
 import re
 import threading
-from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 from urllib.parse import quote
 
 import httpx
 
 import hermes_ops
+from active_runs import REGISTRY
 from hermes_ops import assert_safe_gateway_base_url, probe_gateway_capabilities
 
 logger = logging.getLogger(__name__)
@@ -32,19 +32,9 @@ _VALID_REASONING_EFFORT = frozenset({
     "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
 })
 _AGENT_LOOP_PARITY_TOOLSETS = frozenset({"computer", "computer_use"})
-_active_runs_lock = threading.Lock()
-_active_runs: dict[str, "_ActiveRun"] = {}
 # Connect fast; allow up to 5 minutes between SSE lines (long tool steps) so a
 # hung gateway cannot pin a bridge worker forever with timeout=None.
 _DEFAULT_RUN_SSE_TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)
-
-
-@dataclass
-class _ActiveRun:
-    run_id: str
-    base_url: str
-    api_key: Optional[str]
-    cancelled: threading.Event = field(default_factory=threading.Event)
 
 
 def normalize_reasoning_effort(raw: Any) -> Optional[str]:
@@ -358,56 +348,64 @@ def build_run_submit_body(
     return body
 
 
+# ─── Active gateway runs (spec 4.4) ──────────────────────────────────────────
+# Gateway runs live in the shared ``active_runs.REGISTRY`` (transport "runs"),
+# keyed by (conversation_id, run_id), next to the agent-loop and ACP turns.
+# The functions below keep the conversation-keyed API the routes and tests use.
+
+RUNS_TRANSPORT = "runs"
+
+
 def register_active_run(
     conversation_id: str,
     *,
     run_id: str,
     base_url: str,
     api_key: Optional[str],
+    background: bool = False,
 ) -> None:
-    """Track an in-flight gateway run for cancel/approve by conversation id."""
-    key = str(conversation_id or "").strip()
-    if not key or not str(run_id or "").strip():
-        return
-    with _active_runs_lock:
-        _active_runs[key] = _ActiveRun(
-            run_id=str(run_id).strip(),
-            base_url=base_url,
-            api_key=api_key,
-        )
+    """Track an in-flight gateway run so Stop / disconnect can reach it."""
+    rid = str(run_id or "").strip()
+
+    async def _stop() -> None:
+        await stop_run_async(base_url=base_url, api_key=api_key, run_id=rid)
+
+    REGISTRY.register(
+        conversation_id,
+        rid,
+        transport=RUNS_TRANSPORT,
+        cancel=_stop,
+        background=background,
+        base_url=base_url,
+        api_key=api_key,
+    )
 
 
 def unregister_active_run(conversation_id: str, run_id: Optional[str] = None) -> None:
-    """Drop a conversation's active-run handle, but only if it is still ours.
+    """Drop a gateway run's handle, but only if it is ours (compare-and-delete).
 
-    The handle is keyed by conversation, so a run that finishes late would
-    otherwise delete the handle belonging to a newer overlapping run on the same
-    conversation — leaving that run uncancellable. Comparing run_id makes the
-    delete conditional: the entry is removed only when it still belongs to the
-    run asking.
-
-    run_id is optional for call sites that genuinely mean "clear whatever is
-    there" (an explicit reset), but every completion path passes it.
+    Entries are keyed by (conversation_id, run_id), so a run that finishes late
+    can only remove its own entry, never a newer overlapping run's (B7).
+    ``run_id=None`` means "clear every gateway run of this conversation" for an
+    explicit reset; every completion path passes its run_id.
     """
-    key = str(conversation_id or "").strip()
-    if not key:
+    if run_id is not None:
+        REGISTRY.unregister(conversation_id, run_id)
         return
-    with _active_runs_lock:
-        if run_id is not None:
-            active = _active_runs.get(key)
-            if active is None or active.run_id != str(run_id).strip():
-                # A newer run owns this conversation now; leave its handle alone.
-                return
-        _active_runs.pop(key, None)
+    for run in REGISTRY.runs_for(conversation_id, transport=RUNS_TRANSPORT):
+        REGISTRY.unregister(conversation_id, run.run_id)
 
 
-def is_run_cancelled(conversation_id: str) -> bool:
-    key = str(conversation_id or "").strip()
-    if not key:
-        return False
-    with _active_runs_lock:
-        active = _active_runs.get(key)
-        return bool(active and active.cancelled.is_set())
+def active_gateway_run(conversation_id: str):
+    """The conversation's newest gateway run entry, or None."""
+    return REGISTRY.latest(conversation_id, transport=RUNS_TRANSPORT)
+
+
+def is_run_cancelled(conversation_id: str, run_id: Optional[str] = None) -> bool:
+    if run_id is not None:
+        return REGISTRY.is_cancelled(conversation_id, run_id)
+    active = active_gateway_run(conversation_id)
+    return bool(active and active.is_cancelled)
 
 
 def cancel_active_run(conversation_id: str) -> bool:
@@ -424,15 +422,11 @@ def cancel_active_run(conversation_id: str) -> bool:
 
 
 def _take_cancel_target(conversation_id: str) -> Optional[tuple[str, str, Optional[str]]]:
-    key = str(conversation_id or "").strip()
-    if not key:
+    active = active_gateway_run(conversation_id)
+    if active is None:
         return None
-    with _active_runs_lock:
-        active = _active_runs.get(key)
-        if not active:
-            return None
-        active.cancelled.set()
-        return active.run_id, active.base_url, active.api_key
+    active.cancelled.set()
+    return active.run_id, active.meta.get("base_url"), active.meta.get("api_key")
 
 
 async def cancel_active_run_async(conversation_id: str) -> bool:
@@ -448,6 +442,13 @@ async def cancel_active_run_async(conversation_id: str) -> bool:
     return True
 
 
+def _approve_target(conversation_id: str) -> Optional[tuple[str, str, Optional[str]]]:
+    active = active_gateway_run(conversation_id)
+    if active is None:
+        return None
+    return active.run_id, active.meta.get("base_url"), active.meta.get("api_key")
+
+
 def approve_active_run(
     conversation_id: str,
     *,
@@ -455,16 +456,10 @@ def approve_active_run(
     resolve_all: bool = False,
 ) -> tuple[bool, Optional[int]]:
     """POST /v1/runs/{id}/approval for the active gateway run, if any."""
-    key = str(conversation_id or "").strip()
-    if not key:
+    target = _approve_target(conversation_id)
+    if target is None:
         return False, None
-    with _active_runs_lock:
-        active = _active_runs.get(key)
-        if not active:
-            return False, None
-        run_id = active.run_id
-        base_url = active.base_url
-        api_key = active.api_key
+    run_id, base_url, api_key = target
     try:
         status_code, _payload = approve_run(
             base_url=base_url,
@@ -486,14 +481,10 @@ async def approve_active_run_async(
     resolve_all: bool = False,
 ) -> tuple[bool, Optional[int]]:
     """``approve_active_run`` for async callers: the approval POST uses httpx.AsyncClient."""
-    key = str(conversation_id or "").strip()
-    if not key:
+    target = _approve_target(conversation_id)
+    if target is None:
         return False, None
-    with _active_runs_lock:
-        active = _active_runs.get(key)
-        if not active:
-            return False, None
-        run_id, base_url, api_key = active.run_id, active.base_url, active.api_key
+    run_id, base_url, api_key = target
     try:
         status_code, _payload = await approve_run_async(
             base_url=base_url,

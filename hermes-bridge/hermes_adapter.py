@@ -11,6 +11,7 @@ ImportError and uses the custom run_agent.py instead.
 """
 
 import json
+import contextlib
 import os
 import re
 import sys
@@ -896,6 +897,11 @@ class HermesAgentAdapter:
         # Wall-clock budget for the whole run (seconds). Passed through to the
         # real AIAgent (agent.run_budget_seconds); 0/unset = unlimited.
         run_budget_seconds: Optional[int] = None,
+        # Spec 4.3: hermes approval prompt for dangerous commands. hermes has
+        # no constructor hook for it — it is a per-thread callback
+        # (tools.terminal_tool.set_approval_callback) consulted only in an
+        # interactive context — so run_conversation installs it around the turn.
+        approval_callback: Optional[Callable[..., str]] = None,
     ):
         self.on_tool_start = on_tool_start
         self.on_tool_end = on_tool_end
@@ -906,6 +912,7 @@ class HermesAgentAdapter:
         self.on_notice = on_notice
         self.on_notice_clear = on_notice_clear
         self.run_budget_seconds = run_budget_seconds
+        self.approval_callback = approval_callback
         # Accepted for parity with the bridge's agent_kwargs; the real agent
         # retries its upstream calls internally (no callback to hook).
         self.on_stream_retry = on_stream_retry
@@ -1405,6 +1412,58 @@ class HermesAgentAdapter:
         except Exception as exc:
             print(f"[hermes-adapter] tool_progress error: {exc}", flush=True)
 
+    # --- Approvals and interrupt (spec 4.3 / 4.4) ---
+
+    @contextlib.contextmanager
+    def _approval_context(self):
+        """Install the bridge approval callback for this turn's thread.
+
+        Mirrors hermes' own ACP adapter: set the per-thread approval callback
+        and mark the context interactive so the approval gate consults it
+        instead of auto-resolving. hermes copies both into its tool worker
+        threads (tools.thread_context). Restored afterwards because the
+        bridge reuses worker threads across requests.
+        """
+        callback = getattr(self, "approval_callback", None)
+        if callback is None:
+            yield
+            return
+        try:
+            from tools import terminal_tool
+            from tools.approval_context import (
+                reset_hermes_interactive_context,
+                set_hermes_interactive_context,
+            )
+        except ImportError as exc:
+            print(f"[hermes-adapter] approvals unavailable on this hermes-agent ({exc}); tools auto-resolve", flush=True)
+            yield
+            return
+        previous = terminal_tool._get_approval_callback()
+        terminal_tool.set_approval_callback(callback)
+        token = set_hermes_interactive_context(True)
+        try:
+            yield
+        finally:
+            reset_hermes_interactive_context(token)
+            terminal_tool.set_approval_callback(previous)
+
+    def interrupt(self) -> bool:
+        """Ask the real agent to stop (Stop button / client disconnect).
+
+        Safe from any thread: hermes' ``AIAgent.interrupt`` only sets flags,
+        which the agent loop checks between API calls and tool steps.
+        """
+        agent = getattr(self, "_agent", None)
+        interrupt = getattr(agent, "interrupt", None)
+        if not callable(interrupt):
+            return False
+        try:
+            interrupt(hard_cancel=True)
+        except TypeError:
+            # Older hermes-agent: no hard_cancel keyword.
+            interrupt()
+        return True
+
     # --- Main entry point ---
 
     def run_conversation(
@@ -1425,11 +1484,12 @@ class HermesAgentAdapter:
         self._last_status_message = None
         self._last_fallback_switch_key = None
         try:
-            result = self._agent.run_conversation(
-                user_message=user_message,
-                system_message=self._ephemeral_system_prompt,
-                conversation_history=conversation_history or [],
-            )
+            with self._approval_context():
+                result = self._agent.run_conversation(
+                    user_message=user_message,
+                    system_message=self._ephemeral_system_prompt,
+                    conversation_history=conversation_history or [],
+                )
         finally:
             self._stop_cu_frame_poller()
             try:

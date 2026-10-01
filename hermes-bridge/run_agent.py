@@ -1258,6 +1258,9 @@ class AIAgent(RepoToolsMixin):
         self.repo_file_tree = repo_file_tree or []
         # Scopes the staged-edit brain buffer (same default as RepoToolProvider).
         self.workspace_id = workspace_id or 'default'
+        # Set by interrupt() (Stop button / client disconnect); checked at the
+        # top of every iteration of run_conversation.
+        self._interrupt_requested = False
         self.on_tool_start = on_tool_start
         self.on_tool_end = on_tool_end
         self.on_text = on_text
@@ -1962,6 +1965,11 @@ class AIAgent(RepoToolsMixin):
             "Do not output prose, markdown, or code fences.]"
         )
 
+    def interrupt(self) -> bool:
+        """Stop the loop at the next iteration boundary (thread-safe flag)."""
+        self._interrupt_requested = True
+        return True
+
     def run_conversation(
         self,
         user_message: str,
@@ -2001,6 +2009,9 @@ class AIAgent(RepoToolsMixin):
         edit_contract_injected = False  # track planning contract injection
 
         for iteration in range(self.max_iterations):
+            if getattr(self, "_interrupt_requested", False):
+                print(f"[hermes-agent] Interrupted before iteration {iteration + 1}.", flush=True)
+                return None
             # Full context reset (once) when the session is long-running.
             # Harness pattern: resets with structured handoffs beat in-place
             # compaction for maintaining output quality (Anthropic research).
