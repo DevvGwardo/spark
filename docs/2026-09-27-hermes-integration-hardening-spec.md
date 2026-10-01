@@ -328,13 +328,13 @@ their share of each item is listed as deferred.
 
 | Item | Status | Notes |
 |---|---|---|
-| 5.1 Sync I/O off the loop | **Done** (routes) | ops / sessions / workspace / health / providers / messaging / mcp / cron routes wrap CLI, sqlite, urllib and config writes in `_ops_thread`; runs cancel/approve use `httpx.AsyncClient`. `bridge_loop_monitor.py` (`HERMES_BRIDGE_LOOP_LAG_MONITOR=1`) logs stalls > 250ms with the stuck stack; `test_bridge_loop_monitor.py` asserts it is quiet across a slowed route set. Deferred: chat_impl / acp_chat inline calls (4.2) |
+| 5.1 Sync I/O off the loop | **Done** (routes) | ops / sessions / workspace / health / providers / messaging / mcp / cron routes wrap CLI, sqlite, urllib and config writes in `_ops_thread`; runs cancel/approve use `httpx.AsyncClient`. `bridge_loop_monitor.py` (`HERMES_BRIDGE_LOOP_LAG_MONITOR=1`) logs stalls > 250ms with the stuck stack; `test_bridge_loop_monitor.py` asserts it is quiet across a slowed route set. Deferred: inline calls on the chat path (chat_impl / acp_chat / chat_transports) |
 | 5.2 Routing capability cache | **Done** | `runs_parity_available` / `should_route_via_runs` read cached capabilities with a deduped background refresh; warmed at startup |
 | 5.3 ACP per-conversation lock | **Done** | Global lock guards dict access only; timing test |
 | 5.4 Atomic config writes | **Done** | `config_io.py`: temp + fsync + `os.replace`, `fcntl` sidecar lock, 5 `.bak` files, ruamel required, load→dump conflict refused with 409 |
-| 5.5 Bounded sessions, safe counters | **Done** | `_sessions` LRU + TTL; counters under a lock; main.py duplicates removed. Deferred: chat_impl's second `bridge:metrics` publish (4.2) |
+| 5.5 Bounded sessions, safe counters | **Done** | `_sessions` LRU + TTL; counters under a lock; main.py duplicates removed. Deferred: the chat path's second `bridge:metrics` publish |
 | 5.6 One cron path | **Done** | Bridge-local JSON cron removed; `data/cron_jobs.json` migrated into hermes cron once (deduped, renamed `.migrated` only when complete) |
-| 5.7 Swallowed exceptions | **Done** (excl. deferred files) | `hermes-bridge/ruff.toml` gates S110, BLE001, F821; per-file ignores (TODO) for chat_impl / chat_common / acp_chat / routes/chat / hermes_adapter / run_agent |
+| 5.7 Swallowed exceptions | **Done** (excl. deferred files) | `hermes-bridge/ruff.toml` gates S110, BLE001, F821; per-file ignores (TODO follow-up) for the chat path (chat_impl / chat_common / acp_chat / routes/chat / chat_transports) and repo_tools / hermes_adapter / run_agent |
 | 5.8 Scoped MCP reload | **Done** | hermes `reconcile_mcp_servers_with_config` instead of the wildcard shutdown; other-profile edits never touch process servers |
 
 ### Phase 2 outcome
