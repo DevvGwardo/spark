@@ -78,18 +78,17 @@ async def _bridge_lifespan(app):
     fully isolated. Cron and MCP telemetry are NOT optional and must come up
     whether or not brain connected.
     """
-    global _bridge_iterations_total, _bridge_request_count, _cron_scheduler_task
+    global _cron_scheduler_task
 
     # These are bridge counters, not brain state. Previously they were only
     # initialized inside the brain startup block, so when brain was unavailable
     # _bridge_start_time stayed 0.0 and both /diag and the published
     # bridge:metrics reported a zero start_time. Initialize them unconditionally.
     # The counters live in bridge_state so every module shares one copy.
-    bridge_state._bridge_start_time = time.time()
-    bridge_state._bridge_total_requests = 0
-    bridge_state._bridge_error_count = 0
-    _bridge_iterations_total = 0
-    _bridge_request_count = 0
+    with bridge_state._metrics_lock:
+        bridge_state._bridge_start_time = time.time()
+        bridge_state._bridge_total_requests = 0
+        bridge_state._bridge_error_count = 0
 
     try:
         await brain_client.start_brain(
