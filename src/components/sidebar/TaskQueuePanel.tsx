@@ -49,7 +49,7 @@ function ago(ms: number): string {
 
 const STATUS_CONFIG: Record<string, { icon: React.ReactNode; dot: string; label: string }> = {
   queued:   { icon: <PauseCircle className="h-3 w-3" />, dot: 'bg-blue-500',       label: 'Queued' },
-  running:  { icon: <Loader2 className="h-3 w-3 animate-spin" />, dot: 'bg-amber-500 animate-pulse', label: 'Running' },
+  running:  { icon: <Loader2 className="h-3 w-3 animate-spin" />, dot: 'bg-amber-500 animate-pulse motion-reduce:animate-none', label: 'Running' },
   done:     { icon: <CheckCircle2 className="h-3 w-3" />, dot: 'bg-emerald-500',   label: 'Done' },
   review:   { icon: <AlertCircle className="h-3 w-3" />, dot: 'bg-purple-500',    label: 'Review' },
   blocked:  { icon: <AlertCircle className="h-3 w-3" />, dot: 'bg-red-500',       label: 'Blocked' },
@@ -90,7 +90,7 @@ function TaskItem({ task }: { task: QueuedTask }) {
     >
       {/* Row 1: status dot, title, status badge */}
       <div className="flex items-center gap-2">
-        <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', cfg.dot)} />
+        <span aria-hidden className={cn('h-1.5 w-1.5 shrink-0 rounded-full', cfg.dot)} />
         <span
           className={cn(
             'min-w-0 flex-1 truncate text-[12px] font-medium cursor-pointer',
@@ -119,6 +119,8 @@ function TaskItem({ task }: { task: QueuedTask }) {
         {hasDetails && (
           <button
             onClick={() => setExpanded(!expanded)}
+            aria-label={expanded ? 'Hide details' : 'Show details'}
+            aria-expanded={expanded}
             className="shrink-0 rounded p-0.5 text-muted-foreground/30 hover:text-foreground"
           >
             {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}

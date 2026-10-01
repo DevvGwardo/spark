@@ -67,7 +67,7 @@ function StatusDot({ kind }: { kind: StatusKind }) {
   return (
     <span className="relative inline-flex h-2 w-2 shrink-0">
       {kind === 'connecting' && (
-        <span className={cn('absolute inline-flex h-full w-full animate-ping rounded-full opacity-60', m.dot)} />
+        <span className={cn('absolute inline-flex h-full w-full animate-ping motion-reduce:animate-none rounded-full opacity-60', m.dot)} />
       )}
       <span className={cn('relative inline-flex h-2 w-2 rounded-full', m.dot, m.glow)} />
     </span>
@@ -506,7 +506,7 @@ function ServerDetail({
                 </span>
                 {logsLoading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground/50" />}
                 <span className="inline-flex items-center gap-1 text-[9px] text-emerald-400/70">
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" /> streaming
+                  <span className="h-1.5 w-1.5 animate-pulse motion-reduce:animate-none rounded-full bg-emerald-500" /> streaming
                 </span>
               </div>
               <label className="flex cursor-pointer items-center gap-1.5 text-[10px] text-muted-foreground/55">
@@ -652,7 +652,7 @@ export function McpDashboard() {
           <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-2 text-[11px] text-muted-foreground/50">
               <span className="inline-flex items-center gap-1.5">
-                <span className={cn('h-1.5 w-1.5 rounded-full', live ? 'animate-pulse bg-emerald-500' : 'bg-muted-foreground/40')} />
+                <span className={cn('h-1.5 w-1.5 rounded-full', live ? 'animate-pulse motion-reduce:animate-none bg-emerald-500' : 'bg-muted-foreground/40')} />
                 {live ? 'Live' : 'Paused'}
               </span>
               <span>·</span>

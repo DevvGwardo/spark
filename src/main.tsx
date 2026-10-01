@@ -1,4 +1,5 @@
 import { createRoot } from 'react-dom/client';
+import { MotionConfig } from 'framer-motion';
 import { setBasePath } from '@shoelace-style/shoelace/dist/utilities/base-path.js';
 import '@fontsource/geist-sans/400.css';
 import '@fontsource/geist-sans/500.css';
@@ -27,20 +28,17 @@ setBasePath('./shoelace');
   return Object.values(activities).some((a) => a.streaming);
 };
 
+// The quick-capture window loads the same bundle with ?quick=1 — it gets a
+// minimal tree (toast + error boundary only), never the full chat shell.
+const isQuickWindow = new URLSearchParams(window.location.search).get('quick') === '1';
+
 createRoot(document.getElementById("root")!).render(
-  // The quick-capture window loads the same bundle with ?quick=1 — it gets a
-  // minimal tree (toast + error boundary only), never the full chat shell.
-  new URLSearchParams(window.location.search).get('quick') === '1' ? (
+  // Every framer-motion animation honors the OS "reduce motion" setting.
+  <MotionConfig reducedMotion="user">
     <ToastProvider>
       <ErrorBoundary>
-        <QuickWindow />
+        {isQuickWindow ? <QuickWindow /> : <App />}
       </ErrorBoundary>
     </ToastProvider>
-  ) : (
-    <ToastProvider>
-      <ErrorBoundary>
-        <App />
-      </ErrorBoundary>
-    </ToastProvider>
-  )
+  </MotionConfig>
 );

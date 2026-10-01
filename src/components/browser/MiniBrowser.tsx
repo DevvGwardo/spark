@@ -526,7 +526,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
         />
         {loading && (
           <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-px bg-primary/40 overflow-hidden">
-            <div className="h-full w-full origin-left animate-pulse bg-primary/80" />
+            <div className="h-full w-full origin-left animate-pulse motion-reduce:animate-none bg-primary/80" />
           </div>
         )}
       </div>

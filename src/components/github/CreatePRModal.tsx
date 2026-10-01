@@ -751,7 +751,7 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
               <div className="space-y-5 bg-background p-6">
                 {/* Branch Info */}
                 <div className="flex items-center gap-2.5 rounded-xl border border-[#1E1E22] bg-[#111115] p-3.5">
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-[#2A2A2E] bg-[#16161A] px-3 py-1.5 text-[13px] font-medium text-[#FAFAF9]">
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-[#2A2A2E] bg-[#16161A] px-3 py-1.5 text-[13px] font-medium text-[#FAFAF9] focus-within:border-primary/40">
                     <GitBranch className="h-3.5 w-3.5 text-[#6B6B70]" />
                     <input
                       type="text"

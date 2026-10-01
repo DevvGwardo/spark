@@ -144,7 +144,7 @@ export const WebBridgeSetup: React.FC<{ onComplete: () => void }> = ({ onComplet
           <motion.div
             className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary"
             animate={done ? { scale: [1, 1.12, 1] } : {}}
-            transition={{ duration: 0.5, ease: 'easeOut' }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
           >
             <Sparkles className="h-4 w-4" />
           </motion.div>
@@ -174,9 +174,9 @@ export const WebBridgeSetup: React.FC<{ onComplete: () => void }> = ({ onComplet
               key={row.label}
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.34, ease: [0.16, 1, 0.3, 1], delay: 0.04 + i * 0.06 }}
+              transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1], delay: 0.04 + i * 0.06 }}
               className={cn(
-                'flex items-start gap-3 rounded-lg border border-border/40 px-3 py-2.5 transition-colors duration-300',
+                'flex items-start gap-3 rounded-lg border border-border/40 px-3 py-2.5 transition-colors duration-200',
                 row.ok && 'bg-emerald-500/5 border-emerald-500/20',
               )}
             >
