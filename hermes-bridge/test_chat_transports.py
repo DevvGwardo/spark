@@ -313,6 +313,8 @@ class AgentLoopSseOrderTests(unittest.TestCase):
                 kw["on_computer_use_frame"]({"image": "abc"})
                 kw["on_notice"]({"key": "k", "level": "warn", "message": "m"})
                 kw["on_notice_clear"]("k")
+                kw["on_fallback_switch"]("openrouter", "m2")
+                kw["on_server_tool_event"]({"type": "swarm_result", "success": True})
                 self.on_thinking(2)
 
         body = main.ChatCompletionRequest.model_validate({
@@ -332,8 +334,53 @@ class AgentLoopSseOrderTests(unittest.TestCase):
             "content", "tool_call_begin", "content", "tool_activity",
             "tool_call_end", "content", "tool_activity", "stream_retry",
             "computer_use_frame", "agent_notice", "agent_notice_clear",
+            "fallback_switch", "server_tool_event",
             "agent_status", "content", "<stop>", "data: [DONE]",
         ])
+        deltas = _sse_deltas(payload)
+        switch = next(d["fallback_switch"] for d in deltas if "fallback_switch" in d)
+        self.assertEqual((switch["provider"], switch["model"]), ("openrouter", "m2"))
+        server = next(d["server_tool_event"] for d in deltas if "server_tool_event" in d)
+        self.assertEqual(server["type"], "swarm_result")
+
+
+class RunsSseTests(unittest.TestCase):
+    """Gateway runs announce the run on server_tool_event (fixtures/sse/runs.jsonl)."""
+
+    def test_hermes_run_and_approval_go_out_as_server_tool_event(self):
+        import hermes_runs
+
+        def pump(**kw):
+            kw["emit"]("text", "gateway says hi")
+            kw["emit"]("server_tool_event", {"type": "approval", "tool": "t", "preview": "p", "run_id": "run-1"})
+
+        body = main.ChatCompletionRequest.model_validate({
+            "model": "meta-llama/llama-3-70b-instruct",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": True,
+        })
+        request = _FakeRequest({"authorization": "Bearer k", "x-hermes-conversation-id": "conv-runs"})
+        with patch.dict(sys.modules, {"hermes_adapter": types.SimpleNamespace(HermesAgentAdapter=_FakeAdapter)}), \
+             patch("bridge_providers._load_cli_model_config", return_value=_CLI_CFG), \
+             patch("bridge_providers._get_active_provider", return_value=None), \
+             patch.object(hermes_runs, "parse_use_runs_flag", return_value=True), \
+             patch.object(hermes_runs, "resolve_gateway_base_url", return_value="http://gw"), \
+             patch.object(hermes_runs, "runs_parity_available", return_value=True), \
+             patch.object(hermes_runs, "should_route_via_runs", return_value=True), \
+             patch.object(hermes_runs, "needs_agent_loop_parity", return_value=(False, None)), \
+             patch.object(hermes_runs, "submit_run", return_value=(202, {"run_id": "run-1"})), \
+             patch.object(hermes_runs, "pump_run_events", side_effect=pump), \
+             patch.object(hermes_runs, "register_active_run"), \
+             patch.object(hermes_runs, "unregister_active_run") as unregister:
+            _, payload = asyncio.run(_invoke_chat_and_read_stream(request, body))
+        self.assertEqual(_delta_keys(payload), [
+            "role", "agent_status", "transport_status", "server_tool_event",
+            "content", "server_tool_event", "<stop>", "data: [DONE]",
+        ])
+        events = [d["server_tool_event"] for d in _sse_deltas(payload) if "server_tool_event" in d]
+        self.assertEqual(events[0], {"type": "hermes_run", "run_id": "run-1", "conversation_id": "conv-runs"})
+        self.assertEqual(events[1]["type"], "approval")
+        unregister.assert_called_once_with("conv-runs", "run-1")
 
 
 class PersistOnDisconnectTests(unittest.TestCase):

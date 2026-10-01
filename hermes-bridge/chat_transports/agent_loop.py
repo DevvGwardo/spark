@@ -73,6 +73,10 @@ _PASSTHROUGH_KINDS = frozenset({
     "computer_use_frame",
     "agent_notice",
     "agent_notice_clear",
+    # These two were crossed by d6b3f99: server_tool_event payloads went out
+    # under the fallback_switch key and real fallback switches were dropped.
+    "server_tool_event",
+    "fallback_switch",
 })
 
 if TYPE_CHECKING:  # fastapi is stubbed without Response in the unit tests
@@ -583,8 +587,6 @@ class AgentLoopTransport(BaseChatTransport):
                 yield delta_frame(chunk_id, model, {
                     "content": "\n\n> *Thinking...*\n\n"
                 })
-        elif kind == "server_tool_event":
-            yield delta_frame(chunk_id, model, {"fallback_switch": event[1]})
 
     async def _event_stream(self):
         ctx = self.ctx
