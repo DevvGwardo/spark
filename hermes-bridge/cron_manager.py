@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import subprocess
@@ -9,8 +10,6 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import Request
-
-_cron_jobs: dict[str, dict] = {}
 
 # --- Hermes cron backend integration ---
 _HERMES_AGENT_DIR = os.environ.get(
@@ -334,7 +333,7 @@ except Exception as e:
             else str(e)
         )
         print(
-            f"[cron] Hermes cron backend unavailable, falling back to bridge-local store: {detail}",
+            f"[cron] Hermes cron backend unavailable; /cron routes will return 503: {detail}",
             flush=True,
         )
         # Stubs so the names main.py imports always exist. With the Hermes
@@ -591,13 +590,14 @@ def _run_hermes_tick_now():
 
 
 def _cron_job_count() -> int:
-    if _HERMES_CRON_AVAILABLE:
-        try:
-            return len(_hermes_list_jobs(include_disabled=True) or [])
-        except Exception:
-            pass
-
-    return len(_cron_jobs)
+    """Number of hermes cron jobs; 0 when the backend is unavailable or errors."""
+    if not _HERMES_CRON_AVAILABLE:
+        return 0
+    try:
+        return len(_hermes_list_jobs(include_disabled=True) or [])
+    except Exception:  # noqa: BLE001 - an overview counter must not fail the page
+        logging.getLogger(__name__).debug("cron job count failed", exc_info=True)
+        return 0
 
 
 

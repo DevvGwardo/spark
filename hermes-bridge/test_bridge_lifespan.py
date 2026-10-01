@@ -369,10 +369,9 @@ class LifespanOwnsStartupTests(unittest.TestCase):
 
         return [
             patch("bridge_workspace._HERMES_HOME", Path(tmp)),
-            patch("routes.cron._HERMES_CRON_AVAILABLE", False),
-            patch("routes.cron._cron_jobs", {}),
-            patch("routes.cron._load_cron_data", lambda: None),
-            patch("routes.cron._save_cron_jobs", lambda: None),
+            # hermes cron is the only backend (spec 5.6); the loop itself is
+            # replaced so no tick / legacy migration runs in-process.
+            patch("routes.cron._HERMES_CRON_AVAILABLE", True),
             patch("routes.cron._cron_scheduler_loop", _idle_forever()),
             patch.object(mcp_telemetry, "init_persistence", lambda p: True),
             patch.object(
@@ -477,10 +476,7 @@ class LifespanOwnsStartupTests(unittest.TestCase):
                 # Real start_brain; only cron/telemetry are stubbed out.
                 patches = [
                     patch("bridge_workspace._HERMES_HOME", Path(tmp)),
-                    patch("routes.cron._HERMES_CRON_AVAILABLE", False),
-                    patch("routes.cron._cron_jobs", {}),
-                    patch("routes.cron._load_cron_data", lambda: None),
-                    patch("routes.cron._save_cron_jobs", lambda: None),
+                    patch("routes.cron._HERMES_CRON_AVAILABLE", True),
                     patch("routes.cron._cron_scheduler_loop", _idle_forever()),
                 ]
                 for p in patches:

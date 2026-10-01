@@ -1,0 +1,29 @@
+{
+  "a1b2c3d4": {
+    "id": "a1b2c3d4",
+    "name": "daily-digest",
+    "schedule": "0 9 * * *",
+    "prompt": "Summarize yesterday's merged PRs.",
+    "status": "active",
+    "created_at": "2026-08-01T09:00:00+00:00",
+    "last_run": "2026-09-30T09:00:00+00:00",
+    "next_run": "2026-10-01T09:00:00+00:00"
+  },
+  "e5f6a7b8": {
+    "id": "e5f6a7b8",
+    "name": "",
+    "schedule": "*/30 * * * *",
+    "prompt": "Check CI status on main.",
+    "status": "paused",
+    "created_at": "2026-08-02T10:00:00+00:00",
+    "last_run": null,
+    "next_run": null
+  },
+  "deadbeef": {
+    "id": "deadbeef",
+    "name": "broken",
+    "schedule": "",
+    "prompt": "",
+    "status": "active"
+  }
+}

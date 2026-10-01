@@ -475,7 +475,7 @@ def _workspace_overview_payload(*, hermes_home: Path, profile_name: str) -> dict
             "path": str(_state_db_path(hermes_home)),
             "available": _state_db_path(hermes_home).exists(),
         },
-        "cron_backend": "hermes" if _HERMES_CRON_AVAILABLE else "bridge-local",
+        "cron_backend": "hermes" if _HERMES_CRON_AVAILABLE else "unavailable",
         "counts": {
             "tracked_sessions": int(totals["session_count"]) if totals else 0,
             "messages": int(totals["message_count"]) if totals else 0,
