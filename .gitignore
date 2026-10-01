@@ -113,3 +113,6 @@ data/*.sqlite3-*
 
 # Local promo/video renders
 videos/
+
+# electron-vite temp bundles of the config
+electron.vite.config.*.mjs

@@ -45,11 +45,18 @@ function touch(run: RalphRun): void {
 }
 
 function resolveVenvPython(): string {
-  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  // The round runner imports hermes_adapter from hermes-bridge, which loads the
+  // real agent from ~/.hermes/hermes-agent — the agent's OWN venv is the runtime
+  // that actually has its dependency tree (httpx, yaml, ...). Prefer it, then
+  // fall back to the bridge venvs. Paths work for both tsx (server/ralph-loop.ts
+  // → repo root is one up) and the bundled Electron main (out/main → two up).
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const repoRoots = [path.resolve(here, '..'), path.resolve(here, '..', '..')];
   const candidates = [
+    process.env.HERMES_AGENT_VENV || path.join(process.env.HOME || '', '.hermes', 'hermes-agent', 'venv'),
     process.env.HERMES_BRIDGE_VENV,
-    path.join(repoRoot, 'hermes-bridge', '.venv'),
-    path.join(repoRoot, 'hermes-bridge', 'venv'),
+    ...repoRoots.map((root) => path.join(root, 'hermes-bridge', '.venv')),
+    ...repoRoots.map((root) => path.join(root, 'hermes-bridge', 'venv')),
   ].filter((c): c is string => !!c);
   for (const candidate of candidates) {
     const py = path.join(candidate, 'bin', 'python3');
@@ -131,6 +138,10 @@ async function runRound(run: RalphRun, round: number): Promise<void> {
   const child = spawn(resolveVenvPython(), [scriptPath], {
     env: {
       ...process.env,
+      // A leaked PYTHONPATH (e.g. from launching the app inside another agent's
+      // environment) makes foreign site-packages shadow the runner's venv deps
+      // (yaml, httpx). The runner resolves its own paths; never inherit it.
+      PYTHONPATH: '',
       RALPH_ROUND_PROMPT: prompt,
       RALPH_WORKSPACE_DIR: run.workspaceDir,
       RALPH_ROUND_TIMEOUT_MS: String(ROUND_HARD_KILL_MS),

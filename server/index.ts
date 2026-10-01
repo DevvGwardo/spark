@@ -4,7 +4,7 @@ import helmet from 'helmet';
 import compression from 'compression';
 import { existsSync } from 'fs';
 import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { registerChatStoreRoutes } from './chat-store';
 import { registerCronArchiveRoutes } from './cron-archive-store';
 import { registerChatRoute } from './routes/chat';
@@ -529,9 +529,13 @@ export function startServer(port?: number) {
 // check matched Electron dev (argv[1] = '.') and spawned a second Express
 // instance squatting :3001 — two servers sharing the same SQLite files, plus a
 // port clash with any unrelated service that wants :3001.
+// Compare URL-encoded paths: import.meta.url percent-encodes spaces
+// (repo lives at "/Volumes/T7 Shield/...") while argv[1] does not, so the
+// raw includes() check was always false on this machine and `npm run server`
+// silently never started. Normalize both sides through fileURLToPath.
 const isEntry = !process.versions.electron &&
   !!process.argv[1] &&
-  import.meta.url.includes(process.argv[1].replace(/\\/g, '/'));
+  pathToFileURL(process.argv[1]).href === import.meta.url;
 if (isEntry) {
   startServer();
 
@@ -551,10 +555,10 @@ if (isEntry) {
     // Stop team-agent subprocesses so a `npm run server` exit doesn't orphan
     // run-kanban-agent.py children.
     shutdownTeamCoordinator();
-    if (process.env.MANAGE_BRIDGE === 'true') {
-      stopManagedBridge();
-    }
-    process.exit(0);
+    // Await the bridge stop (SIGINT → 5s → SIGKILL) so it isn't orphaned.
+    void stopManagedBridge()
+      .catch(() => undefined)
+      .finally(() => process.exit(0));
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
