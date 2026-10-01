@@ -61,15 +61,15 @@ Out of scope, because the Phase 6 doc already tracks them: making `/v1/runs` the
 | G15 | Two cron systems (the hermes-helper one and a bridge JSON one) | `main.py:824-1370`, `:6840-7185` |
 | G16 | Unbounded `_sessions` dict. Metrics counters are updated from threads with no lock and are also defined twice | `main.py:57`, `:1795`, `:2793` |
 
-**Transport capability matrix (current):**
+**Transport capability matrix (current, after Phase 4 items 4.3–4.6 and 4.8):**
 
 | Capability | agent-loop (adapter) | ACP | `/v1/runs` (flag) |
 |---|---|---|---|
-| Approvals | ✗ no `approval_callback` | ✓ | partial (depends on gateway) |
-| Cancel / Stop | ✗ | ✗ (timeout only) | ✓ |
-| Stops on client disconnect | ✗ | ✗ | ✗ |
-| Usage / cost in stream | ✗ (printed only; final usage hard-coded 0) | ✗ (`usage_update` ignored) | ✗ |
-| Session resume after reap/crash | ✓ via `session_id` | ✗ (last message only, no `load_session`) | n/a |
+| Approvals | ✓ hermes approval callback → `approval_request` → `/v1/approvals/{id}` (`bridge-*` ids) | ✓ `request_permission` → same registry and route | partial (gateway `approval.*` events arrive as `server_tool_event`; not advertised) |
+| Cancel / Stop | ✓ `AIAgent.interrupt`, via `POST /v1/chat/cancel` | ✓ ACP `session/cancel` | ✓ `POST /v1/runs/{id}/stop` |
+| Stops on client disconnect | ✓ unless `background: true` (desktop chat sets it) | ✓ unless `background: true` | ✓ unless `background: true` |
+| Usage / cost in stream | ✓ agent token counters, priced by `pricing.py`, on the final chunk | ✓ prompt-response usage + `usage_update` cost, priced | ✓ `run.completed` usage, priced |
+| Session resume after reap/crash | ✓ via `session_id` | ✓ `load_session` when advertised, else condensed-history replay | n/a |
 
 ### 2.3 Stale docs
 

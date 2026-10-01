@@ -412,7 +412,7 @@ class RepoToolsMixin:
                 priv = " (private)" if repo.get("private") else ""
                 lines.append(f"- {full_name}{priv}: {desc[:80]}" if desc else f"- {full_name}{priv}")
             return f"Found {len(all_repos)} accessible repositories:\n" + "\n".join(lines)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - tool handler: the error is returned to the model as the result
             return f"Error listing repositories: {e}"
 
     def _handle_list_user_repos(self, args: dict, **kwargs) -> str:
@@ -505,7 +505,7 @@ class RepoToolsMixin:
             if data.get("encoding", "base64") == "base64":
                 return base64.b64decode(content).decode("utf-8", errors="replace")
             return content
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - tool handler: the error is returned to the model as the result
             return f"Error reading '{path}': {e}"
 
     # --- staged edits -----------------------------------------------------
@@ -642,7 +642,7 @@ class RepoToolsMixin:
                 )
             resp.raise_for_status()
             return resp.json(), None
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - reported to the caller as the error half of the tuple
             return None, f"Error reaching the GitHub API: {e}"
 
     def _handle_git_log(self, args: dict, **kwargs) -> str:

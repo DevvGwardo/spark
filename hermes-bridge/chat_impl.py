@@ -8,7 +8,9 @@ Moved verbatim from main.py (spec 4.1). Names that tests patch are owned by one
 module and other modules reach them as ``<module>.<name>`` so a single
 ``patch.object(<module>, name)`` reaches every caller, as patching main did.
 """
+import asyncio
 import os
+from dataclasses import dataclass
 from typing import Optional
 
 from fastapi import Request
@@ -75,6 +77,31 @@ def _background_requested(request: Request, body: ChatCompletionRequest) -> bool
 
 
 async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
+    """Route the request off the event loop, then hand it to its transport.
+
+    Routing is all synchronous I/O: hermes config and auth.json reads, the
+    credential pool, session-row sqlite writes, skill expansion and, for a
+    custom endpoint, a model-catalog fetch. It used to run inline on the event
+    loop and stall every other request while it did (spec 5.1 / G10).
+    """
+    routed = await asyncio.to_thread(_route_chat_request, request, body)
+    if not isinstance(routed, _RoutedChat):
+        return routed  # an early response (error, /moa usage, …)
+    return await routed.transport_cls(routed.ctx, runs_plan=routed.runs_plan).handle()
+
+
+@dataclass
+class _RoutedChat:
+    ctx: ChatContext
+    transport_cls: type
+    runs_plan: Optional[RunsPlan]
+
+
+def _route_chat_request(request: Request, body: ChatCompletionRequest):
+    """Everything transport-independent; runs on a worker thread.
+
+    Returns a ``_RoutedChat`` or an early response.
+    """
     toolsets_header = request.headers.get("x-hermes-toolsets", DEFAULT_TOOLSETS)
     enabled_toolsets = [t.strip() for t in toolsets_header.split(",") if t.strip()]
     # Plan mode: mutating tools are stripped before the agent is built (the
@@ -660,4 +687,4 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
         return runs_plan.route_via_runs
 
     transport_cls = select_transport(execution_mode, route_via_runs=_route_via_runs)
-    return await transport_cls(ctx, runs_plan=runs_plan).handle()
+    return _RoutedChat(ctx=ctx, transport_cls=transport_cls, runs_plan=runs_plan)

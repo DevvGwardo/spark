@@ -106,7 +106,8 @@ class AcpTransport(BaseChatTransport):
         request = self.ctx.request
         body = self.ctx.body
 
-        available, reason = acp_transport.acp_available()
+        # Off the event loop (spec 5.1): PATH lookup, config and fs reads.
+        available, reason = await asyncio.to_thread(acp_transport.acp_available)
         if not available:
             print(f"[hermes-bridge] ACP mode requested but unavailable: {reason}", flush=True)
             # `_mark_request_started` already ran (before the mode branch) — close
@@ -137,8 +138,9 @@ class AcpTransport(BaseChatTransport):
         # "HTTP 400: <host>:<model> is not a valid model ID". When the pinned id is
         # no longer exposed by /v1/providers, drop the pin and let routing follow
         # config.yaml — same policy the agent-loop path applies via cli_is_custom.
-        if provider and provider not in _provider_ids_for_chat_routing(
-            bridge_workspace._resolve_hermes_home(request_profile)
+        if provider and provider not in await asyncio.to_thread(
+            _provider_ids_for_chat_routing,
+            bridge_workspace._resolve_hermes_home(request_profile),
         ):
             print(
                 f"[hermes-bridge] Dropping stale provider pin {provider!r} "
@@ -157,8 +159,8 @@ class AcpTransport(BaseChatTransport):
         # cleanup step may delete it. os.getcwd() then raises FileNotFoundError
         # and every chat request 500s — fall back to the home directory so
         # requests keep working regardless of what happens to the launch cwd.)
-        resolved_repo_root = acp_chat._resolve_acp_repo_root(
-            repo_root_header, repo_owner, repo_name
+        resolved_repo_root = await asyncio.to_thread(
+            acp_chat._resolve_acp_repo_root, repo_root_header, repo_owner, repo_name
         )
         try:
             cwd = resolved_repo_root or os.getcwd()
@@ -304,7 +306,7 @@ class AcpTransport(BaseChatTransport):
                 )
                 print(f"[hermes-bridge] ACP conversation completed. conversation={workspace_id}", flush=True)
                 _finalize_session(True)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - any turn failure is reported in-stream and finalizes the session
                 error_message = str(e)
                 request_outcome["success"] = False
                 request_outcome["error"] = error_message
