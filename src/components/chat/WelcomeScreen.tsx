@@ -169,7 +169,7 @@ export const WelcomeScreen = React.forwardRef<HTMLDivElement, WelcomeScreenProps
         {/* Repo selector / active badge */}
         <StaggerItem className="mt-5">
           {isRepoMode && activeRepo ? (
-            <div className="inline-flex items-center gap-2 pl-3 pr-2 py-1.5 rounded-full bg-primary/8 border border-primary/15 text-[12px] text-primary/90 font-medium">
+            <div className="inline-flex items-center gap-2 pl-3 pr-2 py-1.5 rounded-full bg-primary/[0.08] border border-primary/15 text-[12px] text-primary/90 font-medium">
               <FolderGit2 className="h-3.5 w-3.5 opacity-70" />
               <span className="font-mono">{activeRepo.fullName}</span>
               {getChangeset(scopeId).repoFileTreeStatus === 'loading' && (
