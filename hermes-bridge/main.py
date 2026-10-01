@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 import bridge_config
+import bridge_loop_monitor
 import bridge_providers
 import bridge_state
 import bridge_workspace
@@ -113,7 +114,21 @@ async def _bridge_lifespan(app):
         print(f"[mcp-telemetry] startup init failed: {e}", flush=True)
     _cron_scheduler_task = _start_cron_scheduler()
 
+    # Chat routing reads gateway capabilities from a cache and never probes
+    # inline (spec 5.2); warm it so the first request after startup has an answer.
+    try:
+        import hermes_runs
+
+        hermes_runs.warm_gateway_capabilities()
+    except Exception as e:  # noqa: BLE001 - optimisation only; routing falls back to agent-loop
+        _log.warning("runs", "gateway capability warm-up failed", error=str(e))
+
+    _lag_monitor = bridge_loop_monitor.start_if_enabled()
+
     yield
+
+    if _lag_monitor is not None:
+        _lag_monitor.cancel()
 
     # Tear down in reverse order. Cancellation is awaited so shutdown does not
     # leave orphaned tasks behind the ACP children.

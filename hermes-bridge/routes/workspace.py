@@ -133,20 +133,28 @@ async def workspace_auth_providers(request: Request):
 async def cursor_composer_bridge_status(request: Request):
     """Status for the local Hermes → Cursor Composer bridge (:8790)."""
     hermes_home = bridge_workspace._resolve_hermes_home(bridge_workspace._resolve_profile_name(request))
-    return JSONResponse(content=bridge_workspace._cursor_composer_integration_status(hermes_home=hermes_home))
+    status = await bridge_workspace._ops_thread(
+        bridge_workspace._cursor_composer_integration_status, hermes_home=hermes_home
+    )
+    return JSONResponse(content=status)
 
 
 @router.get("/workspace/overview")
 async def workspace_overview(request: Request):
     profile_name = bridge_workspace._resolve_profile_name(request)
     hermes_home = bridge_workspace._resolve_hermes_home(profile_name)
-    return JSONResponse(content=_workspace_overview_payload(hermes_home=hermes_home, profile_name=profile_name))
+    # sqlite + the cron helper subprocess: off the event loop (spec 5.1).
+    payload = await bridge_workspace._ops_thread(
+        _workspace_overview_payload, hermes_home=hermes_home, profile_name=profile_name
+    )
+    return JSONResponse(content=payload)
 
 
 @router.get("/workspace/usage")
 async def workspace_usage(request: Request):
     hermes_home = bridge_workspace._resolve_hermes_home(bridge_workspace._resolve_profile_name(request))
-    return JSONResponse(content=_workspace_usage_payload(hermes_home=hermes_home))
+    payload = await bridge_workspace._ops_thread(_workspace_usage_payload, hermes_home=hermes_home)
+    return JSONResponse(content=payload)
 
 
 @router.get("/workspace/files")

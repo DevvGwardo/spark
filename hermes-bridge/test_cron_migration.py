@@ -126,7 +126,9 @@ class SingleCronPathTests(unittest.TestCase):
         with patch.object(cron_routes, "_HERMES_CRON_AVAILABLE", False):
             resp = asyncio.run(cron_routes.delete_cron_job("abc"))
         self.assertEqual(resp.status_code, 503)
-        self.assertIn(b"Hermes cron backend unavailable", resp.body)
+        # Other suites stub fastapi's JSONResponse (``content`` instead of ``body``).
+        body = getattr(resp, "body", None) or str(getattr(resp, "content", "")).encode()
+        self.assertIn(b"Hermes cron backend unavailable", body)
 
     def test_scheduler_not_started_without_backend(self):
         with patch.object(cron_routes, "_HERMES_CRON_AVAILABLE", False):

@@ -53,7 +53,7 @@ async def messaging_update_env(platform_id: str, request: Request):
         updates = body.get("env", {})
         if not isinstance(updates, dict):
             return JSONResponse(status_code=400, content={"error": "'env' must be a dict"})
-        result = _update_platform_env(platform_id, updates)
+        result = await _ops_thread(_update_platform_env, platform_id, updates)
         return JSONResponse(content={"platform": result})
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
@@ -68,7 +68,7 @@ async def messaging_update_config(platform_id: str, request: Request):
         updates = body.get("config", {})
         if not isinstance(updates, dict):
             return JSONResponse(status_code=400, content={"error": "'config' must be a dict"})
-        result = _update_platform_config(platform_id, updates)
+        result = await _ops_thread(_update_platform_config, platform_id, updates)
         return JSONResponse(content={"platform": result})
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
@@ -79,7 +79,7 @@ async def messaging_update_config(platform_id: str, request: Request):
 @router.delete("/messaging/platforms/{platform_id}")
 async def messaging_disconnect_platform(platform_id: str):
     try:
-        result = _disconnect_platform(platform_id)
+        result = await _ops_thread(_disconnect_platform, platform_id)
         return JSONResponse(content={"platform": result})
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
@@ -90,7 +90,7 @@ async def messaging_disconnect_platform(platform_id: str):
 @router.post("/messaging/platforms/{platform_id}/test")
 async def messaging_test_platform(platform_id: str):
     try:
-        result = _test_platform_connection(platform_id)
+        result = await _ops_thread(_test_platform_connection, platform_id)
         return JSONResponse(content=result)
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
@@ -143,7 +143,7 @@ async def messaging_oauth_complete(platform_id: str, request: Request):
         code = body.get("code")
         if not code:
             return JSONResponse(status_code=400, content={"error": "Missing 'code' in request body"})
-        result = _complete_oauth(platform_id, code)
+        result = await _ops_thread(_complete_oauth, platform_id, code)
         return JSONResponse(content=result)
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
@@ -169,7 +169,7 @@ async def discord_oauth_callback(request: Request):
             "<script>window.close()</script></body></html>",
         )
     try:
-        _complete_oauth("discord", code)
+        await _ops_thread(_complete_oauth, "discord", code)
         return HTMLResponse(
             status_code=200,
             content="<html><body>"
@@ -201,7 +201,7 @@ async def slack_oauth_callback(request: Request):
             "<script>window.close()</script></body></html>",
         )
     try:
-        _complete_oauth("slack", code)
+        await _ops_thread(_complete_oauth, "slack", code)
         return HTMLResponse(
             status_code=200,
             content="<html><body>"

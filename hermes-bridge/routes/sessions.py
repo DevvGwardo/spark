@@ -53,7 +53,7 @@ async def list_sessions(
             if _normalize_profile_name(session.get("profile")) == profile_name
         ]
     # Merge in sessions from state.db (CLI / cron sessions)
-    db_sessions = _load_state_db_sessions(hermes_home=hermes_home)
+    db_sessions = await bridge_workspace._ops_thread(_load_state_db_sessions, hermes_home=hermes_home)
     in_memory_ids = {s["id"] for s in summaries}
     for db_session in db_sessions:
         if db_session["id"] not in in_memory_ids:
@@ -97,8 +97,9 @@ async def get_session(session_id: str, request: Request):
             payload = dict(session)
             payload.pop("profile", None)
             return JSONResponse(content=payload)
-    # Fall back to state.db for CLI / cron sessions
-    rows = _query_state_db(
+    # Fall back to state.db for CLI / cron sessions (sqlite: off the event loop).
+    rows = await bridge_workspace._ops_thread(
+        _query_state_db,
         "SELECT id, source, model, started_at, ended_at, end_reason, message_count, title "
         "FROM sessions WHERE id = ?",
         (session_id,),
@@ -127,7 +128,9 @@ async def get_session(session_id: str, request: Request):
         "toolsets": [f"source:{row.get('source') or 'cli'}"],
         "repo": None,
         "firstUserMessage": row.get("title") or "",
-        "chat": _load_session_messages(session_id, hermes_home=hermes_home),
+        "chat": await bridge_workspace._ops_thread(
+            _load_session_messages, session_id, hermes_home=hermes_home
+        ),
     }
     return JSONResponse(content=payload)
 
@@ -178,11 +181,12 @@ async def fork_session(session_id: str, request: Request):
     api_key = (
         os.environ.get("HERMES_API_KEY")
         or os.environ.get("API_SERVER_KEY")
-        or bridge_providers._get_local_gateway_key()
+        or await bridge_workspace._ops_thread(bridge_providers._get_local_gateway_key)
         or None
     )
     try:
-        status, payload = hermes_ops.fork_gateway_session(
+        status, payload = await bridge_workspace._ops_thread(
+            hermes_ops.fork_gateway_session,
             session_id,
             base_url=base,
             api_key=api_key,

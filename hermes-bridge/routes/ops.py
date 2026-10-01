@@ -44,7 +44,7 @@ async def put_fallback(request: Request):
         saved = hermes_ops.set_fallback_providers(data, chain)
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
-    dump()
+    await _ops_thread(dump)
     return {"object": "fallback.chain", "providers": saved}
 
 
@@ -180,7 +180,7 @@ async def get_bundles(request: Request):
 async def get_bundle_detail(request: Request, name: str):
     import hermes_ops
     try:
-        result = hermes_ops.show_skill_bundle(name, hermes_home=_ops_home(request))
+        result = await _ops_thread(hermes_ops.show_skill_bundle, name, hermes_home=_ops_home(request))
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
     if not result.get("ok"):
@@ -201,7 +201,7 @@ async def post_bundles_create(request: Request):
     skills_raw = body.get("skills") or body.get("skill_ids") or []
     skills = skills_raw if isinstance(skills_raw, list) else [skills_raw]
     try:
-        return hermes_ops.create_skill_bundle(
+        return await _ops_thread(hermes_ops.create_skill_bundle,
             name,
             [str(s) for s in skills],
             description=body.get("description"),
@@ -222,7 +222,7 @@ async def post_bundles_delete(request: Request):
         body = {}
     name = str((body or {}).get("name") or "").strip()
     try:
-        return hermes_ops.delete_skill_bundle(name, hermes_home=_ops_home(request))
+        return await _ops_thread(hermes_ops.delete_skill_bundle, name, hermes_home=_ops_home(request))
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
 
@@ -230,7 +230,7 @@ async def post_bundles_delete(request: Request):
 @router.post("/bundles/reload")
 async def post_bundles_reload(request: Request):
     import hermes_ops
-    return hermes_ops.reload_skill_bundles(_ops_home(request))
+    return await _ops_thread(hermes_ops.reload_skill_bundles, _ops_home(request))
 
 
 @router.get("/dashboard/url")
@@ -262,7 +262,7 @@ async def put_goals(request: Request):
         saved = hermes_ops.set_goals_config(data, body)
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
-    dump()
+    await _ops_thread(dump)
     return {"object": "goals.config", **saved}
 
 
@@ -289,7 +289,7 @@ async def put_tool_search(request: Request):
         saved = hermes_ops.set_tool_search_config(data, body)
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
-    dump()
+    await _ops_thread(dump)
     return {"object": "tool_search.config", **saved}
 
 
@@ -352,7 +352,7 @@ async def post_pets_select(request: Request):
         body = {}
     pet_id = (body or {}).get("pet_id") or (body or {}).get("id") or ""
     try:
-        return hermes_ops.select_pet(str(pet_id), hermes_home=_ops_home(request))
+        return await _ops_thread(hermes_ops.select_pet, str(pet_id), hermes_home=_ops_home(request))
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
 
@@ -373,7 +373,7 @@ async def post_claw_migrate(request: Request):
             status_code=400,
             content={"error": "Applying migration requires dry_run=false and yes=true"},
         )
-    return hermes_ops.claw_migrate(
+    return await _ops_thread(hermes_ops.claw_migrate,
         dry_run=dry_run,
         migrate_secrets=migrate_secrets,
         yes=yes,
@@ -384,14 +384,14 @@ async def post_claw_migrate(request: Request):
 @router.get("/auth/pool")
 async def get_auth_pool(request: Request):
     import hermes_ops
-    return hermes_ops.list_auth_pool(_ops_home(request))
+    return await _ops_thread(hermes_ops.list_auth_pool, _ops_home(request))
 
 
 @router.get("/auth/pool/{provider}/status")
 async def get_auth_pool_provider_status(request: Request, provider: str):
     import hermes_ops
     try:
-        return hermes_ops.get_auth_provider_status(provider, hermes_home=_ops_home(request))
+        return await _ops_thread(hermes_ops.get_auth_provider_status, provider, hermes_home=_ops_home(request))
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
 
@@ -406,7 +406,7 @@ async def post_auth_pool_reset(request: Request):
     if not isinstance(body, dict) or not body.get("provider"):
         return JSONResponse(status_code=400, content={"error": "provider is required"})
     try:
-        return hermes_ops.reset_auth_pool_provider(
+        return await _ops_thread(hermes_ops.reset_auth_pool_provider,
             str(body["provider"]),
             hermes_home=_ops_home(request),
         )
@@ -431,7 +431,7 @@ async def post_auth_pool_remove(request: Request):
             content={"error": "provider and target (index, id, or label) are required"},
         )
     try:
-        result = hermes_ops.remove_auth_pool_credential(
+        result = await _ops_thread(hermes_ops.remove_auth_pool_credential,
             str(provider),
             str(target),
             hermes_home=_ops_home(request),
@@ -459,7 +459,7 @@ async def post_auth_pool_add(request: Request):
             content={"error": "provider and api_key are required"},
         )
     try:
-        result = hermes_ops.add_auth_api_key(
+        result = await _ops_thread(hermes_ops.add_auth_api_key,
             str(provider),
             str(api_key),
             label=body.get("label"),
@@ -474,39 +474,39 @@ async def post_auth_pool_add(request: Request):
 @router.get("/portal/info")
 async def get_portal_info_route(request: Request):
     import hermes_ops
-    return hermes_ops.get_portal_info(_ops_home(request))
+    return await _ops_thread(hermes_ops.get_portal_info, _ops_home(request))
 
 
 @router.get("/portal/status")
 async def get_portal_status_route(request: Request):
     import hermes_ops
-    return hermes_ops.get_portal_status(_ops_home(request))
+    return await _ops_thread(hermes_ops.get_portal_status, _ops_home(request))
 
 
 @router.get("/portal/tools")
 async def get_portal_tools_route(request: Request):
     import hermes_ops
-    return hermes_ops.list_portal_tools(_ops_home(request))
+    return await _ops_thread(hermes_ops.list_portal_tools, _ops_home(request))
 
 
 @router.get("/portal/open-url")
 async def get_portal_open_url_route(request: Request):
     import hermes_ops
-    return hermes_ops.get_portal_open_url(_ops_home(request))
+    return await _ops_thread(hermes_ops.get_portal_open_url, _ops_home(request))
 
 
 @router.get("/portal/open")
 async def get_portal_open_route(request: Request):
     """Non-interactive browser launch via `hermes portal open` (subscription page)."""
     import hermes_ops
-    return hermes_ops.open_portal_subscription(_ops_home(request))
+    return await _ops_thread(hermes_ops.open_portal_subscription, _ops_home(request))
 
 
 @router.post("/portal/oauth/start")
 async def portal_oauth_start_route(request: Request):
     """Start Nous Portal device-code OAuth (returns user_code + verification URL only)."""
     import hermes_ops
-    result = hermes_ops.portal_oauth_start(_ops_home(request))
+    result = await _ops_thread(hermes_ops.portal_oauth_start, _ops_home(request))
     status = 200 if result.get("ok") else 503
     return JSONResponse(status_code=status, content=result)
 
@@ -516,7 +516,7 @@ async def portal_oauth_poll_route(session_id: str, request: Request):
     """Poll Nous Portal device-code OAuth session (masked status only)."""
     import hermes_ops
     try:
-        result = hermes_ops.portal_oauth_poll(session_id, _ops_home(request))
+        result = await _ops_thread(hermes_ops.portal_oauth_poll, session_id, _ops_home(request))
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
     if result.get("status") == "not_found":
@@ -553,7 +553,7 @@ async def cancel_gateway_run(request: Request):
     conversation_id = str(body.get("conversation_id") or "").strip()
     if not conversation_id:
         return JSONResponse(status_code=400, content={"error": "conversation_id is required"})
-    cancelled = _hermes_runs.cancel_active_run(conversation_id)
+    cancelled = await _hermes_runs.cancel_active_run_async(conversation_id)
     return JSONResponse(status_code=200, content={"cancelled": cancelled})
 
 
@@ -573,7 +573,7 @@ async def approve_gateway_run(request: Request):
         return JSONResponse(status_code=400, content={"error": "conversation_id is required"})
     choice = str(body.get("choice") or "approve").strip().lower() or "approve"
     resolve_all = bool(body.get("all") or body.get("resolve_all"))
-    approved, status_code = _hermes_runs.approve_active_run(
+    approved, status_code = await _hermes_runs.approve_active_run_async(
         conversation_id,
         choice=choice,
         resolve_all=resolve_all,
@@ -597,7 +597,7 @@ async def post_kanban_swarm(request: Request):
     if workers is not None and not isinstance(workers, list):
         workers = None
     try:
-        return hermes_ops.kanban_swarm_create(
+        return await _ops_thread(hermes_ops.kanban_swarm_create,
             goal,
             workers=workers,
             verifier=str(body.get("verifier") or "reviewer"),
@@ -612,7 +612,7 @@ async def post_kanban_swarm(request: Request):
 async def get_projects(request: Request):
     import hermes_ops
     include_archived = request.query_params.get("all", "").lower() in ("1", "true", "yes")
-    return hermes_ops.list_projects(
+    return await _ops_thread(hermes_ops.list_projects,
         hermes_home=_ops_home(request),
         include_archived=include_archived,
     )
@@ -631,7 +631,7 @@ async def post_projects_create(request: Request):
     primary = body.get("primary_folder") or body.get("primary") or body.get("path")
     use = body.get("use", True) is not False
     try:
-        return hermes_ops.create_project(
+        return await _ops_thread(hermes_ops.create_project,
             name,
             primary_folder=str(primary).strip() if primary else None,
             use=use,
@@ -654,7 +654,7 @@ async def post_projects_use(request: Request):
         if raw is not None and str(raw).strip():
             project = str(raw).strip()
     try:
-        return hermes_ops.use_project(project, hermes_home=_ops_home(request))
+        return await _ops_thread(hermes_ops.use_project, project, hermes_home=_ops_home(request))
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
 
@@ -671,7 +671,7 @@ async def post_projects_bind_board(request: Request):
     project = str(body.get("project") or body.get("slug") or "").strip()
     board = body.get("board") or body.get("board_slug")
     try:
-        return hermes_ops.bind_board(
+        return await _ops_thread(hermes_ops.bind_board,
             project,
             str(board).strip() if board is not None else None,
             hermes_home=_ops_home(request),

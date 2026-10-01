@@ -79,6 +79,12 @@ async def health(request: Request):
     # Profile-aware: honor X-Hermes-Profile like /v1/providers and chat do so
     # detectHermesBridge.hasAnyCreds matches the active profile's config.yaml.
     profile_name = bridge_workspace._resolve_profile_name(request)
+    # Off the event loop (spec 5.1): the credential and cursor-composer checks
+    # read files and probe a local HTTP endpoint, and /health is polled.
+    return await bridge_workspace._ops_thread(_health_payload, profile_name)
+
+
+def _health_payload(profile_name: str) -> dict:
     profile_home = bridge_workspace._resolve_hermes_home(profile_name)
     cfg = bridge_providers._load_cli_model_config(profile_home)
 
