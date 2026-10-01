@@ -60,7 +60,23 @@ Depends on hermes-deploy `feat/nubby-cli` (POST /api/nub/cli/key) being deployed
       isn't linked.
   EVIDENCE: {"linked":false} · 401 · 405 · {"status":"not_found"} · {"error":"Nub is not linked. Sign in to Nub in Spark settings first."}
 
-- [ ] G1: Whole suites, lint and typecheck after merging the UI pass.
-  CHECK: npm test 2>&1 | grep -E "Tests +[0-9]+ passed" | tail -1; npm run lint 2>&1 | tail -1; npm run typecheck 2>&1 | tail -1
-  EXPECT: all green, zero lint warnings
-  EVIDENCE: (filled in after the merge)
+- [x] N5: Sign in with Nub is offered on the setup wizard's first step and in
+      Settings → Providers → Nub (sign-in replaces the key field; an already
+      linked user gets Continue). The wizard re-measures a step when its
+      content grows, so the waiting panel is never clipped.
+  CHECK: npx vitest run src/test/setup-wizard-nub.test.tsx src/test/nub-sign-in.test.tsx 2>&1 | grep -E "Tests +[0-9]+ passed"
+  EXPECT: /Tests  5 passed/
+  EVIDENCE: Tests  5 passed (5). Screenshots (headless Chromium against vite +
+      server with a fake maiavm, KANBAN_AUTO_START=false): wizard-step0-{dark,light},
+      wizard-signin-{dark,light}, wizard-waiting-{dark,light}, wizard-finish-dark,
+      app-after-nub-dark (status bar "Nub · glm-5.3-flash"), settings-nub-linked-dark.
+      Zero page errors.
+
+- [x] G1: Whole suites, typecheck and lint after merging the UI pass (feat/ui-pass).
+  CHECK: npm test 2>&1 | grep -E "Tests +[0-9]+ passed" | tail -1; npm run typecheck; cd hermes-bridge && .venv/bin/python -m pytest -q | tail -1
+  EXPECT: all green
+  EVIDENCE: Tests  1298 passed | 27 skipped (1325) · typecheck OK · bridge 848 passed, 5 skipped.
+      Lint: 0 warnings in every file this branch changes. `npm run lint` reports 386
+      pre-existing no-explicit-any warnings (agent-loop.test.ts, chat-handoff.test.ts,
+      useChat.ts), each counted three times because stale agent worktrees under
+      .claude/worktrees/ are linted too; none come from this branch.

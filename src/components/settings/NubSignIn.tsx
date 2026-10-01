@@ -174,20 +174,24 @@ export function NubSignIn({ onLinked, autoOpen = true }: NubSignInProps) {
             Approve the sign-in in Telegram. It should show the code{' '}
             <span className="font-mono font-semibold tracking-wider">{phase.link.code}</span>.
           </p>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center justify-between gap-2">
             <Button type="button" size="sm" variant="outline" onClick={() => openExternalUrl(phase.link.telegramUrl)}>
               <ExternalLink className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
               Open Telegram
             </Button>
-            {phase.link.pairingUrl && (
-              <Button type="button" size="sm" variant="ghost" onClick={() => openExternalUrl(phase.link.pairingUrl!)}>
-                No Telegram here? Open the pairing page
-              </Button>
-            )}
             <Button type="button" size="sm" variant="ghost" onClick={cancel}>
               Cancel
             </Button>
           </div>
+          {phase.link.pairingUrl && (
+            <button
+              type="button"
+              onClick={() => openExternalUrl(phase.link.pairingUrl!)}
+              className="rounded text-[12px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              No Telegram here? Open the pairing page
+            </button>
+          )}
         </div>
       )}
 
@@ -229,6 +233,11 @@ export function NubSignIn({ onLinked, autoOpen = true }: NubSignInProps) {
               <LogOut className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
               Sign out
             </Button>
+            {onLinked && (
+              <Button type="button" size="sm" onClick={onLinked} disabled={busy || !apiKey}>
+                Continue
+              </Button>
+            )}
           </div>
         </div>
       )}

@@ -7,6 +7,7 @@ import { useHermesStore } from '@/stores/hermes-store';
 import { fetchHermesProviders, fetchHermesSavedProviders, type HermesProviderInfo, type HermesSavedProvider } from '@/lib/hermes-api';
 import { useUIStore } from '@/stores/ui-store';
 import { PROVIDERS, PROVIDER_ORDER, CATEGORY_LABELS, getVisibleModelOptions } from '@/lib/providers';
+import { NubSignIn } from '@/components/settings/NubSignIn';
 import { validateApiKey, listGitHubRepos, type GitHubRepoSummary } from '@/lib/api';
 import { PROVIDER_KEY_URLS } from '@/lib/provider-key-urls';
 import { cn } from '@/lib/utils';
@@ -31,6 +32,7 @@ import packageJson from '../../../package.json';
 import { OUTPUT_STYLE_IDS, getOutputStyleSpec, type OutputStyle } from '../../../shared/output-styles';
 
 const PROVIDER_COLORS: Partial<Record<Provider, string>> = {
+  nub: '#5AA2EF',
   openai: '#10A37F',
   anthropic: '#D4A274',
   google: '#4285F4',
@@ -1426,7 +1428,18 @@ export const SettingsModal: React.FC = () => {
                   )}
 
                   <div className="space-y-5">
-                    {needsApiKey && (
+                    {providerInfo?.signIn === 'nub' && (
+                      <div className={cn(settingsCardClass, 'space-y-3 px-5 py-5')}>
+                        <div>
+                          <p className={fieldLabelClass}>Account</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Nub uses your nub agent account instead of a pasted key.
+                          </p>
+                        </div>
+                        <NubSignIn />
+                      </div>
+                    )}
+                    {needsApiKey && providerInfo?.signIn !== 'nub' && (
                       <div className={cn(settingsCardClass, 'space-y-3 px-5 py-5')}>
                         <div className="flex items-center justify-between gap-3">
                           <div>
@@ -1456,8 +1469,11 @@ export const SettingsModal: React.FC = () => {
                             className={cn(textInputClass, 'pr-11 font-mono')}
                           />
                           <button
+                            type="button"
                             onClick={() => setShowKey(s => !s)}
-                            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors duration-100"
+                            aria-label={showKey ? 'Hide API key' : 'Show API key'}
+                            aria-pressed={showKey}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 rounded text-muted-foreground hover:text-foreground transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           >
                             {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                           </button>

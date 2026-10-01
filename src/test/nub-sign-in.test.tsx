@@ -82,6 +82,18 @@ describe('NubSignIn', () => {
     expect(openExternalUrl).not.toHaveBeenCalled();
   });
 
+  it('offers Continue when already linked inside a flow that wants it', async () => {
+    api.status.mockResolvedValue(LINKED);
+    useSettingsStore.getState().updateProviderConfig('nub', { apiKey: 'hermes_pk_raw' });
+    const onLinked = vi.fn();
+    render(<NubSignIn onLinked={onLinked} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
+
+    expect(onLinked).toHaveBeenCalledTimes(1);
+    expect(api.refreshKey).not.toHaveBeenCalled();
+  });
+
   it('fetches a fresh key when linked but the key is missing, and signs out', async () => {
     api.status.mockResolvedValueOnce(LINKED).mockResolvedValue({ linked: false });
     api.refreshKey.mockResolvedValue(KEY);
