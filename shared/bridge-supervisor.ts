@@ -70,6 +70,15 @@ export interface BridgeSupervisorStatus {
   readiness: BridgeReadiness;
 }
 
+/** What the bridge's auth-exempt /diag reports. */
+export interface BridgeDiag {
+  pid?: number;
+  bridge_version?: string;
+  hermes_agent_version?: string | null;
+  launch_token_present?: boolean;
+  token_matches?: boolean;
+}
+
 export interface SupervisorTiming {
   healthTimeoutMs: number;
   healthPollMs: number;
@@ -388,6 +397,12 @@ export class BridgeSupervisor {
   async isOwned(): Promise<boolean> {
     const r = await this.probe('/diag', 1_500);
     return r.ok && (r.body as { token_matches?: unknown } | null | undefined)?.token_matches === true;
+  }
+
+  /** The bridge's /diag body (pid, versions, token_matches), or null if unreachable. */
+  async diag(): Promise<BridgeDiag | null> {
+    const r = await this.probe('/diag', 1_500);
+    return r.ok && r.body && typeof r.body === 'object' ? (r.body as BridgeDiag) : null;
   }
 
   // ── Deps / status / install ──────────────────────────────────────────────
@@ -723,6 +738,21 @@ export class BridgeSupervisor {
     this.child = null;
     this.startPromise = null;
     this.transition('stopped', { attempt: 0, lastError: null });
+  }
+
+  /**
+   * Intentional restart (e.g. after a Hermes update): an awaited stop, then a
+   * fresh start. Not a crash — it does not consume respawn attempts. An adopted
+   * bridge is stopped only after /diag confirms it holds our launch token.
+   */
+  async restart(): Promise<BridgeStartResult> {
+    const wasAdopted = this.adopted && !this.child;
+    await this.stop();
+    if (wasAdopted && (await this.isReachable())) {
+      if (!(await this.isOwned())) return this.failStart(`Bridge on :${this.port} is no longer owned by this launch; not restarting it`);
+      if (!(await this.evictPort())) return this.failStart(`Adopted bridge on :${this.port} could not be stopped for restart`);
+    }
+    return this.start();
   }
 
   private killChild(child: ChildProcess): Promise<void> {

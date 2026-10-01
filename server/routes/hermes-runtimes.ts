@@ -5,6 +5,7 @@ import { access } from 'fs/promises';
 import { promisify } from 'util';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { hermesAgentBin } from '../../shared/hermes-agent';
 import { sendJson } from '../lib/helpers';
 import { logger } from '../lib/logger';
 
@@ -17,7 +18,7 @@ if (!HERMES_HOME) {
   logger.warn('[hermes-runtimes] os.homedir() returned empty — Hermes paths may be incorrect');
 }
 const HERMES_DIR = join(HERMES_HOME, '.hermes', 'hermes-agent');
-const HERMES_BIN = join(HERMES_HOME, '.hermes', 'hermes-agent', 'venv', 'bin', 'hermes');
+const HERMES_BIN = hermesAgentBin(HERMES_DIR);
 const DOCKER_HERMES_CONTAINER = 'hermes-docker';
 
 type ExecFileAsyncFn = (

@@ -18,6 +18,10 @@ interface UpdateStatus {
   hasConflicts?: boolean;
   stashCount?: number;
   blockedReason?: string | null;
+  /** Detached at a release tag: updates move to another tag, not main. */
+  pinned?: boolean;
+  currentTag?: string | null;
+  targetTag?: string | null;
 }
 
 interface UpdateProgress {
@@ -36,7 +40,7 @@ const UpdateProgressModal: React.FC<{
   onClose: () => void;
 }> = ({ progress, updating, onClose }) => {
   const step = progress?.step ?? 0;
-  const total = progress?.totalSteps ?? 6;
+  const total = progress?.totalSteps ?? 7;
   const pct = progress?.done && progress.success ? 100 : Math.round((step / total) * 100);
   const failed = progress?.done && progress.success === false;
   const succeeded = progress?.done && progress.success === true;
@@ -212,6 +216,7 @@ export const HermesUpdateButton: React.FC = () => {
       const res = await fetch(`${baseUrl}/api/hermes/update`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(status?.pinned && status.targetTag ? { tag: status.targetTag } : {}),
       });
 
       const data = await res.json();
@@ -220,8 +225,8 @@ export const HermesUpdateButton: React.FC = () => {
         setResult(`Updated to ${data.newVersion}`);
         // Set terminal state directly — polling may stop before the final snapshot
         setProgress((prev) => ({
-          step: prev?.totalSteps ?? 6,
-          totalSteps: prev?.totalSteps ?? 6,
+          step: prev?.totalSteps ?? 7,
+          totalSteps: prev?.totalSteps ?? 7,
           label: 'Update complete',
           done: true,
           success: true,
@@ -234,7 +239,7 @@ export const HermesUpdateButton: React.FC = () => {
         setError(data.error || 'Update failed');
         setProgress((prev) => ({
           step: prev?.step ?? 0,
-          totalSteps: prev?.totalSteps ?? 6,
+          totalSteps: prev?.totalSteps ?? 7,
           label: prev?.label ?? '',
           done: true,
           success: false,
@@ -247,7 +252,7 @@ export const HermesUpdateButton: React.FC = () => {
       // POST itself failed — surface it in the modal since progress polling won't
       setProgress((prev) => ({
         step: prev?.step ?? 0,
-        totalSteps: prev?.totalSteps ?? 6,
+        totalSteps: prev?.totalSteps ?? 7,
         label: prev?.label ?? '',
         done: true,
         success: false,
@@ -258,7 +263,7 @@ export const HermesUpdateButton: React.FC = () => {
       setUpdating(false);
       stopPolling();
     }
-  }, [checkStatus, startPolling, stopPolling]);
+  }, [checkStatus, startPolling, stopPolling, status]);
 
   // Don't render if status check failed (hermes not installed?)
   if (!status) return null;
@@ -288,7 +293,9 @@ export const HermesUpdateButton: React.FC = () => {
             : updating
               ? 'Updating Hermes...'
               : hasUpdate
-                ? `${status.commitsBehind} update${status.commitsBehind !== 1 ? 's' : ''} available`
+                ? status.pinned
+                  ? `Move hermes-agent from ${status.currentTag} to release ${status.targetTag}`
+                  : `${status.commitsBehind} update${status.commitsBehind !== 1 ? 's' : ''} available`
                 : 'Hermes is up to date'
         }
       >
@@ -311,7 +318,9 @@ export const HermesUpdateButton: React.FC = () => {
               : justUpdated
                 ? 'Updated!'
                 : hasUpdate
-                  ? `Update (${status.commitsBehind})`
+                  ? status.pinned
+                    ? `Move to ${status.targetTag}`
+                    : `Update (${status.commitsBehind})`
                   : 'Up to date'}
         </span>
       </button>

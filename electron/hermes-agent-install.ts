@@ -6,23 +6,29 @@
  * rebased against, applies the parity patch with a version check, and installs
  * its requirements into the same package dir the bridge uses.
  */
-import { execFileSync, spawn } from 'child_process'
+import { execFile, spawn } from 'child_process'
 import { existsSync } from 'fs'
 import { dirname, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
+import { promisify } from 'util'
 import { app } from 'electron'
-import { findExecutable, hermesHome } from '../shared/bridge-supervisor'
+import { findExecutable } from '../shared/bridge-supervisor'
+import {
+  HERMES_AGENT_PATCH_NAME,
+  HERMES_AGENT_VERSION_TAG,
+  applyHermesPatch,
+  exactTagAtHead,
+  findHermesPatch,
+  hermesAgentDir,
+  type GitRun,
+} from '../shared/hermes-agent'
 import { bridgePackagesDir, resolvePython } from './bridge'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
+const execFileAsync = promisify(execFile)
 
-// Spark patches (patches/*) are rebased against this exact Hermes release —
-// see patches/README.md ("Rebased for Hermes 0.19.0 (2026.7.20)").
-const HERMES_AGENT_VERSION_TAG = 'v2026.7.20'
-const HERMES_AGENT_PATCH_NAME = 'hermes-api-server-runs-parity.patch'
-
-function hermesAgentDir(): string {
-  return join(hermesHome(), 'hermes-agent')
+function gitIn(git: string, dir: string): GitRun {
+  return async (args) => (await execFileAsync(git, ['-C', dir, ...args], { encoding: 'utf8' })).stdout
 }
 
 function findGit(): string | null {
@@ -76,7 +82,8 @@ export async function installHermesAgent(onProgress?: (line: string) => void): P
 
   // Version check: Spark's patches only apply to the pinned release. Refuse to
   // patch a different version instead of silently corrupting the checkout.
-  const version = getHermesAgentVersion(git, target)
+  const gitRun = gitIn(git, target)
+  const version = await getHermesAgentVersion(gitRun)
   if (!version.ok) {
     return { ok: false, message: version.message ?? 'Could not determine hermes-agent version' }
   }
@@ -92,17 +99,10 @@ export async function installHermesAgent(onProgress?: (line: string) => void): P
   const patchPath = resolveHermesPatchPath()
   if (!patchPath) {
     log(`Spark patch file (${HERMES_AGENT_PATCH_NAME}) not found — skipping patch application`)
-  } else if (isHermesPatchApplied(git, target, patchPath)) {
-    log('Spark patch already applied, skipping')
   } else {
-    try {
-      execFileSync(git, ['-C', target, 'apply', '--check', patchPath], { stdio: 'ignore' })
-      execFileSync(git, ['-C', target, 'apply', patchPath], { stdio: 'ignore' })
-      log(`Applied ${HERMES_AGENT_PATCH_NAME}`)
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error)
-      return { ok: false, message: `Failed to apply ${HERMES_AGENT_PATCH_NAME}: ${detail.slice(-500)}` }
-    }
+    const patched = await applyHermesPatch(gitRun, patchPath)
+    if (!patched.ok) return { ok: false, message: patched.message }
+    log(patched.alreadyApplied ? 'Spark patch already applied, skipping' : `Applied ${HERMES_AGENT_PATCH_NAME}`)
   }
 
   // Install hermes-agent's deps using our resolved Python.
@@ -141,32 +141,14 @@ export async function installHermesAgent(onProgress?: (line: string) => void): P
  * Resolve the pinned Hermes release the checkout is at. Shallow clones of a
  * tag report the tag via `git describe --tags --exact-match`.
  */
-function getHermesAgentVersion(git: string, dir: string): { ok: boolean; tag?: string; message?: string } {
+async function getHermesAgentVersion(git: GitRun): Promise<{ ok: boolean; tag?: string; message?: string }> {
+  const tag = await exactTagAtHead(git)
+  if (tag) return { ok: true, tag }
   try {
-    const tag = execFileSync(git, ['-C', dir, 'describe', '--tags', '--exact-match'], {
-      encoding: 'utf8',
-    }).trim()
-    if (!tag) throw new Error('empty describe output')
-    return { ok: true, tag }
+    const sha = (await git(['rev-parse', '--short', 'HEAD'])).trim()
+    return { ok: false, message: `Could not determine hermes-agent version (HEAD is ${sha})` }
   } catch {
-    try {
-      const sha = execFileSync(git, ['-C', dir, 'rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim()
-      return { ok: false, message: `Could not determine hermes-agent version (HEAD is ${sha})` }
-    } catch {
-      return { ok: false, message: '~/.hermes/hermes-agent is not a git checkout; cannot verify version' }
-    }
-  }
-}
-
-/**
- * `git apply --reverse --check` exits 0 when the patch is already applied.
- */
-function isHermesPatchApplied(git: string, dir: string, patchPath: string): boolean {
-  try {
-    execFileSync(git, ['-C', dir, 'apply', '--reverse', '--check', patchPath], { stdio: 'ignore' })
-    return true
-  } catch {
-    return false
+    return { ok: false, message: '~/.hermes/hermes-agent is not a git checkout; cannot verify version' }
   }
 }
 
@@ -175,8 +157,7 @@ function isHermesPatchApplied(git: string, dir: string, patchPath: string): bool
  * (process.resourcesPath/patches); dev uses the repo's patches/ directory.
  */
 function resolveHermesPatchPath(): string | null {
-  const candidates = app.isPackaged
+  return findHermesPatch(app.isPackaged
     ? [join(process.resourcesPath, 'patches', HERMES_AGENT_PATCH_NAME)]
-    : [resolve(__dirname, '../../patches', HERMES_AGENT_PATCH_NAME)]
-  return candidates.find((p) => existsSync(p)) ?? null
+    : [resolve(__dirname, '../../patches', HERMES_AGENT_PATCH_NAME)])
 }
