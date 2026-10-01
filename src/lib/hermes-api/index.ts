@@ -5,7 +5,7 @@
  * The transport internals in `./core` (`hermesFetch`, `abortAfter`,
  * `coalesceHermesFetch`) are deliberately not re-exported.
  */
-import { abortAfter, coalesceHermesFetch, hermesFetch } from './core';
+import { abortAfter, hermesFetch } from './core';
 
 export { HermesApiError, HERMES_FETCH_TIMEOUT_MS } from './core';
 export * from './approvals';
@@ -13,72 +13,7 @@ export * from './providers';
 export * from './portal';
 export * from './cron';
 export * from './sessions';
-
-export interface HermesWorkspaceFileSummary {
-  key: string;
-  label: string;
-  description: string;
-  path: string;
-  exists: boolean;
-  size: number;
-  modified_at: string | null;
-  preview: string;
-  version: string | null;
-}
-
-export interface HermesWorkspaceFile extends HermesWorkspaceFileSummary {
-  content: string;
-}
-
-export interface HermesWorkspaceOverview {
-  hermes_home: string;
-  session_source: {
-    kind: string;
-    path: string;
-    available: boolean;
-  };
-  cron_backend: string;
-  counts: {
-    tracked_sessions: number;
-    messages: number;
-    input_tokens: number;
-    output_tokens: number;
-    live_sessions: number;
-    cron_jobs: number;
-    skills: number;
-  };
-  last_session_started_at: string | null;
-  files: HermesWorkspaceFileSummary[];
-  top_models: Array<{
-    model: string;
-    session_count: number;
-    input_tokens: number;
-    output_tokens: number;
-    total_tokens: number;
-  }>;
-  integrations?: {
-    cursor_composer?: CursorComposerBridgeStatus;
-  };
-}
-
-export interface CursorComposerBridgeStatus {
-  id: string;
-  name: string;
-  description?: string;
-  connected: boolean;
-  skills_ready: boolean;
-  bridge_repo?: string;
-  launchd_label?: string;
-  bridge?: {
-    reachable?: boolean;
-    status?: string;
-    health_url?: string;
-    api_url?: string;
-    detail?: string;
-  };
-  skills?: Record<string, boolean>;
-  detail?: string;
-}
+export * from './workspace';
 
 export interface HermesSkillSummary {
   id: string;
@@ -134,10 +69,6 @@ export interface HermesUsageOverview {
   last_session_started_at: string | null;
   top_models: HermesUsageModelBreakdown[];
   recent_days: HermesUsageDay[];
-}
-
-export async function fetchCursorComposerBridge(): Promise<CursorComposerBridgeStatus> {
-  return hermesFetch<CursorComposerBridgeStatus>('/bridges/cursor-composer');
 }
 
 export interface CheckpointProject {
@@ -356,10 +287,6 @@ export async function reloadSkillBundles(): Promise<{
   error?: string;
 }> {
   return hermesFetch('/bundles/reload', { method: 'POST', body: '{}' });
-}
-
-export async function fetchHermesDashboardUrl(): Promise<{ ok: boolean; url: string | null; error?: string }> {
-  return hermesFetch('/dashboard/url');
 }
 
 export interface GoalsConfig {
@@ -774,86 +701,13 @@ export async function createKanbanSwarm(input: {
   });
 }
 
-// ─── Workspace ─────────────────────────────────────────────────────────────
-
-export async function fetchHermesWorkspaceOverview(): Promise<HermesWorkspaceOverview> {
-  return hermesFetch<HermesWorkspaceOverview>('/workspace/overview');
-}
-
 export async function fetchHermesWorkspaceUsage(): Promise<HermesUsageOverview> {
   return hermesFetch<HermesUsageOverview>('/workspace/usage');
-}
-
-// ─── System ─────────────────────────────────────────────────────────────
-
-export interface HermesSystemStats {
-  host: {
-    os: string | null;
-    arch: string | null;
-    hostname: string | null;
-    python_version: string | null;
-    cpu_count: number | null;
-    load_avg: number[] | null;
-    memory_total: number | null;
-    disk: { total: number; used: number; free: number } | null;
-  };
-  gateway: { port: number; reachable: boolean; status: number | null };
-  hermes: { version: string | null };
-  providers: { active: string | null; count: number };
-}
-
-export function fetchHermesSystem(): Promise<HermesSystemStats> {
-  return coalesceHermesFetch('fetchHermesSystem', () =>
-    hermesFetch<HermesSystemStats>('/workspace/system'),
-  );
-}
-
-export async function fetchHermesWorkspaceFiles(): Promise<HermesWorkspaceFileSummary[]> {
-  const data = await hermesFetch<{ files: HermesWorkspaceFileSummary[] }>('/workspace/files');
-  return data.files ?? [];
-}
-
-export async function fetchHermesWorkspaceFile(fileKey: string): Promise<HermesWorkspaceFile> {
-  const data = await hermesFetch<{ file: HermesWorkspaceFile }>(`/workspace/files/${encodeURIComponent(fileKey)}`);
-  return data.file;
-}
-
-export async function updateHermesWorkspaceFile(
-  fileKey: string,
-  content: string,
-  expectedVersion?: string | null,
-): Promise<HermesWorkspaceFile> {
-  const data = await hermesFetch<{ file: HermesWorkspaceFile }>(`/workspace/files/${encodeURIComponent(fileKey)}`, {
-    method: 'PUT',
-    body: JSON.stringify({
-      content,
-      expected_version: expectedVersion ?? null,
-    }),
-  });
-  return data.file;
 }
 
 export async function fetchHermesSkills(): Promise<HermesSkillSummary[]> {
   const data = await hermesFetch<{ skills: HermesSkillSummary[] }>('/workspace/skills');
   return data.skills ?? [];
-}
-
-// ─── Slash commands ─────────────────────────────────────────────────────────
-
-export interface HermesAgentCommand {
-  name: string;
-  description: string;
-  category: string;
-  usage: string;
-  aliases: string[];
-  kind: 'agent' | 'skill';
-}
-
-/** Catalog of slash commands the installed hermes-agent exposes to a chat
- *  client (built-ins + installed skills + plugin commands). */
-export async function fetchHermesAgentCommands(): Promise<HermesAgentCommand[]> {
-  const data = await hermesFetch<{ commands: HermesAgentCommand[] }>('/workspace/commands');
-  return data.commands ?? [];
 }
 
 export async function fetchHermesSkillDetail(skillId: string): Promise<HermesSkillDetail> {
