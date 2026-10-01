@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
+import anyio
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -227,18 +228,76 @@ def _load_hermes_config_editable(hermes_home: Path):
     return _dump, data
 
 
-def _reload_agent_mcp() -> bool:
-    """Best-effort in-process reload of the installed agent's MCP layer so a
-    freshly-installed server connects without a full bridge restart."""
-    try:
-        from tools.mcp_tool_lifecycle import shutdown_mcp_servers
-        from tools.mcp_tool_discovery import discover_mcp_tools
-
-        shutdown_mcp_servers()
-        discover_mcp_tools()
+def _is_process_hermes_home(hermes_home: Optional[Path]) -> bool:
+    """True when ``hermes_home`` is the home the in-process agent's MCP layer serves."""
+    if hermes_home is None:
         return True
-    except Exception as exc:
+    try:
+        return Path(hermes_home).resolve() == bridge_workspace._HERMES_HOME.resolve()
+    except OSError:
+        return Path(hermes_home) == bridge_workspace._HERMES_HOME
+
+
+def _reload_agent_mcp(
+    hermes_home: Optional[Path] = None,
+    *,
+    removed: tuple[str, ...] = (),
+) -> bool:
+    """Bring the in-process agent's MCP servers in step with config.yaml (spec 5.8).
+
+    This used to call ``shutdown_mcp_servers()`` with no arguments — the
+    process-wide wildcard — then rediscover, so installing one server killed
+    every other MCP connection out from under any agent run using it. Now:
+
+    * a config edit for another profile (``X-Hermes-Profile``) never touches
+      the process's servers — that profile's agents read its config.yaml when
+      their next session starts;
+    * otherwise hermes' ``reconcile_mcp_servers_with_config`` tears down only
+      servers removed from / disabled in config and connects only new ones,
+      scoped to the current registry scope;
+    * on an older hermes-agent without it, new servers are connected
+      additively and only the ``removed`` names are shut down.
+
+    Blocking (discovery may wait on hermes' cross-process lock) — call it off
+    the event loop.
+    """
+    if not _is_process_hermes_home(hermes_home):
+        print(
+            f"[hermes-bridge] MCP reload skipped: config edit for profile home {hermes_home} "
+            "applies to that profile's next session",
+            flush=True,
+        )
+        return False
+    try:
+        from tools import mcp_tool_discovery
+    except Exception as exc:  # noqa: BLE001 - optional integration: no agent, no reload
         print(f"[hermes-bridge] MCP reload skipped: {exc}", flush=True)
+        return False
+    try:
+        reconcile = getattr(mcp_tool_discovery, "reconcile_mcp_servers_with_config", None)
+        if reconcile is not None:
+            result = reconcile()
+            print(f"[hermes-bridge] MCP reconcile: {result}", flush=True)
+            return True
+        if removed:
+            import inspect
+
+            from tools.mcp_tool_lifecycle import shutdown_mcp_servers
+
+            if "names" in inspect.signature(shutdown_mcp_servers).parameters:
+                shutdown_mcp_servers(names=set(removed))
+            else:
+                # Too old to scope a teardown. Leaving the removed server
+                # connected until restart beats killing every live server.
+                print(
+                    "[hermes-bridge] MCP: hermes-agent cannot stop a single server; "
+                    f"{', '.join(removed)} stays connected until the bridge restarts",
+                    flush=True,
+                )
+        mcp_tool_discovery.discover_mcp_tools()
+        return True
+    except Exception as exc:  # noqa: BLE001 - reload is best-effort; config is already saved
+        print(f"[hermes-bridge] MCP reload failed: {exc}", flush=True)
         return False
 
 
@@ -317,10 +376,12 @@ async def workspace_mcp_install(request: Request, body: McpInstallRequest):
         return JSONResponse(status_code=409, content={"error": f"'{name}' is already installed"})
     servers[name] = _build_mcp_entry_from_catalog(entry, body.param)
     try:
-        dump()
-    except Exception as e:
+        await anyio.to_thread.run_sync(dump)
+    except BridgeError:
+        raise  # already enveloped (e.g. 409 when config.yaml changed underneath us)
+    except Exception as e:  # noqa: BLE001 - surfaced to the client as a 500
         return JSONResponse(status_code=500, content={"error": f"Failed to write config: {e}"})
-    reloaded = _reload_agent_mcp()
+    reloaded = await anyio.to_thread.run_sync(lambda: _reload_agent_mcp(hermes_home))
     print(f"[hermes-bridge] Installed MCP server '{name}' (reloaded={reloaded})", flush=True)
     return JSONResponse(content={"ok": True, "installed": name, "reloaded": reloaded})
 
@@ -337,10 +398,14 @@ async def workspace_mcp_uninstall(name: str, request: Request):
         return JSONResponse(status_code=404, content={"error": f"'{name}' is not installed"})
     del servers[name]
     try:
-        dump()
-    except Exception as e:
+        await anyio.to_thread.run_sync(dump)
+    except BridgeError:
+        raise  # already enveloped (e.g. 409 when config.yaml changed underneath us)
+    except Exception as e:  # noqa: BLE001 - surfaced to the client as a 500
         return JSONResponse(status_code=500, content={"error": f"Failed to write config: {e}"})
-    reloaded = _reload_agent_mcp()
+    reloaded = await anyio.to_thread.run_sync(
+        lambda: _reload_agent_mcp(hermes_home, removed=(name,))
+    )
     print(f"[hermes-bridge] Removed MCP server '{name}' (reloaded={reloaded})", flush=True)
     return JSONResponse(content={"ok": True, "removed": name, "reloaded": reloaded})
 
@@ -363,7 +428,7 @@ async def workspace_mcp_tool_index(request: Request):
     in-process agent registry (enabled servers only)."""
     hermes_home = bridge_workspace._resolve_hermes_home(bridge_workspace._resolve_profile_name(request))
     try:
-        tools = _build_mcp_tool_index(hermes_home)
+        tools = await anyio.to_thread.run_sync(_build_mcp_tool_index, hermes_home)
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": f"tool index unavailable: {e}"})
     return JSONResponse(content={"tools": tools, "total": len(tools)})
