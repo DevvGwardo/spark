@@ -34,6 +34,8 @@ interface UIState {
   tourSeen: boolean;
   /** Mirrors AppLayout's bridge-setup modal visibility so the tour can wait for it to clear. */
   bridgeSetupOpen: boolean;
+  /** Bumped to ask AppLayout to open the bridge-setup modal (e.g. from BridgeGate's "Set up"). */
+  bridgeSetupRequest: number;
   pendingPanelPrompts: Record<string, PendingPanelPrompt | undefined>;
   preservePanelRepoHandoffs: Record<string, boolean | undefined>;
   setSidebarOpen: (v: boolean) => void;
@@ -58,6 +60,7 @@ interface UIState {
   toggleMcpStoreFullscreen: () => void;
   setTourSeen: (v: boolean) => void;
   setBridgeSetupOpen: (v: boolean) => void;
+  requestBridgeSetup: () => void;
   queuePanelPrompt: (panelId: string, prompt: PendingPanelPrompt) => void;
   clearPanelPrompt: (panelId: string) => void;
   markPanelRepoHandoff: (panelId: string) => void;
@@ -95,6 +98,7 @@ export const useUIStore = create<UIState>()(
       mcpStoreFullscreen: false,
       tourSeen: false,
       bridgeSetupOpen: false,
+      bridgeSetupRequest: 0,
       pendingPanelPrompts: {},
       preservePanelRepoHandoffs: {},
       setSidebarOpen: (v) => set({ sidebarOpen: v }),
@@ -120,6 +124,7 @@ export const useUIStore = create<UIState>()(
       toggleMcpStoreFullscreen: () => set((s) => ({ mcpStoreFullscreen: !s.mcpStoreFullscreen })),
       setTourSeen: (v) => set({ tourSeen: v }),
       setBridgeSetupOpen: (v) => set({ bridgeSetupOpen: v }),
+      requestBridgeSetup: () => set((s) => ({ bridgeSetupRequest: s.bridgeSetupRequest + 1 })),
       queuePanelPrompt: (panelId, prompt) =>
         set((state) => ({
           pendingPanelPrompts: {

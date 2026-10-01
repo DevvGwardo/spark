@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
 import { Loader2, RefreshCw, Server, Cpu, HardDrive, Activity, CircleDot } from 'lucide-react';
-import { fetchHermesSystem, type HermesSystemStats } from '@/lib/hermes-api';
+import { useHermesSystem } from '@/lib/hermes-queries';
+import { HermesErrorState } from '@/components/hermes/HermesErrorState';
 import { cn } from '@/lib/utils';
 import { HermesOpsExtras } from './HermesOpsExtras';
 
@@ -17,27 +17,12 @@ function formatBytes(bytes: number | null): string {
 }
 
 export function HermesSystemPanel() {
-  const [stats, setStats] = useState<HermesSystemStats | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const systemQuery = useHermesSystem();
+  const stats = systemQuery.data ?? null;
+  const loading = systemQuery.isFetching;
+  const load = () => { void systemQuery.refetch(); };
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      setStats(await fetchHermesSystem());
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load system stats');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void load();
-  }, []);
-
-  if (loading && !stats) {
+  if (systemQuery.isPending) {
     return (
       <div className="flex flex-1 items-center justify-center px-4 text-[12px] text-muted-foreground/60">
         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -58,7 +43,7 @@ export function HermesSystemPanel() {
           <span className="text-[12px] font-semibold uppercase tracking-wide">System</span>
         </div>
         <button
-          onClick={() => { void load(); }}
+          onClick={load}
           className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground/60 transition-colors hover:bg-[hsl(var(--sidebar-active))] hover:text-foreground"
           title="Refresh"
         >
@@ -66,11 +51,12 @@ export function HermesSystemPanel() {
         </button>
       </div>
 
-      {error && (
-        <div className="mx-3 mb-2 rounded-xl border border-destructive/25 bg-destructive/10 p-2 text-[11px] text-destructive">
-          {error}
-        </div>
-      )}
+      <HermesErrorState
+        error={systemQuery.error}
+        onRetry={load}
+        fallbackMessage="Failed to load system stats"
+        className="mx-3 mb-2"
+      />
 
       {stats ? (
         <div className="space-y-3 px-3">

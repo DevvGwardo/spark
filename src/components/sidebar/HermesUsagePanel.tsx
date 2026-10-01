@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { BarChart3, Coins, Loader2, RefreshCw } from 'lucide-react';
 import {
   AreaChart,
@@ -10,7 +10,8 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
-import { fetchHermesWorkspaceUsage, type HermesUsageOverview } from '@/lib/hermes-api';
+import { useHermesWorkspaceUsage } from '@/lib/hermes-queries';
+import { HermesErrorState } from '@/components/hermes/HermesErrorState';
 import { relativeTime } from '@/lib/relative-time';
 import { formatCompactNumber, formatUsd, usageBudgetLevel } from '@/components/sidebar/hermesSidebarUtils';
 import { SlotNumber } from '@/components/ui/SlotNumber';
@@ -33,26 +34,10 @@ const BUDGET_LEVEL_COLOR = {
 } as const;
 
 export function HermesUsagePanel() {
-  const [usage, setUsage] = useState<HermesUsageOverview | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const loadUsage = async () => {
-    setLoading(true);
-    try {
-      const data = await fetchHermesWorkspaceUsage();
-      setUsage(data);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load Hermes usage');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void loadUsage();
-  }, []);
+  const usageQuery = useHermesWorkspaceUsage();
+  const usage = usageQuery.data ?? null;
+  const loading = usageQuery.isFetching;
+  const loadUsage = () => { void usageQuery.refetch(); };
 
   const maxModelTokens = useMemo(
     () => Math.max(...(usage?.top_models.map((model) => model.total_tokens) ?? [1])),
@@ -63,7 +48,7 @@ export function HermesUsagePanel() {
     [usage]
   );
 
-  if (loading && !usage) {
+  if (usageQuery.isPending) {
     return (
       <div className="flex flex-1 items-center justify-center px-4 text-[12px] text-muted-foreground/60">
         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -82,7 +67,7 @@ export function HermesUsagePanel() {
           </p>
         </div>
         <button
-          onClick={() => { void loadUsage(); }}
+          onClick={loadUsage}
           className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground/60 transition-colors hover:bg-[hsl(var(--sidebar-active))] hover:text-foreground"
           title="Refresh usage"
         >
@@ -90,11 +75,12 @@ export function HermesUsagePanel() {
         </button>
       </div>
 
-      {error && (
-        <div className="mx-3 mb-2 rounded-xl border border-destructive/25 bg-destructive/10 p-2 text-[11px] text-destructive">
-          {error}
-        </div>
-      )}
+      <HermesErrorState
+        error={usageQuery.error}
+        onRetry={loadUsage}
+        fallbackMessage="Failed to load Hermes usage"
+        className="mx-3 mb-2"
+      />
 
       {usage && (
         <div className="flex-1 space-y-3 overflow-y-auto px-3 pb-3">

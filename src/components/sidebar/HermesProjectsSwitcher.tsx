@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { FolderKanban, Link2, Loader2, Plus } from 'lucide-react';
+import type { HermesProject } from '@/lib/hermes-api';
 import {
-  activateHermesProject,
-  bindHermesProjectBoard,
-  createHermesProject,
-  fetchHermesProjects,
-  type HermesProject,
-} from '@/lib/hermes-api';
+  useActivateHermesProject,
+  useBindHermesProjectBoard,
+  useCreateHermesProject,
+  useHermesProjects,
+} from '@/lib/hermes-queries';
+import { HermesErrorState } from '@/components/hermes/HermesErrorState';
 import { cn } from '@/lib/utils';
 
 function shortenPath(path: string): string {
@@ -18,15 +19,20 @@ function shortenPath(path: string): string {
  * Mounted in the System ops sidebar card.
  */
 export function HermesProjectsSwitcher() {
-  const [projects, setProjects] = useState<HermesProject[]>([]);
-  const [activeSlug, setActiveSlug] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const projectsQuery = useHermesProjects();
+  const projects = projectsQuery.data?.projects ?? [];
+  const activeSlug = projectsQuery.data?.active_slug ?? null;
+  const activateMutation = useActivateHermesProject();
+  const createMutation = useCreateHermesProject();
+  const bindMutation = useBindHermesProjectBoard();
   const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  /** Action failures (or a client-side validation message). */
+  const [actionError, setActionError] = useState<unknown>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState('');
   const [newPrimary, setNewPrimary] = useState('');
   const [boardSlug, setBoardSlug] = useState('');
+  const error = actionError ?? projectsQuery.error;
 
   const activeProject = projects.find(
     (p) => p.active || p.slug === activeSlug || p.id === activeSlug,
@@ -36,36 +42,15 @@ export function HermesProjectsSwitcher() {
     setBoardSlug(activeProject?.board_slug ?? '');
   }, [activeProject?.board_slug, activeProject?.slug]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await fetchHermesProjects();
-      setProjects(data.projects || []);
-      setActiveSlug(data.active_slug ?? null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load projects');
-      setProjects([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
   const onUse = async (project: HermesProject) => {
     const ref = project.slug || project.id;
     if (!ref) return;
     setBusy(ref);
-    setError(null);
+    setActionError(null);
     try {
-      const res = await activateHermesProject(ref);
-      setProjects(res.projects || []);
-      setActiveSlug(res.active_slug ?? ref);
+      await activateMutation.mutateAsync(ref);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to switch project');
+      setActionError(err);
     } finally {
       setBusy(null);
     }
@@ -74,27 +59,22 @@ export function HermesProjectsSwitcher() {
   const onCreate = async () => {
     const name = newName.trim();
     if (!name) {
-      setError('Project name required');
+      setActionError('Project name required');
       return;
     }
     setBusy('create');
-    setError(null);
+    setActionError(null);
     try {
-      const res = await createHermesProject({
+      await createMutation.mutateAsync({
         name,
         primary_folder: newPrimary.trim() || undefined,
         use: true,
       });
-      if (!res.ok) {
-        throw new Error(res.error || 'Create failed');
-      }
-      setProjects(res.projects || []);
-      setActiveSlug(res.active_slug ?? res.created_slug ?? null);
       setNewName('');
       setNewPrimary('');
       setCreateOpen(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Create failed');
+      setActionError(err);
     } finally {
       setBusy(null);
     }
@@ -103,31 +83,26 @@ export function HermesProjectsSwitcher() {
   const onBindBoard = async () => {
     const ref = activeProject?.slug || activeProject?.id || activeSlug;
     if (!ref) {
-      setError('Select a project first');
+      setActionError('Select a project first');
       return;
     }
     setBusy('bind-board');
-    setError(null);
+    setActionError(null);
     try {
-      const res = await bindHermesProjectBoard({
+      const res = await bindMutation.mutateAsync({
         project: ref,
         board: boardSlug.trim() || undefined,
       });
-      if (!res.ok) {
-        throw new Error(res.error || 'Bind failed');
-      }
-      setProjects(res.projects || []);
-      setActiveSlug(res.active_slug ?? activeSlug);
       const updated = (res.projects || []).find((p) => p.slug === ref || p.id === ref);
       setBoardSlug(updated?.board_slug ?? boardSlug.trim());
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Bind board failed');
+      setActionError(err);
     } finally {
       setBusy(null);
     }
   };
 
-  if (loading && projects.length === 0) {
+  if (projectsQuery.isPending) {
     return (
       <div className="flex items-center gap-2 rounded-md border border-border/40 bg-background/40 px-2.5 py-2 text-[11px] text-muted-foreground/60">
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -159,11 +134,13 @@ export function HermesProjectsSwitcher() {
         </button>
       </div>
 
-      {error && (
-        <div className="border-t border-border/30 px-2.5 py-1.5 text-[10px] text-destructive">
-          {error}
-        </div>
-      )}
+      <HermesErrorState
+        error={error}
+        onRetry={() => { setActionError(null); void projectsQuery.refetch(); }}
+        fallbackMessage="Failed to load projects"
+        variant="inline"
+        className="mx-2.5 mb-2"
+      />
 
       {createOpen && (
         <div className="space-y-1.5 border-t border-border/30 px-2.5 py-2">

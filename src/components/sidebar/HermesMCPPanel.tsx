@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
-  AlertCircle,
   ChevronDown,
   ExternalLink,
   Loader2,
@@ -15,15 +14,15 @@ import {
   Zap,
 } from 'lucide-react';
 import { useUIStore } from '@/stores/ui-store';
+import type { HermesMcpServerInfo, HermesMcpCatalogEntry } from '@/lib/hermes-api';
 import {
-  fetchHermesMcpServers,
-  fetchHermesMcpCatalog,
-  installHermesMcpServer,
-  uninstallHermesMcpServer,
-  HermesApiError,
-  type HermesMcpServerInfo,
-  type HermesMcpCatalogEntry,
-} from '@/lib/hermes-api';
+  useHermesMcpCatalog,
+  useHermesMcpServers,
+  useInstallHermesMcpServer,
+  useUninstallHermesMcpServer,
+} from '@/lib/hermes-queries';
+import { toHermesError } from '@/lib/hermes-errors';
+import { HermesErrorState } from '@/components/hermes/HermesErrorState';
 import { cn } from '@/lib/utils';
 import { useHermesMcpToolIndex } from '@/hooks/useHermesMcpToolIndex';
 import { McpToolIndexPanel, McpToolThresholdChip } from '@/components/mcp/McpToolIndexPanel';
@@ -183,32 +182,25 @@ export function HermesMCPPanel() {
   const setMcpStoreFullscreen = useUIStore((s) => s.setMcpStoreFullscreen);
   const { reload: reloadToolIndex, ...toolIndex } = useHermesMcpToolIndex();
 
-  const [servers, setServers] = useState<HermesMcpServerInfo[]>([]);
-  const [catalog, setCatalog] = useState<HermesMcpCatalogEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const serversQuery = useHermesMcpServers();
+  const catalogQuery = useHermesMcpCatalog();
+  const servers = useMemo(() => serversQuery.data ?? [], [serversQuery.data]);
+  const catalog = useMemo(() => catalogQuery.data ?? [], [catalogQuery.data]);
+  const installMutation = useInstallHermesMcpServer();
+  const uninstallMutation = useUninstallHermesMcpServer();
   const [expandedName, setExpandedName] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [installErrors, setInstallErrors] = useState<Record<string, string>>({});
+  const [uninstallError, setUninstallError] = useState<unknown>(null);
+  const loading = serversQuery.isFetching || catalogQuery.isFetching;
+  const loadError = uninstallError ?? serversQuery.error ?? catalogQuery.error;
 
+  const refetchServers = serversQuery.refetch;
+  const refetchCatalog = catalogQuery.refetch;
   const reload = useCallback(async () => {
-    setLoading(true);
-    setLoadError(null);
-    try {
-      const [s, c] = await Promise.all([fetchHermesMcpServers(), fetchHermesMcpCatalog()]);
-      setServers(s);
-      setCatalog(c);
-      await reloadToolIndex();
-    } catch (err) {
-      setLoadError(err instanceof HermesApiError ? err.message : 'Could not reach the bridge.');
-    } finally {
-      setLoading(false);
-    }
-  }, [reloadToolIndex]);
-
-  useEffect(() => {
-    void reload();
-  }, [reload]);
+    setUninstallError(null);
+    await Promise.all([refetchServers(), refetchCatalog(), reloadToolIndex()]);
+  }, [refetchServers, refetchCatalog, reloadToolIndex]);
 
   const stats = useMemo(() => {
     const total = servers.length;
@@ -223,35 +215,38 @@ export function HermesMCPPanel() {
     [catalog, installedNames],
   );
 
+  const installServer = installMutation.mutateAsync;
   const handleInstall = useCallback(async (id: string) => {
     setBusyId(id);
     setInstallErrors((e) => ({ ...e, [id]: '' }));
     try {
-      await installHermesMcpServer(id);
-      await reload();
+      await installServer(id);
+      await reloadToolIndex();
     } catch (err) {
       setInstallErrors((e) => ({
         ...e,
-        [id]: err instanceof HermesApiError ? err.message : 'Install failed',
+        [id]: toHermesError(err, 'Install failed').message,
       }));
     } finally {
       setBusyId(null);
     }
-  }, [reload]);
+  }, [installServer, reloadToolIndex]);
 
+  const uninstallServer = uninstallMutation.mutateAsync;
   const handleUninstall = useCallback(async (name: string) => {
     if (!confirm(`Uninstall the "${name}" MCP server from your hermes-agent?`)) return;
     setBusyId(name);
+    setUninstallError(null);
     try {
-      await uninstallHermesMcpServer(name);
+      await uninstallServer(name);
       if (expandedName === name) setExpandedName(null);
-      await reload();
+      await reloadToolIndex();
     } catch (err) {
-      setLoadError(err instanceof HermesApiError ? err.message : 'Uninstall failed');
+      setUninstallError(err);
     } finally {
       setBusyId(null);
     }
-  }, [expandedName, reload]);
+  }, [expandedName, uninstallServer, reloadToolIndex]);
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -316,21 +311,22 @@ export function HermesMCPPanel() {
       )}
 
       <div className="flex-1 overflow-y-auto px-3 pb-3">
-        {loadError && (
-          <div className="mb-2 flex items-start gap-1.5 rounded-lg border border-destructive/25 bg-destructive/10 px-2.5 py-2 text-[10px] text-destructive/80">
-            <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
-            <span className="break-all">{loadError}</span>
-          </div>
-        )}
+        <HermesErrorState
+          error={loadError}
+          onRetry={() => void reload()}
+          fallbackMessage="Could not reach the bridge."
+          variant="inline"
+          className="mb-2"
+        />
 
-        {loading && servers.length === 0 && (
+        {serversQuery.isPending && !loadError && (
           <div className="flex items-center justify-center gap-2 py-10 text-[11px] text-muted-foreground/50">
             <Loader2 className="h-4 w-4 animate-spin" />
             Loading MCP servers…
           </div>
         )}
 
-        {!loading && servers.length === 0 && (
+        {!serversQuery.isPending && !serversQuery.isFetching && servers.length === 0 && (
           <div className="flex flex-col items-center justify-center py-10 px-4">
             <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-background/60">
               <Network className="h-5 w-5 text-muted-foreground/30" />
