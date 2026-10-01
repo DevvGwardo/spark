@@ -368,12 +368,12 @@ class LifespanOwnsStartupTests(unittest.TestCase):
         import mcp_telemetry
 
         return [
-            patch.object(main, "_HERMES_HOME", Path(tmp)),
-            patch.object(main, "_HERMES_CRON_AVAILABLE", False),
-            patch.object(main, "_cron_jobs", {}),
-            patch.object(main, "_load_cron_data", lambda: None),
-            patch.object(main, "_save_cron_jobs", lambda: None),
-            patch.object(main, "_cron_scheduler_loop", _idle_forever()),
+            patch("bridge_workspace._HERMES_HOME", Path(tmp)),
+            patch("routes.cron._HERMES_CRON_AVAILABLE", False),
+            patch("routes.cron._cron_jobs", {}),
+            patch("routes.cron._load_cron_data", lambda: None),
+            patch("routes.cron._save_cron_jobs", lambda: None),
+            patch("routes.cron._cron_scheduler_loop", _idle_forever()),
             patch.object(mcp_telemetry, "init_persistence", lambda p: True),
             patch.object(
                 brain_client, "start_brain",
@@ -476,12 +476,12 @@ class LifespanOwnsStartupTests(unittest.TestCase):
                 os.environ.pop("BRAIN_MCP_PATH", None)
                 # Real start_brain; only cron/telemetry are stubbed out.
                 patches = [
-                    patch.object(main, "_HERMES_HOME", Path(tmp)),
-                    patch.object(main, "_HERMES_CRON_AVAILABLE", False),
-                    patch.object(main, "_cron_jobs", {}),
-                    patch.object(main, "_load_cron_data", lambda: None),
-                    patch.object(main, "_save_cron_jobs", lambda: None),
-                    patch.object(main, "_cron_scheduler_loop", _idle_forever()),
+                    patch("bridge_workspace._HERMES_HOME", Path(tmp)),
+                    patch("routes.cron._HERMES_CRON_AVAILABLE", False),
+                    patch("routes.cron._cron_jobs", {}),
+                    patch("routes.cron._load_cron_data", lambda: None),
+                    patch("routes.cron._save_cron_jobs", lambda: None),
+                    patch("routes.cron._cron_scheduler_loop", _idle_forever()),
                 ]
                 for p in patches:
                     p.start()

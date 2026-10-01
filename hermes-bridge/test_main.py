@@ -158,6 +158,36 @@ if "fastapi" not in sys.modules:
                 return fn
             return decorator
 
+        def include_router(self, *args, **kwargs):
+            # Routes are declared on per-area APIRouters (routes/*.py) and
+            # included into the app. The stub router keeps no routes, so there
+            # is nothing to include.
+            return None
+
+    class _APIRouter:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def get(self, *args, **kwargs):
+            def decorator(fn):
+                return fn
+            return decorator
+
+        def post(self, *args, **kwargs):
+            def decorator(fn):
+                return fn
+            return decorator
+
+        def delete(self, *args, **kwargs):
+            def decorator(fn):
+                return fn
+            return decorator
+
+        def put(self, *args, **kwargs):
+            def decorator(fn):
+                return fn
+            return decorator
+
     class _HTTPException(Exception):
         def __init__(self, status_code=500, detail=None):
             self.status_code = status_code
@@ -180,6 +210,7 @@ if "fastapi" not in sys.modules:
             self.content = content
 
     fastapi_stub.FastAPI = _FastAPI
+    fastapi_stub.APIRouter = _APIRouter
     fastapi_stub.HTTPException = _HTTPException
     fastapi_stub.Request = _Request
     cors_stub.CORSMiddleware = type("CORSMiddleware", (), {})
@@ -358,12 +389,12 @@ class BrainMCPIntegrationTests(unittest.TestCase):
         self.mock_brain = _MockBrainCalls()
         # Patch all brain MCP entry points in main module
         self.main_patches = [
-            patch.object(main, '_brain_set', self.mock_brain.mock_set),
-            patch.object(main, '_brain_get', self.mock_brain.mock_get),
-            patch.object(main, '_brain_pulse', self.mock_brain.mock_pulse),
-            patch.object(main, '_brain_claim', self.mock_brain.mock_claim),
-            patch.object(main, '_brain_release', self.mock_brain.mock_release),
-            patch.object(main, '_brain_contract_set', self.mock_brain.mock_contract_set),
+            patch("brain_client._brain_set", self.mock_brain.mock_set),
+            patch("brain_client._brain_get", self.mock_brain.mock_get),
+            patch("brain_client._brain_pulse", self.mock_brain.mock_pulse),
+            patch("brain_client._brain_claim", self.mock_brain.mock_claim),
+            patch("brain_client._brain_release", self.mock_brain.mock_release),
+            patch("brain_client._brain_contract_set", self.mock_brain.mock_contract_set),
         ]
         for p in self.main_patches:
             p.start()
@@ -762,8 +793,8 @@ class MixtureOfAgentsTests(unittest.TestCase):
         self.assertEqual(preset["max_tokens"], 8192)
 
     def test_list_providers_exposes_moa_virtual_provider(self):
-        with patch.object(main, "_load_moa_config", return_value=self._moa_config()), \
-             patch.object(main, "_load_cli_model_config", return_value={
+        with patch("bridge_providers._load_moa_config", return_value=self._moa_config()), \
+             patch("bridge_providers._load_cli_model_config", return_value={
                  "default": "review", "provider": "moa", "base_url": None, "api_key": None,
              }):
             response = asyncio.run(main.list_providers(_FakeRequest({})))
@@ -776,16 +807,16 @@ class MixtureOfAgentsTests(unittest.TestCase):
         self.assertEqual(moa_provider["models"], ["review"])
 
     def test_list_providers_hides_disabled_and_excluded(self):
-        with patch.object(main, "_load_moa_config", return_value={"presets": {}, "default_preset": "default"}), \
-             patch.object(main, "_load_cli_model_config", return_value={
+        with patch("bridge_providers._load_moa_config", return_value={"presets": {}, "default_preset": "default"}), \
+             patch("bridge_providers._load_cli_model_config", return_value={
                  "default": "gpt-4o", "provider": "openai", "base_url": None, "api_key": None,
              }), \
-             patch.object(main, "_load_provider_visibility", return_value={
+             patch("routes.providers._load_provider_visibility", return_value={
                  "excluded": {"openrouter"},
                  "disabled": {"anthropic"},
              }), \
-             patch.object(main, "_models_for_provider", return_value=["m1"]), \
-             patch.object(main, "_provider_has_credentials", return_value=True):
+             patch("bridge_providers._models_for_provider", return_value=["m1"]), \
+             patch("bridge_providers._provider_has_credentials", return_value=True):
             response = asyncio.run(main.list_providers(_FakeRequest({})))
 
         ids = {row["id"] for row in response["data"]}
@@ -795,26 +826,26 @@ class MixtureOfAgentsTests(unittest.TestCase):
 
     def test_list_providers_exposes_cli_custom_base_url(self):
         """config.yaml custom base_url becomes a synthetic credentialed provider row."""
-        with patch.object(main, "_load_moa_config", return_value={"presets": {}, "default_preset": "default"}), \
-             patch.object(main, "_load_cli_model_config", return_value={
+        with patch("bridge_providers._load_moa_config", return_value={"presets": {}, "default_preset": "default"}), \
+             patch("bridge_providers._load_cli_model_config", return_value={
                  "default": "deepseek-v4-flash",
                  "provider": "custom",
                  "base_url": "https://api.bullinf.fun/v1",
                  "api_key": "inf_test_key",
              }), \
-             patch.object(main, "_load_provider_visibility", return_value={
+             patch("routes.providers._load_provider_visibility", return_value={
                  "excluded": set(),
                  "disabled": set(),
              }), \
-             patch.object(main, "_models_for_provider", return_value=["m1"]), \
-             patch.object(main, "_provider_has_credentials", return_value=False), \
-             patch.object(main, "_models_for_custom_base_url", return_value=[
+             patch("bridge_providers._models_for_provider", return_value=["m1"]), \
+             patch("bridge_providers._provider_has_credentials", return_value=False), \
+             patch("bridge_providers._models_for_custom_base_url", return_value=[
                  "e2ee-glm-4.7-flash",
                  "deepseek-v4-flash",
                  "mimo-v2.5",
              ]), \
-             patch.object(main, "_get_credential_pool_key", return_value=None), \
-             patch.object(main, "_load_custom_providers_list", return_value=[]):
+             patch("bridge_providers._get_credential_pool_key", return_value=None), \
+             patch("bridge_providers._load_custom_providers_list", return_value=[]):
             response = asyncio.run(main.list_providers(_FakeRequest({})))
 
         custom = next(row for row in response["data"] if str(row["id"]).startswith("custom:"))
@@ -836,10 +867,10 @@ class MixtureOfAgentsTests(unittest.TestCase):
             "base_url": "https://api.bullinf.fun/v1",
             "api_key": "",
         }
-        with patch.object(main, "_get_credential_pool_key", return_value=None), \
-             patch.object(main, "_load_custom_providers_list", return_value=[]), \
-             patch.object(main, "_get_local_gateway_key", return_value="gw-token"), \
-             patch.object(main, "_models_for_custom_base_url", return_value=["mimo-v2.5"]):
+        with patch("bridge_providers._get_credential_pool_key", return_value=None), \
+             patch("bridge_providers._load_custom_providers_list", return_value=[]), \
+             patch("bridge_providers._get_local_gateway_key", return_value="gw-token"), \
+             patch("bridge_providers._models_for_custom_base_url", return_value=["mimo-v2.5"]):
             row = main._cli_custom_provider_row(cfg)
         self.assertIsNotNone(row)
         self.assertFalse(row["credentialed"])
@@ -864,14 +895,14 @@ class MixtureOfAgentsTests(unittest.TestCase):
                 return profile_cfg
             return global_cfg
 
-        with patch.object(main, "_resolve_profile_name", return_value="work"), \
-             patch.object(main, "_resolve_hermes_home", return_value=Path.home() / ".hermes" / "profiles" / "work"), \
-             patch.object(main, "_load_cli_model_config", side_effect=_load_cfg), \
-             patch.object(main, "_provider_has_credentials", return_value=False), \
-             patch.object(main, "_cursor_composer_integration_status", return_value={}), \
-             patch.object(main, "_get_local_gateway_key", return_value=None), \
-             patch.object(main, "_get_credential_pool_key", return_value=None), \
-             patch.object(main, "_load_custom_providers_list", return_value=[]):
+        with patch("bridge_workspace._resolve_profile_name", return_value="work"), \
+             patch("bridge_workspace._resolve_hermes_home", return_value=Path.home() / ".hermes" / "profiles" / "work"), \
+             patch("bridge_providers._load_cli_model_config", side_effect=_load_cfg), \
+             patch("bridge_providers._provider_has_credentials", return_value=False), \
+             patch("bridge_workspace._cursor_composer_integration_status", return_value={}), \
+             patch("bridge_providers._get_local_gateway_key", return_value=None), \
+             patch("bridge_providers._get_credential_pool_key", return_value=None), \
+             patch("bridge_providers._load_custom_providers_list", return_value=[]):
             response = asyncio.run(main.health(_FakeRequest({"x-hermes-profile": "work"})))
 
         self.assertTrue(response["default_model_credentialed"])
@@ -891,11 +922,11 @@ class MixtureOfAgentsTests(unittest.TestCase):
             "x-hermes-execution-mode": "passthrough",
         })
 
-        with patch.object(main, "_load_moa_config", return_value=self._moa_config()), \
-             patch.object(main, "_load_cli_model_config", return_value={
+        with patch("bridge_providers._load_moa_config", return_value=self._moa_config()), \
+             patch("bridge_providers._load_cli_model_config", return_value={
                  "default": None, "provider": None, "base_url": None, "api_key": None,
              }), \
-             patch.object(main, "_get_active_provider", return_value=None):
+             patch("bridge_providers._get_active_provider", return_value=None):
             response = asyncio.run(main.chat_completions(request, body))
 
         self.assertEqual(response.status_code, 400)
@@ -952,11 +983,11 @@ class MixtureOfAgentsTests(unittest.TestCase):
                  "hermes_adapter": self._broken_adapter_module(),
                  "run_agent": fake_run_agent_module,
              }), \
-             patch.object(main, "_load_moa_config", return_value=self._moa_config()), \
-             patch.object(main, "_load_cli_model_config", return_value={
+             patch("bridge_providers._load_moa_config", return_value=self._moa_config()), \
+             patch("bridge_providers._load_cli_model_config", return_value={
                  "default": None, "provider": None, "base_url": None, "api_key": None,
              }), \
-             patch.object(main, "_get_active_provider", return_value=None):
+             patch("bridge_providers._get_active_provider", return_value=None):
             response = asyncio.run(main.chat_completions(request, body))
 
         self._assert_moa_native_required(response)
@@ -979,11 +1010,11 @@ class MixtureOfAgentsTests(unittest.TestCase):
                  "hermes_adapter": self._broken_adapter_module(),
                  "run_agent": fake_run_agent_module,
              }), \
-             patch.object(main, "_load_moa_config", return_value=self._moa_config()), \
-             patch.object(main, "_load_cli_model_config", return_value={
+             patch("bridge_providers._load_moa_config", return_value=self._moa_config()), \
+             patch("bridge_providers._load_cli_model_config", return_value={
                  "default": None, "provider": None, "base_url": None, "api_key": None,
              }), \
-             patch.object(main, "_get_active_provider", return_value=None):
+             patch("bridge_providers._get_active_provider", return_value=None):
             response = asyncio.run(main.chat_completions(request, body))
 
         self._assert_moa_native_required(response)
@@ -1006,13 +1037,13 @@ class MixtureOfAgentsTests(unittest.TestCase):
                  "hermes_adapter": self._broken_adapter_module(),
                  "run_agent": fake_run_agent_module,
              }), \
-             patch.object(main, "_load_moa_config", return_value=self._moa_config()), \
-             patch.object(main, "_load_cli_model_config", return_value={
+             patch("bridge_providers._load_moa_config", return_value=self._moa_config()), \
+             patch("bridge_providers._load_cli_model_config", return_value={
                  "default": "review",
                  "provider": "moa",
                  "base_url": "virtual://moa",
              }), \
-             patch.object(main, "_get_active_provider", return_value=None):
+             patch("bridge_providers._get_active_provider", return_value=None):
             response = asyncio.run(main.chat_completions(request, body))
 
         self._assert_moa_native_required(response)
@@ -1077,9 +1108,9 @@ class MixtureOfAgentsTests(unittest.TestCase):
         self.assertFalse(main._is_loopback_host("192.168.1.10"))
 
     def test_get_moa_endpoint_returns_presets(self):
-        with patch.object(main, "_load_moa_config", return_value=self._moa_config()), \
-             patch.object(main, "_resolve_hermes_home", return_value=main.Path("/tmp")), \
-             patch.object(main, "_resolve_profile_name", return_value=""):
+        with patch("bridge_providers._load_moa_config", return_value=self._moa_config()), \
+             patch("bridge_workspace._resolve_hermes_home", return_value=main.Path("/tmp")), \
+             patch("bridge_workspace._resolve_profile_name", return_value=""):
             response = asyncio.run(main.get_moa_config(_FakeRequest({})))
 
         self.assertEqual(response["object"], "moa.config")
@@ -1106,22 +1137,22 @@ class BridgeOriginGuardTests(unittest.TestCase):
         return asyncio.run(main.bridge_token_guard(request, _call_next))
 
     def test_disallowed_browser_origin_is_rejected(self):
-        with patch.object(main, "HERMES_BRIDGE_TOKEN", ""):
+        with patch("bridge_config.HERMES_BRIDGE_TOKEN", ""):
             resp = self._run_guard("https://evil.example")
         self.assertEqual(resp.status_code, 403)
 
     def test_null_origin_is_rejected(self):
-        with patch.object(main, "HERMES_BRIDGE_TOKEN", ""):
+        with patch("bridge_config.HERMES_BRIDGE_TOKEN", ""):
             resp = self._run_guard("null")
         self.assertEqual(resp.status_code, 403)
 
     def test_no_origin_header_passes(self):
-        with patch.object(main, "HERMES_BRIDGE_TOKEN", ""):
+        with patch("bridge_config.HERMES_BRIDGE_TOKEN", ""):
             resp = self._run_guard(None)
         self.assertEqual(resp, "passed-through")
 
     def test_allowed_app_origins_pass(self):
-        with patch.object(main, "HERMES_BRIDGE_TOKEN", ""):
+        with patch("bridge_config.HERMES_BRIDGE_TOKEN", ""):
             for origin in sorted(main._BRIDGE_ALLOWED_ORIGINS):
                 resp = self._run_guard(origin)
                 self.assertEqual(resp, "passed-through", origin)
@@ -1165,10 +1196,10 @@ class HermesBridgeMainTests(unittest.TestCase):
                 "x-hermes-execution-mode": "passthrough",
             })
 
-            with patch.object(main, "_load_cli_model_config", return_value={
+            with patch("bridge_providers._load_cli_model_config", return_value={
                      "default": None, "provider": None, "base_url": None,
                  }), \
-                 patch.object(main, "_get_active_provider", return_value=None):
+                 patch("bridge_providers._get_active_provider", return_value=None):
                 response = asyncio.run(main.chat_completions(request, body))
                 streamed = asyncio.run(_read_streaming_response(response))
         finally:
@@ -1457,12 +1488,12 @@ class SwarmRoutingTests(unittest.TestCase):
     def setUp(self):
         self.mock_brain = _MockBrainCalls()
         self.main_patches = [
-            patch.object(main, '_brain_set', self.mock_brain.mock_set),
-            patch.object(main, '_brain_get', self.mock_brain.mock_get),
-            patch.object(main, '_brain_pulse', self.mock_brain.mock_pulse),
-            patch.object(main, '_brain_claim', self.mock_brain.mock_claim),
-            patch.object(main, '_brain_release', self.mock_brain.mock_release),
-            patch.object(main, '_brain_contract_set', self.mock_brain.mock_contract_set),
+            patch("brain_client._brain_set", self.mock_brain.mock_set),
+            patch("brain_client._brain_get", self.mock_brain.mock_get),
+            patch("brain_client._brain_pulse", self.mock_brain.mock_pulse),
+            patch("brain_client._brain_claim", self.mock_brain.mock_claim),
+            patch("brain_client._brain_release", self.mock_brain.mock_release),
+            patch("brain_client._brain_contract_set", self.mock_brain.mock_contract_set),
         ]
         for p in self.main_patches:
             p.start()
@@ -1485,7 +1516,7 @@ class SwarmRoutingTests(unittest.TestCase):
             call_record["call_args"] = (request, body)
             return main.StreamingResponse(iter([]), media_type="text/event-stream")
 
-        with patch.object(main, 'swarm_endpoint', patched_swarm_endpoint):
+        with patch("routes.swarm.swarm_endpoint", patched_swarm_endpoint):
             body = main.ChatCompletionRequest.model_validate({
                 "model": "meta-llama/llama-4-maverick",
                 "messages": [{"role": "user", "content": "Fix the auth bug"}],
@@ -1521,7 +1552,7 @@ class SwarmEndpointTests(unittest.TestCase):
 
     def test_contract_advertises_swarm_endpoint(self):
         """The swarm contract in brain lifespan includes /v1/swarm."""
-        source = open(os.path.join(os.path.dirname(__file__), "main.py")).read()
+        source = open(os.path.join(os.path.dirname(__file__), "brain_client.py")).read()  # contract moved out of main.py
         self.assertIn('"/v1/swarm"', source)
 
 
@@ -1595,12 +1626,12 @@ class CliProviderRoutingTests(unittest.TestCase):
         request = _FakeRequest({"authorization": "Bearer openrouter-key"})
 
         with patch.dict(sys.modules, {"hermes_adapter": fake_module}), \
-             patch.object(main, "_load_cli_model_config", return_value={
+             patch("bridge_providers._load_cli_model_config", return_value={
                  "default": "meta-llama/llama-3-70b-instruct",
                  "provider": "openrouter",
                  "base_url": "https://openrouter.ai/api/v1",
              }), \
-             patch.object(main, "_get_active_provider", return_value="nous"):
+             patch("bridge_providers._get_active_provider", return_value="nous"):
             asyncio.run(_invoke_chat_and_read_stream(request, body))
 
         self.assertIsNotNone(adapter.last_init)
@@ -1622,13 +1653,13 @@ class CliProviderRoutingTests(unittest.TestCase):
         request = _FakeRequest({"authorization": "Bearer some-key"})
 
         with patch.dict(sys.modules, {"hermes_adapter": fake_module}), \
-             patch.object(main, "_load_cli_model_config", return_value={
+             patch("bridge_providers._load_cli_model_config", return_value={
                  "default": "xiaomi/mimo-v2-pro",
                  "provider": "nous",
                  "base_url": "https://inference-api.nousresearch.com/v1",
              }), \
-             patch.object(main, "_get_active_provider", return_value=None), \
-             patch.object(main, "_get_nous_agent_key", return_value="nous-key"):
+             patch("bridge_providers._get_active_provider", return_value=None), \
+             patch("bridge_providers._get_nous_agent_key", return_value="nous-key"):
             asyncio.run(_invoke_chat_and_read_stream(request, body))
 
         self.assertIsNotNone(adapter.last_init)
@@ -1648,11 +1679,11 @@ class CliProviderRoutingTests(unittest.TestCase):
         request = _FakeRequest({"authorization": "Bearer some-key"})
 
         with patch.dict(sys.modules, {"hermes_adapter": fake_module}), \
-             patch.object(main, "_load_cli_model_config", return_value={
+             patch("bridge_providers._load_cli_model_config", return_value={
                  "default": None, "provider": None, "base_url": None,
              }), \
-             patch.object(main, "_get_active_provider", return_value="nous"), \
-             patch.object(main, "_get_nous_agent_key", return_value="nous-key"):
+             patch("bridge_providers._get_active_provider", return_value="nous"), \
+             patch("bridge_providers._get_nous_agent_key", return_value="nous-key"):
             asyncio.run(_invoke_chat_and_read_stream(request, body))
 
         self.assertEqual(adapter.last_init["base_url"], main.NOUS_BASE_URL)
@@ -1670,13 +1701,13 @@ class CliProviderRoutingTests(unittest.TestCase):
         request = _FakeRequest({"authorization": "Bearer ignored"})
 
         with patch.dict(sys.modules, {"hermes_adapter": fake_module}), \
-             patch.object(main, "_load_cli_model_config", return_value={
+             patch("bridge_providers._load_cli_model_config", return_value={
                  "default": "my-self-hosted/model",
                  "provider": "selfhost",
                  "base_url": "https://my-llm.internal/v1",
              }), \
-             patch.object(main, "_get_active_provider", return_value=None), \
-             patch.object(main, "_get_credential_pool_key", return_value="selfhost-key"):
+             patch("bridge_providers._get_active_provider", return_value=None), \
+             patch("bridge_providers._get_credential_pool_key", return_value="selfhost-key"):
             asyncio.run(_invoke_chat_and_read_stream(request, body))
 
         self.assertEqual(adapter.last_init["base_url"], "https://my-llm.internal/v1")
@@ -1699,18 +1730,18 @@ class CliProviderRoutingTests(unittest.TestCase):
         })
 
         with patch.dict(sys.modules, {"hermes_adapter": fake_module}), \
-             patch.object(main, "OPENROUTER_KEY", ""), \
-             patch.object(main, "_get_openrouter_key_from_hermes_creds", return_value=None), \
-             patch.object(main, "_provider_has_native_credentials", return_value=False), \
-             patch.object(main, "_get_local_gateway_key", return_value=None), \
-             patch.object(main, "_load_cli_model_config", return_value={
+             patch("bridge_config.OPENROUTER_KEY", ""), \
+             patch("bridge_providers._get_openrouter_key_from_hermes_creds", return_value=None), \
+             patch("bridge_providers._provider_has_native_credentials", return_value=False), \
+             patch("bridge_providers._get_local_gateway_key", return_value=None), \
+             patch("bridge_providers._load_cli_model_config", return_value={
                  "default": "auto",
                  "provider": "custom",
                  "base_url": "https://api.bullinf.fun/v1",
                  "api_key": "inf_test_key",
              }), \
-             patch.object(main, "_get_active_provider", return_value=None), \
-             patch.object(main, "_models_for_custom_base_url", return_value=[
+             patch("bridge_providers._get_active_provider", return_value=None), \
+             patch("bridge_providers._models_for_custom_base_url", return_value=[
                  "e2ee-glm-4.7-flash",
                  "mimo-v2.5",
                  "deepseek-v4-flash",
@@ -1739,18 +1770,18 @@ class CliProviderRoutingTests(unittest.TestCase):
 
         # Gateway present on purpose; native OpenRouter creds absent so demotion runs.
         with patch.dict(sys.modules, {"hermes_adapter": fake_module}), \
-             patch.object(main, "OPENROUTER_KEY", ""), \
-             patch.object(main, "_get_openrouter_key_from_hermes_creds", return_value=None), \
-             patch.object(main, "_get_local_gateway_key", return_value="gw-token"), \
-             patch.object(main, "_load_cli_model_config", return_value={
+             patch("bridge_config.OPENROUTER_KEY", ""), \
+             patch("bridge_providers._get_openrouter_key_from_hermes_creds", return_value=None), \
+             patch("bridge_providers._get_local_gateway_key", return_value="gw-token"), \
+             patch("bridge_providers._load_cli_model_config", return_value={
                  "default": "mimo-v2.5",
                  "provider": "custom",
                  "base_url": "https://api.bullinf.fun/v1",
                  "api_key": "inf_test_key",
              }), \
-             patch.object(main, "_get_active_provider", return_value=None), \
-             patch.object(main, "_get_credential_pool_key", return_value=None), \
-             patch.object(main, "_models_for_custom_base_url", return_value=["mimo-v2.5"]):
+             patch("bridge_providers._get_active_provider", return_value=None), \
+             patch("bridge_providers._get_credential_pool_key", return_value=None), \
+             patch("bridge_providers._models_for_custom_base_url", return_value=["mimo-v2.5"]):
             asyncio.run(_invoke_chat_and_read_stream(request, body))
 
         self.assertIsNotNone(adapter.last_init)
@@ -1770,17 +1801,17 @@ class CliProviderRoutingTests(unittest.TestCase):
         request = _FakeRequest({})
 
         with patch.dict(sys.modules, {"hermes_adapter": fake_module}), \
-             patch.object(main, "OPENROUTER_KEY", ""), \
-             patch.object(main, "_get_openrouter_key_from_hermes_creds", return_value=None), \
-             patch.object(main, "_get_local_gateway_key", return_value=None), \
-             patch.object(main, "_load_cli_model_config", return_value={
+             patch("bridge_config.OPENROUTER_KEY", ""), \
+             patch("bridge_providers._get_openrouter_key_from_hermes_creds", return_value=None), \
+             patch("bridge_providers._get_local_gateway_key", return_value=None), \
+             patch("bridge_providers._load_cli_model_config", return_value={
                  "default": "auto",
                  "provider": "custom",
                  "base_url": "https://my-llm.internal/v1",
                  "api_key": "selfhost-key",
              }), \
-             patch.object(main, "_get_active_provider", return_value=None), \
-             patch.object(main, "_models_for_custom_base_url", return_value=[]):
+             patch("bridge_providers._get_active_provider", return_value=None), \
+             patch("bridge_providers._models_for_custom_base_url", return_value=[]):
             asyncio.run(_invoke_chat_and_read_stream(request, body))
 
         self.assertEqual(adapter.last_init["base_url"], "https://my-llm.internal/v1")
@@ -1802,16 +1833,16 @@ class CliProviderRoutingTests(unittest.TestCase):
         })
 
         with patch.dict(sys.modules, {"hermes_adapter": fake_module}), \
-             patch.object(main, "OPENROUTER_KEY", ""), \
-             patch.object(main, "_get_openrouter_key_from_hermes_creds", return_value=None), \
-             patch.object(main, "_provider_has_credentials", return_value=False), \
-             patch.object(main, "_load_cli_model_config", return_value={
+             patch("bridge_config.OPENROUTER_KEY", ""), \
+             patch("bridge_providers._get_openrouter_key_from_hermes_creds", return_value=None), \
+             patch("bridge_providers._provider_has_credentials", return_value=False), \
+             patch("bridge_providers._load_cli_model_config", return_value={
                  "default": "deepseek-v4-flash",
                  "provider": "custom",
                  "base_url": "https://api.bullinf.fun/v1",
                  "api_key": "inf_test_key",
              }), \
-             patch.object(main, "_get_active_provider", return_value=None):
+             patch("bridge_providers._get_active_provider", return_value=None):
             asyncio.run(_invoke_chat_and_read_stream(request, body))
 
         self.assertEqual(adapter.last_init["base_url"], "https://api.bullinf.fun/v1")
@@ -1830,17 +1861,17 @@ class CliProviderRoutingTests(unittest.TestCase):
         request = _FakeRequest({})
 
         with patch.dict(sys.modules, {"hermes_adapter": fake_module}), \
-             patch.object(main, "OPENROUTER_KEY", ""), \
-             patch.object(main, "_get_openrouter_key_from_hermes_creds", return_value=None), \
-             patch.object(main, "_get_local_gateway_key", return_value=None), \
-             patch.object(main, "_load_cli_model_config", return_value={
+             patch("bridge_config.OPENROUTER_KEY", ""), \
+             patch("bridge_providers._get_openrouter_key_from_hermes_creds", return_value=None), \
+             patch("bridge_providers._get_local_gateway_key", return_value=None), \
+             patch("bridge_providers._load_cli_model_config", return_value={
                  "default": "auto",
                  "provider": "custom",
                  "base_url": "https://api.bullinf.fun/v1",
                  "api_key": "inf_test_key",
              }), \
-             patch.object(main, "_get_active_provider", return_value=None), \
-             patch.object(main, "_models_for_custom_base_url", return_value=[
+             patch("bridge_providers._get_active_provider", return_value=None), \
+             patch("bridge_providers._models_for_custom_base_url", return_value=[
                  "e2ee-glm-4.7-flash",
                  "e2ee-venice-uncensored-24b-p",
                  "mimo-v2.5",
@@ -1885,15 +1916,15 @@ class CliProviderRoutingTests(unittest.TestCase):
         }
 
         with patch.dict(sys.modules, {"hermes_adapter": fake_module}), \
-             patch.object(main, "_load_cli_model_config", return_value={
+             patch("bridge_providers._load_cli_model_config", return_value={
                  "default": "deepseek-v4-flash",
                  "provider": "deepseek",
                  "base_url": "",
              }), \
-             patch.object(main, "_get_active_provider", return_value="nous"), \
-             patch.object(main, "_provider_has_credentials", return_value=True), \
-             patch.object(main, "_provider_serves_model", side_effect=lambda pid, _model: pid != "deepseek"), \
-             patch.object(main, "_load_credential_pool", return_value=fake_pool):
+             patch("bridge_providers._get_active_provider", return_value="nous"), \
+             patch("bridge_providers._provider_has_credentials", return_value=True), \
+             patch("bridge_providers._provider_serves_model", side_effect=lambda pid, _model: pid != "deepseek"), \
+             patch("bridge_providers._load_credential_pool", return_value=fake_pool):
             asyncio.run(_invoke_chat_and_read_stream(request, body))
 
         self.assertIsNotNone(adapter.last_init)
@@ -1923,7 +1954,7 @@ class BrainRequestRegistrationTests(unittest.TestCase):
         })
 
         with patch.dict(sys.modules, {"hermes_adapter": fake_module}):
-            with patch.object(main, "_brain_rpc", new_callable=AsyncMock) as mock_brain_rpc:
+            with patch("brain_client._brain_rpc", new_callable=AsyncMock) as mock_brain_rpc:
                 asyncio.run(_invoke_chat_and_read_stream(request, body))
 
         register_calls = [
@@ -1982,9 +2013,9 @@ class CronBridgeMappingTests(unittest.TestCase):
             )
 
             with (
-                patch.object(main, "_HERMES_CRON_AVAILABLE", True),
-                patch.object(main, "_HERMES_CRON_OUTPUT_DIR", Path(tmpdir), create=True),
-                patch.object(main, "_hermes_get_job", return_value={"id": job_id, "last_run_at": None}, create=True),
+                patch("routes.cron._HERMES_CRON_AVAILABLE", True),
+                patch("routes.cron._HERMES_CRON_OUTPUT_DIR", Path(tmpdir), create=True),
+                patch("routes.cron._hermes_get_job", return_value={"id": job_id, "last_run_at": None}, create=True),
             ):
                 runs = main._build_hermes_run_history(job_id)
 
@@ -2096,27 +2127,27 @@ class StaleProviderPinTests(unittest.TestCase):
                 "base_url": base_url, "api_key": None}
 
     def test_helper_includes_builtin_and_moa_ids(self):
-        with patch.object(main, "_load_cli_model_config", return_value=self._cfg()):
+        with patch("bridge_providers._load_cli_model_config", return_value=self._cfg()):
             ids = main._provider_ids_for_chat_routing()
         self.assertIn("nous", ids)
         self.assertIn("openrouter", ids)
         self.assertIn(main.MOA_PROVIDER_ID, ids)
 
     def test_helper_includes_synthetic_custom_id_when_config_is_custom(self):
-        with patch.object(main, "_load_cli_model_config", return_value=self._cfg(
+        with patch("bridge_providers._load_cli_model_config", return_value=self._cfg(
                 provider="custom", base_url="https://api.bullinf.fun/v1")):
             ids = main._provider_ids_for_chat_routing()
         self.assertIn("custom:api.bullinf.fun", ids)
 
     def test_helper_omits_synthetic_id_when_config_is_native_provider(self):
-        with patch.object(main, "_load_cli_model_config", return_value=self._cfg()):
+        with patch("bridge_providers._load_cli_model_config", return_value=self._cfg()):
             ids = main._provider_ids_for_chat_routing()
         self.assertNotIn("custom:inference-api.nousresearch.com", ids)
 
     def _dropped_pin(self, header_value, cfg):
         """Run the exact normalization _acp_chat_completions_impl applies."""
-        with patch.object(main, "_load_cli_model_config", return_value=cfg), \
-             patch.object(main, "_resolve_hermes_home", return_value=main.Path("/tmp")):
+        with patch("bridge_providers._load_cli_model_config", return_value=cfg), \
+             patch("bridge_workspace._resolve_hermes_home", return_value=main.Path("/tmp")):
             provider = (header_value or "").strip().lower()
             if provider in ("", "auto", "default"):
                 return None
@@ -2146,7 +2177,7 @@ class StaleProviderPinTests(unittest.TestCase):
         inference-api.nousresearch.com → inference-nousresearch.com, so the
         native nous base_url was misclassified as a custom endpoint."""
         cfg = self._cfg()
-        with patch.object(main, "_load_cli_model_config", return_value=cfg):
+        with patch("bridge_providers._load_cli_model_config", return_value=cfg):
             ids = main._provider_ids_for_chat_routing()
         self.assertFalse(main._cli_config_is_custom(cfg))
         self.assertNotIn("custom:inference-api.nousresearch.com", ids)

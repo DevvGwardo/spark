@@ -91,8 +91,7 @@ class ResolveAcpRepoRootTests(unittest.TestCase):
             )
 
     def test_header_file_falls_through_to_clone(self):
-        with mock.patch.object(
-            bridge_main, "_MANAGED_REPOS_ROOT", "/managed"
+        with mock.patch("acp_chat._MANAGED_REPOS_ROOT", "/managed"
         ), mock.patch.object(
             os.path, "isdir", side_effect=lambda p: p == "/managed/o/n"
         ):
@@ -102,8 +101,7 @@ class ResolveAcpRepoRootTests(unittest.TestCase):
             )
 
     def test_missing_header_resolves_managed_clone(self):
-        with mock.patch.object(
-            bridge_main, "_MANAGED_REPOS_ROOT", "/managed"
+        with mock.patch("acp_chat._MANAGED_REPOS_ROOT", "/managed"
         ), mock.patch.object(
             os.path, "isdir", side_effect=lambda p: p == "/managed/o/n"
         ):
