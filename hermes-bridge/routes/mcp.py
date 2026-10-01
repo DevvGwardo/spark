@@ -508,10 +508,12 @@ async def workspace_nub_mcp_register(request: Request, body: NubMcpRequest):
         return JSONResponse(content={"ok": True, "changed": False, "reloaded": False})
     servers[NUB_MCP_NAME] = entry
     try:
-        dump()
-    except Exception as e:
+        await anyio.to_thread.run_sync(dump)
+    except BridgeError:
+        raise  # already enveloped (e.g. 409 when config.yaml changed underneath us)
+    except Exception as e:  # noqa: BLE001 - surfaced to the client as a 500
         return JSONResponse(status_code=500, content={"error": f"Failed to write config: {e}"})
-    reloaded = _reload_agent_mcp()
+    reloaded = await anyio.to_thread.run_sync(lambda: _reload_agent_mcp(hermes_home))
     print(f"[hermes-bridge] Pointed MCP server '{NUB_MCP_NAME}' at Spark (reloaded={reloaded})", flush=True)
     return JSONResponse(content={"ok": True, "changed": True, "reloaded": reloaded})
 
@@ -527,8 +529,12 @@ async def workspace_nub_mcp_unregister(request: Request):
         return JSONResponse(content={"ok": True, "removed": False})
     del servers[NUB_MCP_NAME]
     try:
-        dump()
-    except Exception as e:
+        await anyio.to_thread.run_sync(dump)
+    except BridgeError:
+        raise  # already enveloped (e.g. 409 when config.yaml changed underneath us)
+    except Exception as e:  # noqa: BLE001 - surfaced to the client as a 500
         return JSONResponse(status_code=500, content={"error": f"Failed to write config: {e}"})
-    reloaded = _reload_agent_mcp()
+    reloaded = await anyio.to_thread.run_sync(
+        lambda: _reload_agent_mcp(hermes_home, removed=(NUB_MCP_NAME,))
+    )
     return JSONResponse(content={"ok": True, "removed": True, "reloaded": reloaded})
