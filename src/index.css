@@ -121,36 +121,6 @@
     --text-dim: 0 0% 40%;
     --text-faint: 0 0% 45%;
     --frame-bg: 0 0% 6.7%;
-
-    /* V4 Repo Issue Browser tokens */
-    --v4-bg-page: #1A1A1A;
-    --v4-bg-card: #16161A;
-    --v4-bg-elevated: #1A1A1E;
-    --v4-bg-detail: #0F0F12;
-    --v4-bg-hover: rgba(255,255,255,0.03);
-    --v4-bg-selected: rgba(255,255,255,0.05);
-    --v4-border-subtle: #2A2A2E;
-    --v4-border-strong: #3A3A40;
-    --v4-text-primary: #FAFAF9;
-    --v4-text-secondary: #6B6B70;
-    --v4-text-tertiary: #4A4A50;
-    --v4-text-muted: #8E8E93;
-    --v4-accent-amber: #F59E0B;
-    --v4-accent-amber-dark: #E88B00;
-    --v4-accent-green: #32D583;
-    --v4-accent-indigo: #6366F1;
-    --v4-accent-coral: #E85A4F;
-    --v4-accent-red: #EF4444;
-    --v4-accent-purple: #8B5CF6;
-    --v4-accent-blue: #3178C6;
-    --v4-radius-sm: 8px;
-    --v4-radius-md: 10px;
-    --v4-radius-lg: 14px;
-    --v4-radius-xl: 16px;
-    --v4-radius-2xl: 24px;
-    --v4-radius-pill: 999px;
-    --v4-font-heading: 'Fraunces', serif;
-    --v4-font-body: 'DM Sans', sans-serif;
   }
 }
 
@@ -170,17 +140,17 @@
 
   body {
     @apply bg-background text-foreground;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-family: 'Inter Variable', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
 
   body.font-mono-ui {
-    font-family: 'JetBrains Mono', 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-family: 'Geist Mono Variable', 'Geist Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
 
   body.font-serif-ui {
-    font-family: 'Source Serif 4', 'Georgia', 'Times New Roman', serif;
+    font-family: 'Source Serif 4', ui-serif, 'Georgia', 'Times New Roman', serif;
   }
 
   .app-shell {
@@ -231,7 +201,7 @@
 
 /* Code font */
 code, pre, .font-mono {
-  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-family: 'Geist Mono Variable', 'Geist Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
 }
 
 /* User message chip — Codex TUI treatment: a subtle elevation of the surface
@@ -293,7 +263,7 @@ code, pre, .font-mono {
 .chat-code-block__filename {
   font-size: 12px;
   font-weight: 500;
-  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, monospace;
+  font-family: 'Geist Mono Variable', 'Geist Mono', ui-monospace, SFMono-Regular, monospace;
   color: #d4d4d4;
   white-space: nowrap;
   overflow: hidden;
@@ -316,7 +286,7 @@ code, pre, .font-mono {
   font-size: 11px;
   font-weight: 500;
   color: #9ca3af;
-  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, monospace;
+  font-family: 'Geist Mono Variable', 'Geist Mono', ui-monospace, SFMono-Regular, monospace;
   letter-spacing: 0.01em;
 }
 
@@ -334,14 +304,14 @@ code, pre, .font-mono {
   color: #6b7280;
   font-size: 11px;
   font-weight: 500;
-  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, monospace;
+  font-family: 'Geist Mono Variable', 'Geist Mono', ui-monospace, SFMono-Regular, monospace;
   letter-spacing: 0.02em;
 }
 
 .chat-code-block__line-count {
   color: #6b7280;
   font-size: 10px;
-  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, monospace;
+  font-family: 'Geist Mono Variable', 'Geist Mono', ui-monospace, SFMono-Regular, monospace;
 }
 
 .chat-code-block__copy {
@@ -412,7 +382,7 @@ code, pre, .font-mono {
   /* Fixed px height (not a unitless multiplier) so the 12px gutter rows match
      the 13px code rows exactly — a multiplier would drift them apart. */
   line-height: 20px;
-  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, monospace;
+  font-family: 'Geist Mono Variable', 'Geist Mono', ui-monospace, SFMono-Regular, monospace;
 }
 
 .chat-code-block__viewport {
@@ -453,7 +423,7 @@ code, pre, .font-mono {
   display: block;
   min-width: max-content;
   background: transparent !important;
-  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, monospace;
+  font-family: 'Geist Mono Variable', 'Geist Mono', ui-monospace, SFMono-Regular, monospace;
   font-size: inherit;
   line-height: inherit;
 }

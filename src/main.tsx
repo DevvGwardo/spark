@@ -6,6 +6,7 @@ import '@fontsource/geist-sans/600.css';
 import '@fontsource/geist-sans/700.css';
 
 import '@fontsource-variable/geist-mono';
+import '@fontsource-variable/inter';
 import '@shoelace-style/shoelace/dist/themes/dark.css';
 import App from './App.tsx';
 import { QuickWindow } from './components/quick/QuickWindow';

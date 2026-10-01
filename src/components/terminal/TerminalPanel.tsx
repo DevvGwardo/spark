@@ -64,7 +64,7 @@ export const TerminalPanel: React.FC<{ cwd?: string }> = ({ cwd }) => {
     const term = new Terminal({
       cursorBlink: true,
       fontSize: 13,
-      fontFamily: '"Geist Mono", "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Menlo, monospace',
+      fontFamily: '"Geist Mono Variable", "Geist Mono", "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Menlo, monospace',
       lineHeight: 1.35,
       letterSpacing: 0,
       theme: {

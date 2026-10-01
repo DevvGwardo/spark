@@ -293,7 +293,7 @@ export const HermesPTYPanel = forwardRef<HermesPTYPanelHandle, { maximized?: boo
         cursorBlink: true,
         fontSize,
         scrollback: 5000,
-        fontFamily: '"Geist Mono", "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Menlo, monospace',
+        fontFamily: '"Geist Mono Variable", "Geist Mono", "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Menlo, monospace',
         lineHeight: 1.35,
         theme: {
           background: '#0a0a0a',

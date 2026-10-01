@@ -88,8 +88,8 @@ const V4 = {
   accentRed: '#EF4444',
   accentPurple: '#8B5CF6',
   accentBlue: '#3178C6',
-  fontHeading: "'DM Sans', sans-serif",
-  fontBody: "'DM Sans', sans-serif",
+  fontHeading: "'Geist Sans', -apple-system, BlinkMacSystemFont, sans-serif",
+  fontBody: "'Geist Sans', -apple-system, BlinkMacSystemFont, sans-serif",
 } as const;
 
 const overlayMotion = {
