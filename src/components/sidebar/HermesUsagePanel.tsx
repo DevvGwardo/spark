@@ -163,7 +163,7 @@ export function HermesUsagePanel() {
                 <div key={day.day} className="flex min-w-0 flex-1 flex-col items-center gap-1">
                   <div className="flex h-20 w-full items-end rounded-lg bg-background/70 px-1.5 py-1">
                     <div
-                      className="w-full rounded-md bg-[linear-gradient(180deg,#ffb86b_0%,#ff8f3f_100%)]"
+                      className="w-full rounded-md bg-gradient-to-b from-primary/70 to-primary"
                       style={{
                         height: `${Math.max(day.total_tokens > 0 ? 14 : 0, (day.total_tokens / maxDayTokens) * 100)}%`,
                       }}

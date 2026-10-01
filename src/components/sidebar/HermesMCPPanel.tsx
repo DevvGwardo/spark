@@ -62,7 +62,7 @@ function ServerCard({
       className={cn(
         'rounded-xl border transition-colors',
         expanded
-          ? 'border-[#ff8f3f]/30 bg-[#ff8f3f]/7'
+          ? 'border-primary/30 bg-primary/[0.07]'
           : 'border-border/30 bg-background/30 hover:bg-[hsl(var(--sidebar-active))]',
       )}
     >
@@ -168,7 +168,7 @@ function QuickInstallRow({
         <button
           onClick={onInstall}
           disabled={busy}
-          className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-[#ff8f3f] px-2 py-1 text-[10px] font-medium text-black transition-opacity hover:opacity-90 disabled:opacity-40"
+          className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-primary px-2 py-1 text-[10px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
         >
           {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
           Install
@@ -280,7 +280,7 @@ export function HermesMCPPanel() {
       {servers.length > 0 && (
         <div className="flex flex-wrap gap-2 px-3 pb-2">
           <div className="flex items-center gap-1.5 rounded-lg border border-border/30 bg-background/30 px-2 py-1">
-            <Zap className="h-3 w-3 text-[#ff8f3f]/70" />
+            <Zap className="h-3 w-3 text-primary/70" />
             <span className="text-[10px] font-medium text-muted-foreground/60">
               Hermes config.yaml
             </span>
@@ -337,7 +337,7 @@ export function HermesMCPPanel() {
             </p>
             <button
               onClick={() => setMcpStoreFullscreen(true)}
-              className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-[#ff8f3f]/12 px-3 py-1.5 text-[10px] font-medium text-[#ffbe8a] ring-1 ring-[#ff8f3f]/20 transition-colors hover:bg-[#ff8f3f]/18"
+              className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-primary/[0.12] px-3 py-1.5 text-[10px] font-medium text-primary ring-1 ring-primary/20 transition-colors hover:bg-primary/[0.18]"
             >
               <Store className="h-3 w-3" />
               Open MCP store

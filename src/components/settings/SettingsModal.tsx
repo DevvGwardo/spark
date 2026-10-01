@@ -92,13 +92,13 @@ const settingsCardClass = 'rounded-[10px] border border-[#2a2a2a] bg-white/[0.02
 // ones worth putting in a dropdown.
 const COMPACTION_THRESHOLD_CHOICES = [0.75, 0.8, 0.85, 0.9, 0.95];
 const fieldLabelClass = 'text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80';
-const textInputClass = 'w-full rounded-[10px] border border-[#2a2a2a] bg-[#141414] px-3 py-2 text-sm text-foreground outline-none transition-colors duration-100 placeholder:text-muted-foreground focus:border-[#FF8400]/40 focus:ring-1 focus:ring-[#FF8400]/20';
+const textInputClass = 'w-full rounded-[10px] border border-[#2a2a2a] bg-[#141414] px-3 py-2 text-sm text-foreground outline-none transition-colors duration-100 placeholder:text-muted-foreground focus:border-primary/40 focus:ring-1 focus:ring-primary/20';
 const selectInputClass = `${textInputClass} appearance-none pr-9 cursor-pointer font-mono`;
 const toggleTrackClass = 'relative inline-flex h-[22px] w-[40px] shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2';
 const toggleThumbClass = 'pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-md ring-0 transition-transform duration-200';
 const sectionLabelClass = 'text-[10px] font-semibold uppercase tracking-[1px] text-[#555555]';
 const settingsDividerClass = 'h-px bg-[#2a2a2a] w-full';
-const settingsSearchClass = 'w-full rounded-[10px] border border-[#2a2a2a] bg-[#141414] h-[38px] px-[14px] pl-9 text-sm text-foreground outline-none transition-colors duration-100 placeholder:text-muted-foreground focus:border-[#FF8400]/40 focus:ring-1 focus:ring-[#FF8400]/20';
+const settingsSearchClass = 'w-full rounded-[10px] border border-[#2a2a2a] bg-[#141414] h-[38px] px-[14px] pl-9 text-sm text-foreground outline-none transition-colors duration-100 placeholder:text-muted-foreground focus:border-primary/40 focus:ring-1 focus:ring-primary/20';
 const listCardClass = 'rounded-[10px] bg-white/[0.016] border border-[#2a2a2a] px-4 py-[14px] flex items-center gap-[14px] w-full text-left transition-colors duration-100 hover:bg-white/[0.04]';
 const bottomActionClass = 'rounded-[10px] border border-[#2a2a2a] border-dashed h-[42px] w-full flex items-center justify-center gap-2 text-[13px] text-[#555555] hover:text-[#888888] hover:border-[#444444] transition-colors duration-100';
 const dropdownClass = 'rounded-[8px] bg-[#141414] border border-[#2a2a2a] px-3 py-2 text-sm text-foreground outline-none appearance-none cursor-pointer pr-9';
@@ -112,7 +112,7 @@ const dropdownClass = 'rounded-[8px] bg-[#141414] border border-[#2a2a2a] px-3 p
 const KNOWLEDGE_BASES = [
   { id: 'kb-project-docs', name: 'Project Documentation', description: 'Architecture docs, READMEs, and onboarding guides', iconColor: '#4F8FEA', fileCount: 12, size: '2.4 MB' },
   { id: 'kb-code-snippets', name: 'Code Snippets', description: 'Reusable code patterns and utility functions', iconColor: '#10A37F', fileCount: 34, size: '890 KB' },
-  { id: 'kb-style-guide', name: 'Style Guide', description: 'Design tokens, component specs, and brand guidelines', iconColor: '#FF8400', fileCount: 8, size: '1.1 MB' },
+  { id: 'kb-style-guide', name: 'Style Guide', description: 'Design tokens, component specs, and brand guidelines', iconColor: 'hsl(var(--primary))', fileCount: 8, size: '1.1 MB' },
   { id: 'kb-meeting-notes', name: 'Meeting Notes', description: 'Sprint retrospectives and planning session notes', iconColor: '#8B5CF6', fileCount: 22, size: '560 KB' },
 ];
 
@@ -299,7 +299,7 @@ function GeneralTab() {
       </div>
       <button
         onClick={() => onChange(!enabled)}
-        className={cn(toggleTrackClass, enabled ? 'bg-[#FF8400]' : 'bg-[#333333]')}
+        className={cn(toggleTrackClass, enabled ? 'bg-primary' : 'bg-[#333333]')}
       >
         <span className={cn(toggleThumbClass, enabled ? 'translate-x-[20px]' : 'translate-x-[3px]')} />
       </button>
@@ -457,7 +457,7 @@ function GeneralTab() {
                   className={cn(
                     'rounded-[10px] border px-3 py-2 text-[12px] font-medium transition-colors duration-100',
                     isSelected
-                      ? 'border-primary/50 bg-primary/12 text-foreground'
+                      ? 'border-primary/50 bg-primary/[0.12] text-foreground'
                       : 'border-[#2a2a2a] bg-[#141414] text-muted-foreground hover:border-[#444444] hover:text-foreground'
                   )}
                 >
@@ -509,7 +509,7 @@ function GeneralTab() {
                       className={cn(
                         'rounded-[10px] border px-3 py-2 text-[12px] font-medium transition-colors duration-100',
                         isSelected
-                          ? 'border-primary/50 bg-primary/12 text-foreground'
+                          ? 'border-primary/50 bg-primary/[0.12] text-foreground'
                           : 'border-[#2a2a2a] bg-[#141414] text-muted-foreground hover:border-[#444444] hover:text-foreground'
                       )}
                     >
@@ -1216,7 +1216,7 @@ export const SettingsModal: React.FC = () => {
         className={cn(
           'rounded-[10px] border px-4 py-3.5 flex items-center gap-3.5 w-full text-left transition-all duration-100',
           isActive
-            ? 'bg-[#FF840010] border-[#FF840040]'
+            ? 'bg-primary/[0.06] border-primary/25'
             : 'bg-white/[0.02] border-[#2a2a2a] hover:bg-white/[0.04]'
         )}
       >
@@ -1292,11 +1292,11 @@ export const SettingsModal: React.FC = () => {
                       className={cn(
                         'h-9 rounded-lg flex items-center gap-2.5 px-2.5 text-[13px] w-full transition-colors duration-100',
                         isActive
-                          ? 'bg-[#FF840010] text-[#e0e0e0]'
+                          ? 'bg-primary/[0.06] text-[#e0e0e0]'
                           : 'text-[#888888] hover:text-[#bbbbbb] hover:bg-white/[0.03]'
                       )}
                     >
-                      <Icon className={cn('h-4 w-4', isActive ? 'text-[#FF8400]' : 'text-[#666666]')} />
+                      <Icon className={cn('h-4 w-4', isActive ? 'text-primary' : 'text-[#666666]')} />
                       {item.label}
                     </button>
                   );
@@ -1386,7 +1386,7 @@ export const SettingsModal: React.FC = () => {
                               <div className="flex items-center gap-1.5">
                                 <span className="truncate text-[13px] text-foreground">{p.name}</span>
                                 {p.active && (
-                                  <span className="shrink-0 rounded border border-[#FF8400]/20 bg-[#FF8400]/10 px-1 py-px text-[9px] font-medium uppercase tracking-wide text-[#FF8400]">
+                                  <span className="shrink-0 rounded border border-primary/20 bg-primary/10 px-1 py-px text-[9px] font-medium uppercase tracking-wide text-primary">
                                     Active
                                   </span>
                                 )}

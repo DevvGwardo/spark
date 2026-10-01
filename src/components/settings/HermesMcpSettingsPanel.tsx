@@ -327,7 +327,7 @@ export function HermesMcpSettingsPanel({
             onClick={() => void toggleToolSearch()}
             className={cn(
               'relative inline-flex h-[22px] w-[40px] shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-ring',
-              toolSearch.defer ? 'bg-[#FF8400]' : 'bg-[#333333]',
+              toolSearch.defer ? 'bg-primary' : 'bg-[#333333]',
               toolSearchSaving && 'opacity-50',
             )}
           >
