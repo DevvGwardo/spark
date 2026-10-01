@@ -59,6 +59,8 @@ interface ChatInputProps {
   activeProvider?: string;
   activeModel?: string;
   agentStatusLabel?: string;
+  /** Fluent live tool verb ("Reading foo.ts") for the streaming status bar. */
+  currentTool?: string;
   /** Server start time (epoch ms) of the active run, for a remount-stable elapsed timer. */
   streamStartedAt?: number;
   queuedMessages?: QueuedMessage[];
@@ -113,6 +115,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
   hasMessages = false,
   activeModel: _activeModel,
   agentStatusLabel,
+  currentTool,
   streamStartedAt,
   queuedMessages = [],
   onRemoveQueuedMessage,
@@ -675,6 +678,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
             isStreaming={isStreaming}
             toolCallCount={toolCallCount}
             statusLabel={agentStatusLabel ?? 'Working'}
+            currentTool={currentTool}
             startedAt={streamStartedAt}
             embedded
             onStop={onStop}

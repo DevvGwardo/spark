@@ -26,6 +26,10 @@ export interface JsonRpcResponse {
   error?: { code: number; message: string; data?: unknown }
 }
 
+export interface McpWorkerRequestOptions {
+  timeoutMs?: number
+}
+
 export interface McpWorkerSnapshot {
   serverId: string
   state: McpWorkerState
@@ -34,6 +38,7 @@ export interface McpWorkerSnapshot {
 }
 
 const DEFAULT_SPAWN_TIMEOUT_MS = 10_000
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 const HEADER_BYTES = 4
 
 function encodeFrame(payload: string): Buffer {
@@ -65,6 +70,7 @@ export class McpWorkerHost {
   private readonly pending = new Map<number | string, {
     resolve: (value: JsonRpcResponse) => void
     reject: (err: Error) => void
+    timer: ReturnType<typeof setTimeout>
   }>()
 
   constructor(serverId: string, options: McpWorkerSpawnOptions) {
@@ -183,7 +189,7 @@ export class McpWorkerHost {
     }
   }
 
-  sendRequest(method: string, params?: Record<string, unknown>): Promise<JsonRpcResponse> {
+  sendRequest(method: string, params?: Record<string, unknown>, opts?: McpWorkerRequestOptions): Promise<JsonRpcResponse> {
     const child = this.child
     if (this.state !== 'ready' || child?.stdin === null || child?.stdin === undefined) {
       return Promise.reject(new Error(`MCP worker "${this.serverId}" is not running`))
@@ -193,14 +199,36 @@ export class McpWorkerHost {
     }
     const id = this.nextId
     this.nextId += 1
+    const timeoutMs = opts?.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
     const request: JsonRpcRequest = { jsonrpc: '2.0', id, method, params }
     const frame = encodeFrame(JSON.stringify(request))
     return new Promise<JsonRpcResponse>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject })
+      const timer = setTimeout(() => {
+        if (this.pending.delete(id)) {
+          reject(new Error('request timed out'))
+        }
+      }, timeoutMs)
+      timer.unref()
+      // Wrapped callbacks clear the timer, so expiry / reply / write-error /
+      // rejectAllPending (stop, markExited, fail paths) all clean up.
+      this.pending.set(id, {
+        resolve: (value: JsonRpcResponse) => {
+          clearTimeout(timer)
+          resolve(value)
+        },
+        reject: (err: Error) => {
+          clearTimeout(timer)
+          reject(err)
+        },
+        timer,
+      })
       child.stdin?.write(frame, (err: Error | null | undefined) => {
         if (err !== null && err !== undefined) {
-          this.pending.delete(id)
-          reject(err)
+          const waiter = this.pending.get(id)
+          if (waiter !== undefined) {
+            this.pending.delete(id)
+            waiter.reject(err)
+          }
         }
       })
     })

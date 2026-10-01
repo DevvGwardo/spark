@@ -1,8 +1,10 @@
 // Clean-room reimplementation inspired by observed architecture; no vendor code copied.
-import { McpWorkerHost, type McpWorkerSnapshot, type McpWorkerSpawnOptions, type McpWorkerState } from './mcp-worker-host'
+import { McpWorkerHost, type JsonRpcResponse, type McpWorkerRequestOptions, type McpWorkerSnapshot, type McpWorkerSpawnOptions, type McpWorkerState } from './mcp-worker-host'
 
 export const MAX_MCP_WORKERS = 8
 export const MAX_MCP_RESTARTS = 3
+export const MAX_MCP_WORKER_IDLE_MS = 15 * 60 * 1000
+export const MAX_MCP_WORKER_LIFETIME_MS = 2 * 60 * 60 * 1000
 
 export interface McpWorkerStatus {
   serverId: string
@@ -20,6 +22,8 @@ interface ManagedEntry {
   host: McpWorkerHost
   options: McpWorkerSpawnOptions
   restarts: number
+  createdAt: number
+  lastActivity: number
 }
 
 /**
@@ -47,7 +51,8 @@ export class McpWorkerManager {
       throw new Error(`MCP worker limit reached (${MAX_MCP_WORKERS}); refusing "${registration.serverId}"`)
     }
     const host = new McpWorkerHost(registration.serverId, registration.options)
-    this.workers.set(registration.serverId, { host, options: registration.options, restarts: 0 })
+    const now = Date.now()
+    this.workers.set(registration.serverId, { host, options: registration.options, restarts: 0, createdAt: now, lastActivity: now })
     try {
       await host.spawn()
     } catch (err: unknown) {
@@ -68,6 +73,7 @@ export class McpWorkerManager {
     entry.restarts += 1
     await entry.host.stop()
     entry.host = new McpWorkerHost(serverId, entry.options)
+    entry.lastActivity = Date.now()
     this.workers.set(serverId, entry)
     try {
       await entry.host.spawn()
@@ -82,6 +88,29 @@ export class McpWorkerManager {
     if (entry === undefined) return
     this.workers.delete(serverId)
     await entry.host.stop()
+  }
+
+  request(serverId: string, method: string, params?: Record<string, unknown>, opts?: McpWorkerRequestOptions): Promise<JsonRpcResponse> {
+    const entry = this.workers.get(serverId)
+    if (entry === undefined) {
+      return Promise.reject(new Error(`Unknown MCP worker "${serverId}"`))
+    }
+    entry.lastActivity = Date.now()
+    return entry.host.sendRequest(method, params, opts)
+  }
+
+  async reapIdle(o?: { maxIdleMs?: number; maxLifetimeMs?: number; now?: number }): Promise<string[]> {
+    const now = o?.now ?? Date.now()
+    const maxIdleMs = o?.maxIdleMs ?? MAX_MCP_WORKER_IDLE_MS
+    const maxLifetimeMs = o?.maxLifetimeMs ?? MAX_MCP_WORKER_LIFETIME_MS
+    const reaped: string[] = []
+    for (const [serverId, entry] of [...this.workers.entries()]) {
+      if (now - entry.lastActivity < maxIdleMs && now - entry.createdAt < maxLifetimeMs) continue
+      this.workers.delete(serverId)
+      await entry.host.stop()
+      reaped.push(serverId)
+    }
+    return reaped
   }
 
   status(): McpWorkerStatus[] {

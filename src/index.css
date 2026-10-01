@@ -518,6 +518,37 @@ code, pre, .font-mono {
   overflow: hidden;
 }
 
+/* Codex-style fluent live rows — quiet neutral container with a soft
+   sweeping sheen while a tool streams. No layout shift: background-only,
+   under 200ms, disabled under reduced-motion. */
+.codex-tool-live {
+  position: relative;
+}
+
+.codex-tool-live::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    115deg,
+    transparent 0%,
+    transparent 35%,
+    hsl(var(--primary) / 0.06) 50%,
+    transparent 65%,
+    transparent 100%
+  );
+  transform: translateX(-100%);
+  animation: codex-live-sweep 1.8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes codex-live-sweep {
+  0% { transform: translateX(-100%); opacity: 0.6; }
+  50% { opacity: 1; }
+  100% { transform: translateX(100%); opacity: 0.6; }
+}
+
 .chat-tool-glimmer::before {
   content: "";
   position: absolute;
@@ -651,6 +682,10 @@ code, pre, .font-mono {
 
 /* Respect prefers-reduced-motion for all chat animations */
 @media (prefers-reduced-motion: reduce) {
+  .codex-tool-live::after {
+    animation: none;
+    display: none;
+  }
   .glimmer-text {
     animation: none;
     -webkit-text-fill-color: unset;

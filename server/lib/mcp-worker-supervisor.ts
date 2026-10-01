@@ -2,7 +2,7 @@
 // Singleton owner of the server-side MCP worker pool. All spawns pass the
 // policy gate before reaching the manager. Resettable for tests.
 import { McpWorkerManager, MAX_MCP_WORKERS } from '../../electron/mcp-worker-manager';
-import type { McpWorkerSnapshot } from '../../electron/mcp-worker-host';
+import type { JsonRpcResponse, McpWorkerRequestOptions, McpWorkerSnapshot } from '../../electron/mcp-worker-host';
 import { realpathSync } from 'node:fs';
 import { validateSpawnCommand, validateWorkerCwd, filterWorkerEnv, isAllowedEnvKey, checkSpawnRateLimit, resetSpawnRateLimits } from './mcp-worker-policy';
 import type { WorkerSpawnRequest } from './mcp-worker-protocol';
@@ -82,8 +82,33 @@ export function workerStatus() {
   return manager.status();
 }
 
+export async function callWorkerTool(
+  serverId: string,
+  method: string,
+  params?: Record<string, unknown>,
+  opts?: McpWorkerRequestOptions,
+): Promise<JsonRpcResponse> {
+  try {
+    return await manager.request(serverId, method, params, opts);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/Unknown MCP worker/.test(message)) {
+      throw supervisorError(message, 404);
+    }
+    if (/is not running/.test(message)) {
+      throw supervisorError(message, 409);
+    }
+    throw err;
+  }
+}
+
 export async function stopWorker(serverId: string): Promise<void> {
   await manager.remove(serverId);
+}
+
+/** Stop + drop workers idle past maxIdleMs or alive past maxLifetimeMs. Test hook. */
+export async function reapIdle(o?: { maxIdleMs?: number; maxLifetimeMs?: number; now?: number }): Promise<string[]> {
+  return manager.reapIdle(o);
 }
 
 export async function resetSupervisor(): Promise<void> {

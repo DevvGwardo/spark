@@ -45,24 +45,27 @@ export const StreamingStatusBar: React.FC<StreamingStatusBarProps> = ({
   if (!isStreaming) return null;
 
   if (embedded) {
+    // Codex-style live row: pulsing dot + fluent verb ("Reading foo.ts")
+    // + elapsed + tool count + stop. Single line, no layout jump.
+    const liveLabel = currentTool || statusLabel;
     return (
-      <div className="flex items-center justify-between border-b border-primary/10 bg-primary/[0.04] px-4 py-2 text-xs text-muted-foreground">
-        <div className="flex items-center gap-1.5">
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary/40" />
+      <div className="flex items-center justify-between gap-2 border-b border-primary/10 bg-primary/[0.04] px-4 py-2 text-xs text-muted-foreground">
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span className="relative flex h-2 w-2" aria-hidden="true">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary/40 motion-reduce:animate-none" />
             <span className="relative inline-flex rounded-full h-2 w-2 bg-primary/70" />
           </span>
           <Clock className="h-3 w-3" />
           <span className="tabular-nums">{formatElapsed(elapsed)}</span>
         </div>
-        {statusLabel || currentTool ? (
-          <div className="min-w-0 flex-1 px-3 text-center">
-            <span className="truncate text-[11px] text-foreground/80">
-              {currentTool || statusLabel}
+        {liveLabel ? (
+          <div className="min-w-0 flex-1 px-3 text-center" aria-live="polite">
+            <span className="block truncate text-[11px] text-foreground/80 glimmer-text" title={liveLabel}>
+              {liveLabel}
             </span>
           </div>
         ) : <div className="flex-1" />}
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 shrink-0">
           <Wrench className="h-3 w-3" />
           <span className="tabular-nums">{toolCallCount} tool{toolCallCount !== 1 ? 's' : ''}</span>
         </div>

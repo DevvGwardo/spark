@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { AgentActivity, type ToolActivityEvent } from '@/components/chat/AgentActivity';
+import { getActiveRunningTool, getRunningToolLabel } from '@/lib/tool-activity';
 
 describe('AgentActivity MoA events', () => {
   it('renders MoA advisor cards', () => {
@@ -63,5 +64,37 @@ describe('AgentActivity LSP diagnostics', () => {
     expect(screen.getByText(/LSP · 1 diagnostic/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button'));
     expect(screen.getByText(/LSP · tmp\/foo.py/)).toBeInTheDocument();
+  });
+});
+
+describe('AgentActivity fluent streaming (Codex-style)', () => {
+  it('auto-expands a running tool so no click is needed to see it', () => {
+    const events: ToolActivityEvent[] = [
+      {
+        tool: 'read_repo_file',
+        status: 'running',
+        input: JSON.stringify({ path: 'src/app.ts' }),
+        output: null,
+      },
+    ];
+
+    render(<AgentActivity events={events} />);
+    // Fluent header names the live tool…
+    expect(screen.getByText('Reading src/app.ts')).toBeInTheDocument();
+    // …and the running row is already visible (auto-expanded).
+    expect(screen.getByText(/Running read_repo_file/)).toBeInTheDocument();
+  });
+
+  it('formats running verbs per tool kind', () => {
+    expect(getRunningToolLabel({ tool: 'read_repo_file', input: '{"path":"a/b/c.ts"}' })).toBe('Reading b/c.ts');
+    expect(getRunningToolLabel({ tool: 'terminal', input: '{"command":"npm test"}' })).toBe('Running npm test');
+    expect(getRunningToolLabel({ tool: 'web_search', input: '{"query":"vitest"}' })).toBe('Searching vitest');
+    expect(getActiveRunningTool([
+      { tool: 'search', status: 'completed', input: '{}', output: 'done' },
+      { tool: 'terminal', status: 'running', input: '{"command":"ls"}', output: null },
+    ])?.tool).toBe('terminal');
+    expect(getActiveRunningTool([
+      { tool: 'search', status: 'completed', input: '{}', output: 'done' },
+    ])).toBeNull();
   });
 });

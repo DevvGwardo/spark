@@ -44,40 +44,42 @@ export function ToolCallAccordion({
   );
 
   return (
-    <div className={cn('rounded-md border border-amber-500/20 bg-amber-500/5 my-1', className)}>
+    <div className={cn('rounded-md border border-border/50 bg-muted/20 my-1 overflow-hidden transition-colors duration-150', className)}>
       <button
         onClick={() => setExpanded(!expanded)}
         aria-expanded={expanded}
-        className="flex items-center gap-2 w-full px-3 py-1.5 text-left hover:bg-amber-500/10 transition-colors rounded-md"
+        className="flex items-center gap-2 w-full px-3 py-1.5 text-left hover:bg-muted/40 transition-colors duration-150 rounded-md"
       >
         <ChevronDown
           className={cn(
-            'h-3.5 w-3.5 text-amber-500/70 transition-transform duration-200 flex-shrink-0',
+            'h-3.5 w-3.5 text-muted-foreground/60 transition-transform duration-150 flex-shrink-0',
             expanded ? 'rotate-0' : '-rotate-90'
           )}
         />
-        <Icon className="h-3.5 w-3.5 text-amber-500/70 flex-shrink-0" />
-        <span className="text-[11px] font-medium text-amber-600/80 dark:text-amber-400/80">
+        <Icon className="h-3.5 w-3.5 text-muted-foreground/60 flex-shrink-0" />
+        <span className="text-[11px] font-medium text-muted-foreground truncate min-w-0">
           {segment.toolName}
         </span>
         {segment.summary && (
-          <span className="text-[11px] text-muted-foreground/60 truncate">
+          <span className="text-[11px] text-muted-foreground/60 truncate min-w-0" title={segment.summary}>
             — {segment.summary}
           </span>
         )}
         {resultText && (
-          <span className="text-[10px] text-muted-foreground/40 ml-auto flex-shrink-0">
+          <span className="text-[10px] text-muted-foreground/40 ml-auto flex-shrink-0 font-mono">
             {resultText}
           </span>
         )}
       </button>
       <div
         className={cn(
-          'overflow-hidden transition-all duration-200 ease-in-out',
-          expanded ? 'max-h-[200px] overflow-auto opacity-100' : 'max-h-0 opacity-0'
+          'grid transition-[grid-template-rows,opacity] duration-150 ease-out',
+          expanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
         )}
       >
-        <div className="px-3 pb-2 pt-0.5 space-y-1">{body}</div>
+        <div className="overflow-hidden min-h-0">
+          <div className="px-3 pb-2 pt-0.5 space-y-1">{body}</div>
+        </div>
       </div>
     </div>
   );

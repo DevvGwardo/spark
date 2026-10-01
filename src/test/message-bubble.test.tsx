@@ -242,7 +242,7 @@ describe('MessageBubble', () => {
 
     expect(screen.getByText('Reading file')).toBeInTheDocument();
     expect(screen.getByText('src/components/chat/ChatArea.tsx')).toBeInTheDocument();
-    expect(screen.getByText('Reading...')).toBeInTheDocument();
+    expect(screen.getByText('Reading')).toBeInTheDocument();
   });
 
   it('renders Hermes tool activity through inline tool rows instead of a separate agent activity card', () => {
@@ -690,7 +690,7 @@ describe('MessageBubble', () => {
     );
 
     expect(container.querySelector('.chat-tool-glimmer__track')).not.toBeNull();
-    expect(screen.getByText('Reading...')).toBeInTheDocument();
+    expect(screen.getByText('Reading')).toBeInTheDocument();
   });
 
   it('renders pseudo repo tool rows from assistant text parts when message content is empty', () => {
