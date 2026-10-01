@@ -11,41 +11,20 @@
 import { getApiBaseUrl } from './api';
 import { detectHermesBridge } from './detect-hermes';
 
-// TODO(hermes-hardening 3.3): once `shared/bridge-readiness.ts` lands on main,
-// replace these two declarations with
-//   export type { BridgeReadiness, BridgeReadinessState } from '../../shared/bridge-readiness';
-// They are kept identical to that contract on purpose.
-export type BridgeReadinessState =
-  | 'starting'
-  | 'ready'
-  | 'degraded'
-  | 'restarting'
-  | 'crashed'
-  | 'stopped';
+import {
+  BRIDGE_READINESS_STATES,
+  type BridgeReadiness,
+  type BridgeReadinessState,
+} from '../../shared/bridge-readiness';
 
-export interface BridgeReadiness {
-  state: BridgeReadinessState;
-  /** Epoch ms when the bridge entered `state`. */
-  since: number;
-  /** Supervisor restart attempt (0 for the first start). */
-  attempt: number;
-  lastError: string | null;
-  stderrTail: string[];
-}
+export type { BridgeReadiness, BridgeReadinessState };
 
 /** Readiness plus where it came from — the fallback carries no stderr. */
 export interface BridgeReadinessResult extends BridgeReadiness {
   source: 'readiness' | 'health-fallback';
 }
 
-const READINESS_STATES: ReadonlySet<string> = new Set<BridgeReadinessState>([
-  'starting',
-  'ready',
-  'degraded',
-  'restarting',
-  'crashed',
-  'stopped',
-]);
+const READINESS_STATES: ReadonlySet<string> = new Set<string>(BRIDGE_READINESS_STATES);
 
 /** States in which Hermes queries may run. */
 export function isBridgeUsable(state: BridgeReadinessState | undefined): boolean {
