@@ -146,7 +146,7 @@ export const WelcomeScreen = React.forwardRef<HTMLDivElement, WelcomeScreenProps
           <motion.div
             initial={{ opacity: 0, scale: 0.94 }}
             animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+            transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
           >
             <WelcomeHeroMark className="h-14 w-14 md:h-16 md:w-16 rounded-[18px] md:rounded-[20px]" />
           </motion.div>
@@ -182,6 +182,7 @@ export const WelcomeScreen = React.forwardRef<HTMLDivElement, WelcomeScreenProps
                 onClick={clearActiveRepo}
                 className="ml-0.5 p-1 rounded-full hover:bg-primary/15 transition-colors"
                 title="Stop editing"
+                aria-label="Stop editing"
               >
                 <X className="h-3 w-3" />
               </button>

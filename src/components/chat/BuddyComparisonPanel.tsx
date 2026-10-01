@@ -123,7 +123,7 @@ export function BuddyComparisonPanel({
         </span>
         {buddyResponse.isStreaming && (
           <span className="flex h-2 w-2 flex-shrink-0">
-            <span className="absolute inline-flex h-2 w-2 animate-ping rounded-full bg-emerald-400 opacity-75" />
+            <span className="absolute inline-flex h-2 w-2 animate-ping motion-reduce:animate-none rounded-full bg-emerald-400 opacity-75" />
             <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
           </span>
         )}

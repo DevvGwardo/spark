@@ -106,7 +106,7 @@ function FileChip({ path, status }: { path: string; status: 'active' | 'done' })
     <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-muted/60 border border-border/40 text-[11px] font-mono text-muted-foreground">
       <span
         className={`h-1.5 w-1.5 rounded-full shrink-0 ${
-          status === 'active' ? 'bg-amber-400 animate-pulse' : 'bg-emerald-500'
+          status === 'active' ? 'bg-amber-400 animate-pulse motion-reduce:animate-none' : 'bg-emerald-500'
         }`}
       />
       <FileText className="h-3 w-3 shrink-0 opacity-50" />
@@ -171,7 +171,7 @@ export const ActivityIndicator: React.FC<ActivityIndicatorProps> = ({ isStreamin
       {/* Status line */}
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <span className="relative flex h-2 w-2">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60 opacity-75" />
+          <span className="absolute inline-flex h-full w-full animate-ping motion-reduce:animate-none rounded-full bg-primary/60 opacity-75" />
           <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
         </span>
         {loopActive ? (

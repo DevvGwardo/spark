@@ -70,6 +70,8 @@ function ServerCard({
         <div className="flex items-start justify-between gap-2">
           <div className="flex min-w-0 flex-1 items-start gap-2">
             <span
+              role="img"
+              aria-label={server.enabled ? 'Enabled' : 'Disabled'}
               className={cn(
                 'mt-1.5 inline-block h-2 w-2 shrink-0 rounded-full',
                 server.enabled

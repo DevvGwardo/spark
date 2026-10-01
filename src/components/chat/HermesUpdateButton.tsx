@@ -91,7 +91,7 @@ const UpdateProgressModal: React.FC<{
           >
             <div
               className={cn(
-                'h-full rounded-full transition-all duration-300',
+                'h-full rounded-full transition-all duration-200',
                 failed ? 'bg-destructive' : succeeded ? 'bg-emerald-500' : 'bg-violet-500'
               )}
               style={{ width: `${pct}%` }}

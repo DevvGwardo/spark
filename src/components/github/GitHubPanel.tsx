@@ -445,7 +445,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
                 </div>
                 <div className="h-1.5 bg-secondary rounded-full overflow-hidden">
                   <div
-                    className="h-full bg-primary rounded-full transition-all duration-300 ease-out"
+                    className="h-full bg-primary rounded-full transition-all duration-200 ease-out"
                     style={{ width: `${repoLoadProgress.percent}%` }}
                   />
                 </div>
