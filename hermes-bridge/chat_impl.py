@@ -785,8 +785,11 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
                 moa_provider_id=MOA_PROVIDER_ID,
                 moa_runs_allowed=_hermes_runs.parse_runs_moa_flag(),
                 enabled_toolsets=enabled_toolsets,
-                toolsets_overridden=toolsets_overridden,
-                default_toolsets=default_toolsets,
+                # Were undefined names (NameError → 500 for every HERMES_USE_RUNS
+                # request the gateway could not take). Same semantics as the
+                # worker-side parity check below.
+                toolsets_overridden=request.headers.get("x-hermes-toolsets") is not None,
+                default_toolsets=[t.strip() for t in DEFAULT_TOOLSETS.split(",") if t.strip()],
                 repo_mode=has_repo_tools,
                 github_pat=github_pat or None,
                 custom_tools=_requested_custom_tools if isinstance(_requested_custom_tools, list) else None,
