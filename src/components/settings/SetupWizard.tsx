@@ -639,6 +639,7 @@ export const SetupWizard: React.FC = () => {
     const info = PROVIDERS[provider];
     return (
       <div
+        aria-hidden
         className="flex items-center justify-center rounded-lg font-semibold text-white flex-shrink-0"
         style={{ width: size, height: size, backgroundColor: info.iconColor, fontSize: size * 0.4 }}
       >
@@ -730,7 +731,7 @@ export const SetupWizard: React.FC = () => {
                   onClick={() => handleProviderSelect(p)}
                   className={cn(
                     'flex items-center gap-2.5 px-3 py-2.5 text-left transition-colors duration-100',
-                    isSelected ? 'bg-primary/8' : 'bg-muted/50 hover:bg-muted'
+                    isSelected ? 'bg-primary/[0.08]' : 'bg-muted/50 hover:bg-muted'
                   )}
                 >
                   <ProviderIcon provider={p} size={24} />
