@@ -14,6 +14,9 @@ helpers — do not reinvent formatters, SSE, export, or approval logic.
       Verify: `filterSessions` returns only matching sessions for a query, is case-insensitive,
       matches across id/repo/model/firstUserMessage, and returns all sessions for an empty query.
       feat/overnight-session-filter — filterSessions helper + HermesChatsPanel search input, proven by hermes-session-filter.test.ts.
+      **Superseded:** `filterSessions` and `hermes-session-filter.test.ts` are gone. Search now runs
+      server-side: `HermesChatsPanel` sends `q` to `fetchSessions` (`src/lib/hermes-api.ts`) and the
+      bridge `/sessions` route filters before paginating.
 
 - [x] **Cron run-history summary** — add a pure `summarizeCronRuns(runs)` helper that returns
       `{ total, succeeded, failed, successRate }` from a `CronRun[]`, and surface the summary
@@ -34,6 +37,9 @@ helpers — do not reinvent formatters, SSE, export, or approval logic.
       Verify: `countSessionStatuses` tallies each status correctly, folds unknown statuses into
       `total` only, and returns all-zero for an empty list.
       feat/overnight-session-status-counts — countSessionStatuses helper + status pills in HermesChatsPanel header, proven by session-status-counts.test.ts.
+      **Superseded:** `countSessionStatuses` and `session-status-counts.test.ts` are gone. Counts are
+      computed server-side over the full matching set and returned as `counts` by the bridge
+      `/sessions` route (`SessionsPage.counts` in `src/lib/hermes-api.ts`).
 
 - [x] **Usage budget level** — add a pure `usageBudgetLevel(spent, budget)` helper returning
       `'ok' | 'warn' | 'over'` (warn ≥ 75%, over ≥ 100%, ok below) and use it to color the

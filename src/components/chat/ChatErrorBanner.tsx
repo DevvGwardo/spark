@@ -3,7 +3,7 @@ import { AlertTriangle, ArrowUpRight, Copy, Sparkles, TerminalSquare, SlidersHor
 import { cn } from '@/lib/utils';
 import { getApiBaseUrl } from '@/lib/api';
 import { parseLocalProviderRuntimeError } from '@/lib/local-provider-runtime';
-import type { HermesErrorEnvelopeShape } from '../../../server/lib/hermes-errors.gen';
+import { titleForHermesCode as titleForCode, type HermesErrorEnvelopeShape } from '@/lib/hermes-errors';
 
 interface ChatErrorBannerProps {
   /** The Hermes error envelope, when the failure came through one. */
@@ -24,26 +24,10 @@ interface ChatErrorBannerProps {
  * three regexes this replaced — including one that scraped suggested model names
  * out of a sentence — are gone; suggestions now arrive as
  * `details.suggested_models`.
+ *
+ * The code → title copy lives in lib/hermes-errors so the sidebar's
+ * HermesErrorState and this banner render identical wording.
  */
-type HermesCode = HermesErrorEnvelopeShape['error']['code'];
-
-const HERMES_CODE_TITLES: Record<HermesCode, string> = {
-  BRIDGE_UNREACHABLE: 'Could not reach the Hermes bridge',
-  BRIDGE_STARTING: 'Hermes is still starting',
-  BRIDGE_AUTH: 'Hermes bridge rejected the request',
-  UPSTREAM_TIMEOUT: 'The model provider timed out',
-  MODEL_INCOMPATIBLE: 'That model cannot use Hermes tools',
-  PROVIDER_ERROR: 'The model provider returned an error',
-  APPROVAL_EXPIRED: 'That approval expired',
-  VALIDATION: 'The request was rejected',
-  INTERNAL: 'Hermes hit an unexpected error',
-};
-
-/** A stable, user-meaningful label for the code, used in the UI. */
-function titleForCode(code: HermesCode): string {
-  return HERMES_CODE_TITLES[code] ?? 'Hermes hit an unexpected error';
-}
-
 
 function getModelLabel(model: string) {
   return model.split('/').pop() || model;

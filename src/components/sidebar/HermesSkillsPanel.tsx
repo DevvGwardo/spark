@@ -1,15 +1,14 @@
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { BookOpenText, Check, Download, Loader2, RefreshCw, Search, Sparkles, Trash2 } from 'lucide-react';
+import type { HubSkill } from '@/lib/hermes-api';
 import {
-  deleteHermesSkill,
-  fetchHermesSkillDetail,
-  fetchHermesSkills,
-  fetchSkillsHub,
-  installHubSkill,
-  type HermesSkillDetail,
-  type HermesSkillSummary,
-  type HubSkill,
-} from '@/lib/hermes-api';
+  useDeleteHermesSkill,
+  useHermesSkillDetail,
+  useHermesSkills,
+  useInstallHubSkill,
+  useSkillsHub,
+} from '@/lib/hermes-queries';
+import { HermesErrorState } from '@/components/hermes/HermesErrorState';
 import { relativeTime } from '@/lib/relative-time';
 import { cn } from '@/lib/utils';
 import { filterSkills, formatBytes } from './hermesSidebarUtils';
@@ -81,83 +80,39 @@ function HubBadge({
 
 export function HermesSkillsPanel() {
   const [tab, setTab] = useState<SkillsTab>('installed');
-  const [skills, setSkills] = useState<HermesSkillSummary[]>([]);
-  const [details, setDetails] = useState<Record<string, HermesSkillDetail>>({});
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // `undefined` = nothing chosen yet (follow the first skill); `null` = collapsed.
+  const [requestedId, setSelectedId] = useState<string | null | undefined>(undefined);
   const [installedQuery, setInstalledQuery] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [installedError, setInstalledError] = useState<string | null>(null);
-  const [hubSkills, setHubSkills] = useState<HubSkill[]>([]);
   const [hubQuery, setHubQuery] = useState('');
   const [hubCategory, setHubCategory] = useState('all');
-  const [hubLoading, setHubLoading] = useState(false);
-  const [hubLoaded, setHubLoaded] = useState(false);
-  const [hubError, setHubError] = useState<string | null>(null);
+  /** Install/delete failures; load failures come from the queries. */
+  const [hubActionError, setHubActionError] = useState<unknown>(null);
+  const [installedActionError, setInstalledActionError] = useState<unknown>(null);
   const [installingSkillName, setInstallingSkillName] = useState<string | null>(null);
   const [justInstalledSkillName, setJustInstalledSkillName] = useState<string | null>(null);
   const deferredInstalledQuery = useDeferredValue(installedQuery);
   const deferredHubQuery = useDeferredValue(hubQuery);
 
-  const loadSkills = useCallback(async () => {
-    setLoading(true);
-    try {
-      const nextSkills = await fetchHermesSkills();
-      setSkills(nextSkills);
-      setInstalledError(null);
-      setSelectedId((current) => (
-        nextSkills.some((skill) => skill.id === current)
-          ? current
-          : (nextSkills[0]?.id ?? null)
-      ));
-    } catch (err) {
-      setInstalledError(err instanceof Error ? err.message : 'Failed to load Hermes skills');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const skillsQuery = useHermesSkills();
+  const skills = useMemo(() => skillsQuery.data ?? [], [skillsQuery.data]);
+  // Keep the selection while it still exists; otherwise fall back to the first skill.
+  const selectedId = requestedId === null
+    ? null
+    : requestedId !== undefined && skills.some((skill) => skill.id === requestedId)
+      ? requestedId
+      : (skills[0]?.id ?? null);
+  const detailQuery = useHermesSkillDetail(selectedId);
+  // The hub is only fetched once its tab has been opened.
+  const hubQueryResult = useSkillsHub({ enabled: tab === 'hub' });
+  const hubSkills = useMemo(() => hubQueryResult.data ?? [], [hubQueryResult.data]);
+  const installMutation = useInstallHubSkill();
+  const deleteMutation = useDeleteHermesSkill();
 
-  const loadSkillDetail = useCallback(async (skillId: string) => {
-    setDetailLoading(true);
-    try {
-      const detail = await fetchHermesSkillDetail(skillId);
-      setDetails((current) => current[skillId] ? current : { ...current, [skillId]: detail });
-      setInstalledError(null);
-    } catch (err) {
-      setInstalledError(err instanceof Error ? err.message : 'Failed to load skill');
-    } finally {
-      setDetailLoading(false);
-    }
-  }, []);
-
-  const loadHubSkills = useCallback(async () => {
-    setHubLoading(true);
-    try {
-      const nextSkills = await fetchSkillsHub();
-      setHubSkills(nextSkills);
-      setHubError(null);
-    } catch (err) {
-      setHubError(err instanceof Error ? err.message : 'Failed to load the skills hub');
-    } finally {
-      setHubLoaded(true);
-      setHubLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadSkills();
-  }, [loadSkills]);
-
-  useEffect(() => {
-    if (!selectedId) return;
-    if (details[selectedId]) return;
-    void loadSkillDetail(selectedId);
-  }, [details, loadSkillDetail, selectedId]);
-
-  useEffect(() => {
-    if (tab !== 'hub' || hubLoaded) return;
-    void loadHubSkills();
-  }, [hubLoaded, loadHubSkills, tab]);
+  const loading = skillsQuery.isFetching;
+  const detailLoading = detailQuery.isFetching;
+  const hubLoading = hubQueryResult.isFetching;
+  const installedError = installedActionError ?? detailQuery.error ?? skillsQuery.error;
+  const hubError = hubActionError ?? hubQueryResult.error;
 
   useEffect(() => {
     if (!justInstalledSkillName) return;
@@ -202,33 +157,38 @@ export function HermesSkillsPanel() {
     });
   }, [deferredHubQuery, hubCategory, hubSkills]);
 
+  const refetchSkills = skillsQuery.refetch;
+  const refetchHub = hubQueryResult.refetch;
   const handleRefresh = useCallback(() => {
     if (tab === 'hub') {
-      void loadHubSkills();
+      setHubActionError(null);
+      void refetchHub();
       return;
     }
-    void loadSkills();
-  }, [loadHubSkills, loadSkills, tab]);
+    setInstalledActionError(null);
+    void refetchSkills();
+  }, [refetchHub, refetchSkills, tab]);
 
+  const installHubSkill = installMutation.mutateAsync;
   const handleInstall = useCallback(async (skillName: string) => {
     setInstallingSkillName(skillName);
     setJustInstalledSkillName(null);
     try {
       await installHubSkill(skillName);
-      setHubSkills((current) => current.map((skill) => (
-        skill.name === skillName
-          ? { ...skill, installed: true }
-          : skill
-      )));
-      setHubError(null);
+      setHubActionError(null);
       setJustInstalledSkillName(skillName);
-      void loadSkills();
     } catch (err) {
-      setHubError(err instanceof Error ? err.message : `Failed to install ${skillName}`);
+      setHubActionError(err);
     } finally {
       setInstallingSkillName((current) => current === skillName ? null : current);
     }
-  }, [loadSkills]);
+  }, [installHubSkill]);
+
+  const deleteSkill = deleteMutation.mutateAsync;
+  const handleDelete = useCallback((skillId: string) => {
+    setInstalledActionError(null);
+    deleteSkill(skillId).catch((err: unknown) => setInstalledActionError(err));
+  }, [deleteSkill]);
 
   const headerSubtitle = tab === 'hub'
     ? `${hubSkills.length} discoverable skill${hubSkills.length === 1 ? '' : 's'}`
@@ -289,14 +249,15 @@ export function HermesSkillsPanel() {
             />
           </div>
 
-          {installedError && (
-            <div className="mx-3 mb-2 rounded-xl border border-destructive/25 bg-destructive/10 p-2 text-[11px] text-destructive">
-              {installedError}
-            </div>
-          )}
+          <HermesErrorState
+            error={installedError}
+            onRetry={handleRefresh}
+            fallbackMessage="Failed to load Hermes skills"
+            className="mx-3 mb-2"
+          />
 
           <div className="flex-1 overflow-y-auto px-3 pb-3">
-            {loading && skills.length === 0 ? (
+            {skillsQuery.isPending && !installedError ? (
               <div className="flex items-center justify-center py-8 text-[12px] text-muted-foreground/60">
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 Indexing skills...
@@ -309,7 +270,7 @@ export function HermesSkillsPanel() {
               <div className="space-y-2">
                 {filteredSkills.map((skill) => {
                   const expanded = selectedId === skill.id;
-                  const detail = details[skill.id];
+                  const detail = expanded ? detailQuery.data : undefined;
                   return (
                     <div
                       key={skill.id}
@@ -321,7 +282,7 @@ export function HermesSkillsPanel() {
                       )}
                     >
                       <button
-                        onClick={() => setSelectedId((current) => current === skill.id ? null : skill.id)}
+                        onClick={() => setSelectedId(selectedId === skill.id ? null : skill.id)}
                         className="w-full px-3 py-3 text-left"
                       >
                         <div className="flex items-start justify-between gap-3">
@@ -368,7 +329,7 @@ export function HermesSkillsPanel() {
                                     onClick={(event) => {
                                       event.stopPropagation();
                                       if (confirm('Remove this skill?')) {
-                                        void deleteHermesSkill(skill.id).then(() => { void loadSkills(); });
+                                        handleDelete(skill.id);
                                       }
                                     }}
                                     className="inline-flex h-6 w-6 items-center justify-center rounded-lg text-red-400/60 transition-colors hover:bg-red-500/20 hover:text-red-400"
@@ -426,14 +387,15 @@ export function HermesSkillsPanel() {
             ))}
           </div>
 
-          {hubError && (
-            <div className="mx-3 mb-2 rounded-xl border border-destructive/25 bg-destructive/10 p-2 text-[11px] text-destructive">
-              {hubError}
-            </div>
-          )}
+          <HermesErrorState
+            error={hubError}
+            onRetry={handleRefresh}
+            fallbackMessage="Failed to load the skills hub"
+            className="mx-3 mb-2"
+          />
 
           <div className="flex-1 overflow-y-auto px-3 pb-3">
-            {hubLoading && !hubLoaded ? (
+            {hubQueryResult.isPending && !hubError ? (
               <div className="flex items-center justify-center py-8 text-[12px] text-muted-foreground/60">
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 Loading skills hub...

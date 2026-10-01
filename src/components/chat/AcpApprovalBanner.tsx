@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { ShieldAlert } from 'lucide-react';
 import { useHermesStore } from '@/stores/hermes-store';
 import {
@@ -39,6 +39,27 @@ function commandPrefix(command: string | undefined, max = 40): string {
   return prefix.length > max ? `${prefix.slice(0, max - 1)}…` : prefix;
 }
 
+/** True when the user is typing somewhere. Moving focus to an action button
+ *  then would let a stray Space/Enter meant for the composer approve a tool
+ *  call, so the banner only announces itself in that case. */
+function isEditableElement(el: Element | null): boolean {
+  if (!el || !(el instanceof HTMLElement)) {
+    return false;
+  }
+  if (el.isContentEditable) {
+    return true;
+  }
+  const tag = el.tagName;
+  if (tag === 'TEXTAREA' || tag === 'SELECT') {
+    return true;
+  }
+  if (tag === 'INPUT') {
+    const type = (el as HTMLInputElement).type;
+    return !['button', 'checkbox', 'radio', 'submit', 'reset', 'range', 'color', 'file'].includes(type);
+  }
+  return false;
+}
+
 /**
  * Inline banner for tool permission requests — renders for BOTH the real
  * hermes-agent's ACP approvals (resolved by the bridge) and the new
@@ -57,12 +78,56 @@ export const AcpApprovalBanner: React.FC = () => {
   const panelId = usePanelId();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const titleId = useId();
+  const descriptionId = useId();
+  const actionsRef = useRef<HTMLDivElement>(null);
+  // Focus moves to the first action once per approval id, never on re-render,
+  // so streaming updates elsewhere in the transcript cannot steal focus back.
+  const focusedApprovalIdRef = useRef<string | null>(null);
+  // Where focus was before the banner took it; restored when the queue drains.
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
+  const busyRef = useRef(false);
+  const pendingId = pending?.approval_id ?? null;
+
+  useEffect(() => {
+    if (!pendingId) {
+      focusedApprovalIdRef.current = null;
+      const restore = restoreFocusRef.current;
+      restoreFocusRef.current = null;
+      const active = document.activeElement;
+      // Only restore when the resolved banner left focus nowhere (on <body>).
+      if (restore && restore.isConnected && (!active || active === document.body)) {
+        restore.focus({ preventScroll: true });
+      }
+      return;
+    }
+    if (focusedApprovalIdRef.current === pendingId) {
+      return;
+    }
+    focusedApprovalIdRef.current = pendingId;
+    const active = document.activeElement;
+    if (isEditableElement(active)) {
+      return;
+    }
+    const actions = actionsRef.current;
+    const firstAction = actions?.querySelector<HTMLButtonElement>('button');
+    if (!actions || !firstAction) {
+      return;
+    }
+    if (active instanceof HTMLElement && active !== document.body && !actions.contains(active)) {
+      restoreFocusRef.current = active;
+    }
+    firstAction.focus({ preventScroll: true });
+  }, [pendingId]);
 
   const decide = useCallback(
     async (decision: LadderDecision) => {
-      if (!pending) {
+      // aria-disabled (not disabled) keeps focus on the button while a
+      // decision is in flight, so the guard lives here.
+      if (!pending || busyRef.current) {
         return;
       }
+      busyRef.current = true;
       setBusy(true);
       setError(null);
       const approved = decision !== 'denied';
@@ -101,6 +166,7 @@ export const AcpApprovalBanner: React.FC = () => {
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to send decision');
       } finally {
+        busyRef.current = false;
         setBusy(false);
       }
     },
@@ -126,39 +192,54 @@ export const AcpApprovalBanner: React.FC = () => {
   // and the session-scoped decision it maps to is available.
   const hasPrefix = unified && Boolean(pending.command && hasApprovedSession);
   const prefixLabel = commandPrefix(pending.command);
+  // Accessible names start with the visible label (WCAG 2.5.3) and add the
+  // tool so a screen-reader user hears what they are deciding on.
+  const toolSuffix = pending.tool ? `: ${pending.tool}` : '';
 
   const buttonClass = (tone: 'default' | 'danger') =>
     cn(
       'inline-flex items-center justify-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors duration-150',
+      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
       tone === 'danger'
         ? 'border-destructive/40 bg-background/70 text-destructive hover:bg-destructive/10'
         : 'border-border/60 bg-background/70 text-foreground hover:bg-muted',
-      busy && 'opacity-60',
+      busy && 'cursor-not-allowed opacity-60',
     );
 
   return (
-    <div className="mt-2" data-testid="acp-approval-banner">
+    <div
+      className="mt-2"
+      data-testid="acp-approval-banner"
+      role="region"
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
+      aria-busy={busy}
+    >
       <div className="rounded-[20px] border border-border/60 bg-background/90 shadow-[0_8px_24px_rgba(0,0,0,0.06)] backdrop-blur-sm">
         <div className="flex items-start gap-3 px-3 py-3 sm:px-4">
           <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-muted/45 text-muted-foreground">
-            <ShieldAlert className="h-4 w-4" />
+            <ShieldAlert className="h-4 w-4" aria-hidden="true" />
           </div>
 
           <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-full border border-border/60 bg-muted/60 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                Approval required
-              </span>
-              {pending.tool && (
-                <span className="rounded-full border border-border/60 bg-background/70 px-2.5 py-1 font-mono text-[11px] text-foreground">
-                  {pending.tool}
+            {/* role="alert" (implicit aria-live="assertive") announces each new
+                request, including the next one in the queue. */}
+            <div role="alert" aria-live="assertive" aria-atomic="true">
+              <div className="flex flex-wrap items-center gap-2">
+                <span id={titleId} className="rounded-full border border-border/60 bg-muted/60 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                  Approval required
                 </span>
-              )}
-            </div>
+                {pending.tool && (
+                  <span className="rounded-full border border-border/60 bg-background/70 px-2.5 py-1 font-mono text-[11px] text-foreground">
+                    {pending.tool}
+                  </span>
+                )}
+              </div>
 
-            <p className="mt-2 text-sm font-medium leading-6 text-foreground">
-              {headline}
-            </p>
+              <p id={descriptionId} className="mt-2 text-sm font-medium leading-6 text-foreground">
+                {headline}
+              </p>
+            </div>
 
             {pending.command && (
               <div className="mt-1.5">
@@ -183,19 +264,25 @@ export const AcpApprovalBanner: React.FC = () => {
             )}
 
             {error && (
-              <p className="mt-1.5 text-[11px] text-destructive">
+              <p role="alert" className="mt-1.5 text-[11px] text-destructive">
                 {error}
               </p>
             )}
           </div>
 
           <div className="flex shrink-0 flex-col items-stretch gap-2 sm:items-end">
-            <div className="flex flex-col gap-2 sm:flex-row">
+            <div
+              ref={actionsRef}
+              role="group"
+              aria-label="Approval decision"
+              className="flex flex-col gap-2 sm:flex-row"
+            >
               {hasApproved && (
                 <button
                   type="button"
                   onClick={() => decide('approved')}
-                  disabled={busy}
+                  aria-disabled={busy || undefined}
+                  aria-label={`Approve once${toolSuffix}`}
                   className={buttonClass('default')}
                 >
                   Approve once
@@ -205,7 +292,8 @@ export const AcpApprovalBanner: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => decide('approved_for_session')}
-                  disabled={busy}
+                  aria-disabled={busy || undefined}
+                  aria-label={`Approve for session${toolSuffix}`}
                   className={buttonClass('default')}
                 >
                   Approve for session
@@ -215,7 +303,8 @@ export const AcpApprovalBanner: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => decide('prefix')}
-                  disabled={busy}
+                  aria-disabled={busy || undefined}
+                  aria-label={`Always for prefix ${prefixLabel}`}
                   className={buttonClass('default')}
                   title={`Always allow ${prefixLabel}…`}
                 >
@@ -226,7 +315,8 @@ export const AcpApprovalBanner: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => decide('denied')}
-                  disabled={busy}
+                  aria-disabled={busy || undefined}
+                  aria-label={`Deny${toolSuffix}`}
                   className={buttonClass('danger')}
                 >
                   Deny

@@ -1,9 +1,17 @@
 import { getMessageContent } from "@/hooks/chat-utils";
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Trash2, Zap, AlertCircle, Loader2, ChevronRight, Search, GitBranch } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Trash2, Zap, Loader2, ChevronRight, Search, GitBranch } from 'lucide-react';
 import { useSessionsStore, type HermesSession } from '@/stores/sessions-store';
 import { useUIStore } from '@/stores/ui-store';
-import { forkHermesSession, fetchGatewayCapabilities, getSession, type HermesSessionDetail, type HermesSessionMessage } from '@/lib/hermes-api';
+import type { HermesSessionDetail, HermesSessionMessage } from '@/lib/hermes-api';
+import {
+  useForkHermesSession,
+  useGatewayCapabilities,
+  useHermesActiveSessionDetails,
+  useHermesSession,
+  useHermesSessionsPoll,
+} from '@/lib/hermes-queries';
+import { HermesErrorState } from '@/components/hermes/HermesErrorState';
 import { deriveTasks } from '@/lib/derive-tasks';
 import { cn } from '@/lib/utils';
 import { relativeTime } from '@/lib/relative-time';
@@ -58,7 +66,7 @@ interface SessionCardProps {
   onFork: (id: string) => void;
   detail: HermesSessionDetail | null;
   detailLoading: boolean;
-  detailError: string | null;
+  detailError: unknown;
   detailTab: 'chat' | 'tasks';
   onTabChange: (tab: 'chat' | 'tasks') => void;
 }
@@ -212,7 +220,7 @@ function SessionCard({
                 Loading {detailTab}...
               </div>
             ) : detailError ? (
-              <p className="text-[11px] text-red-400/90">{detailError}</p>
+              <HermesErrorState error={detailError} variant="inline" fallbackMessage="Failed to fetch session detail" />
             ) : detailTab === 'tasks' ? (
               <TaskList tasks={detail ? deriveTasks(detail) : []} />
             ) : chat.length === 0 ? (
@@ -274,91 +282,53 @@ export function HermesChatsPanel() {
     counts,
     hasMore,
     loadingMore,
-    activeDetails,
     loading,
     error,
     loadSessions,
     loadMoreSessions,
     refreshSessions,
-    fetchActiveDetails,
     deleteSession,
   } = useSessionsStore();
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
-  const detailRequestRef = useRef(0);
-  const [selectedSession, setSelectedSession] = useState<HermesSessionDetail | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [detailError, setDetailError] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [detailTab, setDetailTab] = useState<'chat' | 'tasks'>('chat');
   const [query, setQuery] = useState('');
-  const [activeDetailsLoading, setActiveDetailsLoading] = useState(false);
-  const [activeDetailsError, setActiveDetailsError] = useState<string | null>(null);
-  const [forkEnabled, setForkEnabled] = useState(false);
   const [forkingId, setForkingId] = useState<string | null>(null);
-  const [forkError, setForkError] = useState<string | null>(null);
+  const [forkError, setForkError] = useState<unknown>(null);
   const selectedSessionId = useUIStore((s) => s.selectedSessionId);
   const setSelectedSessionId = useUIStore((s) => s.setSelectedSessionId);
   const viewMode = useUIStore((s) => s.hermesSessionViewMode);
   const setViewMode = useUIStore((s) => s.setHermesSessionViewMode);
   const activeSessions = sessions.filter((session) => session.status === 'active');
-  const activeSessionIds = activeSessions.map((session) => session.id).join(',');
+  const activeSessionIdsKey = activeSessions.map((session) => session.id).join(',');
+  const activeSessionIds = useMemo(
+    () => (activeSessionIdsKey ? activeSessionIdsKey.split(',') : []),
+    [activeSessionIdsKey],
+  );
+  const allActive = viewMode === 'all-active';
 
-  const loadSessionDetail = useCallback(async (sessionId: string, silent = false) => {
-    const requestId = ++detailRequestRef.current;
-    if (!silent) {
-      setDetailLoading(true);
-    }
+  const forkEnabled = Boolean(useGatewayCapabilities().data?.session_fork);
+  const forkMutation = useForkHermesSession();
 
-    try {
-      const detail = await getSession(sessionId);
-      if (requestId !== detailRequestRef.current) return;
-      setSelectedSession(detail);
-      setDetailError(null);
-    } catch (err) {
-      if (requestId !== detailRequestRef.current) return;
-      setSelectedSession(null);
-      setDetailError(err instanceof Error ? err.message : 'Failed to fetch session detail');
-    } finally {
-      if (!silent && requestId === detailRequestRef.current) {
-        setDetailLoading(false);
-      }
-    }
-  }, []);
-
-  const loadActiveSessionDetails = useCallback(async (silent = false) => {
-    if (!silent) {
-      setActiveDetailsLoading(true);
-    }
-
-    try {
-      await fetchActiveDetails();
-      setActiveDetailsError(null);
-    } catch (err) {
-      setActiveDetailsError(err instanceof Error ? err.message : 'Failed to fetch active sessions');
-    } finally {
-      if (!silent) {
-        setActiveDetailsLoading(false);
-      }
-    }
-  }, [fetchActiveDetails]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const caps = await fetchGatewayCapabilities();
-        if (!cancelled) {
-          setForkEnabled(!!caps.session_fork);
-        }
-      } catch {
-        if (!cancelled) setForkEnabled(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  // Every 10s while the window is visible: refresh the loaded list window, plus
+  // whichever detail view is showing. React Query pauses all three while the
+  // window is hidden (refetchIntervalInBackground: false).
+  const POLL_MS = 10_000;
+  useHermesSessionsPoll(refreshSessions, { refetchInterval: POLL_MS });
+  const detailQuery = useHermesSession(selectedSessionId, {
+    refetchInterval: allActive ? false : POLL_MS,
+  });
+  const activeDetailsQuery = useHermesActiveSessionDetails(activeSessionIds, {
+    enabled: allActive && activeSessionIds.length > 0,
+    refetchInterval: POLL_MS,
+  });
+  const selectedSession = detailQuery.data ?? null;
+  // Spinner only for a first load of this session — polls refresh silently.
+  const detailLoading = detailQuery.isPending && detailQuery.fetchStatus === 'fetching';
+  const detailError = detailQuery.error;
+  const activeDetails = activeDetailsQuery.data ?? {};
+  const activeDetailsLoading = activeDetailsQuery.isPending && activeDetailsQuery.fetchStatus === 'fetching';
+  const activeDetailsError = activeDetailsQuery.error;
 
   // Load the first page, re-running when the search query changes. Debounced so
   // typing in the filter box doesn't fire a request per keystroke; an empty
@@ -370,46 +340,6 @@ export function HermesChatsPanel() {
     }, delay);
     return () => clearTimeout(timer);
   }, [query, loadSessions]);
-
-  // Poll every 10s while visible: silently refresh the loaded window plus active/selected detail.
-  useEffect(() => {
-    intervalRef.current = setInterval(() => {
-      if (document.visibilityState !== 'visible') return;
-      void (async () => {
-        await refreshSessions();
-        if (viewMode === 'all-active') {
-          await loadActiveSessionDetails(true);
-        } else if (selectedSessionId) {
-          await loadSessionDetail(selectedSessionId, true);
-        }
-      })();
-    }, 10000);
-
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, [refreshSessions, loadActiveSessionDetails, loadSessionDetail, selectedSessionId, viewMode]);
-
-  useEffect(() => {
-    if (!selectedSessionId) {
-      detailRequestRef.current += 1;
-      setSelectedSession(null);
-      setDetailError(null);
-      setDetailLoading(false);
-      return;
-    }
-    void loadSessionDetail(selectedSessionId);
-  }, [loadSessionDetail, selectedSessionId]);
-
-  useEffect(() => {
-    if (viewMode !== 'all-active') return;
-    void loadActiveSessionDetails();
-  }, [loadActiveSessionDetails, viewMode]);
-
-  useEffect(() => {
-    if (viewMode !== 'all-active' || activeSessions.length === 0) return;
-    void loadActiveSessionDetails(true);
-  }, [activeSessionIds, activeSessions.length, loadActiveSessionDetails, viewMode]);
 
   // Infinite scroll: load the next page as the list nears the bottom. Reads are
   // cheap during scroll (layout is already clean) and loadMoreSessions guards
@@ -423,26 +353,14 @@ export function HermesChatsPanel() {
   }, [loadMoreSessions]);
 
   const handleSelect = (id: string) => {
-    if (selectedSessionId === id) {
-      detailRequestRef.current += 1;
-      setDetailError(null);
-      setDetailLoading(false);
-      setSelectedSessionId(null);
-      return;
-    }
-
-    setSelectedSessionId(id);
+    setSelectedSessionId(selectedSessionId === id ? null : id);
   };
 
   const handleDeleteConfirm = async (id: string) => {
     await deleteSession(id);
     setDeleteConfirmId(null);
     if (selectedSessionId === id) {
-      detailRequestRef.current += 1;
       setSelectedSessionId(null);
-      setSelectedSession(null);
-      setDetailError(null);
-      setDetailLoading(false);
     }
   };
 
@@ -450,14 +368,14 @@ export function HermesChatsPanel() {
     setForkError(null);
     setForkingId(id);
     try {
-      const result = await forkHermesSession(id);
+      const result = await forkMutation.mutateAsync(id);
       await refreshSessions();
       const forkId = result.session?.id;
       if (forkId) {
         setSelectedSessionId(forkId);
       }
     } catch (err) {
-      setForkError(err instanceof Error ? err.message : 'Failed to fork session');
+      setForkError(err);
     } finally {
       setForkingId(null);
     }
@@ -466,10 +384,10 @@ export function HermesChatsPanel() {
   const handleRefresh = () => {
     void (async () => {
       await refreshSessions();
-      if (viewMode === 'all-active') {
-        await loadActiveSessionDetails();
+      if (allActive) {
+        await activeDetailsQuery.refetch();
       } else if (selectedSessionId) {
-        await loadSessionDetail(selectedSessionId);
+        await detailQuery.refetch();
       }
     })();
   };
@@ -548,7 +466,12 @@ export function HermesChatsPanel() {
                 Loading active tasks...
               </div>
             ) : activeDetailsError ? (
-              <p className="px-1 text-[11px] text-red-400/90">{activeDetailsError}</p>
+              <HermesErrorState
+                error={activeDetailsError}
+                onRetry={() => void activeDetailsQuery.refetch()}
+                fallbackMessage="Failed to fetch active sessions"
+                variant="inline"
+              />
             ) : activeSessions.length === 0 ? (
               <div className="flex flex-col items-center justify-center px-4 py-6">
                 <Zap className="mb-2 h-7 w-7 text-muted-foreground/30" />
@@ -578,12 +501,7 @@ export function HermesChatsPanel() {
       )}
 
       {/* Error */}
-      {(error || forkError) && (
-        <div className="mx-3 mb-2 flex items-center gap-2 rounded-xl border border-destructive/25 bg-destructive/10 p-2">
-          <AlertCircle className="h-3.5 w-3.5 flex-shrink-0 text-red-400" />
-          <span className="text-[11px] text-red-400">{forkError ?? error}</span>
-        </div>
-      )}
+      <HermesErrorState error={forkError ?? error} onRetry={handleRefresh} className="mx-3 mb-2" />
 
       {/* Session list */}
       <div

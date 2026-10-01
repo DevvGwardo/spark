@@ -209,6 +209,32 @@ class ExemptPathTests(unittest.TestCase):
         self.assertEqual(main._BRIDGE_AUTH_EXEMPT_PATHS, frozenset({"/health", "/diag"}))
 
 
+
+class TestDiagNeverDisclosesToken(unittest.IsolatedAsyncioTestCase):
+    """/diag is auth-exempt, so it must not hand the token to any local caller."""
+
+    async def _diag(self, presented):
+        req = _request("/diag", host="127.0.0.1", token=presented, method="GET")
+        import bridge_config
+        from routes import health
+
+        with patch.object(bridge_config, "HERMES_BRIDGE_TOKEN", "secret-launch-token"):
+            return await health.diag(req)
+
+    async def test_loopback_without_token_gets_no_token(self):
+        payload = await self._diag(None)
+        self.assertNotIn("secret-launch-token", repr(payload))
+        self.assertFalse(payload["token_matches"])
+
+    async def test_matching_token_is_confirmed_not_echoed(self):
+        payload = await self._diag("secret-launch-token")
+        self.assertTrue(payload["token_matches"])
+        self.assertNotIn("token", payload)
+
+    async def test_wrong_token_does_not_match(self):
+        self.assertFalse((await self._diag("nope"))["token_matches"])
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -263,3 +289,28 @@ class ChatOverNonLoopbackTests(unittest.IsolatedAsyncioTestCase):
             status, 200,
             "the client's unconditional token header must satisfy the tightened guard",
         )
+
+
+class TestDiagNeverDisclosesToken(unittest.IsolatedAsyncioTestCase):
+    """/diag is auth-exempt, so it must not hand the token to any local caller."""
+
+    async def _diag(self, presented):
+        req = _request("/diag", host="127.0.0.1", token=presented, method="GET")
+        import bridge_config
+        from routes import health
+
+        with patch.object(bridge_config, "HERMES_BRIDGE_TOKEN", "secret-launch-token"):
+            return await health.diag(req)
+
+    async def test_loopback_without_token_gets_no_token(self):
+        payload = await self._diag(None)
+        self.assertNotIn("secret-launch-token", repr(payload))
+        self.assertFalse(payload["token_matches"])
+
+    async def test_matching_token_is_confirmed_not_echoed(self):
+        payload = await self._diag("secret-launch-token")
+        self.assertTrue(payload["token_matches"])
+        self.assertNotIn("token", payload)
+
+    async def test_wrong_token_does_not_match(self):
+        self.assertFalse((await self._diag("nope"))["token_matches"])

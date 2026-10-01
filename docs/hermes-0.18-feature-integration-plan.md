@@ -9,7 +9,7 @@
 
 ## 1. Executive summary
 
-Spark already ships a deep Hermes shell: agent-loop chat, tool visualization, profiles, skills, memories (file editor), cron, MCP, kanban + orchestrator, teams, rooms, webhooks, pairing, messaging platforms, swarm pipeline, and multi-provider chat.
+Spark already ships a deep Hermes shell: agent-loop chat, tool visualization, profiles, skills, memories (file editor), cron, MCP, kanban + orchestrator, teams, rooms, messaging platforms, swarm pipeline, and multi-provider chat.
 
 Hermes 0.18 has moved past that shell into first-class product surfaces Spark does **not** expose well — especially **Mixture of Agents (MoA)**, native kanban swarm, goals, checkpoints, computer-use, external memory providers, journey/learning graph, plugins/bundles/curator, worktrees, and the async **`/v1/runs`** API.
 
@@ -30,7 +30,7 @@ Hermes 0.18 has moved past that shell into first-class product surfaces Spark do
 | Teams + rooms multi-agent | Done (Spark-owned) | `team-coordinator`, `room-coordinator` |
 | Bridge swarm (Architect→Implementor→Reviewer) | Partial (brain-dependent) | `swarm_pattern.py` |
 | Messaging platform config | Done | `MessagingTab` |
-| Webhooks / pairing panels | Present | `HermesWebhooksPanel`, `HermesPairingPanel` |
+| Webhooks / pairing / logs panels | Removed | `HermesWebhooksPanel`, `HermesPairingPanel` and the logs tab were deleted: every bridge endpoint behind them returned 404 (see the `HERMES_SUB_TABS` note in `src/components/sidebar/ChatSidebar.tsx`) |
 
 ---
 
@@ -281,7 +281,7 @@ Use whatever is credentialed on the machine (Nous free / OpenCode / OpenRouter).
 | Curator | Skills panel footer | `hermes curator status/run` |
 | Goals | ChatInput toggle + Overview card | Pass goal config / slash `/goal` |
 | Worktree sessions | “Open in worktree” on panel create | `hermes --worktree` or kanban workspace `worktree:` |
-| Webhooks polish | Existing panel | Ensure bridge routes match Hermes dynamic subscriptions |
+| Webhooks | New panel (the old one was removed) | Only worth rebuilding once the bridge exposes working routes for Hermes dynamic subscriptions |
 | Insights | Usage panel enhancement | `hermes insights --json` |
 
 ---

@@ -31,6 +31,8 @@ import { logger } from './logger'
 import { sendJson } from './helpers'
 import { getProfileFromRequest } from './hermes-profiles'
 import { getHermesBridgeRoot } from './hermes-bridge-url'
+import { getActiveBridgeSupervisor } from '../../shared/bridge-supervisor'
+import type { BridgeReadiness } from '../../shared/bridge-readiness'
 // Aliased: an unqualified `Response` must stay the global fetch Response, which
 // the Express import would otherwise shadow.
 import type { Request as ExpressRequest, Response as ExpressResponse } from 'express'
@@ -301,11 +303,65 @@ async function probeHealth(bridgeUrl: string, signal?: AbortSignal): Promise<boo
   }
 }
 
-export function bridgeReadiness(): { ready: boolean; checkedAt: number | null } {
-  return { ready: readiness?.ready ?? false, checkedAt: readiness?.checkedAt ?? null }
+// Unmanaged bridges (started by hand / a script) have no supervisor, so their
+// readiness is derived from the cached probe. `since` tracks the last flip.
+let unmanagedSince = Date.now()
+let unmanagedLastReady: boolean | null = null
+
+function readinessFromProbe(): BridgeReadiness {
+  const ready = readiness?.ready ?? null
+  if (ready !== unmanagedLastReady) {
+    unmanagedLastReady = ready
+    unmanagedSince = readiness?.checkedAt ?? Date.now()
+  }
+  return {
+    state: ready === null ? 'starting' : ready ? 'ready' : 'stopped',
+    since: unmanagedSince,
+    attempt: 0,
+    lastError: ready === false ? 'The Hermes bridge is not reachable.' : null,
+    stderrTail: [],
+  }
+}
+
+/**
+ * The single readiness state (Phase 3.3).
+ *
+ * When this process supervises the bridge (Electron, or MANAGE_BRIDGE=true) the
+ * supervisor's state machine is authoritative and nothing here probes. Otherwise
+ * it falls back to the cached /health verdict.
+ */
+export function bridgeReadiness(): BridgeReadiness {
+  return getActiveBridgeSupervisor()?.readiness() ?? readinessFromProbe()
+}
+
+/**
+ * Readiness for the `/api/bridge/readiness` route: like `bridgeReadiness()`, but
+ * refreshes a stale probe first when no supervisor owns the bridge.
+ */
+export async function currentBridgeReadiness(): Promise<BridgeReadiness> {
+  const supervisor = getActiveBridgeSupervisor()
+  if (supervisor) return supervisor.readiness()
+  if (!readiness || Date.now() - readiness.checkedAt >= READINESS_TTL_MS) {
+    const bridgeUrl = getHermesBridgeRoot().replace(/\/+$/, '')
+    const ok = await probeHealth(bridgeUrl)
+    readiness = { ready: ok, checkedAt: Date.now() }
+  }
+  return readinessFromProbe()
 }
 
 async function waitForBridge(bridgeUrl: string, signal?: AbortSignal): Promise<boolean> {
+  // Supervised: follow the state machine instead of running a second poll loop.
+  // crashed/stopped fail fast — retrying for 30s against a dead bridge only
+  // delays the error the UI needs to show.
+  const supervisor = getActiveBridgeSupervisor()
+  if (supervisor) {
+    const { state } = supervisor.readiness()
+    if (state === 'crashed' || state === 'stopped') return false
+    // "ready" can lag a just-died process by one exit event; confirm once.
+    if (state === 'ready' && (await probeHealth(bridgeUrl, signal))) return true
+    return supervisor.waitForReady(READY_POLL_TIMEOUT_MS, signal)
+  }
+
   const now = Date.now()
   if (readiness && now - readiness.checkedAt < READINESS_TTL_MS) {
     return readiness.ready
@@ -333,6 +389,8 @@ async function waitForBridge(bridgeUrl: string, signal?: AbortSignal): Promise<b
 export function resetBridgeReadiness(): void {
   readiness = null
   readinessInFlight = null
+  unmanagedLastReady = null
+  unmanagedSince = Date.now()
 }
 
 // --- Headers ---------------------------------------------------------------------

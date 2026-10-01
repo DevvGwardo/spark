@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useChangesetStore } from '@/stores/changeset-store';
 import { useChatStore } from '@/stores/chat-store';
@@ -75,6 +75,7 @@ vi.mock('@/hooks/useGlobalStyles', () => ({
 }));
 
 import { AppLayout } from '@/components/layout/AppLayout';
+import { renderWithQueryClient } from './support/query-client';
 
 describe('AppLayout tab switching', () => {
   beforeEach(() => {
@@ -123,7 +124,7 @@ describe('AppLayout tab switching', () => {
   });
 
 it('keeps the chat panel mounted and snaps unsupported tabs back to chat', () => {
-  render(<AppLayout />);
+  renderWithQueryClient(<AppLayout />);
 
   expect(screen.getByTestId('chat-panel-container')).toBeInTheDocument();
   expect(chatLifecycle.mounts).toBe(1);
@@ -163,7 +164,7 @@ it('keeps the chat panel mounted and snaps unsupported tabs back to chat', () =>
       },
     });
 
-    render(<AppLayout />);
+    renderWithQueryClient(<AppLayout />);
 
     expect(screen.getByText('Can push')).toBeInTheDocument();
     // Repo attachment status is now shown in sidebar footer, not title bar
@@ -201,7 +202,7 @@ it('keeps the chat panel mounted and snaps unsupported tabs back to chat', () =>
       },
     });
 
-    render(<AppLayout />);
+    renderWithQueryClient(<AppLayout />);
 
     expect(screen.getByRole('button', { name: /pr #42/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^commit$/i })).not.toBeInTheDocument();

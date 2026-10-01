@@ -81,6 +81,7 @@ export const AppLayout: React.FC = () => {
     mcpStoreFullscreen,
     setMcpStoreFullscreen,
     setBridgeSetupOpen,
+    bridgeSetupRequest,
   } = useUIStore(
     useShallow((s) => ({
       sidebarOpen: s.sidebarOpen,
@@ -106,6 +107,7 @@ export const AppLayout: React.FC = () => {
       mcpStoreFullscreen: s.mcpStoreFullscreen,
       setMcpStoreFullscreen: s.setMcpStoreFullscreen,
       setBridgeSetupOpen: s.setBridgeSetupOpen,
+      bridgeSetupRequest: s.bridgeSetupRequest,
     })),
   );
   const { isSetupComplete, activeProvider, providers } = useSettingsStore(
@@ -378,6 +380,13 @@ const headerSecondaryLabel = selectedCronJobId
   useEffect(() => {
     setBridgeSetupOpen(bridgeSetupVisible);
   }, [bridgeSetupVisible, setBridgeSetupOpen]);
+  // Explicit "Set up" requests (BridgeGate in the Hermes sidebar) reopen the
+  // modal even if the user dismissed it earlier.
+  useEffect(() => {
+    if (bridgeSetupRequest === 0) return;
+    setBridgeSetupDismissed(false);
+    setBridgeSetupVisible(true);
+  }, [bridgeSetupRequest]);
   useEffect(() => {
     if (!isSetupComplete) {
       setBridgeSetupVisible(false);

@@ -40,6 +40,17 @@
   .legend { margin-top: 32px; display: flex; gap: 32px; flex-wrap: wrap; }
   .legend-item { display: flex; align-items: center; gap: 8px; font-size: 10px; color: #94a3b8; }
   .legend-swatch { width: 14px; height: 14px; border-radius: 3px; border: 1.5px solid; }
+  .contract-row { display: flex; gap: 20px; flex-wrap: wrap; }
+  .contract-card { flex: 1; min-width: 300px; background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 20px; }
+  .contract-card h3 { color: #94a3b8; font-size: 11px; font-weight: 600; letter-spacing: 0.5px; margin-bottom: 12px; }
+  .contract-card ul { color: #64748b; font-size: 10px; line-height: 1.8; list-style: none; }
+  .contract-card code { color: #e2e8f0; }
+  .contract-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+  .contract-table th { color: #94a3b8; font-weight: 600; text-align: left; padding: 4px 8px 6px 0; border-bottom: 1px solid #1e293b; }
+  .contract-table td { color: #64748b; padding: 4px 8px 4px 0; border-bottom: 1px solid rgba(30,41,59,0.6); vertical-align: top; }
+  .contract-table td:first-child { color: #e2e8f0; white-space: nowrap; }
+  .retry-yes { color: #34d399; }
+  .retry-no { color: #475569; }
 </style>
 </head>
 <body>
@@ -234,6 +245,101 @@
       <li>→ Parallel sub-task decomposition</li>
       <li>→ Retry + fallback orchestration</li>
     </ul>
+  </div>
+</div>
+
+<!-- === Event contract (hardening spec, Phase 1) === -->
+<div class="diagram-container" style="margin-top: 24px;" id="event-contract">
+  <div class="header">
+    <div class="pulse-dot" style="background:#a78bfa;"></div>
+    <div>
+      <h1>Event Contract</h1>
+      <span class="subtitle">One schema source for bridge → Node → UI events and errors · Pydantic is the source of truth</span>
+    </div>
+  </div>
+
+  <svg viewBox="0 0 1000 170" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Contract pipeline: Pydantic models generate JSON Schema, which generates TypeScript types and zod validators used by the Node server and UI">
+    <defs>
+      <pattern id="grid-contract" width="40" height="40" patternUnits="userSpaceOnUse">
+        <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+      </pattern>
+      <marker id="arrow-contract" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M 0 0 L 10 5 L 0 10 Z" fill="#94a3b8"/>
+      </marker>
+    </defs>
+    <rect width="1000" height="170" fill="url(#grid-contract)"/>
+
+    <!-- Pydantic source -->
+    <rect x="20" y="30" width="220" height="80" rx="6" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+    <text x="130" y="58" fill="#e2e8f0" font-size="11" text-anchor="middle" font-weight="600">Pydantic models</text>
+    <text x="130" y="76" fill="#64748b" font-size="8" text-anchor="middle">hermes-bridge/bridge_events.py</text>
+    <text x="130" y="89" fill="#64748b" font-size="8" text-anchor="middle">hermes-bridge/bridge_errors.py</text>
+
+    <line x1="240" y1="70" x2="278" y2="70" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow-contract)"/>
+    <text x="259" y="130" fill="#94a3b8" font-size="8" text-anchor="middle" opacity="0.7">generate_*_schema.py</text>
+
+    <!-- JSON Schema -->
+    <rect x="280" y="30" width="220" height="80" rx="6" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="390" y="58" fill="#e2e8f0" font-size="11" text-anchor="middle" font-weight="600">JSON Schema (checked in)</text>
+    <text x="390" y="76" fill="#64748b" font-size="8" text-anchor="middle">shared/hermes-events.schema.json</text>
+    <text x="390" y="89" fill="#64748b" font-size="8" text-anchor="middle">shared/hermes-errors.schema.json</text>
+
+    <line x1="500" y1="70" x2="538" y2="70" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow-contract)"/>
+    <text x="519" y="130" fill="#94a3b8" font-size="8" text-anchor="middle" opacity="0.7">generate-hermes-contract.mjs</text>
+
+    <!-- Generated TS / zod -->
+    <rect x="540" y="30" width="220" height="80" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+    <text x="650" y="58" fill="#e2e8f0" font-size="11" text-anchor="middle" font-weight="600">TS types + zod (generated)</text>
+    <text x="650" y="76" fill="#64748b" font-size="8" text-anchor="middle">server/lib/hermes-events.gen.ts</text>
+    <text x="650" y="89" fill="#64748b" font-size="8" text-anchor="middle">server/lib/hermes-errors.gen.ts</text>
+
+    <line x1="760" y1="70" x2="798" y2="70" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow-contract)"/>
+
+    <!-- Consumers -->
+    <rect x="800" y="30" width="180" height="80" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+    <text x="890" y="58" fill="#e2e8f0" font-size="11" text-anchor="middle" font-weight="600">Consumers</text>
+    <text x="890" y="76" fill="#64748b" font-size="8" text-anchor="middle">hermes.ts · bridge-client.ts</text>
+    <text x="890" y="89" fill="#64748b" font-size="8" text-anchor="middle">ChatErrorBanner (UI)</text>
+
+    <text x="500" y="158" fill="#94a3b8" font-size="9" text-anchor="middle">npm run gen:hermes-contract · CI job hermes-contract runs check:hermes-contract and fails on stale generated files</text>
+  </svg>
+
+  <div class="contract-row" style="margin-top: 24px;">
+    <div class="contract-card">
+      <h3>SSE EVENTS</h3>
+      <ul>
+        <li>→ Every custom delta key is a Pydantic model with a constructor; <code>main.py</code> never builds a payload as a dict literal</li>
+        <li>→ Keys: <code>tool_activity</code> · <code>tool_call_begin/delta/end</code> · <code>agent_status</code> · <code>agent_notice(_clear)</code> · <code>computer_use_frame</code> · <code>server_tool_event</code> · <code>fallback_switch</code> · <code>transport_status</code> · <code>usage</code> · <code>approval_request</code> · <code>plan_update</code> · <code>stream_retry</code></li>
+        <li>→ Node validates each key with <code>HERMES_EVENT_SCHEMAS[key].safeParse</code> in <code>normalizeHermesAgentLoopPayload</code></li>
+        <li>→ Unknown keys: logged once per type, then dropped</li>
+        <li>→ Known key that fails validation: logged as an error but still forwarded, so the UI never silently loses tool state</li>
+        <li>→ Adapter-owned payloads (<code>agent_notice</code>, <code>computer_use_frame</code>, <code>server_tool_event</code>) are open objects, because hermes-agent owns their fields</li>
+        <li>→ Golden streams in <code>hermes-bridge/fixtures/sse/</code> (agent-loop, ACP, runs, swarm) are replayed by both pytest and vitest</li>
+      </ul>
+    </div>
+    <div class="contract-card">
+      <h3>ERROR ENVELOPE</h3>
+      <ul style="margin-bottom: 12px;">
+        <li>→ Every Hermes error from Node to the UI: <code>{ error: { code, message, retryable, details? } }</code></li>
+        <li>→ The bridge emits the same envelope from a FastAPI handler for <code>BridgeError</code></li>
+        <li>→ <code>BridgeClient</code> maps transport failures onto it; <code>ChatErrorBanner</code> switches on <code>code</code>, with no message regexes</li>
+        <li>→ <code>details</code> carries actionable extras (<code>suggested_models</code>, <code>retry_after_ms</code>, <code>approval_id</code> …)</li>
+      </ul>
+      <table class="contract-table">
+        <thead><tr><th scope="col">code</th><th scope="col">retryable</th><th scope="col">meaning</th></tr></thead>
+        <tbody>
+          <tr><td>BRIDGE_UNREACHABLE</td><td class="retry-yes">yes</td><td>bridge did not answer</td></tr>
+          <tr><td>BRIDGE_STARTING</td><td class="retry-yes">yes</td><td>bridge is up but not ready yet</td></tr>
+          <tr><td>BRIDGE_AUTH</td><td class="retry-no">no</td><td>bridge token rejected</td></tr>
+          <tr><td>UPSTREAM_TIMEOUT</td><td class="retry-yes">yes</td><td>provider or agent timed out</td></tr>
+          <tr><td>MODEL_INCOMPATIBLE</td><td class="retry-no">no</td><td>model cannot serve this request</td></tr>
+          <tr><td>PROVIDER_ERROR</td><td class="retry-yes">yes</td><td>upstream provider failed</td></tr>
+          <tr><td>APPROVAL_EXPIRED</td><td class="retry-no">no</td><td>approval resolved or timed out</td></tr>
+          <tr><td>VALIDATION</td><td class="retry-no">no</td><td>request was malformed</td></tr>
+          <tr><td>INTERNAL</td><td class="retry-no">no</td><td>unexpected bridge/server failure</td></tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 </div>
 </body>

@@ -4,6 +4,7 @@ Moved verbatim from main.py (spec 4.1). Names that tests patch are owned by one
 module and other modules reach them as ``<module>.<name>`` so a single
 ``patch.object(<module>, name)`` reaches every caller, as patching main did.
 """
+import hmac
 import os
 
 from fastapi import APIRouter, Request
@@ -13,7 +14,7 @@ import bridge_config
 import bridge_providers
 import bridge_state
 import bridge_workspace
-from bridge_config import HERMES_BRIDGE_VERSION, _is_loopback_host
+from bridge_config import HERMES_BRIDGE_VERSION
 from bridge_providers import (
     _cli_config_is_custom,
     DEFAULT_MODEL,
@@ -28,18 +29,19 @@ router = APIRouter()
 
 @router.get("/diag")
 async def diag(request: Request):
-    # Only expose the launch token to loopback callers (Electron ownership check).
-    # Non-loopback clients get a boolean presence flag only.
-    payload = {
+    # Ownership check for the supervisor. /diag is auth-exempt, so it must never
+    # disclose the launch token itself (any local process could read it and then
+    # pass the loopback token gate). Instead the caller proves it holds the token
+    # and gets back only whether it matched (constant-time compare).
+    token = bridge_config.HERMES_BRIDGE_TOKEN
+    presented = request.headers.get("x-hermes-bridge-token", "")
+    return {
         "pid": os.getpid(),
-        "home": os.path.expanduser("~"),
         "bridge_version": HERMES_BRIDGE_VERSION,
-        "launch_token_present": bool(bridge_config.HERMES_BRIDGE_TOKEN),
+        "launch_token_present": bool(token),
+        "token_matches": bool(token) and bool(presented)
+        and hmac.compare_digest(presented.encode(), token.encode()),
     }
-    client_host = request.client.host if request.client else None
-    if _is_loopback_host(client_host):
-        payload["token"] = bridge_config.HERMES_BRIDGE_TOKEN
-    return payload
 
 
 @router.get("/health")
