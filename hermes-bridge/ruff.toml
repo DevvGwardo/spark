@@ -24,15 +24,16 @@ select = ["S110", "BLE001", "F821"]
 # comment flagging them would give the answer away.
 "challenge.py" = ["S110", "BLE001"]
 "challenge_script.py" = ["S110", "BLE001"]
-# TODO(spec 4.2): chat_impl / chat_common / acp_chat / routes/chat are being
-# split into transports/ concurrently; audit their blind excepts (and
-# chat_impl's undefined `toolsets_overridden` / `default_toolsets`, F821) there.
-"chat_impl.py" = ["S110", "BLE001", "F821"]
+# TODO(spec 4.2 follow-up): the chat path (chat_impl / chat_common / acp_chat /
+# routes/chat and the chat_transports/ split) was being refactored concurrently
+# with this audit; audit its blind excepts in a follow-up.
+"chat_impl.py" = ["S110", "BLE001"]
 "chat_common.py" = ["S110", "BLE001"]
 "acp_chat.py" = ["S110", "BLE001"]
 "routes/chat.py" = ["S110", "BLE001"]
-"transports/**" = ["S110", "BLE001"]
-# TODO(spec 4.7): hermes_adapter.py repo tools and run_agent.py are being
-# reworked concurrently; audit them with that change.
+"chat_transports/**" = ["S110", "BLE001"]
+# TODO(spec 4.7 follow-up): repo_tools.py, hermes_adapter.py and run_agent.py
+# were being reworked concurrently; audit them in a follow-up.
+"repo_tools.py" = ["S110", "BLE001"]
 "hermes_adapter.py" = ["S110", "BLE001"]
 "run_agent.py" = ["S110", "BLE001"]
