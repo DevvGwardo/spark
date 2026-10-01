@@ -5,7 +5,6 @@ module and other modules reach them as ``<module>.<name>`` so a single
 ``patch.object(<module>, name)`` reaches every caller, as patching main did.
 """
 import os
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -14,7 +13,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 import bridge_workspace
+import config_io
 import mcp_telemetry
+from bridge_errors import INTERNAL, VALIDATION, BridgeError
 
 router = APIRouter()
 
@@ -180,49 +181,50 @@ def _build_mcp_entry_from_catalog(entry: dict, param: Optional[str]) -> dict:
     return built
 
 
-def _backup_hermes_config(path: Path) -> None:
-    if path.is_file():
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        path.with_name(f"config.yaml.bak-{ts}").write_text(
-            path.read_text(encoding="utf-8"), encoding="utf-8"
-        )
-
-
 def _load_hermes_config_editable(hermes_home: Path):
-    """Load config.yaml for editing. Returns ``(dump, data)`` where ``dump()``
-    backs up the file and writes ``data`` back. Uses ruamel round-trip when
-    available (preserves comments/format), else PyYAML (comments lost)."""
+    """Load config.yaml for editing. Returns ``(dump, data)``.
+
+    ``data`` is a ruamel round-trip map (comments and formatting survive), and
+    ``dump()`` writes it back through config_io: exclusive file lock, bounded
+    ``.bak`` rotation, temp file + ``os.replace`` (spec 5.4, G12).
+
+    Fails loudly instead of degrading:
+
+    * no ruamel → BridgeError (500) — the old PyYAML fallback silently threw
+      away every comment in the user's config;
+    * the file changed on disk between load and ``dump()`` (another request,
+      or the ``hermes`` CLI) → BridgeError (409, retryable) and nothing is
+      written, rather than clobbering the other writer's change.
+    """
     path = _hermes_config_path(hermes_home)
     text = path.read_text(encoding="utf-8") if path.is_file() else ""
     try:
-        from ruamel.yaml import YAML
-        from ruamel.yaml.comments import CommentedMap
+        yaml_rt, data = config_io.load_yaml_roundtrip(text)
+    except config_io.ConfigWriteError as exc:
+        raise BridgeError(INTERNAL, str(exc), retryable=False, status_code=500) from exc
+    except Exception as exc:  # noqa: BLE001 - any parser error becomes the envelope
+        raise BridgeError(
+            VALIDATION,
+            f"{path} could not be parsed for editing: {exc}",
+            retryable=False,
+            status_code=500,
+        ) from exc
 
-        yaml_rt = YAML()
-        yaml_rt.preserve_quotes = True
-        # Don't fold long scalars (e.g. absolute command paths) across lines.
-        yaml_rt.width = 4096
-        data = yaml_rt.load(text) if text.strip() else CommentedMap()
-        if data is None:
-            data = CommentedMap()
+    def _dump():
+        with config_io.file_lock(path):
+            current = path.read_text(encoding="utf-8") if path.is_file() else ""
+            if current != text:
+                raise BridgeError(
+                    VALIDATION,
+                    f"{path.name} changed on disk while it was being edited; reload and retry.",
+                    retryable=True,
+                    status_code=409,
+                )
+            config_io.atomic_write_text(
+                path, config_io.dump_yaml_roundtrip(yaml_rt, data), _locked=True
+            )
 
-        def _dump():
-            _backup_hermes_config(path)
-            with open(path, "w") as f:
-                yaml_rt.dump(data, f)
-
-        return _dump, data
-    except Exception:
-        import yaml
-
-        data = (yaml.safe_load(text) if text.strip() else {}) or {}
-
-        def _dump():
-            _backup_hermes_config(path)
-            with open(path, "w") as f:
-                yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
-
-        return _dump, data
+    return _dump, data
 
 
 def _reload_agent_mcp() -> bool:

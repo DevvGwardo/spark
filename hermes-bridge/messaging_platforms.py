@@ -13,6 +13,8 @@ import urllib.parse
 from pathlib import Path
 from typing import Optional
 
+import config_io
+
 _HERMES_HOME = Path(os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes")))
 _ENV_PATH = _HERMES_HOME / ".env"
 _CONFIG_PATH = _HERMES_HOME / "config.yaml"
@@ -337,12 +339,19 @@ def _read_env_file() -> dict[str, str]:
 
 
 def _write_env_file(env: dict[str, str]) -> None:
-    """Write dict back to ~/.hermes/.env, preserving comment lines and ordering."""
-    if not _ENV_PATH.exists():
-        _ENV_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _ENV_PATH.write_text("", encoding="utf-8")
+    """Write dict back to ~/.hermes/.env, preserving comment lines and ordering.
 
-    lines = _ENV_PATH.read_text(encoding="utf-8").splitlines()
+    Atomic and locked (config_io); no ``.bak`` copies — the file holds secrets
+    and backups would multiply them. A new file is created owner-only.
+    """
+    with config_io.file_lock(_ENV_PATH):
+        lines = _ENV_PATH.read_text(encoding="utf-8").splitlines() if _ENV_PATH.exists() else []
+        config_io.atomic_write_text(
+            _ENV_PATH, _render_env_lines(lines, env), backup=False, mode=0o600, _locked=True
+        )
+
+
+def _render_env_lines(lines: list[str], env: dict[str, str]) -> str:
     new_lines: list[str] = []
     seen_keys: set[str] = set()
 
@@ -366,7 +375,7 @@ def _write_env_file(env: dict[str, str]) -> None:
         if key not in seen_keys:
             new_lines.append(f"{key}={value}")
 
-    _ENV_PATH.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    return "\n".join(new_lines) + "\n"
 
 
 def _read_yaml_config() -> dict:
@@ -423,18 +432,6 @@ def _set_nested(config: dict, dotted_key: str, value) -> None:
             current[part] = {}
         current = current[part]
     current[parts[-1]] = value
-
-
-def _write_yaml_config(config: dict) -> None:
-    """Write config dict back to ~/.hermes/config.yaml."""
-    try:
-        import yaml
-        _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(_CONFIG_PATH, "w", encoding="utf-8") as f:
-            yaml.dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
-    except ImportError:
-        # Fallback: won't handle nested well but won't crash
-        print("[messaging] PyYAML not installed — config.yaml may lose formatting", flush=True)
 
 
 def _read_gateway_state() -> dict:
@@ -592,11 +589,10 @@ def update_platform_config(platform_id: str, updates: dict[str, any]) -> dict:
         if key not in valid_keys:
             raise ValueError(f"Invalid config key '{key}' for platform '{platform_id}'")
 
-    config = _read_yaml_config()
-    for key, value in updates.items():
-        _set_nested(config, key, value)
-
-    _write_yaml_config(config)
+    # Round-trip edit (comments survive), locked + atomic + bounded backups.
+    with config_io.edit_yaml(_CONFIG_PATH) as config:
+        for key, value in updates.items():
+            _set_nested(config, key, value)
 
     return get_platform(platform_id)
 
@@ -615,17 +611,16 @@ def disconnect_platform(platform_id: str) -> dict:
     _write_env_file(env)
 
     # Remove config keys
-    config = _read_yaml_config()
-    for key in platform_def.get("config_keys", {}):
-        parts = key.split(".")
-        current = config
-        for part in parts[:-1]:
-            current = current.get(part, {})
-            if not isinstance(current, dict):
-                break
-        else:
-            current.pop(parts[-1], None)
-    _write_yaml_config(config)
+    with config_io.edit_yaml(_CONFIG_PATH) as config:
+        for key in platform_def.get("config_keys", {}):
+            parts = key.split(".")
+            current = config
+            for part in parts[:-1]:
+                current = current.get(part, {})
+                if not isinstance(current, dict):
+                    break
+            else:
+                current.pop(parts[-1], None)
 
     return get_platform(platform_id)
 
