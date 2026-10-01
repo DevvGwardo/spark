@@ -119,7 +119,7 @@ function TeamCard({
         <div className="px-3 pb-2">
           <div className="h-1 w-full rounded-full bg-[hsl(var(--muted))]/50 overflow-hidden">
             <div
-              className="h-full rounded-full bg-emerald-500/60 transition-all duration-500"
+              className="h-full rounded-full bg-emerald-500/60 transition-all duration-200"
               style={{ width: `${progressPct}%` }}
             />
           </div>

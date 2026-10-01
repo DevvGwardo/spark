@@ -91,7 +91,7 @@ export const HermesQueuePanel: React.FC = () => {
                 <Columns2 className="h-3.5 w-3.5 text-muted-foreground/70" />
                 <span className="text-[12px] font-medium text-foreground">{item.panelLabel}</span>
                 {item.isFocused && (
-                  <span className="rounded-full bg-primary/12 px-2 py-0.5 text-[10px] font-medium text-primary">
+                  <span className="rounded-full bg-primary/[0.12] px-2 py-0.5 text-[10px] font-medium text-primary">
                     Focused
                   </span>
                 )}

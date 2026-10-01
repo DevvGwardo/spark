@@ -178,7 +178,7 @@ export function CronHistoryChat() {
                       'w-[3px] rounded-[1px]',
                       run.status === 'success' && 'bg-green-500 h-3.5',
                       run.status === 'error' && 'bg-red-400 h-3.5',
-                      run.status === 'running' && 'bg-blue-400 h-2.5 animate-pulse',
+                      run.status === 'running' && 'bg-blue-400 h-2.5 animate-pulse motion-reduce:animate-none',
                       run.status !== 'success' && run.status !== 'error' && run.status !== 'running' && 'bg-muted-foreground/30 h-2',
                     )}
                   />

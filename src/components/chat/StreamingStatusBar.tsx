@@ -49,7 +49,7 @@ export const StreamingStatusBar: React.FC<StreamingStatusBarProps> = ({
       <div className="flex items-center justify-between border-b border-primary/10 bg-primary/[0.04] px-4 py-2 text-xs text-muted-foreground">
         <div className="flex items-center gap-1.5">
           <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary/40" />
+            <span className="animate-ping motion-reduce:animate-none absolute inline-flex h-full w-full rounded-full bg-primary/40" />
             <span className="relative inline-flex rounded-full h-2 w-2 bg-primary/70" />
           </span>
           <Clock className="h-3 w-3" />
@@ -71,6 +71,7 @@ export const StreamingStatusBar: React.FC<StreamingStatusBarProps> = ({
             onClick={onStop}
             className="ml-2 flex items-center justify-center rounded-[6px] bg-red-500/10 border border-red-500/30 text-red-500 hover:bg-red-500/20 transition-colors duration-100"
             title="Stop generating"
+            aria-label="Stop generating"
             style={{ width: 22, height: 22, minWidth: 22 }}
           >
             <Square className="h-2.5 w-2.5" />
@@ -106,6 +107,7 @@ export const StreamingStatusBar: React.FC<StreamingStatusBarProps> = ({
             onClick={onStop}
             className="ml-2 flex items-center justify-center rounded-[6px] bg-red-500/10 border border-red-500/30 text-red-500 hover:bg-red-500/20 transition-colors duration-100"
             title="Stop generating"
+            aria-label="Stop generating"
             style={{ width: 22, height: 22, minWidth: 22 }}
           >
             <Square className="h-2.5 w-2.5" />

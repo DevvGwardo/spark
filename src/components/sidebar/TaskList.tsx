@@ -11,7 +11,7 @@ function TaskStatusIcon({ status }: { status: Task['status'] }) {
     return <Check className="h-3.5 w-3.5 text-emerald-400" />;
   }
   if (status === 'running') {
-    return <Loader2 className="h-3.5 w-3.5 animate-pulse text-blue-400" />;
+    return <Loader2 className="h-3.5 w-3.5 animate-pulse motion-reduce:animate-none text-blue-400" />;
   }
   if (status === 'error') {
     return <AlertTriangle className="h-3.5 w-3.5 text-red-400" />;

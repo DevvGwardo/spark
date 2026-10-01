@@ -73,6 +73,7 @@ export const HermesModelPicker: React.FC = () => {
         <button
           className="flex min-w-0 items-center gap-1 px-2 py-1 rounded-[6px] text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors duration-100 max-w-[44vw] sm:max-w-[230px]"
           title="Choose provider & model"
+          aria-label={`${triggerLabel}, choose provider and model`}
         >
           {isMoa ? (
             <Layers className="h-3 w-3 shrink-0 text-primary/80" />
@@ -88,7 +89,7 @@ export const HermesModelPicker: React.FC = () => {
           onClick={useAgentDefault}
           className={followAgentModel ? 'bg-accent' : ''}
         >
-          <Bot className="mr-1.5 h-3 w-3 shrink-0 text-[#ff8f3f]" />
+          <Bot className="mr-1.5 h-3 w-3 shrink-0 text-primary" />
           <span className="flex-1 truncate text-xs">
             Agent default
             {defaultModel && (

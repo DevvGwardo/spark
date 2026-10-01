@@ -367,7 +367,7 @@ export function KanbanPanel() {
                   : 'border-border/40 text-muted-foreground/60 hover:border-border/70 hover:text-foreground'
               )}
             >
-              <span className={cn('h-1.5 w-1.5 rounded-full', cfg.color)} />
+              <span aria-hidden className={cn('h-1.5 w-1.5 rounded-full', cfg.color)} />
               {cfg.label}
               <span className="font-mono text-[9px] opacity-60">{laneCounts[lane] || 0}</span>
             </button>
@@ -400,7 +400,7 @@ export function KanbanPanel() {
               )}
             >
               <div className="flex items-center gap-2">
-                <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', laneCfg.color)} />
+                <span aria-hidden className={cn('h-1.5 w-1.5 shrink-0 rounded-full', laneCfg.color)} />
                 <span
                   className={cn(
                     'min-w-0 flex-1 truncate text-[12px] font-medium cursor-pointer',
@@ -436,7 +436,7 @@ export function KanbanPanel() {
                                 : 'text-muted-foreground/70 hover:bg-accent hover:text-foreground'
                             )}
                           >
-                            <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', cfg.color)} />
+                            <span aria-hidden className={cn('h-1.5 w-1.5 shrink-0 rounded-full', cfg.color)} />
                             {cfg.label}
                           </button>
                         );

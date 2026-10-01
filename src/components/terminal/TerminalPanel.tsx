@@ -64,7 +64,7 @@ export const TerminalPanel: React.FC<{ cwd?: string }> = ({ cwd }) => {
     const term = new Terminal({
       cursorBlink: true,
       fontSize: 13,
-      fontFamily: '"Geist Mono", "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Menlo, monospace',
+      fontFamily: '"Geist Mono Variable", "Geist Mono", "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Menlo, monospace',
       lineHeight: 1.35,
       letterSpacing: 0,
       theme: {
@@ -313,24 +313,32 @@ export const TerminalPanel: React.FC<{ cwd?: string }> = ({ cwd }) => {
         </div>
         <div className="flex items-center gap-0.5 flex-1 min-w-0 overflow-x-auto">
           {tabs.map((tab) => (
-            <button
+            <div
               key={tab.id}
-              onClick={() => setActiveTabId(tab.id)}
               className={cn(
-                'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors duration-100 whitespace-nowrap',
+                'inline-flex items-center gap-1 pr-1.5 rounded-md text-[11px] font-medium transition-colors duration-100 whitespace-nowrap',
                 activeTabId === tab.id
                   ? 'bg-[#1a1a1a] text-foreground'
                   : 'text-muted-foreground hover:text-foreground/80'
               )}
             >
-              <span>{tab.label}</span>
-              <span
-                onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}
+              <button
+                type="button"
+                onClick={() => setActiveTabId(tab.id)}
+                aria-pressed={activeTabId === tab.id}
+                className="rounded-md py-1 pl-2.5"
+              >
+                {tab.label}
+              </button>
+              <button
+                type="button"
+                onClick={() => closeTab(tab.id)}
+                aria-label={`Close ${tab.label}`}
                 className="inline-flex items-center justify-center h-4 w-4 rounded hover:bg-[#2a2a2a] transition-colors"
               >
                 <X className="h-2.5 w-2.5" />
-              </span>
-            </button>
+              </button>
+            </div>
           ))}
           <button
             onClick={() => createTab()}

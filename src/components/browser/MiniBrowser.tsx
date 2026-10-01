@@ -293,7 +293,7 @@ export const HermesPTYPanel = forwardRef<HermesPTYPanelHandle, { maximized?: boo
         cursorBlink: true,
         fontSize,
         scrollback: 5000,
-        fontFamily: '"Geist Mono", "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Menlo, monospace',
+        fontFamily: '"Geist Mono Variable", "Geist Mono", "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Menlo, monospace',
         lineHeight: 1.35,
         theme: {
           background: '#0a0a0a',
@@ -526,7 +526,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
         />
         {loading && (
           <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-px bg-primary/40 overflow-hidden">
-            <div className="h-full w-full origin-left animate-pulse bg-primary/80" />
+            <div className="h-full w-full origin-left animate-pulse motion-reduce:animate-none bg-primary/80" />
           </div>
         )}
       </div>

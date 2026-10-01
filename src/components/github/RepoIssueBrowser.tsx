@@ -88,8 +88,8 @@ const V4 = {
   accentRed: '#EF4444',
   accentPurple: '#8B5CF6',
   accentBlue: '#3178C6',
-  fontHeading: "'DM Sans', sans-serif",
-  fontBody: "'DM Sans', sans-serif",
+  fontHeading: "'Geist Sans', -apple-system, BlinkMacSystemFont, sans-serif",
+  fontBody: "'Geist Sans', -apple-system, BlinkMacSystemFont, sans-serif",
 } as const;
 
 const overlayMotion = {
@@ -710,7 +710,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
             <p className="text-[11px]" style={{ color: V4.textSecondary }}>Browse and manage repository issues</p>
           </div>
           <div className="flex-1" />
-          <div className="flex h-[34px] w-[280px] items-center gap-2 rounded-lg border px-3" style={{ background: V4.bgCard, borderColor: V4.borderSubtle }}>
+          <div className="flex h-[34px] w-[280px] items-center gap-2 rounded-lg border px-3 focus-within:ring-1 focus-within:ring-primary/40" style={{ background: V4.bgCard, borderColor: V4.borderSubtle }}>
             <Search className="h-3.5 w-3.5 shrink-0" style={{ color: V4.textTertiary }} />
             <input value={cmdSearchQuery} onChange={(e) => setCmdSearchQuery(e.target.value)} placeholder="Quick search or jump to..." className="flex-1 bg-transparent text-xs outline-none placeholder:text-[#4A4A50]" style={{ color: V4.textPrimary }} />
             <kbd className="rounded border px-1.5 py-0.5 text-[10px]" style={{ borderColor: V4.borderStrong, color: V4.textTertiary, background: V4.bgElevated }}>⌘K</kbd>
@@ -745,7 +745,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
             {/* ─── REPOS PANEL ───────────────────────────── */}
             <div className="flex w-[280px] shrink-0 flex-col border-r" style={{ borderColor: V4.borderSubtle, background: V4.bgPage }}>
               <div className="p-4">
-                <div className="flex h-9 items-center gap-2 rounded-lg border px-3" style={{ background: V4.bgCard, borderColor: V4.borderSubtle }}>
+                <div className="flex h-9 items-center gap-2 rounded-lg border px-3 focus-within:ring-1 focus-within:ring-primary/40" style={{ background: V4.bgCard, borderColor: V4.borderSubtle }}>
                   <Search className="h-3.5 w-3.5 shrink-0" style={{ color: V4.textTertiary }} />
                   <input value={repoQuery} onChange={(e) => setRepoQuery(e.target.value)} placeholder="Search repos..." className="w-full bg-transparent text-[13px] outline-none placeholder:text-[#4A4A50]" style={{ color: V4.textPrimary }} />
                 </div>
@@ -757,7 +757,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                   <span className="text-[11px] font-semibold uppercase tracking-[1px]" style={{ fontFamily: V4.fontBody, color: V4.textSecondary }}>Activity</span>
                   <div className="flex h-[52px] items-end gap-[2px] rounded-xl border p-2" style={{ background: V4.bgCard, borderColor: V4.borderSubtle }}>
                     {Array.from({ length: 30 }, (_, i) => (
-                      <div key={i} className="flex-1 animate-pulse rounded-[2px]" style={{ height: ACTIVITY_SKELETON_HEIGHTS[i], backgroundColor: '#F59E0B18', minWidth: 3 }} />
+                      <div key={i} className="flex-1 animate-pulse motion-reduce:animate-none rounded-[2px]" style={{ height: ACTIVITY_SKELETON_HEIGHTS[i], backgroundColor: '#F59E0B18', minWidth: 3 }} />
                     ))}
                   </div>
                 </div>
@@ -929,7 +929,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
 
                   {/* Search & filter row */}
                   <div className="border-b px-6 py-3" style={{ borderColor: V4.borderSubtle }}>
-                    <div className="flex h-8 items-center gap-2 rounded-lg border px-2.5" style={{ background: V4.bgCard, borderColor: V4.borderSubtle }}>
+                    <div className="flex h-8 items-center gap-2 rounded-lg border px-2.5 focus-within:ring-1 focus-within:ring-primary/40" style={{ background: V4.bgCard, borderColor: V4.borderSubtle }}>
                       <Search className="h-3.5 w-3.5 shrink-0" style={{ color: V4.textTertiary }} />
                       <input
                         value={issueQuery}
@@ -1370,7 +1370,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                           <button onClick={() => setReplyingTo(null)} className="shrink-0 rounded p-0.5 transition-colors hover:bg-white/[0.06]" style={{ color: V4.textTertiary }}><X className="h-3 w-3" /></button>
                         </div>
                       )}
-                      <div className="overflow-hidden rounded-xl border" style={{ background: V4.bgCard, borderColor: V4.borderSubtle }}>
+                      <div className="overflow-hidden rounded-xl border focus-within:ring-1 focus-within:ring-primary/40" style={{ background: V4.bgCard, borderColor: V4.borderSubtle }}>
                         <div className="px-3.5 py-3">
                           <textarea
                             value={commentText}

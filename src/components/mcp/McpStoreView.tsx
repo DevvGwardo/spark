@@ -36,7 +36,7 @@ import { cn } from '@/lib/utils';
 import { useHermesMcpToolIndex } from '@/hooks/useHermesMcpToolIndex';
 import { McpToolIndexPanel, McpToolThresholdChip } from '@/components/mcp/McpToolIndexPanel';
 
-const ACCENT = '#ff8f3f';
+const ACCENT = 'hsl(var(--primary))';
 
 const CATALOG_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   filesystem: FolderTree,
@@ -70,7 +70,7 @@ function InstalledCard({
 }) {
   const removable = !!server.catalog_id;
   return (
-    <div className="flex flex-col rounded-xl border border-border/30 bg-background/30 p-3.5 transition-colors hover:border-[#ff8f3f]/30">
+    <div className="flex flex-col rounded-xl border border-border/30 bg-background/30 p-3.5 transition-colors hover:border-primary/30">
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <span
@@ -143,10 +143,10 @@ function AvailableCard({
   };
 
   return (
-    <div className="flex flex-col rounded-xl border border-border/30 bg-background/30 p-3.5 transition-colors hover:border-[#ff8f3f]/30">
+    <div className="flex flex-col rounded-xl border border-border/30 bg-background/30 p-3.5 transition-colors hover:border-primary/30">
       <div className="flex items-start gap-2.5">
-        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#ff8f3f]/12">
-          <Icon className="h-4 w-4 text-[#ff8f3f]" />
+        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/[0.12]">
+          <Icon className="h-4 w-4 text-primary" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -165,7 +165,7 @@ function AvailableCard({
             onChange={(e) => setParam(e.target.value)}
             placeholder={entry.requires_param.placeholder}
             autoFocus
-            className="w-full rounded-lg border border-border/40 bg-background/40 px-2.5 py-1.5 font-mono text-[11px] text-foreground outline-none transition-colors placeholder:text-muted-foreground/35 focus:border-[#ff8f3f]/40"
+            className="w-full rounded-lg border border-border/40 bg-background/40 px-2.5 py-1.5 font-mono text-[11px] text-foreground outline-none transition-colors placeholder:text-muted-foreground/35 focus:border-primary/40"
           />
         </div>
       )}
@@ -194,7 +194,7 @@ function AvailableCard({
         <button
           onClick={handleClick}
           disabled={busy}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-[#ff8f3f] px-3 py-1.5 text-[11px] font-medium text-black transition-opacity hover:opacity-90 disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[11px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
         >
           {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
           {showParam && entry.requires_param ? 'Confirm install' : 'Install'}

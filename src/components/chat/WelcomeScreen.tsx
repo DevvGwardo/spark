@@ -146,7 +146,7 @@ export const WelcomeScreen = React.forwardRef<HTMLDivElement, WelcomeScreenProps
           <motion.div
             initial={{ opacity: 0, scale: 0.94 }}
             animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+            transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
           >
             <WelcomeHeroMark className="h-14 w-14 md:h-16 md:w-16 rounded-[18px] md:rounded-[20px]" />
           </motion.div>
@@ -169,7 +169,7 @@ export const WelcomeScreen = React.forwardRef<HTMLDivElement, WelcomeScreenProps
         {/* Repo selector / active badge */}
         <StaggerItem className="mt-5">
           {isRepoMode && activeRepo ? (
-            <div className="inline-flex items-center gap-2 pl-3 pr-2 py-1.5 rounded-full bg-primary/8 border border-primary/15 text-[12px] text-primary/90 font-medium">
+            <div className="inline-flex items-center gap-2 pl-3 pr-2 py-1.5 rounded-full bg-primary/[0.08] border border-primary/15 text-[12px] text-primary/90 font-medium">
               <FolderGit2 className="h-3.5 w-3.5 opacity-70" />
               <span className="font-mono">{activeRepo.fullName}</span>
               {getChangeset(scopeId).repoFileTreeStatus === 'loading' && (
@@ -182,6 +182,7 @@ export const WelcomeScreen = React.forwardRef<HTMLDivElement, WelcomeScreenProps
                 onClick={clearActiveRepo}
                 className="ml-0.5 p-1 rounded-full hover:bg-primary/15 transition-colors"
                 title="Stop editing"
+                aria-label="Stop editing"
               >
                 <X className="h-3 w-3" />
               </button>

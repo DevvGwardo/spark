@@ -16,7 +16,7 @@ export const SPRING: Transition = { type: 'spring', stiffness: 520, damping: 40,
 /** Softer settle — height/layout changes that shouldn't feel abrupt. */
 export const SOFT_SPRING: Transition = { type: 'spring', stiffness: 340, damping: 36, mass: 0.9 };
 /** Expo-out easing for plain fades. */
-export const EASE_OUT: Transition = { duration: 0.34, ease: [0.16, 1, 0.3, 1] };
+export const EASE_OUT: Transition = { duration: 0.18, ease: [0.16, 1, 0.3, 1] };
 
 /** Container that releases its children in a staggered cascade. */
 export const staggerContainer: Variants = {

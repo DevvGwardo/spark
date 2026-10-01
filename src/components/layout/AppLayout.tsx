@@ -603,6 +603,7 @@ const headerSecondaryLabel = selectedCronJobId
                     onClick={toggleSidebar}
                     className={chromeIconButtonClass}
                     title="Open sidebar"
+                    aria-label="Open sidebar"
                   >
                     <PanelLeft className="h-3.5 w-3.5" />
                   </button>
@@ -611,6 +612,7 @@ const headerSecondaryLabel = selectedCronJobId
                       onClick={() => openConversation(null)}
                       className={cn(chromeActionButtonClass, 'whitespace-nowrap')}
                       title="New thread"
+                      aria-label="New thread"
                     >
                       <Plus className="h-3.5 w-3.5" />
                       <span className="hidden md:inline">New thread</span>
@@ -626,6 +628,7 @@ const headerSecondaryLabel = selectedCronJobId
                   className={chromeIconButtonClass}
                   style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
                   title="Close sidebar"
+                  aria-label="Close sidebar"
                 >
                   <PanelLeft className="h-3.5 w-3.5" />
                 </button>
@@ -791,6 +794,7 @@ const headerSecondaryLabel = selectedCronJobId
                     remoteAccessOpen && 'border-primary/30 bg-primary/10 text-foreground'
                   )}
                   title="Remote access (QR code)"
+                  aria-label="Remote access (QR code)"
                 >
                   <Smartphone className="h-3.5 w-3.5" />
                 </button>
@@ -805,6 +809,7 @@ const headerSecondaryLabel = selectedCronJobId
                     hermesTerminalOpen && 'border-primary/30 bg-primary/10 text-foreground'
                   )}
                   title="Toggle Hermes terminal"
+                  aria-label="Toggle Hermes terminal"
                 >
                   <Sparkles className="h-3.5 w-3.5" />
                 </button>
@@ -815,6 +820,7 @@ const headerSecondaryLabel = selectedCronJobId
                     terminalOpen && 'border-primary/30 bg-primary/10 text-foreground'
                   )}
                   title="Toggle terminal (Ctrl+`)"
+                  aria-label="Toggle terminal"
                 >
                   <TerminalSquare className="h-3.5 w-3.5" />
                 </button>

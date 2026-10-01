@@ -254,7 +254,7 @@ function GateState({ phase, data, onRetry, onSetup, retrying }: StateProps & { r
           <button
             type="button"
             onClick={onSetup}
-            className="inline-flex items-center gap-1 rounded-md bg-[#ff8f3f] px-2 py-1 text-[11px] font-medium text-black transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ff8f3f]/50"
+            className="inline-flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-[11px] font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
           >
             <PlugZap className="h-3 w-3" aria-hidden />
             Set up

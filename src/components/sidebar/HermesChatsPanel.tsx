@@ -111,10 +111,11 @@ function SessionCard({
       >
         <div className="mt-1 flex-shrink-0">
           <div
+            aria-hidden
             className={cn(
               'h-2 w-2 rounded-full',
               statusColor(session),
-              session.status === 'active' && 'animate-pulse',
+              session.status === 'active' && 'animate-pulse motion-reduce:animate-none',
             )}
           />
         </div>
@@ -484,7 +485,7 @@ export function HermesChatsPanel() {
                   <div key={session.id} className="rounded-md border border-border/30 bg-background/50 px-2 py-2">
                     <div className="flex items-center justify-between gap-2">
                       <p className="truncate text-[11px] font-medium text-foreground">{sessionTitle(session)}</p>
-                      <div className={cn('h-2 w-2 flex-shrink-0 rounded-full', statusColor(session), session.status === 'active' && 'animate-pulse')} />
+                      <div className={cn('h-2 w-2 flex-shrink-0 rounded-full', statusColor(session), session.status === 'active' && 'animate-pulse motion-reduce:animate-none')} />
                     </div>
                     <p className="mt-0.5 truncate text-[10px] text-muted-foreground/50">
                       Session {session.id.slice(0, 8)}

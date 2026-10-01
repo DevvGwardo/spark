@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { X, Eye, EyeOff, Search, Check, Zap, ChevronDown, ChevronRight, ArrowLeft, ExternalLink, Github, Code2, TerminalSquare, RefreshCw, LayoutGrid, BookOpen, Settings, Plus, MessageSquare, ImagePlus, ShieldCheck } from 'lucide-react';
+import { X, Eye, EyeOff, Search, Check, Zap, ChevronDown, ChevronRight, ArrowLeft, ExternalLink, Github, Code2, TerminalSquare, RefreshCw, LayoutGrid, Settings, MessageSquare, ImagePlus, ShieldCheck } from 'lucide-react';
 import { useSettingsStore, type Provider, type Language } from '@/stores/settings-store';
 import { COLOR_THEMES, ACCENT_COLORS } from '@/lib/themes';
 import { ChatSurfaceBackground } from '@/components/chat/ChatSurfaceBackground';
@@ -59,7 +59,6 @@ const navSections = [
     { id: 'github' as const, label: 'GitHub', icon: Github },
   ]},
   { label: 'MANAGEMENT', items: [
-    { id: 'knowledge' as const, label: 'Knowledge', icon: BookOpen },
     { id: 'general' as const, label: 'General', icon: Settings },
   ]},
 ];
@@ -86,98 +85,23 @@ const ProviderIcon: React.FC<{ provider: Provider; size?: 'sm' | 'card' }> = ({ 
   );
 };
 
-const settingsCardClass = 'rounded-[10px] border border-[#2a2a2a] bg-white/[0.02]';
+const settingsCardClass = 'rounded-[10px] border border-border bg-foreground/[0.02]';
 // Thresholds offered in Settings → General → Assistant. Any value in
 // [MIN_COMPACTION_THRESHOLD, MAX_COMPACTION_THRESHOLD] is valid; these are the
 // ones worth putting in a dropdown.
 const COMPACTION_THRESHOLD_CHOICES = [0.75, 0.8, 0.85, 0.9, 0.95];
 const fieldLabelClass = 'text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80';
-const textInputClass = 'w-full rounded-[10px] border border-[#2a2a2a] bg-[#141414] px-3 py-2 text-sm text-foreground outline-none transition-colors duration-100 placeholder:text-muted-foreground focus:border-[#FF8400]/40 focus:ring-1 focus:ring-[#FF8400]/20';
+const textInputClass = 'w-full rounded-[10px] border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition-colors duration-100 placeholder:text-muted-foreground focus:border-primary/40 focus:ring-1 focus:ring-primary/20';
 const selectInputClass = `${textInputClass} appearance-none pr-9 cursor-pointer font-mono`;
-const toggleTrackClass = 'relative inline-flex h-[22px] w-[40px] shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2';
-const toggleThumbClass = 'pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-md ring-0 transition-transform duration-200';
-const sectionLabelClass = 'text-[10px] font-semibold uppercase tracking-[1px] text-[#555555]';
-const settingsDividerClass = 'h-px bg-[#2a2a2a] w-full';
-const settingsSearchClass = 'w-full rounded-[10px] border border-[#2a2a2a] bg-[#141414] h-[38px] px-[14px] pl-9 text-sm text-foreground outline-none transition-colors duration-100 placeholder:text-muted-foreground focus:border-[#FF8400]/40 focus:ring-1 focus:ring-[#FF8400]/20';
-const listCardClass = 'rounded-[10px] bg-white/[0.016] border border-[#2a2a2a] px-4 py-[14px] flex items-center gap-[14px] w-full text-left transition-colors duration-100 hover:bg-white/[0.04]';
-const bottomActionClass = 'rounded-[10px] border border-[#2a2a2a] border-dashed h-[42px] w-full flex items-center justify-center gap-2 text-[13px] text-[#555555] hover:text-[#888888] hover:border-[#444444] transition-colors duration-100';
-const dropdownClass = 'rounded-[8px] bg-[#141414] border border-[#2a2a2a] px-3 py-2 text-sm text-foreground outline-none appearance-none cursor-pointer pr-9';
+const toggleTrackClass = 'relative inline-flex h-[22px] w-[40px] shrink-0 cursor-pointer items-center rounded-full transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background';
+const toggleThumbClass = 'pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-md ring-0 transition-transform duration-150';
+const sectionLabelClass = 'text-[10px] font-semibold uppercase tracking-[1px] text-muted-foreground';
+const settingsDividerClass = 'h-px bg-border w-full';
+const listCardClass = 'rounded-[10px] bg-foreground/[0.016] border border-border px-4 py-[14px] flex items-center gap-[14px] w-full text-left transition-colors duration-100 hover:bg-foreground/[0.04]';
+const bottomActionClass = 'rounded-[10px] border border-border border-dashed h-[42px] w-full flex items-center justify-center gap-2 text-[13px] text-muted-foreground hover:text-foreground hover:border-foreground/25 transition-colors duration-100';
+const dropdownClass = 'rounded-[8px] bg-background border border-border px-3 py-2 text-sm text-foreground outline-none appearance-none cursor-pointer pr-9 focus-visible:border-primary/40 focus-visible:ring-1 focus-visible:ring-primary/30';
 
 
-
-// ---------------------------------------------------------------------------
-// KnowledgeTab — Knowledge base cards
-// ---------------------------------------------------------------------------
-
-const KNOWLEDGE_BASES = [
-  { id: 'kb-project-docs', name: 'Project Documentation', description: 'Architecture docs, READMEs, and onboarding guides', iconColor: '#4F8FEA', fileCount: 12, size: '2.4 MB' },
-  { id: 'kb-code-snippets', name: 'Code Snippets', description: 'Reusable code patterns and utility functions', iconColor: '#10A37F', fileCount: 34, size: '890 KB' },
-  { id: 'kb-style-guide', name: 'Style Guide', description: 'Design tokens, component specs, and brand guidelines', iconColor: '#FF8400', fileCount: 8, size: '1.1 MB' },
-  { id: 'kb-meeting-notes', name: 'Meeting Notes', description: 'Sprint retrospectives and planning session notes', iconColor: '#8B5CF6', fileCount: 22, size: '560 KB' },
-];
-
-function KnowledgeTab() {
-  const [search, setSearch] = useState('');
-
-  const filteredBases = useMemo(() => {
-    const q = search.toLowerCase();
-    if (!q) return KNOWLEDGE_BASES;
-    return KNOWLEDGE_BASES.filter(kb =>
-      kb.name.toLowerCase().includes(q) || kb.description.toLowerCase().includes(q)
-    );
-  }, [search]);
-
-  return (
-    <div className="p-6 space-y-4">
-      {/* Header */}
-      <div>
-        <h3 className="text-lg font-semibold text-[#e0e0e0]">Knowledge</h3>
-        <p className="text-[13px] text-[#666666]">Custom knowledge bases, documents, and context sources.</p>
-      </div>
-
-      {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#555555]" />
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search knowledge bases..."
-          className={settingsSearchClass}
-        />
-      </div>
-
-      {/* Knowledge base cards */}
-      <div className="space-y-2">
-        {filteredBases.map(kb => (
-          <button key={kb.id} className={listCardClass}>
-            <div
-              className="h-[38px] w-[38px] rounded-[10px] flex items-center justify-center shrink-0"
-              style={{ backgroundColor: `${kb.iconColor}18` }}
-            >
-              <BookOpen className="h-4 w-4" style={{ color: kb.iconColor }} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <span className="text-sm font-medium text-foreground">{kb.name}</span>
-              <p className="text-xs text-[#666666] truncate">{kb.description}</p>
-            </div>
-            <div className="text-right shrink-0">
-              <p className="text-xs text-[#888888] font-mono">{kb.fileCount} files</p>
-              <p className="text-[10px] text-[#555555] font-mono">{kb.size}</p>
-            </div>
-            <ChevronRight className="h-4 w-4 text-[#444444] shrink-0" />
-          </button>
-        ))}
-      </div>
-
-      {/* Add knowledge base button */}
-      <button className={bottomActionClass}>
-        <Plus className="h-4 w-4" />
-        Add knowledge base
-      </button>
-    </div>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // GeneralTab — App preferences with sectioned layout
@@ -295,13 +219,19 @@ function GeneralTab() {
     <div className="flex items-center justify-between py-1">
       <div className="min-w-0 flex-1 pr-4">
         <p className="text-sm text-foreground">{label}</p>
-        <p className="text-xs text-[#666666]">{description}</p>
+        <p className="text-xs text-muted-foreground">{description}</p>
       </div>
       <button
+        type="button"
+        role="switch"
+        aria-checked={enabled}
+        aria-label={label}
         onClick={() => onChange(!enabled)}
-        className={cn(toggleTrackClass, enabled ? 'bg-[#FF8400]' : 'bg-[#333333]')}
+        className={cn(toggleTrackClass, enabled ? 'bg-primary' : 'bg-input')}
       >
-        <span className={cn(toggleThumbClass, enabled ? 'translate-x-[20px]' : 'translate-x-[3px]')} />
+        <span className={cn(toggleThumbClass, 'flex items-center justify-center', enabled ? 'translate-x-[20px]' : 'translate-x-[3px]')}>
+          {enabled && <Check className="h-2.5 w-2.5 text-primary" strokeWidth={3} aria-hidden />}
+        </span>
       </button>
     </div>
   );
@@ -310,8 +240,8 @@ function GeneralTab() {
     <div className="p-6 space-y-5">
       {/* Header */}
       <div>
-        <h3 className="text-lg font-semibold text-[#e0e0e0]">General</h3>
-        <p className="text-[13px] text-[#666666]">App preferences, theme, language, and notification settings.</p>
+        <h3 className="text-lg font-semibold text-foreground">General</h3>
+        <p className="text-[13px] text-muted-foreground">App preferences, theme, language, and notification settings.</p>
       </div>
 
       {/* APPEARANCE */}
@@ -322,7 +252,7 @@ function GeneralTab() {
         <div className="flex items-center justify-between">
           <div className="min-w-0 flex-1 pr-4">
             <p className="text-sm text-foreground">Mode</p>
-            <p className="text-xs text-[#666666]">Choose your preferred color scheme</p>
+            <p className="text-xs text-muted-foreground">Choose your preferred color scheme</p>
           </div>
           <div className="relative">
             <select
@@ -342,7 +272,7 @@ function GeneralTab() {
         <div className="space-y-2">
           <p className="text-sm text-foreground">Theme</p>
           {(theme === 'light' || (theme === 'system' && typeof window !== 'undefined' && !window.matchMedia('(prefers-color-scheme: dark)').matches)) ? (
-            <p className="text-xs text-[#666666]">Color themes available in dark mode</p>
+            <p className="text-xs text-muted-foreground">Color themes available in dark mode</p>
           ) : (
             <div className="grid grid-cols-3 gap-2">
               {COLOR_THEMES.map((t) => {
@@ -355,7 +285,7 @@ function GeneralTab() {
                       'rounded-xl overflow-hidden text-left transition-all duration-100',
                       isSelected
                         ? 'border-2 border-primary ring-2 ring-primary/20'
-                        : 'border border-[#2F2F2F] hover:border-[#444]'
+                        : 'border border-border hover:border-foreground/25'
                     )}
                   >
                     {/* Mini window preview */}
@@ -385,10 +315,10 @@ function GeneralTab() {
                       </div>
                     </div>
                     {/* Theme name */}
-                    <div className="px-2.5 py-2 bg-[#111]">
+                    <div className="px-2.5 py-2 bg-muted/60">
                       <p className={cn(
                         'text-xs font-medium',
-                        isSelected ? 'text-primary' : 'text-[#999]'
+                        isSelected ? 'text-primary' : 'text-muted-foreground'
                       )}>{t.name}</p>
                     </div>
                   </button>
@@ -411,7 +341,7 @@ function GeneralTab() {
                   onClick={() => setAccentColor(c.value)}
                   className={cn(
                     'h-6 w-6 rounded-full transition-all duration-100 flex items-center justify-center shrink-0',
-                    isSelected && 'ring-2 ring-offset-2 ring-offset-[#141414]'
+                    isSelected && 'ring-2 ring-offset-2 ring-offset-card'
                   )}
                   style={{
                     backgroundColor: `hsl(${c.value})`,
@@ -428,10 +358,10 @@ function GeneralTab() {
         <div className="space-y-3">
           <div>
             <p className="text-sm text-foreground">Chat background</p>
-            <p className="text-xs text-[#666666]">Apply a subtle background to the conversation canvas while keeping the current palette.</p>
+            <p className="text-xs text-muted-foreground">Apply a subtle background to the conversation canvas while keeping the current palette.</p>
           </div>
 
-          <div className="relative overflow-hidden rounded-[14px] border border-[#2a2a2a] bg-[#0f0f10]">
+          <div className="relative overflow-hidden rounded-[14px] border border-border bg-background">
             <ChatSurfaceBackground />
             <div className="relative z-10 flex h-[108px] items-end gap-3 p-3">
               <div className="w-[124px] rounded-[14px] border border-white/10 bg-background/72 px-3 py-2 shadow-[0_8px_24px_rgba(0,0,0,0.18)] backdrop-blur-xl">
@@ -457,8 +387,8 @@ function GeneralTab() {
                   className={cn(
                     'rounded-[10px] border px-3 py-2 text-[12px] font-medium transition-colors duration-100',
                     isSelected
-                      ? 'border-primary/50 bg-primary/12 text-foreground'
-                      : 'border-[#2a2a2a] bg-[#141414] text-muted-foreground hover:border-[#444444] hover:text-foreground'
+                      ? 'border-primary/50 bg-primary/[0.12] text-foreground'
+                      : 'border-border bg-background text-muted-foreground hover:border-foreground/25 hover:text-foreground'
                   )}
                 >
                   {option.label}
@@ -468,7 +398,7 @@ function GeneralTab() {
           </div>
 
           {chatBackgroundType === 'image' && (
-            <div className="space-y-3 rounded-[10px] border border-[#2a2a2a] bg-[#111111] p-3">
+            <div className="space-y-3 rounded-[10px] border border-border bg-muted/40 p-3">
               <input
                 ref={backgroundFileInputRef}
                 type="file"
@@ -481,7 +411,7 @@ function GeneralTab() {
                 <button
                   type="button"
                   onClick={() => backgroundFileInputRef.current?.click()}
-                  className="inline-flex items-center gap-2 rounded-[10px] border border-[#2a2a2a] bg-[#141414] px-3 py-2 text-[12px] font-medium text-foreground transition-colors duration-100 hover:border-[#444444]"
+                  className="inline-flex items-center gap-2 rounded-[10px] border border-border bg-background px-3 py-2 text-[12px] font-medium text-foreground transition-colors duration-100 hover:border-foreground/25"
                 >
                   <ImagePlus className="h-3.5 w-3.5" />
                   {chatBackgroundImageData ? 'Replace image' : 'Upload image'}
@@ -490,7 +420,7 @@ function GeneralTab() {
                   <button
                     type="button"
                     onClick={() => setChatBackgroundImageData(null)}
-                    className="rounded-[10px] border border-[#2a2a2a] px-3 py-2 text-[12px] font-medium text-muted-foreground transition-colors duration-100 hover:border-[#444444] hover:text-foreground"
+                    className="rounded-[10px] border border-border px-3 py-2 text-[12px] font-medium text-muted-foreground transition-colors duration-100 hover:border-foreground/25 hover:text-foreground"
                   >
                     Remove image
                   </button>
@@ -509,8 +439,8 @@ function GeneralTab() {
                       className={cn(
                         'rounded-[10px] border px-3 py-2 text-[12px] font-medium transition-colors duration-100',
                         isSelected
-                          ? 'border-primary/50 bg-primary/12 text-foreground'
-                          : 'border-[#2a2a2a] bg-[#141414] text-muted-foreground hover:border-[#444444] hover:text-foreground'
+                          ? 'border-primary/50 bg-primary/[0.12] text-foreground'
+                          : 'border-border bg-background text-muted-foreground hover:border-foreground/25 hover:text-foreground'
                       )}
                     >
                       {option.label}
@@ -522,7 +452,7 @@ function GeneralTab() {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <p className="text-[12px] text-foreground">Image opacity</p>
-                  <span className="text-[11px] font-mono text-[#777777]">{Math.round(chatBackgroundImageOpacity * 100)}%</span>
+                  <span className="text-[11px] font-mono text-muted-foreground">{Math.round(chatBackgroundImageOpacity * 100)}%</span>
                 </div>
                 <input
                   type="range"
@@ -531,12 +461,12 @@ function GeneralTab() {
                   step={0.05}
                   value={chatBackgroundImageOpacity}
                   onChange={(event) => setChatBackgroundImageOpacity(Number(event.target.value))}
-                  className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-[#222222] accent-[hsl(var(--primary))]"
+                  className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-muted accent-[hsl(var(--primary))]"
                 />
               </div>
 
               {backgroundUploadError && (
-                <p className="text-[11px] text-[#ff9b9b]">{backgroundUploadError}</p>
+                <p className="text-[11px] text-destructive">{backgroundUploadError}</p>
               )}
             </div>
           )}
@@ -546,7 +476,7 @@ function GeneralTab() {
         <div className="flex items-center justify-between">
           <div className="min-w-0 flex-1 pr-4">
             <p className="text-sm text-foreground">Language</p>
-            <p className="text-xs text-[#666666]">Set your preferred display language</p>
+            <p className="text-xs text-muted-foreground">Set your preferred display language</p>
           </div>
           <div className="relative">
             <select
@@ -583,7 +513,7 @@ function GeneralTab() {
         <div className="flex items-center justify-between py-1">
           <div className="min-w-0 flex-1 pr-4">
             <p className="text-sm text-foreground">Output style</p>
-            <p className="text-xs text-[#666666]">{getOutputStyleSpec(outputStyle as OutputStyle).description}</p>
+            <p className="text-xs text-muted-foreground">{getOutputStyleSpec(outputStyle as OutputStyle).description}</p>
           </div>
           <div className="relative">
             <select
@@ -610,7 +540,7 @@ function GeneralTab() {
           <div className="flex items-center justify-between py-1">
             <div className="min-w-0 flex-1 pr-4">
               <p className="text-sm text-foreground">Compact at</p>
-              <p className="text-xs text-[#666666]">
+              <p className="text-xs text-muted-foreground">
                 Summarize once the context window is {Math.round(autoCompactThreshold * 100)}% full
               </p>
             </div>
@@ -635,18 +565,18 @@ function GeneralTab() {
       {/* APPROVAL POLICIES */}
       <div className="space-y-3">
         <p className={sectionLabelClass}>Approval policies</p>
-        <p className="text-xs text-[#666666]">
+        <p className="text-xs text-muted-foreground">
           Saved approvals auto-accept repo changes that match. Session approvals clear when the chat panel closes.
         </p>
 
         {approvalPolicies.length === 0 ? (
-          <p className="text-xs text-[#555555]">No saved always-approvals.</p>
+          <p className="text-xs text-muted-foreground">No saved always-approvals.</p>
         ) : (
           <ul className="space-y-1.5">
             {approvalPolicies.map((policy) => (
               <li
                 key={policy.key}
-                className="flex items-center justify-between rounded-[8px] border border-[#2a2a2a] bg-[#141414] px-3 py-2"
+                className="flex items-center justify-between rounded-[8px] border border-border bg-background px-3 py-2"
               >
                 <div className="flex min-w-0 items-center gap-2">
                   <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -655,7 +585,7 @@ function GeneralTab() {
                 <button
                   onClick={() => removeApprovalPolicy(policy.key)}
                   aria-label={`Revoke approval ${policy.key}`}
-                  className="ml-3 rounded-[6px] p-1 text-muted-foreground transition-colors duration-100 hover:bg-[#1f1f1f] hover:text-foreground"
+                  className="ml-3 rounded-[6px] p-1 text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-foreground"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
@@ -667,7 +597,7 @@ function GeneralTab() {
         <div className="flex items-center justify-between py-1">
           <div className="min-w-0 flex-1 pr-4">
             <p className="text-sm text-foreground">Session approvals</p>
-            <p className="text-xs text-[#666666]">
+            <p className="text-xs text-muted-foreground">
               {sessionApprovalPolicies.length === 0
                 ? 'No active session approvals.'
                 : `${sessionApprovalPolicies.length} active session approval${sessionApprovalPolicies.length === 1 ? '' : 's'}.`}
@@ -679,8 +609,8 @@ function GeneralTab() {
             className={cn(
               'rounded-[8px] border px-3 py-1.5 text-xs font-medium transition-colors duration-100',
               sessionApprovalPolicies.length === 0
-                ? 'cursor-not-allowed border-[#2a2a2a] bg-[#141414] text-muted-foreground/50'
-                : 'border-[#2a2a2a] bg-[#141414] text-muted-foreground hover:border-[#444444] hover:text-foreground',
+                ? 'cursor-not-allowed border-border bg-background text-muted-foreground/50'
+                : 'border-border bg-background text-muted-foreground hover:border-foreground/25 hover:text-foreground',
             )}
           >
             Clear all
@@ -696,11 +626,11 @@ function GeneralTab() {
         <div className="flex items-center justify-between py-1">
           <div className="min-w-0 flex-1 pr-4">
             <p className="text-sm text-foreground">Product tour</p>
-            <p className="text-xs text-[#666666]">Replay the guided walkthrough of threads, GitHub, the board, and the composer</p>
+            <p className="text-xs text-muted-foreground">Replay the guided walkthrough of threads, GitHub, the board, and the composer</p>
           </div>
           <button
             onClick={startTour}
-            className="rounded-[8px] border border-[#2a2a2a] bg-[#141414] px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors duration-100 hover:border-[#444444] hover:text-foreground"
+            className="rounded-[8px] border border-border bg-background px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors duration-100 hover:border-foreground/25 hover:text-foreground"
           >
             Take the tour
           </button>
@@ -716,19 +646,19 @@ function GeneralTab() {
         <div className="flex items-center justify-between py-1">
           <div className="min-w-0 flex-1 pr-4">
             <p className="text-sm text-foreground">Clear history</p>
-            <p className="text-xs text-[#666666]">Delete all conversation history and cached data</p>
+            <p className="text-xs text-muted-foreground">Delete all conversation history and cached data</p>
           </div>
           {showClearConfirm ? (
             <div className="flex items-center gap-2">
               <button
                 onClick={handleClearData}
-                className="rounded-[8px] bg-[#FF4444] px-3 py-1.5 text-xs font-medium text-white"
+                className="rounded-[8px] bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground"
               >
                 Confirm
               </button>
               <button
                 onClick={() => setShowClearConfirm(false)}
-                className="rounded-[8px] border border-[#2a2a2a] px-3 py-1.5 text-xs font-medium text-muted-foreground"
+                className="rounded-[8px] border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground"
               >
                 Cancel
               </button>
@@ -736,7 +666,7 @@ function GeneralTab() {
           ) : (
             <button
               onClick={() => setShowClearConfirm(true)}
-              className="rounded-[8px] bg-[#FF444418] border border-[#FF444430] px-3 py-1.5 text-xs font-medium text-[#FF4444]"
+              className="rounded-[8px] bg-destructive/10 border border-destructive/20 px-3 py-1.5 text-xs font-medium text-destructive"
             >
               Clear data
             </button>
@@ -799,7 +729,8 @@ export const SettingsModal: React.FC = () => {
   // "Connect GitHub" button), jump straight to it.
   useEffect(() => {
     if (settingsOpen && settingsSection) {
-      setTab(settingsSection);
+      // Knowledge is hidden until it has real data; fall back to Providers.
+      setTab(settingsSection === 'knowledge' ? 'providers' : settingsSection);
       setProviderView('list');
     }
   }, [settingsOpen, settingsSection]);
@@ -1216,14 +1147,14 @@ export const SettingsModal: React.FC = () => {
         className={cn(
           'rounded-[10px] border px-4 py-3.5 flex items-center gap-3.5 w-full text-left transition-all duration-100',
           isActive
-            ? 'bg-[#FF840010] border-[#FF840040]'
-            : 'bg-white/[0.02] border-[#2a2a2a] hover:bg-white/[0.04]'
+            ? 'bg-primary/[0.06] border-primary/25'
+            : 'bg-foreground/[0.02] border-border hover:bg-foreground/[0.04]'
         )}
       >
         <ProviderIcon provider={p} size="card" />
         <div className="min-w-0 flex-1">
           <span className="text-sm font-medium text-foreground">{info.label}</span>
-          <p className="text-xs text-[#666666] truncate">{info.description}</p>
+          <p className="text-xs text-muted-foreground truncate">{info.description}</p>
         </div>
         {status && (
           <span
@@ -1233,7 +1164,7 @@ export const SettingsModal: React.FC = () => {
             {status.label}
           </span>
         )}
-        <ChevronRight className="h-4 w-4 text-[#555555] shrink-0" />
+        <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
       </button>
     );
   };
@@ -1242,7 +1173,7 @@ export const SettingsModal: React.FC = () => {
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
         className={cn(
-          'absolute inset-0 bg-black/70 backdrop-blur-md transition-opacity duration-250 ease-out',
+          'absolute inset-0 bg-black/70 backdrop-blur-md transition-opacity duration-200 ease-out',
           visible ? 'opacity-100' : 'opacity-0',
         )}
         onClick={() => setSettingsOpen(false)}
@@ -1255,17 +1186,18 @@ export const SettingsModal: React.FC = () => {
         tabIndex={-1}
         onTransitionEnd={handleTransitionEnd}
         className={cn(
-          'relative flex w-[880px] h-[600px] flex-col overflow-hidden rounded-2xl border border-[#2a2a2a] bg-card transition-[transform,opacity] duration-250 ease-out focus:outline-none',
+          'relative flex w-[880px] h-[600px] flex-col overflow-hidden rounded-2xl border border-border bg-card transition-[transform,opacity] duration-200 ease-out focus:outline-none',
           visible ? 'scale-100 opacity-100' : 'scale-95 opacity-0',
         )}
       >
         {/* Header */}
-        <div className="border-b border-[#2a2a2a] px-5 py-3.5">
+        <div className="border-b border-border px-5 py-3.5">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-semibold text-foreground">Settings</h2>
             <button
               onClick={() => setSettingsOpen(false)}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white/[0.03] text-muted-foreground transition-colors duration-100 hover:bg-white/[0.06] hover:text-foreground"
+              aria-label="Close settings"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-foreground/[0.03] text-muted-foreground transition-colors duration-100 hover:bg-foreground/[0.06] hover:text-foreground"
             >
               <X className="h-4 w-4" />
             </button>
@@ -1275,11 +1207,11 @@ export const SettingsModal: React.FC = () => {
         {/* Body: sidebar + content */}
         <div className="flex flex-1 min-h-0">
           {/* Vertical nav sidebar */}
-          <nav className="w-[200px] shrink-0 border-r border-[#2a2a2a] flex flex-col py-4 px-3">
+          <nav className="w-[200px] shrink-0 border-r border-border flex flex-col py-4 px-3">
             {navSections.map((section, sIdx) => (
               <React.Fragment key={section.label}>
-                {sIdx > 0 && <div className="h-px bg-[#2a2a2a] my-3" />}
-                <p className="text-[10px] font-semibold uppercase tracking-[1px] text-[#555555] px-2.5 mb-1.5">
+                {sIdx > 0 && <div className="h-px bg-border my-3" />}
+                <p className="text-[10px] font-semibold uppercase tracking-[1px] text-muted-foreground px-2.5 mb-1.5">
                   {section.label}
                 </p>
                 {section.items.map((item) => {
@@ -1292,11 +1224,11 @@ export const SettingsModal: React.FC = () => {
                       className={cn(
                         'h-9 rounded-lg flex items-center gap-2.5 px-2.5 text-[13px] w-full transition-colors duration-100',
                         isActive
-                          ? 'bg-[#FF840010] text-[#e0e0e0]'
-                          : 'text-[#888888] hover:text-[#bbbbbb] hover:bg-white/[0.03]'
+                          ? 'bg-primary/[0.06] text-foreground'
+                          : 'text-muted-foreground hover:text-foreground hover:bg-foreground/[0.03]'
                       )}
                     >
-                      <Icon className={cn('h-4 w-4', isActive ? 'text-[#FF8400]' : 'text-[#666666]')} />
+                      <Icon className={cn('h-4 w-4', isActive ? 'text-primary' : 'text-muted-foreground')} />
                       {item.label}
                     </button>
                   );
@@ -1304,7 +1236,7 @@ export const SettingsModal: React.FC = () => {
               </React.Fragment>
             ))}
             <div className="mt-auto px-2.5">
-              <span className="font-mono text-[11px] text-[#444444]">v{packageJson.version}</span>
+              <span className="font-mono text-[11px] text-muted-foreground">v{packageJson.version}</span>
             </div>
           </nav>
 
@@ -1314,7 +1246,7 @@ export const SettingsModal: React.FC = () => {
               <div className="p-6 space-y-4">
                 <div>
                   <h3 className="text-lg font-semibold text-foreground">Providers</h3>
-                  <p className="text-[13px] text-[#666666]">Manage AI providers, API keys, and active models.</p>
+                  <p className="text-[13px] text-muted-foreground">Manage AI providers, API keys, and active models.</p>
                 </div>
 
                 {/* Search */}
@@ -1361,9 +1293,9 @@ export const SettingsModal: React.FC = () => {
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-[13px] font-semibold text-foreground">Saved on your Hermes agent</p>
-                        <p className="text-[11px] text-[#666666]">Providers authenticated in <span className="font-mono">~/.hermes</span> — managed by the agent.</p>
+                        <p className="text-[11px] text-muted-foreground">Providers authenticated in <span className="font-mono">~/.hermes</span> — managed by the agent.</p>
                       </div>
-                      <span className="text-[10px] text-[#555555]">{savedProviders.length}</span>
+                      <span className="text-[10px] text-muted-foreground">{savedProviders.length}</span>
                     </div>
                     <div className="space-y-1.5">
                       {savedProviders.map((p) => {
@@ -1376,9 +1308,11 @@ export const SettingsModal: React.FC = () => {
                         return (
                           <div
                             key={p.id}
-                            className="flex items-center gap-2.5 rounded-[8px] border border-[#222222] bg-white/[0.015] px-2.5 py-2"
+                            className="flex items-center gap-2.5 rounded-[8px] border border-border bg-foreground/[0.015] px-2.5 py-2"
                           >
                             <span
+                              role="img"
+                              aria-label={`Status: ${p.status}`}
                               className={cn('h-1.5 w-1.5 shrink-0 rounded-full', dot)}
                               title={p.status}
                             />
@@ -1386,7 +1320,7 @@ export const SettingsModal: React.FC = () => {
                               <div className="flex items-center gap-1.5">
                                 <span className="truncate text-[13px] text-foreground">{p.name}</span>
                                 {p.active && (
-                                  <span className="shrink-0 rounded border border-[#FF8400]/20 bg-[#FF8400]/10 px-1 py-px text-[9px] font-medium uppercase tracking-wide text-[#FF8400]">
+                                  <span className="shrink-0 rounded border border-primary/20 bg-primary/10 px-1 py-px text-[9px] font-medium uppercase tracking-wide text-primary">
                                     Active
                                   </span>
                                 )}
@@ -1397,7 +1331,7 @@ export const SettingsModal: React.FC = () => {
                                 <p className="truncate font-mono text-[11px] text-muted-foreground/50">{p.base_url}</p>
                               ) : null}
                             </div>
-                            <span className="shrink-0 text-[10px] text-[#555555]">{p.auth_type}</span>
+                            <span className="shrink-0 text-[10px] text-muted-foreground">{p.auth_type}</span>
                           </div>
                         );
                       })}
@@ -1415,10 +1349,6 @@ export const SettingsModal: React.FC = () => {
                   settingsCardClass={settingsCardClass}
                 />
 
-                {/* Add provider placeholder */}
-                <button className="rounded-[10px] h-[42px] border border-[#2a2a2a] border-dashed w-full text-[13px] text-[#555555] hover:text-[#888888] hover:border-[#444444] transition-colors duration-100">
-                  + Add provider
-                </button>
               </div>
             )}
 
@@ -1426,7 +1356,7 @@ export const SettingsModal: React.FC = () => {
               <div className="p-6">
                 <button
                   onClick={() => setProviderView('list')}
-                  className="flex items-center gap-1.5 text-[13px] text-[#888888] hover:text-foreground transition-colors duration-100 mb-4"
+                  className="flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground transition-colors duration-100 mb-4"
                 >
                   <ArrowLeft className="h-3.5 w-3.5" />
                   Back to providers
@@ -1439,7 +1369,7 @@ export const SettingsModal: React.FC = () => {
                       <div className="flex flex-wrap items-center gap-2">
                         <h3 className="text-base font-semibold tracking-[-0.015em] text-foreground">{providerInfo.label}</h3>
                         {providerInfo.badge && (
-                          <span className="rounded-full border border-[#2a2a2a] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                          <span className="rounded-full border border-border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                             {providerInfo.badge}
                           </span>
                         )}
@@ -1462,10 +1392,10 @@ export const SettingsModal: React.FC = () => {
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="rounded-full border border-[#2a2a2a] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                            <span className="rounded-full border border-border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                               {localRuntimeDetails.badge}
                             </span>
-                            <span className="rounded-full border border-[#2a2a2a] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                            <span className="rounded-full border border-border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                               {localRuntimeDetails.title}
                             </span>
                           </div>
@@ -1474,13 +1404,13 @@ export const SettingsModal: React.FC = () => {
                           <div className="mt-3 grid gap-3 grid-cols-2">
                             <div>
                               <p className={fieldLabelClass}>Start Command</p>
-                              <div className="mt-1 rounded-[10px] border border-[#2a2a2a] bg-[#141414] px-3 py-2 text-xs font-mono text-foreground">
+                              <div className="mt-1 rounded-[10px] border border-border bg-background px-3 py-2 text-xs font-mono text-foreground">
                                 {localRuntimeDetails.command}
                               </div>
                             </div>
                             <div>
                               <p className={fieldLabelClass}>{localRuntimeDetails.locationLabel}</p>
-                              <div className="mt-1 rounded-[10px] border border-[#2a2a2a] bg-[#141414] px-3 py-2 text-xs font-mono text-foreground">
+                              <div className="mt-1 rounded-[10px] border border-border bg-background px-3 py-2 text-xs font-mono text-foreground">
                                 {localRuntimeDetails.locationValue}
                               </div>
                             </div>
@@ -1624,7 +1554,7 @@ export const SettingsModal: React.FC = () => {
                           <button
                             onClick={handleRefreshModels}
                             disabled={refreshingModels}
-                            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#2a2a2a] bg-[#141414] text-muted-foreground hover:text-foreground hover:bg-white/[0.06] transition-colors duration-100 disabled:opacity-50"
+                            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground hover:text-foreground hover:bg-foreground/[0.06] transition-colors duration-100 disabled:opacity-50"
                             title="Refresh available models"
                           >
                             <RefreshCw className={cn('h-3.5 w-3.5', refreshingModels && 'animate-spin')} />
@@ -1832,7 +1762,7 @@ export const SettingsModal: React.FC = () => {
                       <div className="space-y-2.5">
                         <div className="flex items-center justify-between">
                           <label className="text-sm font-medium text-foreground">Temperature</label>
-                          <span className="rounded-full border border-[#2a2a2a] px-2 py-0.5 text-xs font-mono tabular-nums text-muted-foreground">
+                          <span className="rounded-full border border-border px-2 py-0.5 text-xs font-mono tabular-nums text-muted-foreground">
                             {config.temperature}
                           </span>
                         </div>
@@ -1847,7 +1777,7 @@ export const SettingsModal: React.FC = () => {
                       <div className="space-y-2.5">
                         <div className="flex items-center justify-between">
                           <label className="text-sm font-medium text-foreground">Max Tokens</label>
-                          <span className="rounded-full border border-[#2a2a2a] px-2 py-0.5 text-xs font-mono tabular-nums text-muted-foreground">
+                          <span className="rounded-full border border-border px-2 py-0.5 text-xs font-mono tabular-nums text-muted-foreground">
                             {config.maxTokens}
                           </span>
                         </div>
@@ -1869,29 +1799,29 @@ export const SettingsModal: React.FC = () => {
               <div className="p-6 space-y-4">
                 {/* Header */}
                 <div>
-                  <h3 className="text-lg font-semibold text-[#e0e0e0]">GitHub</h3>
-                  <p className="text-[13px] text-[#666666]">Connected repositories, access tokens, and config settings.</p>
+                  <h3 className="text-lg font-semibold text-foreground">GitHub</h3>
+                  <p className="text-[13px] text-muted-foreground">Connected repositories, access tokens, and config settings.</p>
                 </div>
 
                 {/* Connection status card */}
                 <div className={cn(settingsCardClass, 'px-4 py-[14px] flex items-center gap-[14px]')}>
-                  <div className="h-[38px] w-[38px] rounded-[10px] flex items-center justify-center shrink-0 bg-white/[0.05]">
+                  <div className="h-[38px] w-[38px] rounded-[10px] flex items-center justify-center shrink-0 bg-foreground/[0.05]">
                     <Github className="h-5 w-5 text-foreground" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <span className="text-sm font-medium text-foreground">
                       {githubPAT ? (githubUsername ? `@${githubUsername}` : 'Verifying...') : 'Not connected'}
                     </span>
-                    <p className="text-xs text-[#666666]">
+                    <p className="text-xs text-muted-foreground">
                       {githubPAT ? 'Personal Access Token configured' : 'Add a token to connect'}
                     </p>
                   </div>
                   {githubPAT ? (
-                    <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold text-[#00FF88] bg-[#00FF8812] shrink-0">
+                    <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-success bg-success/10 shrink-0">
                       Connected
                     </span>
                   ) : (
-                    <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold text-[#FF6666] bg-[#FF444412] shrink-0">
+                    <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold text-destructive bg-destructive/10 shrink-0">
                       Disconnected
                     </span>
                   )}
@@ -1910,7 +1840,7 @@ export const SettingsModal: React.FC = () => {
                       href="https://github.com/settings/tokens/new?scopes=repo&description=Spark%20Integration"
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 rounded-full border border-[#2a2a2a] px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors duration-100 hover:bg-white/[0.04] hover:text-foreground"
+                      className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors duration-100 hover:bg-foreground/[0.04] hover:text-foreground"
                     >
                       Generate token
                       <ExternalLink className="h-3 w-3" />
@@ -1955,7 +1885,7 @@ export const SettingsModal: React.FC = () => {
                           </div>
                           <div className="min-w-0 flex-1">
                             <span className="text-sm font-medium text-foreground">{repo.full_name}</span>
-                            <p className="text-xs text-[#666666] truncate">{repo.description || (repo.private ? 'Private repository' : 'No description')}</p>
+                            <p className="text-xs text-muted-foreground truncate">{repo.description || (repo.private ? 'Private repository' : 'No description')}</p>
                           </div>
                           {repo.language && (
                             <span className="text-[10px] text-muted-foreground/60 shrink-0">{repo.language}</span>
@@ -1982,7 +1912,6 @@ export const SettingsModal: React.FC = () => {
 
             {tab === 'cursor-composer' && <CursorComposerTab />}
 
-            {tab === 'knowledge' && <KnowledgeTab />}
 
             {tab === 'general' && <GeneralTab />}
           </div>

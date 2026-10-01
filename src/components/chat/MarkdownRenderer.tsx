@@ -208,7 +208,7 @@ const CodeBlock = React.forwardRef<HTMLElement, React.HTMLAttributes<HTMLElement
         <div className="chat-code-block__body">
           <div
             ref={contentRef}
-            className="overflow-hidden transition-[max-height] duration-300 ease-in-out"
+            className="overflow-hidden transition-[max-height] duration-200 ease-in-out"
             style={{ maxHeight: expanded ? `${contentRef.current?.scrollHeight || 2000}px` : `${COLLAPSED_HEIGHT}px` }}
           >
             <div className="chat-code-block__editor">
