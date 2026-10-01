@@ -387,7 +387,6 @@ class WorkspaceFileTests(RealBridgeTestCase):
         self.assertEqual(r.status_code, 422)
         self.assertFalse((self.hermes_home / "SOUL.md").exists())
 
-    @unittest.expectedFailure
     def test_validation_errors_use_the_bridge_error_envelope(self):
         # main.py promises every error leaves the bridge as
         # {"error": {code, message, retryable}} and never as a bare {"detail"}
@@ -774,7 +773,6 @@ class TokenGuardHttpTests(RealBridgeTestCase):
         r = self.client.get("/definitely/not/a/route", headers={"X-Hermes-Bridge-Token": TOKEN})
         self.assertEqual(r.status_code, 404)
 
-    @unittest.expectedFailure
     def test_unknown_route_404_uses_the_bridge_error_envelope(self):
         # main._handle_http_exception says "FastAPI raises this for 404s", but
         # it is registered for fastapi.HTTPException, and an unmatched route
