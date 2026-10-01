@@ -37,7 +37,7 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
                 }
             },
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - last-resort handler: logged with traceback, enveloped for the client
         import traceback as _tb
         tb_str = _tb.format_exc()
         _log.error("chat", "unhandled error in chat_completions", error=str(e), traceback=tb_str)

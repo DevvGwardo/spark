@@ -335,7 +335,10 @@ class BridgeAcpClient:
                 output = _tool_output(update)
                 if output:
                     self.emit("tool_call_delta", tool_call_delta_event(call_id, output))
-        elif kind == "plan_update":
+        elif kind in ("plan", "plan_update"):
+            # The ACP SDK's AgentPlanUpdate discriminator is "plan"; older
+            # payloads used "plan_update". Matching only the latter silently
+            # dropped every plan hermes-acp sent (found by the 7.2 fake agent).
             # The SDK nests entries under ``plan`` (PlanUpdate.plan.entries);
             # tolerate a top-level ``entries`` shape too. Markdown plans carry
             # ``content`` instead of entries — forward the raw text so the

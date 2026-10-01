@@ -159,14 +159,14 @@ class AgentLoopTransport(BaseChatTransport):
         # Brain MCP: register per-request session so overseer can address it directly
         try:
             await brain_client._brain_rpc("tools/call", {"name": "brain_register", "arguments": {"name": f"hermes-request-{chunk_id}"}})
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - brain MCP is optional observability; the turn runs without it
+            logger.debug("brain_register failed", exc_info=True)
         # Brain MCP: publish per-request job metadata keyed by chunk_id so the overseer
         # can correlate in-flight requests and inspect individual job state.
         try:
             brain_client._brain_set(f"bridge:active-request:{chunk_id}", ctx.active_job_meta)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - brain MCP is optional observability; the turn runs without it
+            logger.debug("brain active-request publish failed", exc_info=True)
         # Bound per request (not at module import) so tests that patch
         # worktree_support reach this request, as before the split.
         from worktree_support import (
@@ -418,7 +418,7 @@ class AgentLoopTransport(BaseChatTransport):
             )
             turn = self._prepare_turn(adjust_toolsets_for_worktree, wt_info, worktree_active)
             self._run_turn(turn)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - any turn failure is reported in-stream and finalizes the session
             error_message = str(e)
             print(f"[hermes-bridge] Agent error: {error_message}", flush=True)
             _append_session_chat_chunk(ctx.session_id, "assistant", f"\n\n[Error: {error_message}]")
@@ -431,7 +431,7 @@ class AgentLoopTransport(BaseChatTransport):
             if worktree_active and wt_info:
                 try:
                     cleanup_worktree(wt_info)
-                except Exception as wt_cleanup_err:
+                except Exception as wt_cleanup_err:  # noqa: BLE001 - cleanup failure is logged; the turn result stands
                     print(f"[hermes-bridge] Worktree cleanup error: {wt_cleanup_err}", flush=True)
             # Brain MCP: clean up per-request state to prevent zombies
             try:
@@ -449,8 +449,8 @@ class AgentLoopTransport(BaseChatTransport):
                     brain_client._brain_release(r)
                 # Pulse done status
                 brain_client._brain_pulse("done", f"completed chunk={self.chunk_id}")
-            except Exception:
-                pass  # Best-effort cleanup
+            except Exception:  # noqa: BLE001 - brain cleanup is best-effort; claims expire via TTL=120
+                logger.debug("brain per-request cleanup failed", exc_info=True)
             with self._agent_lock:
                 self._agent = None
             self.unregister_run()
@@ -742,18 +742,9 @@ class AgentLoopTransport(BaseChatTransport):
         brain_client._brain_set("hermes-bridge:active_request", "")
         brain_client._brain_set("hermes-bridge:active_sessions", str(bridge_state._bridge_active_requests), "global")
         brain_client._brain_set("hermes-bridge:last_completion", f"model={body.model} events={event_count} elapsed_ms={elapsed_ms}", "global")
-        # Bridge metrics — publish final state via _update_bridge_metrics (called from
-        # the worker) plus api_calls for the completed request
-        brain_client._brain_set("bridge:metrics", json.dumps({
-            "active_requests": bridge_state._bridge_active_requests,
-            "error_rate": round(bridge_state._bridge_error_count / max(bridge_state._bridge_total_requests, 1), 4),
-            "uptime": round(time.time() - bridge_state._bridge_start_time, 1) if bridge_state._bridge_start_time > 0 else 0.0,
-            "start_time": bridge_state._bridge_start_time,
-            "total_requests": bridge_state._bridge_total_requests,
-            "error_count": bridge_state._bridge_error_count,
-            "api_calls": event_count,
-            "estimated_cost_usd": round(event_count * 0.001, 4),
-        }))
+        # The global bridge:metrics key is published by _update_bridge_metrics
+        # (bridge_state, under its lock) when the worker finishes. This used to
+        # publish it a second time from unlocked reads, with a made-up cost.
         # Brain MCP: per-request metrics keyed by chunk_id for per-request auditing
         usage = self._usage or {}
         try:
@@ -765,8 +756,8 @@ class AgentLoopTransport(BaseChatTransport):
                 "model": body.model,
                 "repo_mode": ctx.has_repo_tools,
             }))
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - per-request metrics are observability only
+            logger.debug("per-request metrics publish failed", exc_info=True)
         for frame in stop_frames(chunk_id, body.model, usage=self._usage):
             yield frame
 
