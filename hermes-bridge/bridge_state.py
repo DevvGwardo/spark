@@ -9,6 +9,7 @@ module and other modules reach them as ``<module>.<name>`` so a single
 ``patch.object(<module>, name)`` reaches every caller, as patching main did.
 """
 import json
+import threading
 import time
 from typing import Optional
 
@@ -35,6 +36,11 @@ _bridge_start_time: float = 0.0
 _bridge_total_requests: int = 0
 _bridge_error_count: int = 0
 _bridge_active_requests: int = 0
+# The counters are bumped from the request handlers AND from agent worker
+# threads (the streaming paths finish on a thread), so `+= 1` on a module global
+# can lose updates. Every read-modify-write goes through this lock (G16). The
+# brain publish happens after it is released — it can block on IO.
+_metrics_lock = threading.Lock()
 
 
 def _update_bridge_metrics(
@@ -43,23 +49,24 @@ def _update_bridge_metrics(
     decrement_active: bool = False,
 ):
     global _bridge_error_count, _bridge_active_requests
-    if decrement_active:
-        _bridge_active_requests = max(0, _bridge_active_requests - 1)
-    if increment_active:
-        _bridge_active_requests += 1
-    if not success:
-        _bridge_error_count += 1
-    error_rate = _bridge_error_count / max(_bridge_total_requests, 1)
-    uptime = time.time() - _bridge_start_time if _bridge_start_time else 0
-    metrics = json.dumps({
-        "api_calls": _bridge_total_requests,
-        "error_rate": round(error_rate, 4),
-        "active_requests": _bridge_active_requests,
-        "uptime": round(uptime, 1),
-        "start_time": _bridge_start_time,
-        "total_requests": _bridge_total_requests,
-        "error_count": _bridge_error_count,
-    })
+    with _metrics_lock:
+        if decrement_active:
+            _bridge_active_requests = max(0, _bridge_active_requests - 1)
+        if increment_active:
+            _bridge_active_requests += 1
+        if not success:
+            _bridge_error_count += 1
+        error_rate = _bridge_error_count / max(_bridge_total_requests, 1)
+        uptime = time.time() - _bridge_start_time if _bridge_start_time else 0
+        metrics = json.dumps({
+            "api_calls": _bridge_total_requests,
+            "error_rate": round(error_rate, 4),
+            "active_requests": _bridge_active_requests,
+            "uptime": round(uptime, 1),
+            "start_time": _bridge_start_time,
+            "total_requests": _bridge_total_requests,
+            "error_count": _bridge_error_count,
+        })
     brain_client._brain_set("bridge:metrics", metrics, "global")
 
 
@@ -73,7 +80,9 @@ def _mark_request_started(
     repo_edit_intent: bool,
 ) -> str:
     global _bridge_total_requests
-    _bridge_total_requests += 1
+    with _metrics_lock:
+        _bridge_total_requests += 1
+        request_num = _bridge_total_requests
     _update_bridge_metrics(success=True, increment_active=True)
     active_job_meta = json.dumps({
         "owner": repo_owner or None,
@@ -82,7 +91,7 @@ def _mark_request_started(
         "toolsets": enabled_toolsets,
         "repo_mode": repo_mode,
         "edit_intent": repo_edit_intent,
-        "request_num": _bridge_total_requests,
+        "request_num": request_num,
     })
     brain_client._brain_set("hermes-bridge:active_request", active_job_meta)
     brain_client._brain_set("hermes-bridge:active_sessions", str(_bridge_active_requests), "global")

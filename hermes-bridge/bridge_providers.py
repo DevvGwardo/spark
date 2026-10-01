@@ -5,6 +5,7 @@ module and other modules reach them as ``<module>.<name>`` so a single
 ``patch.object(<module>, name)`` reaches every caller, as patching main did.
 """
 import json
+import logging
 import os
 import sys
 import time
@@ -53,6 +54,8 @@ from provider_config import (
     _VISION_CAPABLE_MODELS,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def _load_cli_model_config(hermes_home: Optional[Path] = None) -> dict:
     """Read the `model:` block from <hermes_home>/config.yaml (Hermes CLI config).
@@ -93,8 +96,8 @@ def _load_cli_model_config(hermes_home: Optional[Path] = None) -> dict:
                             v = stripped.split(prefix, 1)[1].strip().strip('"').strip("'")
                             if v:
                                 result[k] = v
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort parse; caller gets partial/empty result
+        logger.debug("reading dotenv-style file failed", exc_info=True)
     return result
 
 
@@ -122,7 +125,7 @@ def _synthetic_cli_provider_id(cfg: dict) -> str:
     host = ""
     try:
         host = (urlparse(base_url).hostname or "").strip().lower()
-    except Exception:
+    except Exception:  # noqa: BLE001 - malformed URL falls back to generic custom label
         host = ""
     if host:
         return f"custom:{host}"
@@ -145,7 +148,7 @@ def _load_custom_providers_list(hermes_home: Optional[Path] = None) -> list[dict
         if not isinstance(raw, list):
             return []
         return [entry for entry in raw if isinstance(entry, dict)]
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable/malformed config yields no custom providers
         return []
 
 
@@ -180,7 +183,7 @@ def _has_pool_entry(provider_name: str) -> bool:
             auth = json.load(f)
         pool = auth.get("credential_pool", {}).get(provider_name, [])
         return bool(pool)
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable auth store means no credentials
         return False
 
 def _cli_custom_endpoint_credentialed(cfg: dict, hermes_home: Optional[Path] = None) -> bool:
@@ -259,7 +262,7 @@ def _resolve_chat_agent_class():
     try:
         from hermes_adapter import HermesAgentAdapter as AIAgent
         return AIAgent, True
-    except Exception as adapter_err:
+    except Exception as adapter_err:  # noqa: BLE001 - adapter import failure is logged; falls back to legacy run_agent
         _log.warning("adapter", "adapter import failed, using legacy run_agent", error=str(adapter_err))
         from run_agent import AIAgent
         return AIAgent, False
@@ -304,7 +307,7 @@ def _retry_brain_call(func, *args, retries: int = 2, backoff: float = 0.5, **kwa
                 return result
             # None means brain unavailable — treat as failure
             _brain_circuit.record_failure()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - brain call failure is retried and recorded in the circuit breaker
             print(f"[hermes-bridge] brain call attempt {attempt + 1} failed: {e}", flush=True)
             _brain_circuit.record_failure()
         if attempt < retries:
@@ -388,8 +391,8 @@ def _get_local_gateway_key() -> Optional[str]:
         token = config.get("gateway", {}).get("auth", {}).get("token")
         if token and isinstance(token, str) and len(token) > 0:
             return token
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort lookup; caller treats None as no token
+        logger.debug("reading gateway token from config failed", exc_info=True)
     return None
 
 
@@ -412,8 +415,8 @@ def _get_openrouter_key_from_hermes_creds() -> Optional[str]:
             key = cred.get("access_token", "")
             if key and key != "***" and len(key) > 0:
                 return key
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort lookup; caller treats None as no key
+        logger.debug("reading credential from auth store failed", exc_info=True)
     return None
 
 
@@ -431,8 +434,8 @@ def _get_nous_agent_key() -> Optional[str]:
         key = nous.get("agent_key", "")
         if key and len(key) > 0:
             return key
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort lookup; caller treats None as no key
+        logger.debug("reading nous agent key failed", exc_info=True)
     return None
 
 
@@ -453,8 +456,8 @@ def _read_hermes_dotenv_var(name: str) -> str:
                         continue
                     k, _, v = line.partition("=")
                     _HERMES_DOTENV_CACHE[k.strip()] = v.strip().strip('"').strip("'")
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort cache; lookups fall back to empty string
+            logger.debug("reading hermes .env failed", exc_info=True)
     return _HERMES_DOTENV_CACHE.get(name, "")
 
 
@@ -493,8 +496,8 @@ def _get_credential_pool_key(provider_name: str) -> Optional[str]:
                         env_key = _read_hermes_dotenv_var(env_var)
                     if env_key and env_key != "***":
                         return env_key
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort lookup; caller treats None as no key
+        logger.debug("resolving provider key failed", exc_info=True)
     return None
 
 
@@ -505,8 +508,8 @@ def _get_active_provider() -> Optional[str]:
         with open(auth_path, "r") as f:
             auth = json.load(f)
         return auth.get("active_provider")
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort lookup; caller treats None as unknown
+        logger.debug("reading active provider failed", exc_info=True)
     return None
 
 
@@ -518,7 +521,7 @@ def _load_credential_pool() -> dict[str, list[dict]]:
             auth = json.load(f)
         pool = auth.get("credential_pool", {}) or {}
         return pool if isinstance(pool, dict) else {}
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable auth store yields an empty credential pool
         return {}
 
 
@@ -626,7 +629,7 @@ def _resolve_custom_credential_pool_route(
 try:
     import hermes_cli.models as _hermes_cli_models
     _CLI_PROVIDER_MODELS = dict(getattr(_hermes_cli_models, "_PROVIDER_MODELS", {}) or {})
-except Exception:
+except Exception:  # noqa: BLE001 - hermes_cli is optional; static model lists are used instead
     _CLI_PROVIDER_MODELS = {}
 
 # Bridge provider id → hermes_cli provider id (where they differ)
@@ -754,7 +757,7 @@ async def _fetch_openrouter_models() -> list[dict]:
                 owner = mid.split("/")[0] if "/" in mid else "unknown"
                 models.append({"id": mid, "object": "model", "owned_by": owner})
             return models
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - OpenRouter fetch failure is logged and yields an empty model list
         print(f"[bridge] OpenRouter model fetch failed: {e}", file=sys.stderr)
         return []
 
@@ -798,8 +801,8 @@ def _provider_has_native_credentials(pid: str) -> bool:
 
             if probe_bridge_health().get("reachable"):
                 return True
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort probe; falls through to env-var key check
+            logger.debug("bridge health probe failed", exc_info=True)
 
     pcfg = _PROVIDER_CONFIG.get(pid, {})
     env_var = pcfg.get("env_var", "")

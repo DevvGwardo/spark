@@ -4,8 +4,12 @@ Moved verbatim from main.py (spec 4.1). Names that tests patch are owned by one
 module and other modules reach them as ``<module>.<name>`` so a single
 ``patch.object(<module>, name)`` reaches every caller, as patching main did.
 """
+import functools
 import hmac
 import os
+import re
+from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, Request
 
@@ -26,6 +30,31 @@ from provider_config import _PROVIDER_CONFIG
 
 router = APIRouter()
 
+_RELEASE_DATE_RE = re.compile(r'^__release_date__\s*=\s*["\']([^"\']+)["\']', re.MULTILINE)
+
+
+@functools.lru_cache(maxsize=1)
+def _hermes_agent_version() -> Optional[str]:
+    """The installed hermes-agent release (e.g. ``"2026.9.24"``), or None.
+
+    Read once per process from ``hermes_cli/__init__.py``'s ``__release_date__``
+    — the value hermes release tags are cut from (tag ``v2026.9.24``). The file is
+    parsed as text rather than imported: importing ``hermes_cli`` reconfigures
+    stdio, and the package metadata version is a ``0.0.0`` placeholder on the
+    editable checkouts Spark installs. Caching per process is correct because the
+    supervisor restarts the bridge after an update and compares this field
+    (server/lib/hermes-agent-update.ts ``restartBridgeAndVerify``).
+    """
+    agent_dir = Path(
+        os.environ.get("HERMES_AGENT_DIR") or os.path.expanduser("~/.hermes/hermes-agent")
+    )
+    try:
+        text = (agent_dir / "hermes_cli" / "__init__.py").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    match = _RELEASE_DATE_RE.search(text)
+    return match.group(1).strip() if match else None
+
 
 @router.get("/diag")
 async def diag(request: Request):
@@ -38,6 +67,7 @@ async def diag(request: Request):
     return {
         "pid": os.getpid(),
         "bridge_version": HERMES_BRIDGE_VERSION,
+        "hermes_agent_version": _hermes_agent_version(),
         "launch_token_present": bool(token),
         "token_matches": bool(token) and bool(presented)
         and hmac.compare_digest(presented.encode(), token.encode()),
@@ -49,6 +79,12 @@ async def health(request: Request):
     # Profile-aware: honor X-Hermes-Profile like /v1/providers and chat do so
     # detectHermesBridge.hasAnyCreds matches the active profile's config.yaml.
     profile_name = bridge_workspace._resolve_profile_name(request)
+    # Off the event loop (spec 5.1): the credential and cursor-composer checks
+    # read files and probe a local HTTP endpoint, and /health is polled.
+    return await bridge_workspace._ops_thread(_health_payload, profile_name)
+
+
+def _health_payload(profile_name: str) -> dict:
     profile_home = bridge_workspace._resolve_hermes_home(profile_name)
     cfg = bridge_providers._load_cli_model_config(profile_home)
 

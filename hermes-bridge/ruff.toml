@@ -1,0 +1,39 @@
+# Ruff config for the Python bridge (hardening spec 5.7).
+#
+# Deliberately narrow: this gates swallowed exceptions, not style.
+#   S110   `try`/`except`/`pass` — a silently swallowed error
+#   BLE001 blind `except Exception` / `except BaseException`
+#   F821   undefined name (the swarm `_finalize_session` NameError class of bug)
+#
+# Every remaining blind except either logs at debug with exc_info=True and a
+# comment saying why swallowing is safe, or carries a per-line
+# `# noqa: BLE001 - <reason>` naming the reason the broad catch is intended.
+#
+# Run: ruff check hermes-bridge   (from the repo root, or `ruff check .` here)
+
+target-version = "py311"
+extend-exclude = [".venv", "fixtures", "data"]
+
+[lint]
+select = ["S110", "BLE001", "F821"]
+
+[lint.per-file-ignores]
+# Tests deliberately catch broadly to assert on behaviour.
+"test_*.py" = ["S110", "BLE001"]
+# Seeded-bug review fixtures: the swallowed exceptions are the point, and a
+# comment flagging them would give the answer away.
+"challenge.py" = ["S110", "BLE001"]
+"challenge_script.py" = ["S110", "BLE001"]
+# TODO(spec 4.2 follow-up): the chat path (chat_impl / chat_common / acp_chat /
+# routes/chat and the chat_transports/ split) was being refactored concurrently
+# with this audit; audit its blind excepts in a follow-up.
+"chat_impl.py" = ["S110", "BLE001"]
+"chat_common.py" = ["S110", "BLE001"]
+"acp_chat.py" = ["S110", "BLE001"]
+"routes/chat.py" = ["S110", "BLE001"]
+"chat_transports/**" = ["S110", "BLE001"]
+# TODO(spec 4.7 follow-up): repo_tools.py, hermes_adapter.py and run_agent.py
+# were being reworked concurrently; audit them in a follow-up.
+"repo_tools.py" = ["S110", "BLE001"]
+"hermes_adapter.py" = ["S110", "BLE001"]
+"run_agent.py" = ["S110", "BLE001"]

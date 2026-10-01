@@ -1,8 +1,8 @@
-"""Routes: /cron, plus the legacy local cron store and the background scheduler.
+"""Routes: /cron, the background scheduler, and the legacy-store migration.
 
-The store and scheduler live beside the routes because ``_load_cron_data``
-rebinds ``_cron_jobs`` / ``_cron_run_history`` with ``global``; keeping every
-reader in this one module keeps those rebinds visible to all of them.
+hermes-agent's cron is the only cron implementation (spec 5.6). The routes
+reach it through the ``_hermes_*`` names imported from cron_manager (in-process
+or helper-subprocess backed); tests patch them on this module.
 
 Moved verbatim from main.py (spec 4.1). Names that tests patch are owned by one
 module and other modules reach them as ``<module>.<name>`` so a single
@@ -10,12 +10,8 @@ module and other modules reach them as ``<module>.<name>`` so a single
 """
 import asyncio
 import json as _json
-import os
 import os as _os
-import tempfile as _tempfile
 import threading
-import uuid
-from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Request
@@ -26,7 +22,6 @@ from bridge_workspace import _ops_thread
 from cron_manager import (
     _cloudchat_origin_from_body,
     _cron_job_count,
-    _cron_jobs,
     _cron_query_value,
     _excerpt_history_output,
     _extract_history_error,
@@ -71,133 +66,148 @@ def _build_hermes_run_history(job_id: str) -> list[dict]:
     return _cron_mod._build_hermes_run_history(job_id)
 
 
-# ------------------------------------------------------------------
-# Cron job storage (persistent JSON file + in-memory cache)
-# ------------------------------------------------------------------
-_cron_run_history: dict[str, list[dict]] = {}  # job_id -> list of run records
-MAX_RUN_HISTORY = 20
+def _cron_unavailable() -> JSONResponse:
+    """503 for every /cron route when the hermes cron backend did not load.
 
-# routes/ sits one level below hermes-bridge/; the data dir stays hermes-bridge/data.
+    There is one cron implementation (spec 5.6, G15): hermes-agent's, reached
+    in-process or through the helper interpreter. The bridge-local JSON store
+    and its own agent runner are gone; jobs it held are migrated into hermes at
+    startup (``_migrate_legacy_cron_jobs``).
+    """
+    detail = _HERMES_CRON_IMPORT_ERROR or "hermes-agent cron module not importable"
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": {
+                "code": "BRIDGE_STARTING",
+                "message": f"Hermes cron backend unavailable: {detail}",
+                "retryable": True,
+            }
+        },
+    )
+
+
+# ------------------------------------------------------------------
+# One-time migration of the retired bridge-local cron store
+# ------------------------------------------------------------------
+
+# routes/ sits one level below hermes-bridge/; the legacy data dir is hermes-bridge/data.
 _CRON_DATA_DIR = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "data")
 _CRON_JOBS_FILE = _os.path.join(_CRON_DATA_DIR, "cron_jobs.json")
 _CRON_HISTORY_FILE = _os.path.join(_CRON_DATA_DIR, "cron_history.json")
-_cron_lock = threading.Lock()
+_MIGRATED_SUFFIX = ".migrated"
 
 
-def _ensure_data_dir():
-    """Create the data directory if it doesn't exist."""
+def _legacy_job_key(name: Optional[str], prompt: Optional[str]) -> tuple[str, str]:
+    return (str(name or "").strip(), str(prompt or "").strip())
+
+
+def _migrate_legacy_cron_jobs(
+    jobs_file: Optional[str] = None,
+    history_file: Optional[str] = None,
+) -> dict:
+    """Move jobs from the retired ``data/cron_jobs.json`` into hermes cron, once.
+
+    Idempotent and loss-free:
+
+    * a legacy job whose (name, prompt) already exists in hermes is skipped, so
+      a crash mid-migration and the retry on the next start never duplicate;
+    * paused legacy jobs are created and then paused;
+    * the file is renamed to ``cron_jobs.json.migrated`` only when every job
+      made it across — on any failure it stays put and the next start retries;
+    * a file that cannot be parsed is left untouched (never deleted).
+
+    Returns ``{"migrated": n, "skipped": n, "failed": n, "marked": bool}``.
+    Blocking (hermes cron may go through the helper subprocess): call it off
+    the event loop.
+    """
+    jobs_file = jobs_file or _CRON_JOBS_FILE
+    history_file = history_file or _CRON_HISTORY_FILE
+    result = {"migrated": 0, "skipped": 0, "failed": 0, "marked": False}
+    if not _os.path.exists(jobs_file):
+        return result
     try:
-        _os.makedirs(_CRON_DATA_DIR, exist_ok=True)
-    except OSError as e:
-        print(f"[cron-persist] Error creating data dir: {e}", flush=True)
+        with open(jobs_file, "r", encoding="utf-8") as f:
+            legacy = _json.load(f)
+    except (OSError, ValueError) as e:
+        print(f"[cron] legacy store {jobs_file} unreadable, not migrating: {e}", flush=True)
+        result["failed"] = 1
+        return result
+    if not isinstance(legacy, dict):
+        print(f"[cron] legacy store {jobs_file} is not a job map, not migrating", flush=True)
+        result["failed"] = 1
+        return result
 
-
-def _atomic_write_json(filepath: str, data):
-    """Write JSON to a file atomically (write to temp, then rename)."""
-    dir_name = _os.path.dirname(filepath)
-    fd = None
-    tmp_path = None
-    try:
-        fd, tmp_path = _tempfile.mkstemp(dir=dir_name, suffix=".tmp")
-        with _os.fdopen(fd, "w") as f:
-            fd = None  # fdopen took ownership
-            _json.dump(data, f, ensure_ascii=False, indent=2)
-        _os.replace(tmp_path, filepath)
-        tmp_path = None  # successfully renamed
-    except Exception as e:
-        print(f"[cron-persist] Error writing {filepath}: {e}", flush=True)
-        if tmp_path and _os.path.exists(tmp_path):
-            try:
-                _os.unlink(tmp_path)
-            except OSError:
-                pass
-        raise
-
-
-def _load_cron_data():
-    """Load cron jobs and history from disk into memory."""
-    global _cron_jobs, _cron_run_history
-    _ensure_data_dir()
-    # Load jobs
-    try:
-        if _os.path.exists(_CRON_JOBS_FILE):
-            with open(_CRON_JOBS_FILE, "r") as f:
-                data = _json.load(f)
-            if isinstance(data, dict):
-                _cron_jobs = data
-                print(f"[cron-persist] Loaded {len(_cron_jobs)} cron jobs from disk", flush=True)
-    except Exception as e:
-        print(f"[cron-persist] Error loading cron jobs: {e}", flush=True)
-        _cron_jobs = {}
-    # Load history
-    try:
-        if _os.path.exists(_CRON_HISTORY_FILE):
-            with open(_CRON_HISTORY_FILE, "r") as f:
-                data = _json.load(f)
-            if isinstance(data, dict):
-                _cron_run_history = data
-                print(f"[cron-persist] Loaded run history for {len(_cron_run_history)} jobs", flush=True)
-    except Exception as e:
-        print(f"[cron-persist] Error loading cron history: {e}", flush=True)
-        _cron_run_history = {}
-
-
-def _save_cron_jobs():
-    """Persist current cron jobs to disk (thread-safe, atomic)."""
-    with _cron_lock:
+    existing = {
+        _legacy_job_key(job.get("name"), job.get("prompt"))
+        for job in (_hermes_list_jobs(include_disabled=True) or [])
+        if isinstance(job, dict)
+    }
+    for legacy_id, job in legacy.items():
+        if not isinstance(job, dict) or not job.get("schedule") or not job.get("prompt"):
+            print(f"[cron] legacy job {legacy_id!r} has no schedule/prompt, skipping", flush=True)
+            result["skipped"] += 1
+            continue
+        name = str(job.get("name") or f"job-{legacy_id}").strip()
+        key = _legacy_job_key(name, job.get("prompt"))
+        if key in existing:
+            result["skipped"] += 1
+            continue
         try:
-            _ensure_data_dir()
-            _atomic_write_json(_CRON_JOBS_FILE, _cron_jobs)
-        except Exception as e:
-            print(f"[cron-persist] Error saving cron jobs: {e}", flush=True)
+            created = _hermes_create_job(
+                prompt=str(job["prompt"]),
+                schedule=str(job["schedule"]),
+                name=name,
+                deliver="local",
+                origin=None,
+            )
+            if job.get("status") == "paused" and isinstance(created, dict) and created.get("id"):
+                _hermes_pause_job(created["id"])
+            existing.add(key)
+            result["migrated"] += 1
+        except Exception as e:  # noqa: BLE001 - one bad job must not block the rest; retried next start
+            result["failed"] += 1
+            print(f"[cron] failed to migrate legacy job {legacy_id!r} ({name}): {e}", flush=True)
 
-
-def _save_cron_history():
-    """Persist current cron run history to disk (thread-safe, atomic)."""
-    with _cron_lock:
+    if result["failed"] == 0:
         try:
-            _ensure_data_dir()
-            _atomic_write_json(_CRON_HISTORY_FILE, _cron_run_history)
-        except Exception as e:
-            print(f"[cron-persist] Error saving cron history: {e}", flush=True)
+            _os.replace(jobs_file, jobs_file + _MIGRATED_SUFFIX)
+            if _os.path.exists(history_file):
+                _os.replace(history_file, history_file + _MIGRATED_SUFFIX)
+            result["marked"] = True
+        except OSError as e:
+            # Still safe: the dedupe above makes the next start's retry a no-op.
+            print(f"[cron] migrated legacy jobs but could not mark {jobs_file}: {e}", flush=True)
+    print(
+        f"[cron] legacy cron store migration: migrated={result['migrated']} "
+        f"skipped={result['skipped']} failed={result['failed']} marked={result['marked']}",
+        flush=True,
+    )
+    return result
 
-try:
-    from croniter import croniter as _croniter_cls
-except ImportError:
-    _croniter_cls = None
 
-
-def _compute_next_run(schedule: str) -> Optional[str]:
-    """Compute next run time from a cron expression. Returns ISO string or None."""
-    if not _croniter_cls:
-        return None
-    try:
-        now = datetime.now(timezone.utc)
-        cron = _croniter_cls(schedule, now)
-        return cron.get_next(datetime).isoformat()
-    except Exception:
-        return None
-
+# ------------------------------------------------------------------
+# Routes
+# ------------------------------------------------------------------
 
 @router.get("/cron")
 async def list_cron_jobs(request: Request):
-    if _HERMES_CRON_AVAILABLE:
-        conversation_id = _cron_query_value(request, "conversation_id")
-        hermes_jobs = await _ops_thread(_hermes_list_jobs, include_disabled=True)
-        jobs = [_map_hermes_job(job) for job in hermes_jobs]
-        if conversation_id:
-            jobs = [job for job in jobs if job.get("conversation_id") == conversation_id]
-        jobs.sort(key=lambda item: item.get("created_at") or "", reverse=True)
-        return JSONResponse(content={"jobs": jobs})
-
-    return JSONResponse(content={"jobs": list(_cron_jobs.values())})
+    if not _HERMES_CRON_AVAILABLE:
+        return _cron_unavailable()
+    conversation_id = _cron_query_value(request, "conversation_id")
+    hermes_jobs = await _ops_thread(_hermes_list_jobs, include_disabled=True)
+    jobs = [_map_hermes_job(job) for job in hermes_jobs]
+    if conversation_id:
+        jobs = [job for job in jobs if job.get("conversation_id") == conversation_id]
+    jobs.sort(key=lambda item: item.get("created_at") or "", reverse=True)
+    return JSONResponse(content={"jobs": jobs})
 
 
 @router.post("/cron")
 async def create_cron_job(request: Request):
     try:
         body = await request.json()
-    except Exception:
+    except ValueError:
         return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
 
     schedule = body.get("schedule")
@@ -206,194 +216,63 @@ async def create_cron_job(request: Request):
 
     if not schedule or not prompt:
         return JSONResponse(status_code=400, content={"error": "schedule and prompt are required"})
+    if not _HERMES_CRON_AVAILABLE:
+        return _cron_unavailable()
 
-    if _HERMES_CRON_AVAILABLE:
-        origin = _cloudchat_origin_from_body(body)
-        job = await _ops_thread(
-            _hermes_create_job,
-            prompt=str(prompt),
-            schedule=str(schedule),
-            name=str(name).strip() or None,
-            deliver="local",
-            origin=origin,
-        )
-        return JSONResponse(status_code=201, content={"job": _map_hermes_job(job)})
-
-    job_id = str(uuid.uuid4())[:8]
-    now = datetime.now(timezone.utc).isoformat()
-    next_run = _compute_next_run(schedule)
-    job = {
-        "id": job_id,
-        "name": name or f"job-{job_id}",
-        "schedule": schedule,
-        "prompt": prompt,
-        "status": "active",
-        "created_at": now,
-        "last_run": None,
-        "next_run": next_run,
-    }
-    _cron_jobs[job_id] = job
-    _save_cron_jobs()
-    return JSONResponse(status_code=201, content={"job": job})
+    origin = _cloudchat_origin_from_body(body)
+    job = await _ops_thread(
+        _hermes_create_job,
+        prompt=str(prompt),
+        schedule=str(schedule),
+        name=str(name).strip() or None,
+        deliver="local",
+        origin=origin,
+    )
+    return JSONResponse(status_code=201, content={"job": _map_hermes_job(job)})
 
 
 @router.delete("/cron/{job_id}")
 async def delete_cron_job(job_id: str):
-    if _HERMES_CRON_AVAILABLE:
-        if not await _ops_thread(_hermes_remove_job, job_id):
-            return JSONResponse(status_code=404, content={"error": "not found"})
-        return JSONResponse(content={"ok": True})
-
-    if job_id not in _cron_jobs:
+    if not _HERMES_CRON_AVAILABLE:
+        return _cron_unavailable()
+    if not await _ops_thread(_hermes_remove_job, job_id):
         return JSONResponse(status_code=404, content={"error": "not found"})
-    _cron_jobs.pop(job_id)
-    _cron_run_history.pop(job_id, None)
-    _save_cron_jobs()
-    _save_cron_history()
     return JSONResponse(content={"ok": True})
 
 
 @router.post("/cron/{job_id}/pause")
 async def pause_cron_job(job_id: str):
-    if _HERMES_CRON_AVAILABLE:
-        updated = await _ops_thread(_hermes_pause_job, job_id)
-        if not updated:
-            return JSONResponse(status_code=404, content={"error": "not found"})
-        return JSONResponse(content={"job": _map_hermes_job(updated)})
-
-    if job_id not in _cron_jobs:
+    if not _HERMES_CRON_AVAILABLE:
+        return _cron_unavailable()
+    updated = await _ops_thread(_hermes_pause_job, job_id)
+    if not updated:
         return JSONResponse(status_code=404, content={"error": "not found"})
-    _cron_jobs[job_id]["status"] = "paused"
-    _save_cron_jobs()
-    return JSONResponse(content={"job": _cron_jobs[job_id]})
+    return JSONResponse(content={"job": _map_hermes_job(updated)})
 
 
 @router.post("/cron/{job_id}/resume")
 async def resume_cron_job(job_id: str):
-    if _HERMES_CRON_AVAILABLE:
-        updated = await _ops_thread(_hermes_resume_job, job_id)
-        if not updated:
-            return JSONResponse(status_code=404, content={"error": "not found"})
-        return JSONResponse(content={"job": _map_hermes_job(updated)})
-
-    if job_id not in _cron_jobs:
+    if not _HERMES_CRON_AVAILABLE:
+        return _cron_unavailable()
+    updated = await _ops_thread(_hermes_resume_job, job_id)
+    if not updated:
         return JSONResponse(status_code=404, content={"error": "not found"})
-    _cron_jobs[job_id]["status"] = "active"
-    _save_cron_jobs()
-    return JSONResponse(content={"job": _cron_jobs[job_id]})
-
-
-def _run_cron_agent(job: dict, run_record: dict):
-    """Background thread: run the agent for a cron job and collect output."""
-    try:
-        # Import AIAgent here to avoid circular issues
-        from hermes_adapter import HermesAgentAdapter as AIAgent
-
-        output_chunks: list[str] = []
-        tool_log: list[dict] = []
-
-        def on_text(text: str):
-            output_chunks.append(text)
-
-        def on_tool_start(name: str, inp: str):
-            tool_log.append({"type": "tool_start", "name": name, "input": inp[:500]})
-
-        def on_tool_end(name: str, out: str):
-            tool_log.append({"type": "tool_end", "name": name, "output": out[:500]})
-
-        def on_thinking(iteration: int):
-            tool_log.append({"type": "thinking", "iteration": iteration})
-
-        def on_reasoning(text: str):
-            pass  # skip reasoning in cron output
-
-        def on_server_tool_event(event: dict):
-            pass  # skip server tool events in cron
-
-        agent = AIAgent(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=os.environ.get("HERMES_OPENROUTER_KEY", ""),
-            model=job.get("model") or os.environ.get("HERMES_DEFAULT_MODEL", "meta-llama/llama-4-maverick"),
-            max_iterations=int(os.environ.get("HERMES_MAX_ITERATIONS", "30")),
-            enabled_toolsets=job.get("toolsets") or os.environ.get("HERMES_TOOLSETS", "web,browser,terminal"),
-            on_tool_start=on_tool_start,
-            on_tool_end=on_tool_end,
-            on_text=on_text,
-            on_server_tool_event=on_server_tool_event,
-        )
-        agent.on_thinking = on_thinking
-        agent.on_reasoning = on_reasoning
-
-        # Build a minimal system context from the job prompt
-        conversation_history = [{"role": "system", "content": f"You are executing a scheduled cron job named '{job.get('name', job['id'])}'. Follow the instructions below."}]
-
-        agent.run_conversation(
-            user_message=job["prompt"],
-            conversation_history=conversation_history,
-        )
-
-        run_record["status"] = "completed"
-        run_record["output"] = "".join(output_chunks)
-        run_record["tool_log"] = tool_log
-    except Exception as e:
-        run_record["status"] = "failed"
-        run_record["error"] = str(e)
-        run_record["output"] = "".join(output_chunks) if 'output_chunks' in dir() else ""
-    finally:
-        run_record["completed_at"] = datetime.now(timezone.utc).isoformat()
-        _save_cron_history()
+    return JSONResponse(content={"job": _map_hermes_job(updated)})
 
 
 @router.post("/cron/{job_id}/run")
 async def run_cron_job(job_id: str):
-    if _HERMES_CRON_AVAILABLE:
-        job = await _ops_thread(_hermes_get_job, job_id)
-        if not job:
-            return JSONResponse(status_code=404, content={"error": "not found"})
-        updated = await _ops_thread(_hermes_trigger_job, job_id)
-        threading.Thread(target=_run_hermes_tick_now, daemon=True).start()
-        return JSONResponse(content={
-            "ok": True,
-            "status": "queued",
-            "job": _map_hermes_job(updated or job),
-        })
-
-    if job_id not in _cron_jobs:
+    if not _HERMES_CRON_AVAILABLE:
+        return _cron_unavailable()
+    job = await _ops_thread(_hermes_get_job, job_id)
+    if not job:
         return JSONResponse(status_code=404, content={"error": "not found"})
-    job = _cron_jobs[job_id]
-    run_time = datetime.now(timezone.utc).isoformat()
-    job["last_run"] = run_time
-    # Compute next_run from schedule
-    job["next_run"] = _compute_next_run(job.get("schedule", ""))
-
-    run_id = str(uuid.uuid4())[:8]
-    run_record = {
-        "run_id": run_id,
-        "job_id": job_id,
-        "started_at": run_time,
-        "completed_at": None,
-        "status": "running",
-        "output": "",
-        "error": None,
-        "tool_log": [],
-    }
-
-    # Store in history
-    history = _cron_run_history.setdefault(job_id, [])
-    history.insert(0, run_record)
-    if len(history) > MAX_RUN_HISTORY:
-        _cron_run_history[job_id] = history[:MAX_RUN_HISTORY]
-    _save_cron_jobs()
-    _save_cron_history()
-
-    # Spawn background thread
-    t = threading.Thread(target=_run_cron_agent, args=(job, run_record), daemon=True)
-    t.start()
-
+    updated = await _ops_thread(_hermes_trigger_job, job_id)
+    threading.Thread(target=_run_hermes_tick_now, daemon=True).start()
     return JSONResponse(content={
         "ok": True,
-        "run_id": run_id,
-        "status": "running",
+        "status": "queued",
+        "job": _map_hermes_job(updated or job),
     })
 
 
@@ -401,100 +280,64 @@ async def run_cron_job(job_id: str):
 async def get_cron_history(job_id: str):
     if not _JOB_ID_RE.match(job_id or ""):
         return JSONResponse(status_code=422, content={"error": "invalid job_id"})
-    if _HERMES_CRON_AVAILABLE:
-        if not await _ops_thread(_hermes_get_job, job_id):
-            return JSONResponse(status_code=404, content={"error": "not found"})
-        return JSONResponse(content={"job_id": job_id, "runs": _build_hermes_run_history(job_id)})
-
-    if job_id not in _cron_jobs:
+    if not _HERMES_CRON_AVAILABLE:
+        return _cron_unavailable()
+    if not await _ops_thread(_hermes_get_job, job_id):
         return JSONResponse(status_code=404, content={"error": "not found"})
-    history = _cron_run_history.get(job_id, [])
-    return JSONResponse(content={"job_id": job_id, "runs": history})
+    runs = await _ops_thread(_build_hermes_run_history, job_id)
+    return JSONResponse(content={"job_id": job_id, "runs": runs})
 
 
 # ------------------------------------------------------------------
 # Background cron scheduler
 # ------------------------------------------------------------------
 
+CRON_TICK_SECONDS = 30
+
+
+def _cron_startup() -> None:
+    """Blocking startup work: migrate the legacy store, then report the job count."""
+    try:
+        _migrate_legacy_cron_jobs()
+    except Exception as e:  # noqa: BLE001 - migration retries next start; scheduling must still run
+        print(f"[cron] legacy cron migration failed: {e}", flush=True)
+    try:
+        job_count = len(_hermes_list_jobs(include_disabled=True) or [])
+    except Exception as e:  # noqa: BLE001 - informational count only
+        print(f"[cron] Failed to inspect Hermes jobs on startup: {e}", flush=True)
+        return
+    print(f"[cron] Hermes-backed scheduler running with {job_count} jobs", flush=True)
+
+
 async def _cron_scheduler_loop():
-    """Background task: check active cron jobs every 30s and trigger them."""
+    """Background task: run the hermes cron tick every 30s, off the event loop.
+
+    ``tick`` runs due jobs synchronously (in-process, or via the helper
+    subprocess), so calling it directly on the loop — as this used to — froze
+    every request for the length of a cron run.
+    """
+    await _ops_thread(_cron_startup)
     while True:
         try:
-            if _HERMES_CRON_AVAILABLE:
-                _run_hermes_tick_now()
-                await asyncio.sleep(30)
-                continue
-
-            now = datetime.now(timezone.utc)
-            for job_id, job in list(_cron_jobs.items()):
-                if job.get("status") != "active":
-                    continue
-                next_run_str = job.get("next_run")
-                if not next_run_str:
-                    continue
-                try:
-                    next_run_dt = datetime.fromisoformat(next_run_str)
-                    if next_run_dt.tzinfo is None:
-                        next_run_dt = next_run_dt.replace(tzinfo=timezone.utc)
-                except (ValueError, TypeError):
-                    continue
-                if now >= next_run_dt:
-                    print(f"[cron-scheduler] Triggering job {job_id} ({job.get('name', '')})", flush=True)
-                    try:
-                        run_time = now.isoformat()
-                        job["last_run"] = run_time
-                        job["next_run"] = _compute_next_run(job.get("schedule", ""))
-
-                        run_id = str(uuid.uuid4())[:8]
-                        run_record = {
-                            "run_id": run_id,
-                            "job_id": job_id,
-                            "started_at": run_time,
-                            "completed_at": None,
-                            "status": "running",
-                            "output": "",
-                            "error": None,
-                            "tool_log": [],
-                        }
-                        history = _cron_run_history.setdefault(job_id, [])
-                        history.insert(0, run_record)
-                        if len(history) > MAX_RUN_HISTORY:
-                            _cron_run_history[job_id] = history[:MAX_RUN_HISTORY]
-                        _save_cron_jobs()
-                        _save_cron_history()
-
-                        t = threading.Thread(target=_run_cron_agent, args=(job, run_record), daemon=True)
-                        t.start()
-                    except Exception as e:
-                        print(f"[cron-scheduler] Error triggering job {job_id}: {e}", flush=True)
-        except Exception as e:
+            await _ops_thread(_run_hermes_tick_now)
+        except Exception as e:  # noqa: BLE001 - one bad tick must not kill the scheduler
             print(f"[cron-scheduler] Scheduler loop error: {e}", flush=True)
-        await asyncio.sleep(30)
+        await asyncio.sleep(CRON_TICK_SECONDS)
 
 
-def _start_cron_scheduler() -> asyncio.Task:
-    """Start the cron scheduler loop and return its task handle.
+def _start_cron_scheduler() -> Optional[asyncio.Task]:
+    """Start the cron scheduler loop and return its task handle (None when unavailable).
 
     Returns the task so the lifespan can cancel and await it on shutdown — the
     old fire-and-forget create_task() left the loop running past app teardown, and
     gave tests no way to assert the scheduler was actually alive.
     """
-    if _HERMES_CRON_AVAILABLE:
-        try:
-            job_count = len(_hermes_list_jobs(include_disabled=True))
-        except Exception as e:
-            job_count = 0
-            print(f"[cron] Failed to inspect Hermes jobs on startup: {e}", flush=True)
-        print(f"[cron] Hermes-backed scheduler starting with {job_count} jobs", flush=True)
-        return asyncio.create_task(_cron_scheduler_loop())
-
-    # Load persisted cron data from disk
-    _load_cron_data()
-    # Recompute next_run for active jobs (they may have been offline)
-    for job_id, job in _cron_jobs.items():
-        if job.get("status") == "active" and job.get("schedule"):
-            job["next_run"] = _compute_next_run(job["schedule"])
-    if _cron_jobs:
-        _save_cron_jobs()
-    print(f"[cron] Scheduler starting with {len(_cron_jobs)} jobs", flush=True)
+    if not _HERMES_CRON_AVAILABLE:
+        print(
+            "[cron] Hermes cron backend unavailable; scheduler not started "
+            f"({_HERMES_CRON_IMPORT_ERROR or 'cron module not importable'})",
+            flush=True,
+        )
+        return None
+    print("[cron] Hermes-backed scheduler starting", flush=True)
     return asyncio.create_task(_cron_scheduler_loop())

@@ -70,7 +70,7 @@ def list_recent_manifests(hermes_home: Path, *, limit: int = 8) -> List[Dict[str
             data.setdefault("delegation_id", child.name)
             mtime = manifest_path.stat().st_mtime
             entries.append((mtime, data))
-        except Exception:
+        except Exception:  # noqa: BLE001 - one unreadable manifest must not hide the others
             continue
     entries.sort(key=lambda item: item[0], reverse=True)
     return [item[1] for item in entries[: max(1, min(limit, 20))]]

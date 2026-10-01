@@ -48,7 +48,7 @@ async def workspace_skills_hub(request: Request):
         return JSONResponse(content={"skills": skills})
     except subprocess.TimeoutExpired:
         return JSONResponse(status_code=504, content={"error": "skills hub request timed out"})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - surfaced to the client as a 500
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -64,7 +64,7 @@ async def workspace_skill_install(payload: HermesHubSkillInstallRequest, request
         return JSONResponse(status_code=504, content={"error": "skill install timed out"})
     except FileNotFoundError:
         return JSONResponse(status_code=500, content={"error": "hermes command not found"})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - surfaced to the client as a 500
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -80,7 +80,7 @@ async def workspace_skill_uninstall(request: Request):
     try:
         skill_path = (skills_dir / skill_id).resolve()
         skill_path.relative_to(skills_dir.resolve())
-    except Exception:
+    except (OSError, ValueError, RuntimeError):
         return JSONResponse(status_code=404, content={"error": "skill not found"})
 
     if skill_path.is_dir():
@@ -115,5 +115,5 @@ async def workspace_skill_uninstall(request: Request):
         return JSONResponse(status_code=504, content={"error": "uninstall timed out"})
     except FileNotFoundError:
         return JSONResponse(status_code=500, content={"error": "hermes command not found"})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - surfaced to the client as a 500
         return JSONResponse(status_code=500, content={"error": str(e)})

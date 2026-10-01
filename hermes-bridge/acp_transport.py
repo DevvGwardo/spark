@@ -195,7 +195,7 @@ class BridgeAcpClient:
     async def session_update(self, session_id: str, update: Any, **kwargs: Any) -> None:
         try:
             self._dispatch(session_id, update)
-        except Exception as exc:  # never let a translate error kill the loop
+        except Exception as exc:  # noqa: BLE001 - a translate error must not kill the receive loop (logged below)
             logger.warning("acp session_update dispatch failed: %s", exc, exc_info=True)
 
     async def request_permission(
@@ -391,28 +391,34 @@ class _AcpHandle:
                 self.conn.close_session(self.session_id),
                 timeout=CLOSE_SESSION_TIMEOUT_SECONDS,
             )
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort teardown; process is killed next
+            logger.debug("acp close_session failed", exc_info=True)
         if self.proc is not None:
             try:
                 if self.proc.returncode is None:
                     self.proc.kill()
-            except Exception:
+            except ProcessLookupError:
                 pass
             try:
                 await self.proc.wait()
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - best-effort reap during teardown
+                logger.debug("acp proc.wait failed", exc_info=True)
         if self.stderr_file is not None:
             try:
                 self.stderr_file.close()
-            except Exception:
+            except OSError:
                 pass
             self.stderr_file = None
 
 
 _sessions: dict[str, _AcpHandle] = {}
+# Guards ``_sessions`` / ``_conversation_locks`` dict access only — never held
+# across a spawn, a prompt or a close (see ensure_session).
 _sessions_lock = asyncio.Lock()
+# Per-conversation session-setup locks (G11), created by _conversation_lock.
+_conversation_locks: dict[str, asyncio.Lock] = {}
+# Bumped by shutdown_all so a spawn that finishes after shutdown is discarded.
+_sessions_generation = 0
 
 # How long to wait for the agent to acknowledge close_session before we
 # hard-kill the process. Keep it short — this runs on the bridge's event loop.
@@ -523,41 +529,46 @@ async def ensure_session(
     an environment hint (``HERMES_ACP_PLAN_MODE=1``) — best-effort, never
     blocks spawning.
     """
-    import acp
-    from acp.schema import ClientCapabilities, Implementation
+    # Fail fast (no retries) when the ACP SDK itself is missing.
+    import acp  # noqa: F401
 
-    async with _sessions_lock:
-        handle = _sessions.get(conversation_id)
-        if handle is not None and handle.proc.returncode is None:
-            if _same_dir(handle.cwd, cwd) and handle.plan_mode == plan_mode:
-                handle.touch()
-                return handle
-            # The conversation moved to a different checkout (repo switch) or toggled plan_mode —
-            # a reused session would resolve relative reads/searches against
-            # the old cwd and fail every one, or have the wrong tools registered. Tear down and respawn there.
-            _sessions.pop(conversation_id, None)
-            loop.create_task(_close_handle_quietly(handle))
-            handle = None
+    # Two locks (G11). The per-conversation lock serializes first-turn spawns
+    # for ONE conversation, so a double-submit cannot start two hermes-acp
+    # children for it. The global ``_sessions_lock`` guards only the dict and
+    # is never held across the spawn, its retries or their backoff — holding
+    # it there made every other conversation's first turn wait behind a
+    # multi-second hermes-acp startup.
+    conv_lock = await _conversation_lock(conversation_id)
+    async with conv_lock:
+        stale: Optional[_AcpHandle] = None
+        reason: Optional[str] = None
+        async with _sessions_lock:
+            handle = _sessions.get(conversation_id)
+            if handle is not None and handle.proc.returncode is None:
+                if _same_dir(handle.cwd, cwd) and handle.plan_mode == plan_mode:
+                    handle.touch()
+                    return handle
+                # The conversation moved to a different checkout (repo switch) or
+                # toggled plan_mode — a reused session would resolve relative
+                # reads/searches against the old cwd and fail every one, or have
+                # the wrong tools registered. Tear down and respawn there.
+                reason = "acp-transport-cwd-switch"
+            elif handle is not None:
+                # The previous hermes-acp process died — drop the handle and
+                # release its stderr log fd in the background before respawning.
+                reason = "acp-transport-reconnect"
+            if handle is not None:
+                _sessions.pop(conversation_id, None)
+                stale = handle
+            generation = _sessions_generation
+        if stale is not None:
+            loop.create_task(_close_handle_quietly(stale))
             emit(
                 "stream_retry",
                 stream_retry_event(
                     attempt=1,
                     max_attempts=ACP_SPAWN_MAX_ATTEMPTS,
-                    reason="acp-transport-cwd-switch",
-                    delay_ms=0,
-                ),
-            )
-        if handle is not None:
-            # The previous hermes-acp process died — drop the handle and
-            # release its stderr log fd in the background before respawning.
-            _sessions.pop(conversation_id, None)
-            loop.create_task(_close_handle_quietly(handle))
-            emit(
-                "stream_retry",
-                stream_retry_event(
-                    attempt=1,
-                    max_attempts=ACP_SPAWN_MAX_ATTEMPTS,
-                    reason="acp-transport-reconnect",
+                    reason=reason,
                     delay_ms=0,
                 ),
             )
@@ -585,14 +596,6 @@ async def ensure_session(
                     plan_mode=plan_mode,
                     spawn_env=spawn_env,
                 )
-                _sessions[conversation_id] = handle
-                logger.info(
-                    "acp session %s ready for conversation %s (cwd=%s)",
-                    handle.session_id,
-                    conversation_id,
-                    cwd,
-                )
-                return handle
             except BaseException as exc:  # noqa: BLE001 - spawn must be retried
                 last_error = exc
                 if spawn_attempt >= ACP_SPAWN_MAX_ATTEMPTS:
@@ -609,9 +612,47 @@ async def ensure_session(
                 )
                 if delay_ms > 0:
                     await asyncio.sleep(delay_ms / 1000)
+                continue
+
+            async with _sessions_lock:
+                shut_down = generation != _sessions_generation
+                if not shut_down:
+                    _sessions[conversation_id] = handle
+            if shut_down:
+                # shutdown_all() ran while this spawn was in flight; it could not
+                # see the new child, so close it here rather than orphan it.
+                await _close_handle_quietly(handle)
+                raise RuntimeError("ACP transport shut down during session spawn")
+            logger.info(
+                "acp session %s ready for conversation %s (cwd=%s)",
+                handle.session_id,
+                conversation_id,
+                cwd,
+            )
+            return handle
 
         # Should not reach here — the loop either returns or re-raises.
         raise RuntimeError("hermes-acp spawn failed") from last_error
+
+
+async def _conversation_lock(conversation_id: str) -> asyncio.Lock:
+    """The lock serializing session setup for one conversation (created on demand)."""
+    async with _sessions_lock:
+        lock = _conversation_locks.get(conversation_id)
+        if lock is None:
+            lock = _conversation_locks[conversation_id] = asyncio.Lock()
+        return lock
+
+
+def _prune_conversation_locks_locked() -> None:
+    """Drop setup locks nobody holds for conversations with no live session.
+
+    Caller holds ``_sessions_lock``. Keeps ``_conversation_locks`` bounded by
+    the live/in-flight conversations instead of every id ever seen.
+    """
+    for cid, lock in list(_conversation_locks.items()):
+        if cid not in _sessions and not lock.locked():
+            _conversation_locks.pop(cid, None)
 
 
 async def _spawn_session(
@@ -684,7 +725,7 @@ async def _spawn_session(
             if method_id:
                 try:
                     await conn.authenticate(method_id)
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - auth is optional; session setup proceeds and surfaces real failures later
                     logger.warning("acp authenticate(%s) failed: %s", method_id, exc)
 
         ns = await conn.new_session(cwd=cwd or ".")
@@ -696,7 +737,7 @@ async def _spawn_session(
             model_id = build_session_model_id(provider, model)
             try:
                 await conn.set_session_model(model_id, session_id)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - model selection is best-effort; session keeps its default model
                 logger.warning("acp set_session_model(%s) failed: %s", model_id, exc)
     except BaseException:
         # Setup failed partway — never leave an orphaned hermes-acp or a
@@ -705,16 +746,16 @@ async def _spawn_session(
             try:
                 if proc.returncode is None:
                     proc.kill()
-            except Exception:
+            except ProcessLookupError:
                 pass
             try:
                 await proc.wait()
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - best-effort reap; original error is re-raised below
+                logger.debug("acp proc.wait failed during setup cleanup", exc_info=True)
         if stderr_file is not None:
             try:
                 stderr_file.close()
-            except Exception:
+            except OSError:
                 pass
         raise
 
@@ -736,8 +777,8 @@ async def _close_handle_quietly(handle: _AcpHandle) -> None:
     """Close a handle in the background; never raises, never blocks callers."""
     try:
         await handle.close()
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - documented never-raises background close
+        logger.debug("acp background handle close failed", exc_info=True)
 
 
 def run_prompt_blocking(
@@ -847,22 +888,26 @@ async def reap_idle_sessions() -> int:
             if now - handle.last_used > IDLE_TIMEOUT_SECONDS:
                 _sessions.pop(cid, None)
                 stale.append(handle)
+        _prune_conversation_locks_locked()
     for handle in stale:
         try:
             await handle.close()
             closed += 1
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - one bad handle must not block closing the rest
+            logger.debug("acp handle close failed", exc_info=True)
     return closed
 
 
 async def shutdown_all() -> None:
     """Close every live ACP session (used on bridge shutdown)."""
+    global _sessions_generation
     async with _sessions_lock:
+        _sessions_generation += 1
         handles = list(_sessions.values())
         _sessions.clear()
+        _prune_conversation_locks_locked()
     for handle in handles:
         try:
             await handle.close()
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - one bad handle must not block closing the rest
+            logger.debug("acp handle close failed during shutdown", exc_info=True)

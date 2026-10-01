@@ -4,18 +4,22 @@ Moved verbatim from main.py (spec 4.1). Names that tests patch are owned by one
 module and other modules reach them as ``<module>.<name>`` so a single
 ``patch.object(<module>, name)`` reaches every caller, as patching main did.
 """
+import logging
 import os
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import anyio
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 import bridge_workspace
+import config_io
 import mcp_telemetry
+from bridge_errors import INTERNAL, VALIDATION, BridgeError
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -111,7 +115,8 @@ def _read_hermes_config(hermes_home: Path) -> dict:
         with open(path) as f:
             cfg = yaml.safe_load(f)
         return cfg if isinstance(cfg, dict) else {}
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort read; callers fall back to an empty config
+        logger.debug("MCP config read failed; treating as empty", exc_info=True)
         return {}
 
 
@@ -180,63 +185,122 @@ def _build_mcp_entry_from_catalog(entry: dict, param: Optional[str]) -> dict:
     return built
 
 
-def _backup_hermes_config(path: Path) -> None:
-    if path.is_file():
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        path.with_name(f"config.yaml.bak-{ts}").write_text(
-            path.read_text(encoding="utf-8"), encoding="utf-8"
-        )
-
-
 def _load_hermes_config_editable(hermes_home: Path):
-    """Load config.yaml for editing. Returns ``(dump, data)`` where ``dump()``
-    backs up the file and writes ``data`` back. Uses ruamel round-trip when
-    available (preserves comments/format), else PyYAML (comments lost)."""
+    """Load config.yaml for editing. Returns ``(dump, data)``.
+
+    ``data`` is a ruamel round-trip map (comments and formatting survive), and
+    ``dump()`` writes it back through config_io: exclusive file lock, bounded
+    ``.bak`` rotation, temp file + ``os.replace`` (spec 5.4, G12).
+
+    Fails loudly instead of degrading:
+
+    * no ruamel → BridgeError (500) — the old PyYAML fallback silently threw
+      away every comment in the user's config;
+    * the file changed on disk between load and ``dump()`` (another request,
+      or the ``hermes`` CLI) → BridgeError (409, retryable) and nothing is
+      written, rather than clobbering the other writer's change.
+    """
     path = _hermes_config_path(hermes_home)
     text = path.read_text(encoding="utf-8") if path.is_file() else ""
     try:
-        from ruamel.yaml import YAML
-        from ruamel.yaml.comments import CommentedMap
+        yaml_rt, data = config_io.load_yaml_roundtrip(text)
+    except config_io.ConfigWriteError as exc:
+        raise BridgeError(INTERNAL, str(exc), retryable=False, status_code=500) from exc
+    except Exception as exc:  # noqa: BLE001 - any parser error becomes the envelope
+        raise BridgeError(
+            VALIDATION,
+            f"{path} could not be parsed for editing: {exc}",
+            retryable=False,
+            status_code=500,
+        ) from exc
 
-        yaml_rt = YAML()
-        yaml_rt.preserve_quotes = True
-        # Don't fold long scalars (e.g. absolute command paths) across lines.
-        yaml_rt.width = 4096
-        data = yaml_rt.load(text) if text.strip() else CommentedMap()
-        if data is None:
-            data = CommentedMap()
+    def _dump():
+        with config_io.file_lock(path):
+            current = path.read_text(encoding="utf-8") if path.is_file() else ""
+            if current != text:
+                raise BridgeError(
+                    VALIDATION,
+                    f"{path.name} changed on disk while it was being edited; reload and retry.",
+                    retryable=True,
+                    status_code=409,
+                )
+            config_io.atomic_write_text(
+                path, config_io.dump_yaml_roundtrip(yaml_rt, data), _locked=True
+            )
 
-        def _dump():
-            _backup_hermes_config(path)
-            with open(path, "w") as f:
-                yaml_rt.dump(data, f)
-
-        return _dump, data
-    except Exception:
-        import yaml
-
-        data = (yaml.safe_load(text) if text.strip() else {}) or {}
-
-        def _dump():
-            _backup_hermes_config(path)
-            with open(path, "w") as f:
-                yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
-
-        return _dump, data
+    return _dump, data
 
 
-def _reload_agent_mcp() -> bool:
-    """Best-effort in-process reload of the installed agent's MCP layer so a
-    freshly-installed server connects without a full bridge restart."""
-    try:
-        from tools.mcp_tool_lifecycle import shutdown_mcp_servers
-        from tools.mcp_tool_discovery import discover_mcp_tools
-
-        shutdown_mcp_servers()
-        discover_mcp_tools()
+def _is_process_hermes_home(hermes_home: Optional[Path]) -> bool:
+    """True when ``hermes_home`` is the home the in-process agent's MCP layer serves."""
+    if hermes_home is None:
         return True
-    except Exception as exc:
+    try:
+        return Path(hermes_home).resolve() == bridge_workspace._HERMES_HOME.resolve()
+    except OSError:
+        return Path(hermes_home) == bridge_workspace._HERMES_HOME
+
+
+def _reload_agent_mcp(
+    hermes_home: Optional[Path] = None,
+    *,
+    removed: tuple[str, ...] = (),
+) -> bool:
+    """Bring the in-process agent's MCP servers in step with config.yaml (spec 5.8).
+
+    This used to call ``shutdown_mcp_servers()`` with no arguments — the
+    process-wide wildcard — then rediscover, so installing one server killed
+    every other MCP connection out from under any agent run using it. Now:
+
+    * a config edit for another profile (``X-Hermes-Profile``) never touches
+      the process's servers — that profile's agents read its config.yaml when
+      their next session starts;
+    * otherwise hermes' ``reconcile_mcp_servers_with_config`` tears down only
+      servers removed from / disabled in config and connects only new ones,
+      scoped to the current registry scope;
+    * on an older hermes-agent without it, new servers are connected
+      additively and only the ``removed`` names are shut down.
+
+    Blocking (discovery may wait on hermes' cross-process lock) — call it off
+    the event loop.
+    """
+    if not _is_process_hermes_home(hermes_home):
+        print(
+            f"[hermes-bridge] MCP reload skipped: config edit for profile home {hermes_home} "
+            "applies to that profile's next session",
+            flush=True,
+        )
+        return False
+    try:
+        from tools import mcp_tool_discovery
+    except Exception as exc:  # noqa: BLE001 - optional integration: no agent, no reload
         print(f"[hermes-bridge] MCP reload skipped: {exc}", flush=True)
+        return False
+    try:
+        reconcile = getattr(mcp_tool_discovery, "reconcile_mcp_servers_with_config", None)
+        if reconcile is not None:
+            result = reconcile()
+            print(f"[hermes-bridge] MCP reconcile: {result}", flush=True)
+            return True
+        if removed:
+            import inspect
+
+            from tools.mcp_tool_lifecycle import shutdown_mcp_servers
+
+            if "names" in inspect.signature(shutdown_mcp_servers).parameters:
+                shutdown_mcp_servers(names=set(removed))
+            else:
+                # Too old to scope a teardown. Leaving the removed server
+                # connected until restart beats killing every live server.
+                print(
+                    "[hermes-bridge] MCP: hermes-agent cannot stop a single server; "
+                    f"{', '.join(removed)} stays connected until the bridge restarts",
+                    flush=True,
+                )
+        mcp_tool_discovery.discover_mcp_tools()
+        return True
+    except Exception as exc:  # noqa: BLE001 - reload is best-effort; config is already saved
+        print(f"[hermes-bridge] MCP reload failed: {exc}", flush=True)
         return False
 
 
@@ -259,7 +323,8 @@ def _build_mcp_tool_index(hermes_home: Path) -> list[dict]:
         discover_mcp_tools()
         with _agent_lock:
             pairs = list(_mcp_tool_server_names.items())
-    except Exception:
+    except Exception:  # noqa: BLE001 - optional integration; index falls back to empty
+        logger.debug("MCP tool discovery failed; returning empty index", exc_info=True)
         pairs = []
         registry = None  # type: ignore[assignment]
 
@@ -315,10 +380,12 @@ async def workspace_mcp_install(request: Request, body: McpInstallRequest):
         return JSONResponse(status_code=409, content={"error": f"'{name}' is already installed"})
     servers[name] = _build_mcp_entry_from_catalog(entry, body.param)
     try:
-        dump()
-    except Exception as e:
+        await anyio.to_thread.run_sync(dump)
+    except BridgeError:
+        raise  # already enveloped (e.g. 409 when config.yaml changed underneath us)
+    except Exception as e:  # noqa: BLE001 - surfaced to the client as a 500
         return JSONResponse(status_code=500, content={"error": f"Failed to write config: {e}"})
-    reloaded = _reload_agent_mcp()
+    reloaded = await anyio.to_thread.run_sync(lambda: _reload_agent_mcp(hermes_home))
     print(f"[hermes-bridge] Installed MCP server '{name}' (reloaded={reloaded})", flush=True)
     return JSONResponse(content={"ok": True, "installed": name, "reloaded": reloaded})
 
@@ -335,10 +402,14 @@ async def workspace_mcp_uninstall(name: str, request: Request):
         return JSONResponse(status_code=404, content={"error": f"'{name}' is not installed"})
     del servers[name]
     try:
-        dump()
-    except Exception as e:
+        await anyio.to_thread.run_sync(dump)
+    except BridgeError:
+        raise  # already enveloped (e.g. 409 when config.yaml changed underneath us)
+    except Exception as e:  # noqa: BLE001 - surfaced to the client as a 500
         return JSONResponse(status_code=500, content={"error": f"Failed to write config: {e}"})
-    reloaded = _reload_agent_mcp()
+    reloaded = await anyio.to_thread.run_sync(
+        lambda: _reload_agent_mcp(hermes_home, removed=(name,))
+    )
     print(f"[hermes-bridge] Removed MCP server '{name}' (reloaded={reloaded})", flush=True)
     return JSONResponse(content={"ok": True, "removed": name, "reloaded": reloaded})
 
@@ -350,7 +421,7 @@ async def workspace_mcp_telemetry(request: Request):
     global activity feed. Metrics persist across bridge restarts via SQLite."""
     try:
         snap = mcp_telemetry.snapshot()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - surfaced to the client as a 500
         return JSONResponse(status_code=500, content={"error": f"telemetry unavailable: {e}"})
     return JSONResponse(content=snap)
 
@@ -361,8 +432,8 @@ async def workspace_mcp_tool_index(request: Request):
     in-process agent registry (enabled servers only)."""
     hermes_home = bridge_workspace._resolve_hermes_home(bridge_workspace._resolve_profile_name(request))
     try:
-        tools = _build_mcp_tool_index(hermes_home)
-    except Exception as e:
+        tools = await anyio.to_thread.run_sync(_build_mcp_tool_index, hermes_home)
+    except Exception as e:  # noqa: BLE001 - surfaced to the client as a 500
         return JSONResponse(status_code=500, content={"error": f"tool index unavailable: {e}"})
     return JSONResponse(content={"tools": tools, "total": len(tools)})
 
@@ -377,6 +448,6 @@ async def workspace_mcp_server_logs(name: str, request: Request):
         limit = 200
     try:
         lines = mcp_telemetry.read_server_logs(hermes_home, name, limit=limit)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - surfaced to the client as a 500
         return JSONResponse(status_code=500, content={"error": f"could not read logs: {e}"})
     return JSONResponse(content={"server": name, "lines": lines})

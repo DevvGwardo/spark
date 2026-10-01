@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import json
 import os
 import re
 import threading
 from typing import Any, Callable, Optional
+
+logger = logging.getLogger(__name__)
 
 _COMPUTER_USE_TOOL_NAMES = frozenset({"computer_use", "computer"})
 
@@ -165,7 +168,7 @@ def is_cua_capture_available() -> bool:
     try:
         backend = _get_backend()
         return bool(backend.is_available())
-    except Exception:
+    except Exception:  # noqa: BLE001 - availability probe; any backend failure means unavailable
         return False
 
 
@@ -191,7 +194,7 @@ def try_supplemental_capture(timeout: float = CU_CAPTURE_TIMEOUT_SEC) -> Optiona
             cap = backend.capture(mode="vision")
             if cap and cap.png_b64:
                 holder[0] = _data_url_from_capture_b64(cap.png_b64, cap.image_mime_type)
-        except Exception:
+        except Exception:  # noqa: BLE001 - supplemental capture is best-effort; thread exits quietly
             return
 
     thread = threading.Thread(target=_run, name="cu-supplemental-capture", daemon=True)
@@ -253,8 +256,8 @@ class ComputerUseFramePoller:
                 continue
             try:
                 self.on_frame(payload)
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - on_frame callback raised; ignored so frame loop continues; logged at debug
+                logger.debug("on_frame callback raised; ignored so frame loop continues", exc_info=True)
 
 
 def format_computer_use_action_label(args: Any) -> str:

@@ -39,7 +39,7 @@ async def get_bridge_default_model() -> str:
             data = resp.json()
             _bridge_default_model = data.get("hermes_default_model", "default")
             return _bridge_default_model
-    except Exception:
+    except Exception:  # noqa: BLE001 - optional lookup; falls back to 'default' model
         return "default"
 
 
@@ -222,7 +222,7 @@ async def messages(request: Request):
             "usage": {"input_tokens": 0, "output_tokens": len(full_content.split())},
         }
         return JSONResponse(content=result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - upstream failure is surfaced to the client as a 502
         return JSONResponse(
             status_code=502,
             content={"type": "error", "error": {"type": "api_error", "message": str(e)}},
@@ -236,7 +236,7 @@ async def list_models():
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(f"{HERMES_BRIDGE_URL}/models")
             return JSONResponse(content=resp.json())
-    except Exception:
+    except Exception:  # noqa: BLE001 - bridge unreachable; return empty model list
         return JSONResponse(content={"object": "list", "data": []})
 
 
@@ -247,7 +247,7 @@ async def health():
             resp = await client.get(f"{HERMES_BRIDGE_URL.replace('/v1', '')}/health")
             bridge_health = resp.json()
             return {"status": "ok", "bridge": bridge_health}
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - health probe reports any failure as status=error
         return {"status": "error", "detail": str(e)}
 
 

@@ -6,6 +6,7 @@ module and other modules reach them as ``<module>.<name>`` so a single
 """
 import asyncio
 import hashlib
+import logging
 import os
 import sqlite3
 import subprocess
@@ -38,6 +39,8 @@ from session_tracker import (
     _sessions_lock,
     _trim_session_message_content,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # --- Session tracking for Hermes Chats view ---
@@ -73,8 +76,8 @@ def _save_session_to_db(session: dict) -> None:
                     session.get("firstUserMessage", "")[:100],
                 ),
             )
-    except Exception:
-        pass  # Best-effort; don't break request handling
+    except Exception:  # noqa: BLE001 - best-effort; must not break request handling
+        logger.debug("session persistence failed", exc_info=True)
 
 
 
@@ -103,7 +106,7 @@ def _read_active_profile_name() -> str:
         return "default"
     try:
         return _normalize_profile_name(_ACTIVE_PROFILE_PATH.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable profile file falls back to the default profile
         return "default"
 
 
@@ -111,7 +114,7 @@ def _resolve_profile_name(request: Optional[Request] = None) -> str:
     if request is not None:
         try:
             header_value = request.headers.get("x-hermes-profile")
-        except Exception:
+        except Exception:  # noqa: BLE001 - header access failure treated as no profile header
             header_value = None
         normalized = _normalize_profile_name(header_value)
         if header_value is not None and str(header_value).strip():
@@ -161,7 +164,7 @@ def _iso_from_unix(timestamp: Optional[float]) -> Optional[str]:
         return None
     try:
         return datetime.fromtimestamp(float(timestamp), tz=timezone.utc).isoformat()
-    except Exception:
+    except (TypeError, ValueError, OverflowError, OSError):
         return None
 
 
@@ -170,7 +173,7 @@ def _iso_from_stat(path: Path) -> Optional[str]:
         return None
     try:
         return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
-    except Exception:
+    except (OSError, ValueError, OverflowError):
         return None
 
 
@@ -371,7 +374,7 @@ def _skill_detail(skill_id: str, *, hermes_home: Optional[Path] = None) -> Optio
     try:
         candidate = (skills_dir / skill_id).resolve()
         candidate.relative_to(skills_dir.resolve())
-    except Exception:
+    except Exception:  # noqa: BLE001 - any resolve/containment failure rejects the skill id
         return None
 
     if candidate.is_dir():
@@ -475,7 +478,7 @@ def _workspace_overview_payload(*, hermes_home: Path, profile_name: str) -> dict
             "path": str(_state_db_path(hermes_home)),
             "available": _state_db_path(hermes_home).exists(),
         },
-        "cron_backend": "hermes" if _HERMES_CRON_AVAILABLE else "bridge-local",
+        "cron_backend": "hermes" if _HERMES_CRON_AVAILABLE else "unavailable",
         "counts": {
             "tracked_sessions": int(totals["session_count"]) if totals else 0,
             "messages": int(totals["message_count"]) if totals else 0,
@@ -508,7 +511,7 @@ def _cursor_composer_integration_status(*, hermes_home: Path) -> dict:
         from cursor_composer_bridge import bridge_status
 
         return bridge_status(hermes_home=hermes_home)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - optional integration status; failure is reported in the returned status payload
         return {
             "id": "cursor-composer",
             "name": "Cursor Composer",
@@ -731,7 +734,7 @@ def _load_hermes_agent_commands() -> list:
                 "aliases": list(getattr(c, "aliases", ()) or ()),
                 "kind": "agent",
             })
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - optional command registry; bridge continues without it
         print(f"[hermes-bridge] command registry unavailable: {e}", flush=True)
 
     # Installed skill commands (one per skill in ~/.hermes/skills/).
@@ -747,7 +750,7 @@ def _load_hermes_agent_commands() -> list:
                 "aliases": [],
                 "kind": "skill",
             })
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - optional skill commands; bridge continues without them
         print(f"[hermes-bridge] skill commands unavailable: {e}", flush=True)
 
     # Plugin-registered commands.
@@ -763,7 +766,7 @@ def _load_hermes_agent_commands() -> list:
                 "aliases": [],
                 "kind": "agent",
             })
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - optional plugin commands; bridge continues without them
         print(f"[hermes-bridge] plugin commands unavailable: {e}", flush=True)
 
     _HERMES_COMMANDS_CACHE = commands
@@ -802,5 +805,5 @@ def _maybe_expand_skill_command(messages: list) -> None:
         if expanded:
             messages[idx]["content"] = expanded
             print(f"[hermes-bridge] Expanded skill command {cmd_token} -> {cmd_key}", flush=True)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - skill expansion is best-effort; message is sent unexpanded
         print(f"[hermes-bridge] skill command expansion failed: {e}", flush=True)
