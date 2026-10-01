@@ -287,6 +287,7 @@ export function normalizeHermesUsage(usage: unknown): ProxyUsage {
         completion_tokens?: unknown;
         total_tokens?: unknown;
         cached_input_tokens?: unknown;
+        estimated_cost_usd?: unknown;
         prompt_tokens_details?: { cached_tokens?: unknown };
         usage?: { prompt_tokens?: unknown; completion_tokens?: unknown };
       }
@@ -305,11 +306,17 @@ export function normalizeHermesUsage(usage: unknown): ProxyUsage {
         ? record.prompt_tokens_details.cached_tokens
         : 0;
 
+  // Hermes bridge only (spec 4.5): the turn's cost, priced bridge-side by
+  // pricing.py from the same token counts.
+  const cost = record.estimated_cost_usd;
+  const costUsd = typeof cost === 'number' && Number.isFinite(cost) && cost >= 0 ? cost : undefined;
+
   return {
     promptTokens,
     completionTokens,
     totalTokens,
     cachedInputTokens: Math.max(0, cachedRaw),
+    ...(costUsd !== undefined ? { costUsd } : {}),
   };
 }
 
@@ -438,6 +445,21 @@ function logContractViolationOnce(key: string, detail: string): void {
 type CustomEventEntry = { key: string; payload: Record<string, unknown> };
 
 /**
+ * The final chunk's `usage` is a contracted event (UsageEvent) even though it
+ * sits in the standard OpenAI position, so it is validated here rather than in
+ * collectContractedEvents. Like every other contracted event it is forwarded
+ * even when invalid: losing the token counts would be worse than a loud log.
+ */
+function validateBridgeUsage(usage: unknown): unknown {
+  if (usage === undefined || usage === null) return usage;
+  const result = HERMES_EVENT_SCHEMAS.usage.safeParse(usage);
+  if (!result.success) {
+    logContractViolationOnce('usage', result.error.issues[0]?.message ?? 'invalid payload');
+  }
+  return usage;
+}
+
+/**
  * Pull contracted custom events out of one source object (a delta, or the payload
  * root), validating each against the generated schema and dispatching it.
  */
@@ -507,7 +529,7 @@ export function normalizeHermesAgentLoopPayload(payload: string): NormalizedProx
   const reasoning = typeof delta?.reasoning === 'string' ? delta.reasoning : undefined;
 
   return {
-    usage: normalizeHermesUsage(root.usage),
+    usage: normalizeHermesUsage(validateBridgeUsage(root.usage)),
     finishReason: choice?.finish_reason !== undefined && choice?.finish_reason !== null
       ? normalizeHermesFinishReason(choice.finish_reason)
       : undefined,

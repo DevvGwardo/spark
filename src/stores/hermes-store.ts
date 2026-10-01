@@ -249,10 +249,28 @@ interface HermesState {
   toolCallRecordsByPanel: Record<string, ToolCallRecordsByMessage>;
   setToolCallRecords: (panelId: string, records: ToolCallRecordsByMessage) => void;
 
+  /**
+   * What the transport serving each panel's current turn can honor, from the
+   * bridge's transport_status event (hardening spec 4.8). Absent means
+   * unknown (not a Hermes turn, or an older bridge): affordances stay as-is.
+   * Non-persisted.
+   */
+  transportCapabilitiesByPanel: Record<string, HermesTransportCapabilities>;
+  setTransportCapabilities: (panelId: string, capabilities: HermesTransportCapabilities | null) => void;
+
   /** One-shot chat UI → useChat action requests per panel (non-persisted). */
   pendingChatActions: Record<string, ChatActionRequest[]>;
   requestChatAction: (panelId: string, action: ChatActionRequest) => void;
   setPendingChatActions: (panelId: string, actions: ChatActionRequest[]) => void;
+}
+
+/** One row of the bridge's transport capability matrix (spec 4.8). */
+export interface HermesTransportCapabilities {
+  approvals: boolean;
+  cancel: boolean;
+  stopsOnClientDisconnect: boolean;
+  usageInStream: boolean;
+  sessionResume: boolean;
 }
 
 const defaultToolsets: HermesToolsets = {
@@ -297,6 +315,7 @@ export const useHermesStore = create<HermesState>()(
       sessionApprovalPolicies: [],
       pendingAcpApprovals: {},
       toolCallRecordsByPanel: {},
+      transportCapabilitiesByPanel: {},
       pendingChatActions: {},
       underlyingProvider: '',
       followAgentModel: true,
@@ -536,6 +555,33 @@ export const useHermesStore = create<HermesState>()(
       clearPendingAcpApprovals: () =>
         set(() => ({ pendingAcpApprovals: {} })),
 
+      setTransportCapabilities: (panelId, capabilities) =>
+        set((state) => {
+          const prev = state.transportCapabilitiesByPanel[panelId];
+          if (!capabilities) {
+            if (!prev) return state;
+            const next = { ...state.transportCapabilitiesByPanel };
+            delete next[panelId];
+            return { transportCapabilitiesByPanel: next };
+          }
+          if (
+            prev &&
+            prev.approvals === capabilities.approvals &&
+            prev.cancel === capabilities.cancel &&
+            prev.stopsOnClientDisconnect === capabilities.stopsOnClientDisconnect &&
+            prev.usageInStream === capabilities.usageInStream &&
+            prev.sessionResume === capabilities.sessionResume
+          ) {
+            return state;
+          }
+          return {
+            transportCapabilitiesByPanel: {
+              ...state.transportCapabilitiesByPanel,
+              [panelId]: capabilities,
+            },
+          };
+        }),
+
       setToolCallRecords: (panelId, records) =>
         set((state) => {
           const prev = state.toolCallRecordsByPanel[panelId];
@@ -591,6 +637,7 @@ export const useHermesStore = create<HermesState>()(
         // Transient runtime slices — never persisted, but ensure they exist
         // when rehydrating from an older persisted snapshot.
         if (!merged.toolCallRecordsByPanel) merged.toolCallRecordsByPanel = {};
+        if (!merged.transportCapabilitiesByPanel) merged.transportCapabilitiesByPanel = {};
         if (!merged.pendingChatActions) merged.pendingChatActions = {};
         // Ensure new toolset keys default on for existing installs
         merged.toolsets = { ...defaultToolsets, ...(merged.toolsets || {}) };

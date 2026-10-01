@@ -97,6 +97,7 @@ import {
   toStoredAIMessages,
   upsertStoredMessage,
   type AgentStatusEvent,
+  type HermesTransportStatusEvent,
   type AutoContinueRequest,
   type ProviderOverride,
   type SendMessageOptions,
@@ -1366,6 +1367,9 @@ When the user asks you to make changes:
         ...(typeof record.cached_input_tokens === 'number' && Number.isFinite(record.cached_input_tokens)
           ? { cachedInputTokens: record.cached_input_tokens }
           : {}),
+        ...(typeof record.cost_usd === 'number' && Number.isFinite(record.cost_usd) && record.cost_usd >= 0
+          ? { costUsd: record.cost_usd }
+          : {}),
         contextWindow: toNumber(record.context_window),
         model: typeof record.model === 'string' ? record.model : '',
       });
@@ -1413,6 +1417,15 @@ When the user asks you to make changes:
 
     const notifyTransportStatus = (message: string | null) => {
       setTransportStatusMessage((current) => (current === message ? current : message));
+    };
+
+    // Spec 4.8: the serving transport's capability row drives which
+    // affordances (Stop, bridge approval prompts) the panel offers. A stream
+    // without one (non-Hermes, older bridge) leaves the defaults in place.
+    useHermesStore.getState().setTransportCapabilities(panelId, null);
+    const applyTransportStatus = (event: HermesTransportStatusEvent) => {
+      notifyTransportStatus(formatHermesTransportStatus(event));
+      useHermesStore.getState().setTransportCapabilities(panelId, event.capabilities ?? null);
     };
 
     const seenFallbackSwitches = new Set<string>();
@@ -1479,7 +1492,7 @@ When the user asks you to make changes:
               }
               const transportStatus = parseHermesTransportStatusDelta(delta?.transport_status);
               if (transportStatus) {
-                notifyTransportStatus(formatHermesTransportStatus(transportStatus));
+                applyTransportStatus(transportStatus);
               }
               const fallbackSwitch = parseFallbackSwitchDelta(delta?.fallback_switch);
               if (fallbackSwitch) {
@@ -1577,7 +1590,10 @@ When the user asks you to make changes:
                   continue;
                 }
                 if (isHermesTransportStatusData(item)) {
-                  notifyTransportStatus(formatHermesTransportStatus(item));
+                  const parsedStatus = parseHermesTransportStatusDelta(item);
+                  if (parsedStatus) {
+                    applyTransportStatus(parsedStatus);
+                  }
                   continue;
                 }
                 if (isHermesLoopStatusData(item)) {

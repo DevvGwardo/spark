@@ -30,6 +30,11 @@ function legacyOptionIdForDecision(decision: LadderDecision): AcpApprovalDecisio
   }
 }
 
+/** Approval ids issued by the Hermes bridge (ACP and agent-loop prompts). */
+function isBridgeApprovalId(approvalId: string): boolean {
+  return approvalId.startsWith('acp-') || approvalId.startsWith('bridge-');
+}
+
 function commandPrefix(command: string | undefined, max = 40): string {
   if (!command) {
     return '';
@@ -76,6 +81,11 @@ export const AcpApprovalBanner: React.FC = () => {
   const pending = useHermesStore((state) => Object.values(state.pendingAcpApprovals)[0] ?? null);
   const clearPendingAcpApproval = useHermesStore((state) => state.clearPendingAcpApproval);
   const panelId = usePanelId();
+  // Spec 4.8: a bridge prompt (acp-*/bridge-* ids) the serving transport says
+  // it cannot honor is not offered; engine-local approvals are unaffected.
+  const bridgeApprovalsUnsupported = useHermesStore(
+    (state) => state.transportCapabilitiesByPanel[panelId]?.approvals === false,
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const titleId = useId();
@@ -173,7 +183,7 @@ export const AcpApprovalBanner: React.FC = () => {
     [panelId, pending, clearPendingAcpApproval],
   );
 
-  if (!pending) {
+  if (!pending || (bridgeApprovalsUnsupported && isBridgeApprovalId(pending.approval_id))) {
     return null;
   }
 

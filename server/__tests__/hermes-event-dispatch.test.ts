@@ -100,6 +100,57 @@ describe('contracted event dispatch', () => {
     })
   })
 
+  it('carries the capability row on transport_status (spec 4.8)', async () => {
+    const capabilities = {
+      approvals: true,
+      cancel: true,
+      stops_on_client_disconnect: true,
+      usage_in_stream: true,
+      session_resume: true,
+    }
+    const data = await dataFor({
+      transport_status: { requested: 'acp', actual: 'acp', capabilities },
+    })
+    expect(data[0]).toEqual({ type: 'transport_status', requested: 'acp', actual: 'acp', capabilities })
+    expect(error).not.toHaveBeenCalled()
+  })
+
+  it('reads the bridge-priced turn cost from the final usage block (spec 4.5)', async () => {
+    const normalize = await freshNormalizer()
+    const result = normalize(JSON.stringify({
+      id: 'chunk-1',
+      object: 'chat.completion.chunk',
+      choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+      usage: {
+        prompt_tokens: 2000,
+        completion_tokens: 350,
+        total_tokens: 2350,
+        cached_input_tokens: 800,
+        estimated_cost_usd: 0.00909,
+        cost_source: 'pricing',
+      },
+    }))
+    expect(result?.usage).toEqual({
+      promptTokens: 2000,
+      completionTokens: 350,
+      totalTokens: 2350,
+      cachedInputTokens: 800,
+      costUsd: 0.00909,
+    })
+    expect(error).not.toHaveBeenCalled()
+  })
+
+  it('logs a usage block that violates the contract but still forwards its tokens', async () => {
+    const normalize = await freshNormalizer()
+    const result = normalize(JSON.stringify({
+      id: 'chunk-1',
+      choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4, cost_source: 7 },
+    }))
+    expect(result?.usage?.totalTokens).toBe(4)
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('"usage"'))
+  })
+
   it('keeps reading the payload root as well as the delta', async () => {
     const data = await dataFor(
       { content: 'hi' },

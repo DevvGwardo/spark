@@ -169,11 +169,16 @@ class CapabilityMatrixTests(unittest.TestCase):
         from chat_transports.swarm import SwarmTransport
 
         expected = {
-            AgentLoopTransport: dict(approvals=True, cancel=True, stops_on_client_disconnect=True, session_resume=True),
-            AcpTransport: dict(approvals=True, cancel=True, stops_on_client_disconnect=True, session_resume=False),
-            RunsTransport: dict(approvals=False, cancel=True, stops_on_client_disconnect=True, session_resume=False),
-            SwarmTransport: dict(approvals=False, cancel=False, stops_on_client_disconnect=False, session_resume=False),
-            PassthroughTransport: dict(approvals=False, cancel=False, stops_on_client_disconnect=False, session_resume=False),
+            AgentLoopTransport: dict(approvals=True, cancel=True, stops_on_client_disconnect=True,
+                                     usage_in_stream=True, session_resume=True),
+            AcpTransport: dict(approvals=True, cancel=True, stops_on_client_disconnect=True,
+                               usage_in_stream=True, session_resume=True),
+            RunsTransport: dict(approvals=False, cancel=True, stops_on_client_disconnect=True,
+                                usage_in_stream=True, session_resume=False),
+            SwarmTransport: dict(approvals=False, cancel=False, stops_on_client_disconnect=False,
+                                 usage_in_stream=False, session_resume=False),
+            PassthroughTransport: dict(approvals=False, cancel=False, stops_on_client_disconnect=False,
+                                       usage_in_stream=False, session_resume=False),
         }
         names = set()
         for cls, caps in expected.items():
@@ -182,8 +187,7 @@ class CapabilityMatrixTests(unittest.TestCase):
                 self.assertTrue(isinstance(cls.__new__(cls), ChatTransport))
                 for flag, value in caps.items():
                     self.assertEqual(getattr(cls.capabilities, flag), value, flag)
-                # Usage reporting lands with spec 4.5.
-                self.assertFalse(cls.capabilities.usage_in_stream)
+                self.assertEqual(set(cls.capabilities.as_dict()), set(caps))
                 names.add(cls.name)
         self.assertEqual(names, {"agent-loop", "acp", "runs", "swarm", "passthrough"})
 
@@ -466,7 +470,7 @@ class AcpSseOrderTests(unittest.TestCase):
                 _FakeRequest({"authorization": "Bearer k", "x-hermes-execution-mode": "acp"}), body,
             ))
         self.assertEqual(_delta_keys(payload), [
-            "role", "agent_status", "content", "content", "tool_activity",
+            "role", "transport_status", "agent_status", "content", "content", "tool_activity",
             "content", "tool_activity", "approval_request", "content",
             "plan_update", "content", "<stop>", "data: [DONE]",
         ])

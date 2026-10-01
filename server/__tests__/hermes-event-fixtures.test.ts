@@ -95,6 +95,21 @@ describe('golden SSE contract fixtures', () => {
     })
   }
 
+  it('every final-chunk usage block validates against the usage contract (spec 4.5)', () => {
+    for (const [name, frames] of Object.entries(FIXTURES)) {
+      const usage = frames[frames.length - 1]?.usage
+      expect(usage, `${name} has no final usage`).toBeDefined()
+      const result = HERMES_EVENT_SCHEMAS.usage.safeParse(usage)
+      expect(result.success, `${name} usage rejected`).toBe(true)
+    }
+    // The agent transports report priced, non-zero usage instead of zeros.
+    for (const name of ['agent-loop', 'acp']) {
+      const usage = FIXTURES[name]![FIXTURES[name]!.length - 1]!.usage as Record<string, unknown>
+      expect(usage.total_tokens as number).toBeGreaterThan(0)
+      expect(usage.estimated_cost_usd as number).toBeGreaterThan(0)
+    }
+  })
+
   it('rejects a fixture payload that violates the contract', () => {
     // Proves the loop above is not vacuous: a deliberately broken usage counter
     // must fail.

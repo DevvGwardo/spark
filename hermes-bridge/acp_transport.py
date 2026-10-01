@@ -35,6 +35,7 @@ import re
 import shutil
 import time
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
@@ -352,9 +353,20 @@ class BridgeAcpClient:
                     text = _block_text(raw_content) or _block_text(getattr(update, "content", None))
                 if text:
                     self.emit("plan", text)
-        # usage_update / session_info_update / config_option_update /
-        # current_mode_update / available_commands_update are not rendered
-        # in CloudChat's chat stream — ignored.
+        elif kind == "usage_update":
+            # Spec 4.5: context pressure (used/size) and, when the agent
+            # reports it, the session cost. Token counts arrive on the
+            # prompt response instead (see run_prompt_blocking).
+            cost = getattr(update, "cost", None)
+            self.emit("usage_update", {
+                "used": getattr(update, "used", None),
+                "size": getattr(update, "size", None),
+                "cost_amount": getattr(cost, "amount", None) if cost is not None else None,
+                "cost_currency": getattr(cost, "currency", None) if cost is not None else None,
+            })
+        # session_info_update / config_option_update / current_mode_update /
+        # available_commands_update are not rendered in CloudChat's chat
+        # stream — ignored.
 
 
 # ── Session registry & process management ───────────────────────────────────
@@ -371,6 +383,12 @@ class _AcpHandle:
     loop: asyncio.AbstractEventLoop
     plan_mode: bool = False
     approvals: dict[str, asyncio.Future] = field(default_factory=dict)
+    # Spec 4.6: True until the first prompt of a session created with
+    # new_session (not restored with load_session). That prompt carries a
+    # condensed transcript of the conversation so far, so a reaped or crashed
+    # agent does not lose the thread.
+    fresh: bool = False
+    resumed: bool = False
     last_used: float = field(default_factory=time.time)
     # True while a prompt is in flight on this handle — the idle reaper must
     # never close a session mid-turn (a long stream can legitimately exceed
@@ -426,6 +444,19 @@ _sessions_lock = asyncio.Lock()
 _conversation_locks: dict[str, asyncio.Lock] = {}
 # Bumped by shutdown_all so a spawn that finishes after shutdown is discarded.
 _sessions_generation = 0
+
+# Spec 4.6: the last ACP session id per conversation, kept across reaps and
+# crashes so the next spawn can ask the agent to load_session it. Bounded;
+# the oldest conversations fall out first.
+_last_session_ids: "OrderedDict[str, str]" = OrderedDict()
+_LAST_SESSION_IDS_MAX = 512
+
+
+def _remember_session_id(conversation_id: str, session_id: str) -> None:
+    _last_session_ids[conversation_id] = session_id
+    _last_session_ids.move_to_end(conversation_id)
+    while len(_last_session_ids) > _LAST_SESSION_IDS_MAX:
+        _last_session_ids.popitem(last=False)
 
 # How long to wait for the agent to acknowledge close_session before we
 # hard-kill the process. Keep it short — this runs on the bridge's event loop.
@@ -604,6 +635,7 @@ async def ensure_session(
                     model=model,
                     plan_mode=plan_mode,
                     spawn_env=spawn_env,
+                    resume_session_id=_last_session_ids.get(conversation_id),
                 )
             except BaseException as exc:  # noqa: BLE001 - spawn must be retried
                 last_error = exc
@@ -627,6 +659,7 @@ async def ensure_session(
                 shut_down = generation != _sessions_generation
                 if not shut_down:
                     _sessions[conversation_id] = handle
+                    _remember_session_id(conversation_id, handle.session_id)
             if shut_down:
                 # shutdown_all() ran while this spawn was in flight; it could not
                 # see the new child, so close it here rather than orphan it.
@@ -675,8 +708,15 @@ async def _spawn_session(
     model: Optional[str],
     plan_mode: bool,
     spawn_env: Optional[dict],
+    resume_session_id: Optional[str] = None,
 ) -> _AcpHandle:
-    """Spawn hermes-acp and initialize a session (single attempt; raises on failure)."""
+    """Spawn hermes-acp and initialize a session (single attempt; raises on failure).
+
+    With ``resume_session_id`` and an agent that advertises ``load_session``,
+    the conversation's previous session is restored (its history lives in the
+    agent's session store). Otherwise a new session is created and marked
+    ``fresh`` so its first prompt replays a condensed transcript (spec 4.6).
+    """
     import acp
     from acp.schema import ClientCapabilities, Implementation
 
@@ -737,8 +777,14 @@ async def _spawn_session(
                 except Exception as exc:  # noqa: BLE001 - auth is optional; session setup proceeds and surfaces real failures later
                     logger.warning("acp authenticate(%s) failed: %s", method_id, exc)
 
-        ns = await conn.new_session(cwd=cwd or ".")
-        session_id = str(getattr(ns, "session_id", "") or "")
+        session_id = ""
+        resumed = False
+        if resume_session_id and _agent_can_load_session(init):
+            session_id = await _try_load_session(conn, client, cwd, resume_session_id)
+            resumed = bool(session_id)
+        if not session_id:
+            ns = await conn.new_session(cwd=cwd or ".")
+            session_id = str(getattr(ns, "session_id", "") or "")
         if not session_id:
             raise RuntimeError("hermes-acp returned no session id")
 
@@ -779,7 +825,126 @@ async def _spawn_session(
         plan_mode=plan_mode,
         approvals=client._approvals,
         stderr_file=stderr_file,
+        fresh=not resumed,
+        resumed=resumed,
     )
+
+
+def _agent_can_load_session(init: Any) -> bool:
+    caps = getattr(init, "agent_capabilities", None)
+    return bool(getattr(caps, "load_session", False))
+
+
+async def _try_load_session(conn: Any, client: "BridgeAcpClient", cwd: str, session_id: str) -> str:
+    """Restore a previous session; "" when the agent no longer has it.
+
+    load_session replays the session's history as session_update
+    notifications. The bridge already showed that transcript, so the client
+    is muted for the duration instead of re-streaming it into this turn.
+    """
+    emit = client.emit
+    client.emit = _discard_emit
+    try:
+        response = await conn.load_session(cwd=cwd or ".", session_id=session_id)
+        # The SDK runs each notification as its own task, while the response
+        # resolves load_session directly; replayed updates read before the
+        # response can still be in flight here. Let them finish while muted.
+        await _settle_pending_notifications()
+    except Exception as exc:  # noqa: BLE001 - an unknown/expired session falls back to new_session + history replay
+        logger.info("acp load_session(%s) failed, starting a new session: %s", session_id, exc)
+        return ""
+    finally:
+        client.emit = emit
+    if response is None:
+        logger.info("acp load_session(%s): agent no longer has it", session_id)
+        return ""
+    logger.info("acp session %s restored with load_session", session_id)
+    return session_id
+
+
+def _discard_emit(*_args: Any) -> None:
+    return None
+
+
+async def _settle_pending_notifications() -> None:
+    # Every replayed notification was read (and became a task) before the
+    # response; a few loop turns plus a short grace let those tasks run.
+    for _ in range(20):
+        await asyncio.sleep(0)
+    await asyncio.sleep(0.05)
+
+
+# Condensed transcript replayed into the first prompt of a fresh session.
+_HISTORY_MAX_MESSAGES = 20
+_HISTORY_MAX_MESSAGE_CHARS = 1500
+_HISTORY_MAX_CHARS = 12000
+
+
+def condensed_history_prefix(history: Optional[list]) -> str:
+    """A bounded transcript of the conversation before this turn (spec 4.6).
+
+    ``history`` is the request's prior messages (dicts with role/content).
+    Only user and assistant turns are kept, newest first within the budget,
+    each clipped. Returns "" when there is nothing to replay.
+    """
+    lines: list[str] = []
+    budget = _HISTORY_MAX_CHARS
+    for message in reversed(list(history or [])[-_HISTORY_MAX_MESSAGES:]):
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        text = _message_text(message.get("content")).strip()
+        if not text:
+            continue
+        if len(text) > _HISTORY_MAX_MESSAGE_CHARS:
+            text = text[:_HISTORY_MAX_MESSAGE_CHARS] + " [...]"
+        line = f"{'User' if role == 'user' else 'Assistant'}: {text}"
+        if len(line) > budget:
+            break
+        budget -= len(line)
+        lines.append(line)
+    if not lines:
+        return ""
+    lines.reverse()
+    return (
+        "[Earlier in this conversation (condensed; the agent session was restarted):\n"
+        + "\n".join(lines)
+        + "\n]"
+    )
+
+
+def _message_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict) and isinstance(block.get("text"), str):
+                parts.append(block["text"])
+            elif isinstance(block, str):
+                parts.append(block)
+        return "\n".join(parts)
+    return ""
+
+
+def _prompt_usage(response: Any) -> Optional[dict]:
+    """Token counts from an ACP PromptResponse (``usage`` is optional)."""
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None
+    fields = {
+        "input_tokens": getattr(usage, "input_tokens", None),
+        "output_tokens": getattr(usage, "output_tokens", None),
+        "total_tokens": getattr(usage, "total_tokens", None),
+        "thought_tokens": getattr(usage, "thought_tokens", None),
+        "cached_read_tokens": getattr(usage, "cached_read_tokens", None),
+        "cached_write_tokens": getattr(usage, "cached_write_tokens", None),
+    }
+    if not any(fields.values()):
+        return None
+    return fields
 
 
 async def _close_handle_quietly(handle: _AcpHandle) -> None:
@@ -801,8 +966,14 @@ def run_prompt_blocking(
     model: Optional[str] = None,
     timeout: Optional[float] = None,
     plan_mode: bool = False,
+    history: Optional[list] = None,
 ) -> None:
-    """Blocking bridge used from the worker thread (mirrors the agent-loop transport)."""
+    """Blocking bridge used from the worker thread (mirrors the agent-loop transport).
+
+    ``history`` is the conversation before this turn; it is replayed
+    (condensed) only into the first prompt of a fresh session (spec 4.6).
+    Emits ``("usage", fields)`` with the prompt response's token counts.
+    """
     import acp
     import inspect
 
@@ -830,6 +1001,11 @@ def run_prompt_blocking(
                 handle.client.emit = emit
                 handle.touch()
                 prompt_text = user_message
+                if handle.fresh:
+                    replay = condensed_history_prefix(history)
+                    if replay:
+                        prompt_text = f"{replay}\n\n{prompt_text}"
+                    handle.fresh = False
                 if plan_mode:
                     prompt_text = prompt_text + PLAN_MODE_PROMPT_SUFFIX
                 blocks = [acp.text_block(prompt_text)]
@@ -847,7 +1023,10 @@ def run_prompt_blocking(
                     call = handle.conn.prompt(blocks, handle.session_id)
                 # Bound the turn: a stuck or over-long prompt must not run forever,
                 # and its late output must not bleed into the next request.
-                await asyncio.wait_for(call, timeout=prompt_timeout)
+                response = await asyncio.wait_for(call, timeout=prompt_timeout)
+                usage = _prompt_usage(response)
+                if usage:
+                    emit("usage", usage)
             except asyncio.TimeoutError:
                 # The turn overran its deadline. Cancel it and tear the session
                 # down so stale notifications from this turn are dropped instead

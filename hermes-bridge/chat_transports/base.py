@@ -146,8 +146,16 @@ class BaseChatTransport:
         return False
 
     def usage(self) -> Optional[dict]:
-        # Spec 4.5: per-turn usage is not collected yet (final chunk reports 0).
+        """This turn's usage (spec 4.5), once known; None reports zeros."""
         return None
+
+    def effective_capabilities(self) -> TransportCapabilities:
+        """What this request can actually honor (spec 4.8).
+
+        The class declaration is the transport's ceiling; a request can do
+        less (agent-loop without the real hermes agent has no approval gate).
+        """
+        return self.capabilities
 
     # ── spec 4.4: one registry, cancel on disconnect ─────────────────────
 

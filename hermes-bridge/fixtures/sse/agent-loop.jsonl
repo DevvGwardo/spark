@@ -1,6 +1,6 @@
 {"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
 {"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"agent_status":{"phase":"starting","label":"agent-loop","elapsed_ms":0,"source":"hermes-bridge"}},"finish_reason":null}]}
-{"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"transport_status":{"requested":"agent-loop","actual":"agent-loop"}},"finish_reason":null}]}
+{"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"transport_status":{"requested":"agent-loop","actual":"agent-loop","capabilities":{"approvals":true,"cancel":true,"stops_on_client_disconnect":true,"usage_in_stream":true,"session_resume":true}}},"finish_reason":null}]}
 {"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"Checking "},"finish_reason":null}]}
 {"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"tool_activity":{"tool":"web_search","status":"running","input":{"q":"x"},"output":null}},"finish_reason":null}]}
 {"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"tool_call_begin":{"call_id":"t1","name":"web_search","ts":1}},"finish_reason":null}]}
@@ -8,4 +8,4 @@
 {"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"tool_activity":{"tool":"web_search","status":"completed","input":"","output":"3 results"}},"finish_reason":null}]}
 {"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"agent_notice":{"key":"credits","level":"warn","message":"running low","upstream_only":"kept"}},"finish_reason":null}]}
 {"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"computer_use_frame":{"type":"computer_use_frame","data":"base64","width":10}},"finish_reason":null}]}
-{"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"done"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}
+{"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"done"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2000,"completion_tokens":350,"total_tokens":2350,"cached_input_tokens":800,"reasoning_tokens":50,"estimated_cost_usd":0.00909,"cost_source":"pricing"}}

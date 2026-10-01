@@ -15,6 +15,8 @@ export interface UsageEvent {
   cached_input_tokens: number;
   context_window: number;
   model: string;
+  /** Turn cost in USD, present only when the backend priced the turn. */
+  cost_usd?: number;
 }
 
 export interface UsageEventSource {
@@ -24,6 +26,8 @@ export interface UsageEventSource {
   outputTokens: number;
   /** Tokens served from a provider cache (0 when unknown). */
   cachedInputTokens?: number;
+  /** Turn cost in USD when known (Hermes bridge, priced by pricing.py). */
+  costUsd?: number;
 }
 
 /**
@@ -38,6 +42,11 @@ export function buildUsageEvent(
   const outputTokens = Math.max(0, Math.floor(source.outputTokens) || 0);
   const cachedInputTokens = Math.max(0, Math.floor(source.cachedInputTokens ?? 0) || 0);
 
+  const costUsd =
+    typeof source.costUsd === 'number' && Number.isFinite(source.costUsd) && source.costUsd >= 0
+      ? source.costUsd
+      : undefined;
+
   return {
     type: 'usage',
     input_tokens: inputTokens,
@@ -45,5 +54,6 @@ export function buildUsageEvent(
     cached_input_tokens: cachedInputTokens,
     context_window: getModelContextWindow(model),
     model,
+    ...(costUsd !== undefined ? { cost_usd: costUsd } : {}),
   };
 }

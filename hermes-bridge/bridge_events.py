@@ -612,20 +612,36 @@ class FallbackSwitchEvent(BaseModel):
 
 
 class TransportStatusEvent(BaseModel):
-    """The transport that will actually serve this request, and why it differs."""
+    """The transport that will actually serve this request, and why it differs.
+
+    ``capabilities`` is the serving transport's row of the capability matrix
+    (spec 4.8): approvals, cancel, stops_on_client_disconnect,
+    usage_in_stream, session_resume. The UI hides or disables affordances
+    the transport cannot honor (Stop, approval prompts).
+    """
 
     requested: str
     actual: str
     reason: Optional[str] = None
+    capabilities: Optional[dict[str, bool]] = None
 
 
 class UsageEvent(BaseModel):
-    """Token usage and cost for a completed turn."""
+    """Token usage and cost for a completed turn (spec 4.5).
+
+    Travels as the ``usage`` of the final chunk (OpenAI-compatible position).
+    ``estimated_cost_usd`` is recomputed from the token counts by pricing.py
+    when the model can be priced (``cost_source="pricing"``), else taken from
+    the agent's own estimate when plausible (``"agent"``), else omitted.
+    """
 
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    cached_input_tokens: Optional[int] = None
+    reasoning_tokens: Optional[int] = None
     estimated_cost_usd: Optional[float] = None
+    cost_source: Optional[str] = None
 
 
 # Every custom event key the bridge may emit, mapped to its model. The event
@@ -712,11 +728,18 @@ def fallback_switch_event(provider: str, model: str, reason: Optional[str] = Non
     return event
 
 
-def transport_status_event(requested: str, actual: str, reason: Optional[str] = None) -> dict:
-    """Which transport actually serves the request, and why it differs."""
+def transport_status_event(
+    requested: str,
+    actual: str,
+    reason: Optional[str] = None,
+    capabilities: Optional[dict] = None,
+) -> dict:
+    """Which transport actually serves the request, why it differs, and what it can do."""
     event: dict = {"requested": requested, "actual": actual}
     if reason:
         event["reason"] = reason
+    if capabilities is not None:
+        event["capabilities"] = {str(k): bool(v) for k, v in capabilities.items()}
     return event
 
 
@@ -725,15 +748,25 @@ def usage_event(
     completion_tokens: int = 0,
     total_tokens: int = 0,
     estimated_cost_usd: Optional[float] = None,
+    *,
+    cached_input_tokens: Optional[int] = None,
+    reasoning_tokens: Optional[int] = None,
+    cost_source: Optional[str] = None,
 ) -> dict:
-    """Token usage for a completed turn."""
+    """Token usage for a completed turn. Optional fields are omitted when unknown."""
     event: dict = {
         "prompt_tokens": int(prompt_tokens or 0),
         "completion_tokens": int(completion_tokens or 0),
         "total_tokens": int(total_tokens or 0),
     }
+    if cached_input_tokens is not None:
+        event["cached_input_tokens"] = int(cached_input_tokens)
+    if reasoning_tokens is not None:
+        event["reasoning_tokens"] = int(reasoning_tokens)
     if estimated_cost_usd is not None:
         event["estimated_cost_usd"] = float(estimated_cost_usd)
+    if cost_source is not None:
+        event["cost_source"] = str(cost_source)
     return event
 
 

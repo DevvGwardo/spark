@@ -19,6 +19,8 @@ export interface UsageInfo {
   cachedInputTokens?: number;
   contextWindow: number;
   model: string;
+  /** Turn cost in USD when the backend priced it (Hermes bridge). */
+  costUsd?: number;
 }
 
 interface ContextUsageState {

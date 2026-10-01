@@ -319,11 +319,26 @@
       "type": "object"
     },
     "TransportStatusEvent": {
-      "description": "The transport that will actually serve this request, and why it differs.",
+      "description": "The transport that will actually serve this request, and why it differs.\n\n``capabilities`` is the serving transport's row of the capability matrix\n(spec 4.8): approvals, cancel, stops_on_client_disconnect,\nusage_in_stream, session_resume. The UI hides or disables affordances\nthe transport cannot honor (Stop, approval prompts).",
       "properties": {
         "actual": {
           "title": "Actual",
           "type": "string"
+        },
+        "capabilities": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "boolean"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Capabilities"
         },
         "reason": {
           "anyOf": [
@@ -350,12 +365,36 @@
       "type": "object"
     },
     "UsageEvent": {
-      "description": "Token usage and cost for a completed turn.",
+      "description": "Token usage and cost for a completed turn (spec 4.5).\n\nTravels as the ``usage`` of the final chunk (OpenAI-compatible position).\n``estimated_cost_usd`` is recomputed from the token counts by pricing.py\nwhen the model can be priced (``cost_source=\"pricing\"``), else taken from\nthe agent's own estimate when plausible (``\"agent\"``), else omitted.",
       "properties": {
+        "cached_input_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cached Input Tokens"
+        },
         "completion_tokens": {
           "default": 0,
           "title": "Completion Tokens",
           "type": "integer"
+        },
+        "cost_source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cost Source"
         },
         "estimated_cost_usd": {
           "anyOf": [
@@ -373,6 +412,18 @@
           "default": 0,
           "title": "Prompt Tokens",
           "type": "integer"
+        },
+        "reasoning_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reasoning Tokens"
         },
         "total_tokens": {
           "default": 0,

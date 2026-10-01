@@ -65,11 +65,11 @@ export const toolCallEndSchema = z.object({ "call_id": z.any(), "name": z.any(),
 
 /** Contract for the `transport_status` delta key. */
 
-export const transportStatusSchema = z.object({ "actual": z.string(), "reason": z.union([z.string(), z.null()]).default(null), "requested": z.string() }).describe("The transport that will actually serve this request, and why it differs.")
+export const transportStatusSchema = z.object({ "actual": z.string(), "capabilities": z.union([z.record(z.boolean()), z.null()]).default(null), "reason": z.union([z.string(), z.null()]).default(null), "requested": z.string() }).describe("The transport that will actually serve this request, and why it differs.\n\n``capabilities`` is the serving transport's row of the capability matrix\n(spec 4.8): approvals, cancel, stops_on_client_disconnect,\nusage_in_stream, session_resume. The UI hides or disables affordances\nthe transport cannot honor (Stop, approval prompts).")
 
 /** Contract for the `usage` delta key. */
 
-export const usageSchema = z.object({ "completion_tokens": z.number().int().default(0), "estimated_cost_usd": z.union([z.number(), z.null()]).default(null), "prompt_tokens": z.number().int().default(0), "total_tokens": z.number().int().default(0) }).describe("Token usage and cost for a completed turn.")
+export const usageSchema = z.object({ "cached_input_tokens": z.union([z.number().int(), z.null()]).default(null), "completion_tokens": z.number().int().default(0), "cost_source": z.union([z.string(), z.null()]).default(null), "estimated_cost_usd": z.union([z.number(), z.null()]).default(null), "prompt_tokens": z.number().int().default(0), "reasoning_tokens": z.union([z.number().int(), z.null()]).default(null), "total_tokens": z.number().int().default(0) }).describe("Token usage and cost for a completed turn (spec 4.5).\n\nTravels as the ``usage`` of the final chunk (OpenAI-compatible position).\n``estimated_cost_usd`` is recomputed from the token counts by pricing.py\nwhen the model can be priced (``cost_source=\"pricing\"``), else taken from\nthe agent's own estimate when plausible (``\"agent\"``), else omitted.")
 
 /** Every custom event key the bridge may emit, mapped to its validator. */
 export const HERMES_EVENT_SCHEMAS = {
