@@ -309,6 +309,10 @@ class EnsureSessionLockingTests(unittest.TestCase):
         at._sessions.clear()
         at._conversation_locks.clear()
         self.spawned: list[str] = []
+        # ensure_session fail-fast imports the SDK; the spawn itself is faked.
+        sdk_stub = mock.patch.dict("sys.modules", {"acp": SimpleNamespace()})
+        sdk_stub.start()
+        self.addCleanup(sdk_stub.stop)
 
     def tearDown(self):
         at._sessions.clear()
