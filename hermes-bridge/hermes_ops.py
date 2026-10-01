@@ -1011,6 +1011,29 @@ def clear_gateway_capabilities_cache() -> None:
         _gateway_caps_cache.clear()
 
 
+def _gateway_caps_cache_key(base_url: str, api_key: Optional[str]) -> str:
+    key = api_key or os.environ.get("HERMES_API_KEY") or os.environ.get("API_SERVER_KEY") or ""
+    return f"{base_url}|{bool(key)}"
+
+
+def peek_gateway_capabilities(
+    base_url: str = "http://127.0.0.1:8642",
+    api_key: Optional[str] = None,
+) -> tuple[Optional[dict[str, Any]], bool]:
+    """Last cached capabilities for this gateway without any network I/O.
+
+    Returns ``(caps_or_None, fresh)`` where ``fresh`` means younger than the
+    TTL. Raises like ``probe_gateway_capabilities`` for an unsafe base URL.
+    """
+    base_url = assert_safe_gateway_base_url(base_url)
+    cache_key = _gateway_caps_cache_key(base_url, api_key)
+    with _gateway_caps_lock:
+        hit = _gateway_caps_cache.get(cache_key)
+    if not hit:
+        return None, False
+    return dict(hit[1]), time.time() - hit[0] < _GATEWAY_CAPS_TTL_SECONDS
+
+
 def probe_gateway_capabilities(
     base_url: str = "http://127.0.0.1:8642",
     api_key: Optional[str] = None,
@@ -1027,7 +1050,7 @@ def probe_gateway_capabilities(
 
     base_url = assert_safe_gateway_base_url(base_url)
     key = api_key or os.environ.get("HERMES_API_KEY") or os.environ.get("API_SERVER_KEY") or ""
-    cache_key = f"{base_url}|{bool(key)}"
+    cache_key = _gateway_caps_cache_key(base_url, api_key)
     now = time.time()
     if not force:
         with _gateway_caps_lock:

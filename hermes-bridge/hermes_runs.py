@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import threading
@@ -21,7 +22,10 @@ from urllib.parse import quote
 
 import httpx
 
+import hermes_ops
 from hermes_ops import assert_safe_gateway_base_url, probe_gateway_capabilities
+
+logger = logging.getLogger(__name__)
 
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
 _VALID_REASONING_EFFORT = frozenset({
@@ -81,14 +85,100 @@ def extract_gateway_error_text(payload: dict[str, Any]) -> str:
         return str(payload)[:500]
 
 
+# ─── Capability cache for chat routing (spec 5.2) ────────────────────────────
+# runs_parity_available / should_route_via_runs run on every chat request, in
+# the async handler. They used to call probe_gateway_capabilities, whose cache
+# miss is two synchronous urllib round-trips (up to 6s) on the event loop.
+# They now read the last known capabilities and refresh them on a background
+# thread (stale-while-revalidate); a cold cache answers "no gateway support",
+# which routes to the always-safe agent loop until the first probe lands.
+
+_caps_refresh_lock = threading.Lock()
+_caps_refresh_inflight: set[tuple[str, bool]] = set()
+
+
+def _refresh_capabilities_in_background(base_url: str, api_key: Optional[str]) -> None:
+    key = (base_url, bool(api_key))
+    with _caps_refresh_lock:
+        if key in _caps_refresh_inflight:
+            return
+        _caps_refresh_inflight.add(key)
+
+    def _run() -> None:
+        try:
+            probe_gateway_capabilities(base_url=base_url, api_key=api_key, force=True)
+        except Exception:  # noqa: BLE001 - background probe; routing keeps the last answer
+            logger.debug("gateway capabilities refresh failed for %s", base_url, exc_info=True)
+        finally:
+            with _caps_refresh_lock:
+                _caps_refresh_inflight.discard(key)
+
+    threading.Thread(target=_run, name="hermes-caps-refresh", daemon=True).start()
+
+
+def cached_gateway_capabilities(
+    base_url: str = "http://127.0.0.1:8642",
+    api_key: Optional[str] = None,
+) -> dict[str, Any]:
+    """Last known gateway capabilities, never blocking; refreshes in the background when stale."""
+    try:
+        caps, fresh = hermes_ops.peek_gateway_capabilities(base_url=base_url, api_key=api_key)
+    except Exception:  # noqa: BLE001 - unsafe/invalid base URL means "no gateway"
+        logger.debug("gateway capabilities peek failed for %s", base_url, exc_info=True)
+        return {}
+    if not fresh:
+        _refresh_capabilities_in_background(base_url, api_key)
+    return caps or {}
+
+
+def warm_gateway_capabilities() -> threading.Thread:
+    """Probe the local gateway in the background so the first chat request has an answer.
+
+    Warms both cache keys chat routing can hit (with and without a gateway
+    key). Key resolution reads hermes config files, so it happens on the
+    background thread too.
+    """
+    def _run() -> None:
+        base_url = resolve_gateway_base_url()
+        try:
+            import bridge_providers
+
+            key = (
+                os.environ.get("HERMES_API_KEY", "").strip()
+                or os.environ.get("API_SERVER_KEY", "").strip()
+                or (bridge_providers._get_local_gateway_key() or "")
+            )
+        except Exception:  # noqa: BLE001 - warm-up is an optimisation only
+            logger.debug("gateway key resolution failed during warm-up", exc_info=True)
+            key = ""
+        for api_key in (None, key or None):
+            try:
+                probe_gateway_capabilities(base_url=base_url, api_key=api_key, force=True)
+            except Exception:  # noqa: BLE001 - warm-up is an optimisation only
+                logger.debug("gateway capabilities warm-up failed", exc_info=True)
+
+    thread = threading.Thread(target=_run, name="hermes-caps-warm", daemon=True)
+    thread.start()
+    return thread
+
+
+def _capabilities(base_url: str, api_key: Optional[str], blocking: bool) -> dict[str, Any]:
+    if blocking:
+        return probe_gateway_capabilities(base_url=base_url, api_key=api_key)
+    return cached_gateway_capabilities(base_url=base_url, api_key=api_key)
+
+
 def gateway_supports_moa_runs(
     base_url: str = "http://127.0.0.1:8642",
     api_key: Optional[str] = None,
+    *,
+    blocking: bool = True,
 ) -> bool:
     """Probe gateway /v1/capabilities for MoA run submission support."""
     try:
-        caps = probe_gateway_capabilities(base_url=base_url, api_key=api_key)
-    except Exception:
+        caps = _capabilities(base_url, api_key, blocking)
+    except Exception:  # noqa: BLE001 - an unreachable gateway means "unsupported"
+        logger.debug("gateway capabilities probe failed", exc_info=True)
         return False
     features = caps.get("features")
     if isinstance(features, dict):
@@ -104,11 +194,14 @@ def gateway_supports_moa_runs(
 def gateway_supports_runs_parity(
     base_url: str = "http://127.0.0.1:8642",
     api_key: Optional[str] = None,
+    *,
+    blocking: bool = True,
 ) -> bool:
     """Probe gateway /v1/capabilities for Spark /v1/runs override support."""
     try:
-        caps = probe_gateway_capabilities(base_url=base_url, api_key=api_key)
-    except Exception:
+        caps = _capabilities(base_url, api_key, blocking)
+    except Exception:  # noqa: BLE001 - an unreachable gateway means "unsupported"
+        logger.debug("gateway capabilities probe failed", exc_info=True)
         return False
     features = caps.get("features")
     if isinstance(features, dict):
@@ -123,12 +216,15 @@ def runs_parity_available(
     api_key: Optional[str] = None,
     env_override: Optional[bool] = None,
 ) -> bool:
-    """True when gateway or env allows cwd/toolsets/provider runs overrides."""
+    """True when gateway or env allows cwd/toolsets/provider runs overrides.
+
+    Never probes inline: reads the cached capabilities (spec 5.2).
+    """
     if env_override is True or parse_runs_parity_flag():
         return True
     if env_override is False:
         return False
-    return gateway_supports_runs_parity(base_url=base_url, api_key=api_key)
+    return gateway_supports_runs_parity(base_url=base_url, api_key=api_key, blocking=False)
 
 
 def is_moa_runs_rejection(status_code: int, payload: dict[str, Any]) -> bool:
@@ -315,22 +411,40 @@ def is_run_cancelled(conversation_id: str) -> bool:
 
 
 def cancel_active_run(conversation_id: str) -> bool:
-    """Signal cancel and POST /v1/runs/{id}/stop for the active gateway run."""
+    """Signal cancel and POST /v1/runs/{id}/stop for the active gateway run (blocking)."""
+    target = _take_cancel_target(conversation_id)
+    if target is None:
+        return False
+    run_id, base_url, api_key = target
+    try:
+        stop_run(base_url=base_url, api_key=api_key, run_id=run_id)
+    except Exception:  # noqa: BLE001 - the cancel flag is set; the pump stops the run on its next event
+        logger.debug("gateway stop_run failed for %s", run_id, exc_info=True)
+    return True
+
+
+def _take_cancel_target(conversation_id: str) -> Optional[tuple[str, str, Optional[str]]]:
     key = str(conversation_id or "").strip()
     if not key:
-        return False
+        return None
     with _active_runs_lock:
         active = _active_runs.get(key)
         if not active:
-            return False
+            return None
         active.cancelled.set()
-        run_id = active.run_id
-        base_url = active.base_url
-        api_key = active.api_key
+        return active.run_id, active.base_url, active.api_key
+
+
+async def cancel_active_run_async(conversation_id: str) -> bool:
+    """``cancel_active_run`` for async callers: the stop POST uses httpx.AsyncClient."""
+    target = _take_cancel_target(conversation_id)
+    if target is None:
+        return False
+    run_id, base_url, api_key = target
     try:
-        stop_run(base_url=base_url, api_key=api_key, run_id=run_id)
-    except Exception:
-        pass
+        await stop_run_async(base_url=base_url, api_key=api_key, run_id=run_id)
+    except Exception:  # noqa: BLE001 - the cancel flag is set; the pump stops the run on its next event
+        logger.debug("gateway stop_run failed for %s", run_id, exc_info=True)
     return True
 
 
@@ -360,7 +474,37 @@ def approve_active_run(
             resolve_all=resolve_all,
         )
         return True, status_code
-    except Exception:
+    except Exception:  # noqa: BLE001 - reported to the caller as "not delivered"
+        logger.debug("gateway approve_run failed for %s", run_id, exc_info=True)
+        return False, None
+
+
+async def approve_active_run_async(
+    conversation_id: str,
+    *,
+    choice: str = "approve",
+    resolve_all: bool = False,
+) -> tuple[bool, Optional[int]]:
+    """``approve_active_run`` for async callers: the approval POST uses httpx.AsyncClient."""
+    key = str(conversation_id or "").strip()
+    if not key:
+        return False, None
+    with _active_runs_lock:
+        active = _active_runs.get(key)
+        if not active:
+            return False, None
+        run_id, base_url, api_key = active.run_id, active.base_url, active.api_key
+    try:
+        status_code, _payload = await approve_run_async(
+            base_url=base_url,
+            api_key=api_key,
+            run_id=run_id,
+            choice=choice,
+            resolve_all=resolve_all,
+        )
+        return True, status_code
+    except Exception:  # noqa: BLE001 - reported to the caller as "not delivered"
+        logger.debug("gateway approve_run failed for %s", run_id, exc_info=True)
         return False, None
 
 
@@ -385,11 +529,14 @@ def parse_use_runs_flag(
 def gateway_supports_runs(
     base_url: str = "http://127.0.0.1:8642",
     api_key: Optional[str] = None,
+    *,
+    blocking: bool = True,
 ) -> bool:
     """Probe gateway /v1/capabilities for run_submission."""
     try:
-        caps = probe_gateway_capabilities(base_url=base_url, api_key=api_key)
-    except Exception:
+        caps = _capabilities(base_url, api_key, blocking)
+    except Exception:  # noqa: BLE001 - an unreachable gateway means "unsupported"
+        logger.debug("gateway capabilities probe failed", exc_info=True)
         return False
     return bool(caps.get("run_submission"))
 
@@ -416,12 +563,15 @@ def should_route_via_runs(
     runs_moa_flag: Optional[bool] = None,
     enabled_toolsets: Optional[list[str]] = None,
 ) -> bool:
-    """Gate: flag on + gateway run_submission; MoA only when explicitly enabled."""
+    """Gate: flag on + gateway run_submission; MoA only when explicitly enabled.
+
+    Never probes inline: reads the cached capabilities (spec 5.2).
+    """
     if not flag_enabled:
         return False
     if enabled_toolsets_need_agent_loop_parity(enabled_toolsets):
         return False
-    if not gateway_supports_runs(base_url=base_url, api_key=api_key):
+    if not gateway_supports_runs(base_url=base_url, api_key=api_key, blocking=False):
         return False
     if provider == moa_provider_id:
         moa_enabled = (
@@ -431,7 +581,7 @@ def should_route_via_runs(
         )
         if moa_enabled:
             return True
-        return gateway_supports_moa_runs(base_url=base_url, api_key=api_key)
+        return gateway_supports_moa_runs(base_url=base_url, api_key=api_key, blocking=False)
     return True
 
 
@@ -700,6 +850,49 @@ def approve_run(
         if not isinstance(payload, dict):
             payload = {}
         return resp.status_code, payload
+
+
+def _small_json_payload(resp) -> dict[str, Any]:
+    try:
+        payload = resp.json() if resp.content else {}
+    except json.JSONDecodeError:
+        payload = {"error": resp.text[:300]}
+    return payload if isinstance(payload, dict) else {}
+
+
+async def stop_run_async(
+    *,
+    base_url: str,
+    api_key: Optional[str],
+    run_id: str,
+    timeout: float = 15.0,
+) -> tuple[int, dict[str, Any]]:
+    """POST /v1/runs/{run_id}/stop without blocking the event loop."""
+    base_url = assert_safe_gateway_base_url(base_url)
+    safe_id = quote(str(run_id).strip(), safe="")
+    url = base_url.rstrip("/") + f"/v1/runs/{safe_id}/stop"
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.post(url, headers=_gateway_headers(api_key), json={})
+        return resp.status_code, _small_json_payload(resp)
+
+
+async def approve_run_async(
+    *,
+    base_url: str,
+    api_key: Optional[str],
+    run_id: str,
+    choice: str,
+    resolve_all: bool = False,
+    timeout: float = 15.0,
+) -> tuple[int, dict[str, Any]]:
+    """POST /v1/runs/{run_id}/approval without blocking the event loop."""
+    base_url = assert_safe_gateway_base_url(base_url)
+    safe_id = quote(str(run_id).strip(), safe="")
+    url = base_url.rstrip("/") + f"/v1/runs/{safe_id}/approval"
+    body = {"choice": choice, "all": resolve_all}
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.post(url, headers=_gateway_headers(api_key), json=body)
+        return resp.status_code, _small_json_payload(resp)
 
 
 _SSE_DATA_RE = re.compile(r"^data:\s*(.+)\s*$")
