@@ -35,6 +35,7 @@ import { registerFactoryRoutes } from './routes/factory';
 import { registerMcpWorkersRoute } from './routes/mcp-workers.route';
 import { registerMcpExtensionsRoute } from './routes/mcp-extensions.route';
 import { registerRemoteStatusRoutes } from './routes/remote-status';
+import { registerNubRoutes, syncNubMcpOnStartup } from './routes/nub';
 import { startManagedBridge, stopManagedBridge } from './lib/bridge-manager';
 import { taskOrchestrator } from './task-orchestrator';
 import { shutdownTeamCoordinator } from './team-coordinator';
@@ -217,6 +218,7 @@ export function createApp(opts?: { serveFrontend?: boolean }) {
   registerMcpWorkersRoute(app);
   registerMcpExtensionsRoute(app);
   registerRemoteStatusRoutes(app);
+  registerNubRoutes(app);
 
   // Workspace search lives in registerWorkspaceRoutes (hardened root checks).
   // ─── Health check ──────────────────────────────────────────────────────────
@@ -469,6 +471,9 @@ export function startServer(port?: number) {
 
       // Surface a mispointed HERMES_BRIDGE_URL (gateway vs full bridge) early.
       warnIfBridgeMisconfigured();
+
+      // Re-point Hermes's `nub` MCP server at this port when Nub is linked.
+      void syncNubMcpOnStartup();
 
       // ─── Tailscale remote access ────────────────────────────────────────
       if (serveFrontend) {
