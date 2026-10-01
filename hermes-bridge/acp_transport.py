@@ -37,6 +37,8 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
+
+import approval_registry
 from bridge_events import (
     PLAN_MODE_PROMPT_SUFFIX,
     build_approval_request_event,
@@ -178,10 +180,14 @@ class BridgeAcpClient:
         emit: Callable[[str, Any], None],
         approvals: dict[str, asyncio.Future],
         cwd: Optional[str] = None,
+        conversation_id: str = "",
     ) -> None:
         self.emit = emit
+        # Handle-scoped index of this session's parked approvals; the futures
+        # themselves live in the shared approval_registry (spec 4.3).
         self._approvals = approvals
         self._cwd = cwd
+        self._conversation_id = conversation_id
         # tool_call_id -> {"title", "input", "ts"} for the structured
         # tool_call_begin/delta/end envelopes (started on ``tool_call``,
         # completed on ``tool_call_update`` with status completed/failed).
@@ -247,7 +253,7 @@ class BridgeAcpClient:
             ),
         )
 
-        future: asyncio.Future = asyncio.get_running_loop().create_future()
+        future = approval_registry.register(approval_id, self._conversation_id)
         self._approvals[approval_id] = future
         try:
             decision = await asyncio.wait_for(future, timeout=APPROVAL_TIMEOUT_SECONDS)
@@ -255,6 +261,7 @@ class BridgeAcpClient:
             decision = {"option_id": "deny"}
         finally:
             self._approvals.pop(approval_id, None)
+            approval_registry.discard(approval_id)
 
         option_id = clamp_acp_option_id(
             decision.get("option_id") if isinstance(decision, dict) else decision,
@@ -423,6 +430,8 @@ _sessions_generation = 0
 # How long to wait for the agent to acknowledge close_session before we
 # hard-kill the process. Keep it short — this runs on the bridge's event loop.
 CLOSE_SESSION_TIMEOUT_SECONDS = 5.0
+# session/cancel is a notification; this only bounds a wedged stdin write.
+CANCEL_TIMEOUT_SECONDS = 5.0
 
 
 def _env_float(name: str, default: float) -> float:
@@ -671,7 +680,7 @@ async def _spawn_session(
     import acp
     from acp.schema import ClientCapabilities, Implementation
 
-    client = BridgeAcpClient(emit=emit, approvals={}, cwd=cwd)
+    client = BridgeAcpClient(emit=emit, approvals={}, cwd=cwd, conversation_id=conversation_id)
     # Drain stderr to a per-conversation log file so a chatty agent can
     # never deadlock the stdio pipe, and failures are debuggable. The
     # conversation id is client-controlled — sanitize it before it goes
@@ -857,16 +866,49 @@ def run_prompt_blocking(
 
 
 async def resolve_approval(approval_id: str, option_id: str) -> bool:
-    """Complete a parked approval future. Returns True when the decision was delivered."""
+    """Complete a parked approval future. Returns True when the decision was delivered.
+
+    Covers every transport: ACP permission requests and agent-loop approval
+    callbacks both park in ``approval_registry``.
+    """
     # Normalize UI ladder ids (`approved`) so request_permission can clamp
     # against the option list hermes actually offered.
     normalized = clamp_acp_option_id(option_id)
+    if approval_registry.resolve(approval_id, normalized):
+        return True
     for handle in list(_sessions.values()):
         future = handle.approvals.get(approval_id)
         if future is not None and not future.done():
             future.set_result({"option_id": normalized})
             return True
     return False
+
+
+async def cancel_turn(conversation_id: str) -> bool:
+    """Cancel the in-flight prompt of a conversation's ACP session (spec 4.4).
+
+    Sends ACP ``session/cancel``; hermes interrupts the agent and the pending
+    ``prompt`` returns with ``stop_reason="cancelled"``. Parked approvals are
+    denied first so a turn waiting on the user notices the Stop at once.
+    Returns False when the conversation has no live session.
+    """
+    async with _sessions_lock:
+        handle = _sessions.get(conversation_id)
+    if handle is None:
+        return False
+    approval_registry.deny_all(conversation_id)
+    for approval_id, future in list(handle.approvals.items()):
+        if not future.done():
+            future.set_result({"option_id": "deny"})
+        handle.approvals.pop(approval_id, None)
+    if not handle.busy:
+        return True
+    try:
+        await asyncio.wait_for(handle.conn.cancel(handle.session_id), timeout=CANCEL_TIMEOUT_SECONDS)
+    except Exception:  # noqa: BLE001 - a failed cancel notification falls back to the prompt timeout; logged
+        logger.warning("acp cancel(%s) failed", handle.session_id, exc_info=True)
+        return False
+    return True
 
 
 async def reap_idle_sessions() -> int:

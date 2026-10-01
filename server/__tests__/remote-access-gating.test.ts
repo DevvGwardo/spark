@@ -186,6 +186,15 @@ describe('merged hermes approval route (B3)', () => {
     expect(forwardedBodies[0]?.body).toEqual({ option_id: 'allow_once' })
   })
 
+  it('forwards agent-loop bridge-* approval ids to the bridge (spec 4.3)', async () => {
+    stubBridgeOk()
+    const res = await postApproval(server.url, 'bridge-test-1', { option_id: 'allow_session' })
+    expect(res.status).toBe(200)
+    expect(forwardedBodies).toHaveLength(1)
+    expect(forwardedBodies[0]?.url).toContain('/v1/approvals/bridge-test-1')
+    expect(forwardedBodies[0]?.body).toEqual({ option_id: 'allow_session' })
+  })
+
   it('rejects a body with neither decision nor option_id', async () => {
     stubBridgeOk()
     const res = await postApproval(server.url, 'acp-test-3', {})

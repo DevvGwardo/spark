@@ -58,6 +58,22 @@ from session_tracker import (
 )
 
 
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _background_requested(request: Request, body: ChatCompletionRequest) -> bool:
+    """Spec 4.4: ``background: true`` (body) or ``X-Hermes-Background: 1``.
+
+    A background turn keeps running when its client stream goes away; any
+    other turn is cancelled on disconnect.
+    """
+    raw = (body.model_extra or {}).get("background")
+    if raw is True or (isinstance(raw, str) and raw.strip().lower() in _TRUTHY):
+        return True
+    header = request.headers.get("x-hermes-background", "")
+    return str(header or "").strip().lower() in _TRUTHY
+
+
 async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
     toolsets_header = request.headers.get("x-hermes-toolsets", DEFAULT_TOOLSETS)
     enabled_toolsets = [t.strip() for t in toolsets_header.split(",") if t.strip()]
@@ -631,6 +647,7 @@ async def _chat_completions_impl(request: Request, body: ChatCompletionRequest):
         agent_base_url=agent_base_url,
         agent_api_key=agent_api_key,
         active_job_meta=active_job_meta,
+        background=_background_requested(request, body),
     )
 
     # Transport choice happens only in select_transport. The runs decision

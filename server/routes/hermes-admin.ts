@@ -81,11 +81,13 @@ export function registerHermesAdminRoute(app: Express) {
   });
 
   // Single approval route (B3): accepts BOTH body shapes. Engine-local ids
-  // (server-side approval-engine, anything not starting with "acp-") resolve
-  // locally via {decision}; bridge ACP ids ("acp-*") forward to the bridge,
-  // either by translating {decision} or by forwarding {option_id} verbatim.
+  // (server-side approval-engine) resolve locally via {decision}; bridge ids
+  // forward to the bridge, either by translating {decision} or by forwarding
+  // {option_id} verbatim. Bridge ids are "acp-*" (ACP permission requests) and
+  // "bridge-*" (agent-loop approval prompts, hardening spec 4.3).
   // Body: {"decision": "approved" | "approved_for_session" | "denied", "reason"?: string}
   //    or {"option_id": "allow_once" | "allow_session" | "allow_always" | "deny"}.
+  const BRIDGE_APPROVAL_ID_PREFIXES = ['acp-', 'bridge-'];
   app.post('/api/hermes/approvals/:approvalId', async (req: Request, res: Response) => {
     const { approvalId } = req.params;
     if (!approvalId) {
@@ -112,7 +114,7 @@ export function registerHermesAdminRoute(app: Express) {
       });
       return;
     }
-    if (approvalId.startsWith('acp-')) {
+    if (BRIDGE_APPROVAL_ID_PREFIXES.some((prefix) => approvalId.startsWith(prefix))) {
       const DECISION_TO_OPTION_ID: Record<string, string> = {
         approved: 'allow_once',
         approved_for_session: 'allow_session',

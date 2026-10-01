@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import threading
 import time
@@ -22,6 +23,7 @@ from typing import TYPE_CHECKING, Any, Iterable, Optional
 
 from fastapi.responses import StreamingResponse
 
+import approval_registry
 import brain_client
 import bridge_state
 import bridge_workspace
@@ -48,6 +50,7 @@ from chat_common import (
     _format_tool_start_text,
     _get_stream_chunk_size,
 )
+from chat_transports.approvals import agent_loop_approvals_enabled, make_approval_callback
 from chat_transports.base import BaseChatTransport, ChatContext, TransportCapabilities
 from chat_transports.drain import (
     AGENT_LOOP_HEARTBEAT_SECONDS,
@@ -77,10 +80,18 @@ _PASSTHROUGH_KINDS = frozenset({
     # under the fallback_switch key and real fallback switches were dropped.
     "server_tool_event",
     "fallback_switch",
+    # Spec 4.3: hermes approval prompts, same event the ACP transport emits.
+    "approval_request",
 })
+
+# Spec 4.4: after Stop, the SSE stream ends within this many seconds even if
+# the agent is inside a call it cannot interrupt; the worker finishes later.
+CANCEL_GRACE_SECONDS = 1.5
 
 if TYPE_CHECKING:  # fastapi is stubbed without Response in the unit tests
     from fastapi.responses import Response
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -100,9 +111,15 @@ class AgentTurn:
 
 class AgentLoopTransport(BaseChatTransport):
     name = "agent-loop"
-    # G6: no approval_callback, no interrupt, final usage hard-coded to 0;
-    # session resume works because the adapter keys state.db on session_id.
-    capabilities = TransportCapabilities(session_resume=True)
+    # Approvals via hermes' approval callback (4.3), Stop via the real agent's
+    # interrupt flag (4.4); resume works because the adapter keys state.db on
+    # session_id. Usage is still hard-coded to 0 (4.5).
+    capabilities = TransportCapabilities(
+        approvals=True,
+        cancel=True,
+        stops_on_client_disconnect=True,
+        session_resume=True,
+    )
 
     def __init__(self, ctx: ChatContext, *, runs_plan: RunsPlan, **kwargs: Any):
         super().__init__(ctx, **kwargs)
@@ -114,6 +131,11 @@ class AgentLoopTransport(BaseChatTransport):
         self._tool_state_lock = threading.Lock()
         self._active_tool_state: dict = {}  # call_id -> {"ts": monotonic, "name": tool}
         self._pending_tool_ids: dict[str, list] = {}  # tool_name -> [call_ids] (FIFO fallback)
+        # The agent of the running turn (set on the worker thread) and the
+        # guard that makes closing the channel idempotent (worker vs Stop).
+        self._agent: Any = None
+        self._agent_lock = threading.Lock()
+        self._channel_closed = False
 
     # ── entry point ──────────────────────────────────────────────────────
 
@@ -150,7 +172,37 @@ class AgentLoopTransport(BaseChatTransport):
 
         self._worktree = (maybe_setup_worktree, adjust_toolsets_for_worktree, cleanup_worktree)
         self.channel = EventChannel(asyncio.get_running_loop())
+        # Registered before the stream starts so a Stop that races the first
+        # frame still reaches this turn.
+        self.register_run(chunk_id)
         return StreamingResponse(self._event_stream(), media_type="text/event-stream")
+
+    # ── cancel (spec 4.4) ────────────────────────────────────────────────
+
+    async def cancel(self) -> bool:
+        """Interrupt the running agent and end the stream promptly.
+
+        The real agent checks its interrupt flag between API calls and tool
+        steps. A parked approval is denied so the turn does not sit out the
+        approval timeout. If the agent is inside a call it cannot interrupt,
+        the stream still ends after ``CANCEL_GRACE_SECONDS``.
+        """
+        approval_registry.deny_all(self.ctx.workspace_id)
+        with self._agent_lock:
+            agent = self._agent
+        if agent is not None:
+            await asyncio.to_thread(_interrupt_agent, agent)
+        channel = self.channel
+        if channel is not None:
+            channel.loop.call_later(CANCEL_GRACE_SECONDS, self._close_channel)
+        return True
+
+    def _close_channel(self) -> None:
+        with self._agent_lock:
+            if self._channel_closed:
+                return
+            self._channel_closed = True
+        self.channel.close()
 
     # ── producer side: agent callbacks (worker thread) ──────────────────
 
@@ -371,7 +423,10 @@ class AgentLoopTransport(BaseChatTransport):
                 brain_client._brain_pulse("done", f"completed chunk={self.chunk_id}")
             except Exception:
                 pass  # Best-effort cleanup
-            self.channel.close()
+            with self._agent_lock:
+                self._agent = None
+            self.unregister_run()
+            self._close_channel()
 
     def _prepare_turn(self, adjust_toolsets_for_worktree, wt_info, worktree_active: bool) -> AgentTurn:
         ctx = self.ctx
@@ -521,11 +576,29 @@ class AgentLoopTransport(BaseChatTransport):
             agent_kwargs["hermes_home"] = str(bridge_workspace._resolve_hermes_home(ctx.request_profile))
             if ctx.run_budget_seconds:
                 agent_kwargs["run_budget_seconds"] = ctx.run_budget_seconds
+            if agent_loop_approvals_enabled():
+                # Spec 4.3: real-agent only (the fallback agent has no gate).
+                agent_kwargs["approval_callback"] = make_approval_callback(
+                    loop=self.channel.loop,
+                    conversation_id=ctx.workspace_id,
+                    emit=lambda event: self._qput(("approval_request", event)),
+                    is_cancelled=lambda: self.cancel_requested,
+                    cwd=(turn.wt_info or {}).get("path") or ctx.repo_root_header or None,
+                )
         if ctx.resolved_provider == MOA_PROVIDER_ID:
             agent_kwargs["provider_override"] = MOA_PROVIDER_ID
         agent = ctx.agent_class(**agent_kwargs)
         agent.on_thinking = self.on_thinking
         agent.on_reasoning = self.on_reasoning
+        with self._agent_lock:
+            self._agent = agent
+        if self.cancel_requested:
+            # Stop arrived while the turn was being set up: don't start it
+            # (hermes clears a pending interrupt when a turn begins).
+            print("[hermes-bridge] Turn cancelled before the agent started.", flush=True)
+            _update_bridge_metrics(success=True, decrement_active=True)
+            ctx.finalize_session(True)
+            return
 
         history = turn.history
         print(f"[hermes-bridge] User message: {turn.user_message[:100]}... history_msgs={len(history)} has_system={any(m.get('role') == 'system' for m in history)}", flush=True)
@@ -606,13 +679,27 @@ class AgentLoopTransport(BaseChatTransport):
 
         agent_task = asyncio.ensure_future(asyncio.to_thread(self._run_sync))
         stats = DrainStats()
-        async for frame in drain_to_sse(
-            self.channel.queue,
-            lambda event: self._render(event, stream_started_at),
-            heartbeat_seconds=AGENT_LOOP_HEARTBEAT_SECONDS,
-            stats=stats,
-        ):
-            yield frame
+        completed = False
+        try:
+            async for frame in drain_to_sse(
+                self.channel.queue,
+                lambda event: self._render(event, stream_started_at),
+                heartbeat_seconds=AGENT_LOOP_HEARTBEAT_SECONDS,
+                stats=stats,
+            ):
+                yield frame
+            async for frame in self._finish_stream(agent_task, stats, stream_started_at):
+                yield frame
+            completed = True
+        finally:
+            # Spec 4.4: a client that leaves mid-turn cancels it unless the
+            # request asked for background mode.
+            self.on_stream_closed(completed)
+
+    async def _finish_stream(self, agent_task, stats: DrainStats, stream_started_at: float):
+        ctx = self.ctx
+        body = ctx.body
+        chunk_id = self.chunk_id
         event_count = stats.events
 
         # Final chunk
@@ -650,4 +737,30 @@ class AgentLoopTransport(BaseChatTransport):
         for frame in stop_frames(chunk_id, body.model):
             yield frame
 
+        if self.cancel_requested and not agent_task.done():
+            # Stopped, and the agent is still unwinding an uninterruptible
+            # call: don't hold the response open for it.
+            agent_task.add_done_callback(_consume_task_result)
+            return
         await agent_task
+
+
+def _interrupt_agent(agent: Any) -> bool:
+    """Set the agent's interrupt flag (hermes ``AIAgent.interrupt`` or the fallback's)."""
+    interrupt = getattr(agent, "interrupt", None)
+    if not callable(interrupt):
+        return False
+    try:
+        interrupt()
+    except Exception:  # noqa: BLE001 - a failed interrupt still leaves the stream-side grace close
+        logger.warning("agent interrupt failed", exc_info=True)
+        return False
+    return True
+
+
+def _consume_task_result(task: "asyncio.Future") -> None:
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.warning("cancelled agent-loop worker ended with an error: %s", exc)

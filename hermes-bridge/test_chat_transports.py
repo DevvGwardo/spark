@@ -158,7 +158,7 @@ class SelectTransportTableTests(unittest.TestCase):
 
 
 class CapabilityMatrixTests(unittest.TestCase):
-    """Declared capabilities match the spec §2.2 G6 matrix (today's truth)."""
+    """Declared capabilities match the spec §2.2 capability matrix."""
 
     def test_matrix(self):
         from chat_transports.acp import AcpTransport
@@ -169,11 +169,11 @@ class CapabilityMatrixTests(unittest.TestCase):
         from chat_transports.swarm import SwarmTransport
 
         expected = {
-            AgentLoopTransport: dict(approvals=False, cancel=False, session_resume=True),
-            AcpTransport: dict(approvals=True, cancel=False, session_resume=False),
-            RunsTransport: dict(approvals=False, cancel=True, session_resume=False),
-            SwarmTransport: dict(approvals=False, cancel=False, session_resume=False),
-            PassthroughTransport: dict(approvals=False, cancel=False, session_resume=False),
+            AgentLoopTransport: dict(approvals=True, cancel=True, stops_on_client_disconnect=True, session_resume=True),
+            AcpTransport: dict(approvals=True, cancel=True, stops_on_client_disconnect=True, session_resume=False),
+            RunsTransport: dict(approvals=False, cancel=True, stops_on_client_disconnect=True, session_resume=False),
+            SwarmTransport: dict(approvals=False, cancel=False, stops_on_client_disconnect=False, session_resume=False),
+            PassthroughTransport: dict(approvals=False, cancel=False, stops_on_client_disconnect=False, session_resume=False),
         }
         names = set()
         for cls, caps in expected.items():
@@ -182,16 +182,15 @@ class CapabilityMatrixTests(unittest.TestCase):
                 self.assertTrue(isinstance(cls.__new__(cls), ChatTransport))
                 for flag, value in caps.items():
                     self.assertEqual(getattr(cls.capabilities, flag), value, flag)
-                # Nobody stops on disconnect or reports usage yet (spec 4.4/4.5).
-                self.assertFalse(cls.capabilities.stops_on_client_disconnect)
+                # Usage reporting lands with spec 4.5.
                 self.assertFalse(cls.capabilities.usage_in_stream)
                 names.add(cls.name)
         self.assertEqual(names, {"agent-loop", "acp", "runs", "swarm", "passthrough"})
 
     def test_unsupported_cancel_reports_false(self):
-        from chat_transports.agent_loop import AgentLoopTransport
+        from chat_transports.swarm import SwarmTransport
 
-        transport = AgentLoopTransport.__new__(AgentLoopTransport)
+        transport = SwarmTransport.__new__(SwarmTransport)
         self.assertFalse(asyncio.run(transport.cancel()))
 
 
@@ -384,8 +383,10 @@ class RunsSseTests(unittest.TestCase):
 
 
 class PersistOnDisconnectTests(unittest.TestCase):
-    """A client that goes away mid-stream does not stop the turn (spec 4.4 keeps
-    this as the ``background: true`` behavior); the worker still finalizes."""
+    """A ``background: true`` turn survives its client going away mid-stream
+    (spec 4.4 keeps today's persist-on-disconnect as an explicit choice); the
+    worker still finalizes. Without the flag a disconnect cancels the turn —
+    see test_transport_parity.py."""
 
     def test_agent_loop_finishes_and_finalizes_after_disconnect(self):
         import threading
@@ -411,6 +412,7 @@ class PersistOnDisconnectTests(unittest.TestCase):
             "model": "meta-llama/llama-3-70b-instruct",
             "messages": [{"role": "user", "content": "hi"}],
             "stream": True,
+            "background": True,
         })
         request = _FakeRequest({"authorization": "Bearer k", "x-hermes-conversation-id": "conv-disconnect"})
 

@@ -29,7 +29,6 @@ from chat_common import (
     _format_tool_end_text,
     _format_tool_start_text,
     _get_stream_chunk_size,
-    _resolve_workspace_id,
     _single_message_sse,
 )
 from chat_transports.base import BaseChatTransport, TransportCapabilities
@@ -63,11 +62,34 @@ if TYPE_CHECKING:  # fastapi is stubbed without Response in the unit tests
     from fastapi.responses import Response
 
 
+# Spec 4.4: after Stop the SSE stream ends within this many seconds even if
+# hermes-acp is slow to acknowledge session/cancel.
+CANCEL_GRACE_SECONDS = 1.5
+
+
 class AcpTransport(BaseChatTransport):
     name = "acp"
-    # G6: approvals yes (session/request_permission), no cancel, no usage,
-    # no resume after reap (only the last message is sent).
-    capabilities = TransportCapabilities(approvals=True)
+    # Approvals via session/request_permission, Stop via session/cancel.
+    # No usage yet, no resume after reap (only the last message is sent).
+    capabilities = TransportCapabilities(
+        approvals=True,
+        cancel=True,
+        stops_on_client_disconnect=True,
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._channel = None
+
+    async def cancel(self) -> bool:
+        """ACP ``session/cancel`` for this conversation's in-flight prompt."""
+        import acp_transport
+
+        cancelled = await acp_transport.cancel_turn(self.ctx.workspace_id)
+        channel = self._channel
+        if channel is not None:
+            channel.loop.call_later(CANCEL_GRACE_SECONDS, channel.close)
+        return cancelled
 
     async def handle(self) -> Response:
         """Chat completions via the ACP transport (real hermes-agent)."""
@@ -117,7 +139,9 @@ class AcpTransport(BaseChatTransport):
             )
             provider = None
 
-        workspace_id = _resolve_workspace_id(request, body)
+        # Resolved once in chat_impl: the registry, the ACP session and the
+        # session tracker must all agree on the conversation id.
+        workspace_id = self.ctx.workspace_id
         session_id = workspace_id
         # Resolve the session cwd to a real checkout: explicit header first, then
         # the managed clone for owner/name, then the historical fallbacks. (The
@@ -199,6 +223,7 @@ class AcpTransport(BaseChatTransport):
         started_at = time.monotonic()
         loop = asyncio.get_running_loop()
         channel = EventChannel(loop)
+        self._channel = channel
         _qput = channel.put
 
         def on_text(text: str):
@@ -270,6 +295,7 @@ class AcpTransport(BaseChatTransport):
                 _qput(("text", f"\n\n[Error: {error_message}]"))
                 _finalize_session(False, error_message=error_message)
             finally:
+                self.unregister_run()
                 channel.close()
 
         def render(event: tuple) -> Iterable[str]:
@@ -324,15 +350,24 @@ class AcpTransport(BaseChatTransport):
 
             agent_task = asyncio.ensure_future(asyncio.to_thread(_run_acp_sync))
             stats = DrainStats()
-            # Wall-clock keepalive below the Express proxy's 30s activity timeout.
-            async for frame in drain_to_sse(
-                channel.queue,
-                render,
-                heartbeat_seconds=acp_chat.ACP_SSE_HEARTBEAT_SECONDS,
-                stats=stats,
-            ):
-                yield frame
+            completed = False
+            try:
+                # Wall-clock keepalive below the Express proxy's 30s activity timeout.
+                async for frame in drain_to_sse(
+                    channel.queue,
+                    render,
+                    heartbeat_seconds=acp_chat.ACP_SSE_HEARTBEAT_SECONDS,
+                    stats=stats,
+                ):
+                    yield frame
+                async for frame in finish(agent_task, stats):
+                    yield frame
+                completed = True
+            finally:
+                # Spec 4.4: disconnect cancels unless background was requested.
+                self.on_stream_closed(completed)
 
+        async def finish(agent_task, stats: DrainStats):
             elapsed_ms = int((time.monotonic() - started_at) * 1000)
             _mark_request_finished(
                 model=body.model,
@@ -345,6 +380,17 @@ class AcpTransport(BaseChatTransport):
             )
             for frame in stop_frames(chunk_id, body.model):
                 yield frame
+            if self.cancel_requested and not agent_task.done():
+                # Stopped and hermes-acp has not acknowledged yet: don't hold
+                # the response open for the worker.
+                agent_task.add_done_callback(_consume_task_result)
+                return
             await agent_task
 
+        self.register_run(chunk_id)
         return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+def _consume_task_result(task) -> None:
+    if not task.cancelled() and task.exception() is not None:
+        print(f"[hermes-bridge] cancelled ACP worker ended with an error: {task.exception()}", flush=True)
