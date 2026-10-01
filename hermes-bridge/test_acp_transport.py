@@ -298,3 +298,60 @@ class ToolInputFromLocationsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EnsureSessionLockingTests(unittest.TestCase):
+    """G11 / spec 5.3: the global lock must not be held across a spawn."""
+
+    SPAWN_SECONDS = 0.4
+
+    def setUp(self):
+        at._sessions.clear()
+        at._conversation_locks.clear()
+        self.spawned: list[str] = []
+
+    def tearDown(self):
+        at._sessions.clear()
+        at._conversation_locks.clear()
+
+    async def _fake_spawn(self, *, conversation_id, cwd, plan_mode, **kwargs):
+        self.spawned.append(conversation_id)
+        await asyncio.sleep(self.SPAWN_SECONDS)
+        handle = _make_handle(cid=conversation_id)
+        handle.proc.returncode = None  # alive
+        handle.cwd = cwd
+        handle.plan_mode = plan_mode
+        return handle
+
+    def _ensure(self, loop, cid):
+        return at.ensure_session(loop=loop, conversation_id=cid, cwd="/tmp", emit=lambda *a: None)
+
+    def _run(self, *cids):
+        async def main():
+            loop = asyncio.get_running_loop()
+            started = time.monotonic()
+            handles = await asyncio.gather(*(self._ensure(loop, cid) for cid in cids))
+            return handles, time.monotonic() - started
+
+        with mock.patch.object(at, "_spawn_session", self._fake_spawn), mock.patch.object(
+            at, "_acp_command", return_value=["hermes-acp"]
+        ):
+            return asyncio.run(main())
+
+    def test_two_first_turns_do_not_serialize(self):
+        handles, elapsed = self._run("conv-a", "conv-b")
+        self.assertEqual(sorted(self.spawned), ["conv-a", "conv-b"])
+        self.assertEqual({h.conversation_id for h in handles}, {"conv-a", "conv-b"})
+        # Serialized would be >= 2 * SPAWN_SECONDS; concurrent is ~1x.
+        self.assertLess(elapsed, self.SPAWN_SECONDS * 1.75)
+
+    def test_same_conversation_spawns_once(self):
+        handles, _ = self._run("conv-a", "conv-a")
+        self.assertEqual(self.spawned, ["conv-a"])
+        self.assertIs(handles[0], handles[1])
+
+    def test_conversation_locks_pruned_after_shutdown(self):
+        self._run("conv-a")
+        self.assertIn("conv-a", at._conversation_locks)
+        asyncio.run(at.shutdown_all())
+        self.assertEqual(at._conversation_locks, {})
