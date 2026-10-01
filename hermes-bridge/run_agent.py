@@ -14,7 +14,7 @@ import threading
 import httpx
 import re
 from typing import Optional, Callable
-from urllib.parse import quote, quote_plus
+from urllib.parse import quote_plus
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from kanban_tools import (
     KANBAN_TOOL_DEFINITIONS, KANBAN_TOOL_NAMES,
@@ -23,6 +23,13 @@ from kanban_tools import (
     kanban_list, kanban_create, kanban_link, kanban_unblock,
 )
 from team_tools import TEAM_TOOL_DEFINITIONS, TEAM_TOOL_NAMES, team_delegate_to_agent, team_report_progress, team_query_context, team_publish_finding, team_request_help, team_signal_completion
+from repo_tools import (
+    REPO_EDIT_TOOL_NAMES,
+    REPO_READONLY_TOOL_NAMES,
+    REPO_TOOL_NAMES,
+    RepoToolsMixin,
+    openai_tool_definitions,
+)
 from bridge_errors import (
     MODEL_INCOMPATIBLE,
     BridgeError,
@@ -194,212 +201,9 @@ REPO_MODE_BLOCKED_TOOLSETS = {
     "code_execution",
 }
 
-REPO_TOOL_DEFINITIONS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "list_user_repos",
-            "description": "List all repositories accessible with the current GitHub token. Use this when the active repo cannot be found (404) to discover available repos.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "read_repo_file",
-            "description": "Read the contents of a file from the repository.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "The file path to read",
-                    }
-                },
-                "required": ["path"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "git_log",
-            "description": "View the repository's git commit history (read-only). Use this to understand recent changes, who changed what, and when. Optionally filter to commits that touched a specific file or directory.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Optional file or directory path to filter history to commits that touched it.",
-                    },
-                    "ref": {
-                        "type": "string",
-                        "description": "Optional branch, tag, or commit SHA to start from. Defaults to the repository's default branch.",
-                    },
-                    "max_count": {
-                        "type": "integer",
-                        "description": "How many commits to return (default 15, max 50).",
-                    },
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "git_show",
-            "description": "Show a single commit (read-only): its message, author, date, and the diff/patch for each changed file. Use a SHA from git_log.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "sha": {
-                        "type": "string",
-                        "description": "The commit SHA (or ref) to show.",
-                    },
-                },
-                "required": ["sha"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "git_diff",
-            "description": "Show the diff between two git refs (read-only), e.g. two branches, tags, or commit SHAs. Returns the changed-files summary and per-file patches.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "base": {
-                        "type": "string",
-                        "description": "The base ref (branch, tag, or SHA) to compare from.",
-                    },
-                    "head": {
-                        "type": "string",
-                        "description": "The head ref (branch, tag, or SHA) to compare to.",
-                    },
-                },
-                "required": ["base", "head"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "edit_repo_file",
-            "description": "Edit an existing file in the repository. Call read_repo_file first to see current contents.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "The file path to edit",
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "The new full file content",
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "What was changed",
-                    },
-                },
-                "required": ["path", "content"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "create_repo_file",
-            "description": "Create a new file in the repository.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "The file path to create",
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "The file content",
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "What this file is for",
-                    },
-                },
-                "required": ["path", "content"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "delete_repo_file",
-            "description": "Delete a file from the repository.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "The file path to delete",
-                    },
-                    "reason": {
-                        "type": "string",
-                        "description": "Why this file is being deleted",
-                    },
-                },
-                "required": ["path"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "batch_edit_repo_files",
-            "description": "Edit multiple files at once. Preferred over individual edit_repo_file calls when changing multiple files.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "changes": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "path": {"type": "string"},
-                                "action": {"type": "string", "enum": ["create", "edit", "delete"]},
-                                "content": {"type": "string"},
-                                "description": {"type": "string"},
-                            },
-                            "required": ["path", "action", "content"],
-                        },
-                        "description": "List of file changes to apply",
-                    },
-                },
-                "required": ["changes"],
-            },
-        },
-    },
-]
-
-REPO_TOOL_NAMES = {t["function"]["name"] for t in REPO_TOOL_DEFINITIONS}
-# Read-only repo tools — always safe to expose, even when edit intent is off.
-REPO_READONLY_TOOL_NAMES = {
-    "read_repo_file",
-    "list_user_repos",
-    "git_log",
-    "git_show",
-    "git_diff",
-}
-REPO_EDIT_TOOL_NAMES = {
-    "batch_edit_repo_files",
-    "edit_repo_file",
-    "create_repo_file",
-    "delete_repo_file",
-}
+# Repo tool schemas, name sets and handlers are shared with hermes_adapter via
+# repo_tools.py; these names are re-exported for existing callers.
+REPO_TOOL_DEFINITIONS = openai_tool_definitions()
 REPO_CONTINUATION_RETRY_LIMIT = 2
 REPO_TOOL_ENFORCEMENT_RETRY_LIMIT = 2
 FIX_INTENT_CONTINUATION_LIMIT = 2
@@ -810,6 +614,37 @@ def _cap_tool_response(result: str) -> str:
         result[:head_budget]
         + f"\n\n[... {omitted:,} characters omitted — output truncated to {MAX_TOOL_RESPONSE_CHARS:,} chars ...]\n\n"
         + result[-tail_budget:]
+    )
+
+
+_FILE_TRUNCATION_MARKER = "lines omitted — file has"
+
+
+def _truncate_file_content(content: str) -> str:
+    """Line-aware truncation for large repo files read by this agent.
+
+    Keeps the head (imports, declarations) and the tail (often where recent
+    changes live). Falls back to a character budget when the line split alone
+    does not fit.
+    """
+    if len(content) <= MAX_TOOL_RESPONSE_CHARS:
+        return content
+    lines = content.split("\n")
+    total_lines = len(lines)
+    head_lines = int(total_lines * 0.6)
+    tail_lines = total_lines - head_lines
+    head = "\n".join(lines[:head_lines])
+    tail = "\n".join(lines[-tail_lines:])
+    if len(head) + len(tail) > MAX_TOOL_RESPONSE_CHARS:
+        head_budget = int(MAX_TOOL_RESPONSE_CHARS * 0.6)
+        tail_budget = MAX_TOOL_RESPONSE_CHARS - head_budget - 200
+        head = content[:head_budget]
+        tail = content[-tail_budget:]
+    omitted = total_lines - head_lines - tail_lines
+    return (
+        head
+        + f"\n\n[... {omitted} {_FILE_TRUNCATION_MARKER} {total_lines} total lines ...]\n\n"
+        + tail
     )
 
 
@@ -1371,7 +1206,7 @@ def _execute_mcp_tool(
         return f"Error calling MCP tool '{tool_name}': {e}"
 
 
-class AIAgent:
+class AIAgent(RepoToolsMixin):
     def __init__(
         self,
         base_url: str,
@@ -1421,6 +1256,8 @@ class AIAgent:
         self.github_repo_owner = github_repo_owner
         self.github_repo_name = github_repo_name
         self.repo_file_tree = repo_file_tree or []
+        # Scopes the staged-edit brain buffer (same default as RepoToolProvider).
+        self.workspace_id = workspace_id or 'default'
         self.on_tool_start = on_tool_start
         self.on_tool_end = on_tool_end
         self.on_text = on_text
@@ -1788,476 +1625,62 @@ class AIAgent:
         )
         return new_messages
 
-    @staticmethod
-    def _parse_next_link(link_header: str) -> str | None:
-        """Parse GitHub's Link header to find the next page URL."""
-        if not link_header:
-            return None
-        for part in link_header.split(","):
-            if 'rel="next"' in part:
-                url = part.split(";")[0].strip().strip("<>")
-                return url
-        return None
+    # --- RepoToolsMixin host hooks (handlers live in repo_tools.py) ---
 
-    def _list_user_repos(self) -> str:
-        """List all repos accessible with the current GitHub token."""
-        if not self.github_pat:
-            return "Error: No GitHub token configured. Cannot list repositories."
-        try:
-            url = "https://api.github.com/user/repos?sort=updated&per_page=100&affiliation=owner,collaborator,organization_member"
-            headers = {
-                "Authorization": f"Bearer {self.github_pat}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-                "User-Agent": "Hermes-Agent",
-            }
-            all_repos = []
-            rate_limit_retries = 0
-            with httpx.Client(timeout=15) as client:
-                while url:
-                    resp = client.get(url, headers=headers)
-                    if resp.status_code == 401:
-                        return "Error: GitHub token is invalid or expired. The user should update their token in Settings."
-                    if resp.status_code == 429:
-                        rate_limit_retries += 1
-                        if rate_limit_retries > 3:
-                            raise RuntimeError(
-                                "GitHub API rate limited (429) after 3 retries — try again later."
-                            )
-                        raw_retry_after = resp.headers.get("Retry-After", "5")
-                        try:
-                            retry_after = min(max(int(raw_retry_after), 1), 30)
-                        except ValueError:
-                            retry_after = 5
-                        time.sleep(retry_after)
-                        continue
-                    resp.raise_for_status()
-                    page = resp.json()
-                    if isinstance(page, list):
-                        all_repos.extend(page)
-                    url = self._parse_next_link(resp.headers.get("Link", ""))
-            repos = all_repos
-            if not repos:
-                return "No repositories found for this GitHub token."
-            lines = []
-            for repo in repos:
-                name = repo.get("full_name", "?")
-                desc = repo.get("description") or ""
-                private = " (private)" if repo.get("private") else ""
-                lines.append(f"- {name}{private}: {desc[:80]}" if desc else f"- {name}{private}")
-            return f"Found {len(repos)} accessible repositories:\n" + "\n".join(lines)
-        except Exception as e:
-            return f"Error listing repositories: {e}"
+    @property
+    def repo_owner(self) -> Optional[str]:
+        return self.github_repo_owner
 
-    def _execute_repo_tool(self, tool_name: str, arguments: dict) -> str:
-        """Execute a repo tool, emit events, and return the result string."""
-        if tool_name == "list_user_repos":
-            if self.on_tool_start:
-                self.on_tool_start("list_user_repos", "")
-            result = self._list_user_repos()
-            if self.on_tool_end:
-                self.on_tool_end("list_user_repos", "", result[:200])
-            return result
+    @property
+    def repo_name(self) -> Optional[str]:
+        return self.github_repo_name
 
-        if tool_name == "read_repo_file":
-            path = arguments.get("path", "")
-            if self.on_tool_start:
-                self.on_tool_start("read_repo_file", path)
-            # Return staged/cached content if the file was already edited in
-            # this session.  This prevents the model from seeing the original
-            # (pre-edit) version from GitHub and re-applying the same changes.
-            if path in self.session_cache:
-                result = self.session_cache[path]
-                if self.on_tool_end:
-                    self.on_tool_end("read_repo_file", path, f"Read {len(result)} chars from {path} (cached)")
-                print(f"[hermes-agent] Read {path} from session cache: {len(result)} chars", flush=True)
-            else:
-                try:
-                    result = self._read_github_file(path)
-                finally:
-                    if self.on_tool_end:
-                        self.on_tool_end("read_repo_file", path, f"Read {len(result) if 'result' in dir() else 0} chars from {path}")
-                if not result.startswith("Error"):
-                    self.session_cache[path] = result
-            result = _cap_tool_response(result)
-            if result == "":
-                result = "(empty file)"
-            self._emit_event({"type": "repo_file_read", "path": path, "content": result})
-            return result
-
-        if tool_name in ("git_log", "git_show", "git_diff"):
-            if tool_name == "git_log":
-                label = arguments.get("path", "") or arguments.get("ref", "")
-                if self.on_tool_start:
-                    self.on_tool_start("git_log", label)
-                result = self._git_log(
-                    path=arguments.get("path", ""),
-                    ref=arguments.get("ref", ""),
-                    max_count=arguments.get("max_count", 15),
-                )
-            elif tool_name == "git_show":
-                sha = arguments.get("sha", "")
-                if self.on_tool_start:
-                    self.on_tool_start("git_show", sha)
-                result = self._git_show(sha)
-            else:  # git_diff
-                base = arguments.get("base", "")
-                head = arguments.get("head", "")
-                if self.on_tool_start:
-                    self.on_tool_start("git_diff", f"{base}...{head}")
-                result = self._git_diff(base, head)
-            result = _cap_tool_response(result)
-            if self.on_tool_end:
-                self.on_tool_end(tool_name, "", result[:200])
-            return result
-
-        if tool_name == "edit_repo_file":
-            path = arguments.get("path", "")
-            content = arguments.get("content", "")
-            description = arguments.get("description", "")
-            original_content = self.session_cache.get(path, "")
-            self.session_cache[path] = content
-            if self.on_tool_start:
-                self.on_tool_start("edit_repo_file", path)
-            self._emit_event({
-                "type": "repo_file_edit",
-                "path": path,
-                "content": content,
-                "originalContent": original_content,
-                "description": description,
-            })
-            if self.on_tool_end:
-                self.on_tool_end("edit_repo_file", path, f"Staged edit to {path}")
-            return f"Staged edit to {path}"
-
-        if tool_name == "create_repo_file":
-            path = arguments.get("path", "")
-            content = arguments.get("content", "")
-            description = arguments.get("description", "")
-            self.session_cache[path] = content
-            if self.on_tool_start:
-                self.on_tool_start("create_repo_file", path)
-            self._emit_event({
-                "type": "repo_file_create",
-                "path": path,
-                "content": content,
-                "description": description,
-            })
-            if self.on_tool_end:
-                self.on_tool_end("create_repo_file", path, f"Staged new file {path}")
-            return f"Staged new file {path}"
-
-        if tool_name == "delete_repo_file":
-            path = arguments.get("path", "")
-            reason = arguments.get("reason", "")
-            original_content = self.session_cache.pop(path, "")
-            if self.on_tool_start:
-                self.on_tool_start("delete_repo_file", path)
-            self._emit_event({
-                "type": "repo_file_delete",
-                "path": path,
-                "originalContent": original_content,
-                "reason": reason,
-            })
-            if self.on_tool_end:
-                self.on_tool_end("delete_repo_file", path, f"Staged deletion of {path}")
-            return f"Staged deletion of {path}"
-
-        if tool_name == "batch_edit_repo_files":
-            changes = arguments.get("changes", [])
-            if not isinstance(changes, list):
-                return f"Error: 'changes' must be a list, got {type(changes).__name__}"
-            batch_changes = []
-            results_list = []
-            for change in changes:
-                if not isinstance(change, dict):
-                    continue
-                c_path = change.get("path", "")
-                c_action = change.get("action", "edit")
-                c_content = change.get("content", "")
-                c_description = change.get("description", "")
-                c_original = self.session_cache.get(c_path, "")
-                if c_action == "delete":
-                    self.session_cache.pop(c_path, None)
-                else:
-                    self.session_cache[c_path] = c_content
-                batch_changes.append({
-                    "path": c_path,
-                    "action": c_action,
-                    "content": c_content,
-                    "originalContent": c_original,
-                    "description": c_description,
-                })
-                results_list.append(f"Staged {c_action} on {c_path}")
-            if self.on_tool_start:
-                paths = [c["path"] for c in batch_changes[:5]]
-                self.on_tool_start("batch_edit_repo_files", json.dumps({"changes": [{"path": p} for p in paths]}))
-            self._emit_event({"type": "repo_batch_edit", "changes": batch_changes})
-            if self.on_tool_end:
-                self.on_tool_end("batch_edit_repo_files", "", f"Staged {len(batch_changes)} file changes")
-            return "\n".join(results_list) if results_list else "No valid changes to apply"
-
-        return f"Unknown repo tool: {tool_name}"
+    def _emit_repo_event(self, event: dict) -> None:
+        self._emit_event(event)
 
     def _read_github_file(self, path: str) -> str:
-        """Read a file from GitHub using the API. Falls back to a hint if no credentials."""
-        if not self.github_pat or not self.github_repo_owner or not self.github_repo_name:
-            missing = []
-            if not self.github_pat:
-                missing.append("GitHub PAT")
-            if not self.github_repo_owner:
-                missing.append("repo owner")
-            if not self.github_repo_name:
-                missing.append("repo name")
-            print(f"[hermes-agent] Cannot read '{path}': missing {', '.join(missing)}", flush=True)
-            return (
-                f"Error: Cannot read '{path}' — missing GitHub credentials ({', '.join(missing)}). "
-                f"The user needs to configure a GitHub Personal Access Token in Settings."
-            )
-        try:
-            encoded_owner = quote(self.github_repo_owner, safe="")
-            encoded_repo = quote(self.github_repo_name, safe="")
-            encoded_path = quote(path, safe="/")
-            url = f"https://api.github.com/repos/{encoded_owner}/{encoded_repo}/contents/{encoded_path}"
-            headers = {
-                "Authorization": f"Bearer {self.github_pat}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-                "User-Agent": "Hermes-Agent",
-            }
-            with httpx.Client(timeout=15) as client:
-                resp = client.get(url, headers=headers)
-                if resp.status_code == 404:
-                    # Distinguish file-not-found from repo-level access issues.
-                    # If the path is not the root, probe the root to check repo access.
-                    if path and path != "" and path != "/":
-                        root_url = f"https://api.github.com/repos/{encoded_owner}/{encoded_repo}/contents/"
-                        root_resp = client.get(root_url, headers=headers)
-                        if root_resp.status_code == 404:
-                            return (
-                                f"Error: Repository {self.github_repo_owner}/{self.github_repo_name} "
-                                f"was not found (HTTP 404). The repository may have been renamed or deleted, "
-                                f"or your GitHub token may lack access to it. "
-                                f"Call list_user_repos to see which repositories are actually accessible "
-                                f"with the current token, then inform the user of the correct repo name."
-                            )
-                    parent_dir = "/".join(path.split("/")[:-1]) if "/" in path else ""
-                    hint = f" Try read_repo_file on the parent directory '{parent_dir}' to see available files." if parent_dir else " Try read_repo_file with path '' to list the root directory."
-                    return f"Error: File not found at '{path}' in {self.github_repo_owner}/{self.github_repo_name}.{hint}"
-                if resp.status_code == 403:
-                    return (
-                        f"Error: Access denied (HTTP 403) for '{path}' in {self.github_repo_owner}/{self.github_repo_name}. "
-                        f"The GitHub token may lack the required permissions (needs 'repo' scope for private repositories)."
-                    )
-                resp.raise_for_status()
-            data = resp.json()
-            if isinstance(data, list):
-                # GitHub returns a list for directories
-                entries = [item.get("name", "?") for item in data[:20] if isinstance(item, dict)]
-                listing = ", ".join(entries)
-                if len(data) > 20:
-                    listing += f" (+{len(data) - 20} more)"
-                return f"Error: '{path}' is a directory, not a file. Contents: {listing}"
-            if not data.get("content"):
-                return f"Error: File content unavailable for '{path}'. The file may be empty or too large for the GitHub API."
-            import base64
-            content = base64.b64decode(data["content"]).decode("utf-8")
-            # Intelligent truncation: keep first and last sections so the agent
-            # sees both the file header/imports and the tail (often where recent
-            # changes live).
-            if len(content) > MAX_TOOL_RESPONSE_CHARS:
-                lines = content.split("\n")
-                total_lines = len(lines)
-                # Keep first 60% and last 40% of lines within budget
-                head_lines = int(total_lines * 0.6)
-                tail_lines = total_lines - head_lines
-                head = "\n".join(lines[:head_lines])
-                tail = "\n".join(lines[-tail_lines:])
-                # If still too long, fall back to char-based truncation
-                if len(head) + len(tail) > MAX_TOOL_RESPONSE_CHARS:
-                    head_budget = int(MAX_TOOL_RESPONSE_CHARS * 0.6)
-                    tail_budget = MAX_TOOL_RESPONSE_CHARS - head_budget - 200
-                    head = content[:head_budget]
-                    tail = content[-tail_budget:]
-                omitted = total_lines - head_lines - tail_lines
-                content = (
-                    head
-                    + f"\n\n[... {omitted} lines omitted — file has {total_lines} total lines ...]\n\n"
-                    + tail
-                )
-            print(f"[hermes-agent] Read {path} from GitHub: {len(content)} chars", flush=True)
+        """Shared GitHub read, plus this agent's line-aware truncation of large files."""
+        content = super()._read_github_file(path)
+        if content.startswith("Error") or content.startswith("Directory listing for"):
             return content
-        except Exception as e:
-            print(f"[hermes-agent] Failed to read {path} from GitHub: {e}", flush=True)
-            return f"Error reading file '{path}' from GitHub: {str(e)}"
+        return _truncate_file_content(content)
 
-    def _github_headers(self) -> dict:
-        return {
-            "Authorization": f"Bearer {self.github_pat}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "Hermes-Agent",
-        }
-
-    def _github_creds_missing(self) -> Optional[str]:
-        """Return an error string if GitHub credentials are not configured."""
-        missing = []
-        if not self.github_pat:
-            missing.append("GitHub PAT")
-        if not self.github_repo_owner:
-            missing.append("repo owner")
-        if not self.github_repo_name:
-            missing.append("repo name")
-        if missing:
-            return (
-                f"Error: Cannot access git history — missing GitHub credentials "
-                f"({', '.join(missing)}). The user needs to configure a GitHub "
-                f"Personal Access Token in Settings."
-            )
-        return None
-
-    def _github_get(self, sub_path: str, params: Optional[dict] = None):
-        """GET a GitHub REST endpoint scoped to the active repo.
-
-        Returns ``(data, None)`` on success or ``(None, error_str)`` on any
-        failure, so callers can surface a model-readable message.
-        """
-        encoded_owner = quote(self.github_repo_owner, safe="")
-        encoded_repo = quote(self.github_repo_name, safe="")
-        url = f"https://api.github.com/repos/{encoded_owner}/{encoded_repo}/{sub_path}"
-        try:
-            with httpx.Client(timeout=15) as client:
-                resp = client.get(url, headers=self._github_headers(), params=params or {})
-            if resp.status_code == 401:
-                return None, "Error: GitHub token is invalid or expired. The user should update their token in Settings."
-            if resp.status_code == 403:
-                return None, (
-                    f"Error: Access denied (HTTP 403) for {self.github_repo_owner}/{self.github_repo_name}. "
-                    f"The GitHub token may lack the required permissions (needs 'repo' scope for private repositories)."
-                )
-            if resp.status_code == 404:
-                return None, (
-                    f"Error: Not found (HTTP 404) for {self.github_repo_owner}/{self.github_repo_name}. "
-                    f"The repo, branch, or commit ref may not exist or the token may lack access. "
-                    f"Call list_user_repos to see accessible repositories."
-                )
-            resp.raise_for_status()
-            return resp.json(), None
-        except Exception as e:
-            return None, f"Error reaching the GitHub API: {e}"
+    def _should_pool_file(self, content: str) -> bool:
+        # Never pool a truncated copy into the cache shared with the adapter path.
+        return _FILE_TRUNCATION_MARKER not in content
 
     @staticmethod
-    def _format_commit_patch(files: list, per_file_cap: int = 4000) -> str:
-        """Render a list of GitHub commit/compare ``files`` as a unified diff."""
-        chunks = []
-        for f in files:
-            if not isinstance(f, dict):
-                continue
-            filename = f.get("filename", "?")
-            status = f.get("status", "modified")
-            add = f.get("additions", 0)
-            dele = f.get("deletions", 0)
-            header = f"diff --- {filename} ({status}, +{add} -{dele})"
-            patch = f.get("patch")
-            if patch:
-                if len(patch) > per_file_cap:
-                    patch = patch[:per_file_cap] + f"\n[... patch truncated, {len(patch) - per_file_cap} more chars ...]"
-                chunks.append(f"{header}\n{patch}")
-            else:
-                # Binary files and very large diffs have no patch from the API.
-                chunks.append(f"{header}\n(no textual diff available — binary or too large)")
-        return "\n\n".join(chunks) if chunks else "(no file changes)"
+    def _repo_tool_label(tool_name: str, arguments: dict) -> str:
+        """Short tool_start payload for the UI (path, ref range, SHA, ...)."""
+        if tool_name in ("read_repo_file", "edit_repo_file", "create_repo_file", "delete_repo_file"):
+            return arguments.get("path", "")
+        if tool_name == "git_log":
+            return arguments.get("path", "") or arguments.get("ref", "")
+        if tool_name == "git_show":
+            return arguments.get("sha", "")
+        if tool_name == "git_diff":
+            return f"{arguments.get('base', '')}...{arguments.get('head', '')}"
+        if tool_name == "batch_edit_repo_files":
+            changes = arguments.get("changes", [])
+            if isinstance(changes, list):
+                paths = [c.get("path", "") for c in changes[:5] if isinstance(c, dict)]
+                return json.dumps({"changes": [{"path": p} for p in paths]})
+        return ""
 
-    def _git_log(self, path: str = "", ref: str = "", max_count: int = 15) -> str:
-        """List recent commits via the GitHub commits API (read-only)."""
-        creds_err = self._github_creds_missing()
-        if creds_err:
-            return creds_err
+    def _execute_repo_tool(self, tool_name: str, arguments: dict) -> str:
+        """Run a shared repo tool handler, bracketed by tool_start/tool_end."""
+        if tool_name not in REPO_TOOL_NAMES:
+            return f"Unknown repo tool: {tool_name}"
+        label = self._repo_tool_label(tool_name, arguments)
+        if self.on_tool_start:
+            self.on_tool_start(tool_name, label)
+        result = ""
         try:
-            per_page = max(1, min(int(max_count or 15), 50))
-        except (TypeError, ValueError):
-            per_page = 15
-        params: dict = {"per_page": per_page}
-        if path:
-            params["path"] = path
-        if ref:
-            params["sha"] = ref
-        data, err = self._github_get("commits", params)
-        if err:
-            return err
-        if not isinstance(data, list) or not data:
-            scope = f" touching '{path}'" if path else ""
-            return f"No commits found{scope}."
-        lines = []
-        for c in data:
-            if not isinstance(c, dict):
-                continue
-            sha = (c.get("sha") or "")[:8]
-            commit = c.get("commit") or {}
-            author = (commit.get("author") or {})
-            name = author.get("name", "?")
-            date = (author.get("date", "") or "")[:10]
-            message = (commit.get("message", "") or "").split("\n", 1)[0]
-            lines.append(f"{sha}  {date}  {name}: {message}")
-        scope = f" touching '{path}'" if path else ""
-        ref_note = f" from '{ref}'" if ref else ""
-        return f"Last {len(lines)} commit(s){scope}{ref_note}:\n" + "\n".join(lines)
-
-    def _git_show(self, sha: str) -> str:
-        """Show one commit's metadata and per-file patch (read-only)."""
-        creds_err = self._github_creds_missing()
-        if creds_err:
-            return creds_err
-        if not sha:
-            return "Error: 'sha' is required. Use a SHA from git_log."
-        data, err = self._github_get(f"commits/{quote(sha, safe='')}")
-        if err:
-            return err
-        if not isinstance(data, dict):
-            return f"Error: Unexpected response for commit '{sha}'."
-        commit = data.get("commit") or {}
-        author = commit.get("author") or {}
-        full_sha = data.get("sha", sha)
-        message = commit.get("message", "")
-        name = author.get("name", "?")
-        email = author.get("email", "")
-        date = author.get("date", "")
-        files = data.get("files") if isinstance(data.get("files"), list) else []
-        stats = data.get("stats") or {}
-        header = (
-            f"commit {full_sha}\n"
-            f"Author: {name} <{email}>\n"
-            f"Date:   {date}\n"
-            f"Files:  {len(files)} changed, +{stats.get('additions', 0)} -{stats.get('deletions', 0)}\n\n"
-            f"{message}\n"
-        )
-        return header + "\n" + self._format_commit_patch(files)
-
-    def _git_diff(self, base: str, head: str) -> str:
-        """Compare two refs via the GitHub compare API (read-only)."""
-        creds_err = self._github_creds_missing()
-        if creds_err:
-            return creds_err
-        if not base or not head:
-            return "Error: both 'base' and 'head' refs are required."
-        # GitHub's compare basehead uses a triple-dot range.
-        basehead = f"{quote(base, safe='')}...{quote(head, safe='')}"
-        data, err = self._github_get(f"compare/{basehead}")
-        if err:
-            return err
-        if not isinstance(data, dict):
-            return f"Error: Unexpected response comparing '{base}...{head}'."
-        status = data.get("status", "?")
-        ahead = data.get("ahead_by", 0)
-        behind = data.get("behind_by", 0)
-        total = data.get("total_commits", 0)
-        files = data.get("files") if isinstance(data.get("files"), list) else []
-        header = (
-            f"Comparing {base}...{head}\n"
-            f"Status: {status} (ahead {ahead}, behind {behind}), {total} commit(s), "
-            f"{len(files)} file(s) changed\n"
-        )
-        return header + "\n" + self._format_commit_patch(files)
+            result = self.dispatch_repo_tool(tool_name, arguments)
+        finally:
+            if self.on_tool_end:
+                self.on_tool_end(tool_name, label, result[:200])
+        return result
 
     @staticmethod
     def _should_retry_api_error(status_code: int) -> bool:

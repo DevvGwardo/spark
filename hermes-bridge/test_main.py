@@ -1545,10 +1545,11 @@ class SwarmEndpointTests(unittest.TestCase):
         self.assertTrue(asyncio.iscoroutinefunction(main.swarm_endpoint))
 
     def test_swarm_execution_mode_path_in_chat_handler(self):
-        """The chat handler source code checks for 'swarm' execution mode."""
-        import inspect
-        source = inspect.getsource(main._chat_completions_impl)
-        self.assertIn('execution_mode == "swarm"', source)
+        """x-hermes-execution-mode: swarm selects the swarm transport (spec 4.2)."""
+        from chat_transports.selection import select_transport
+        from chat_transports.swarm import SwarmTransport
+
+        self.assertIs(select_transport("swarm", route_via_runs=lambda: False), SwarmTransport)
 
     def test_contract_advertises_swarm_endpoint(self):
         """The swarm contract in brain lifespan includes /v1/swarm."""
