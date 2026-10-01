@@ -657,7 +657,7 @@ export const SetupWizard: React.FC = () => {
       <div key="provider" data-step-content>
         <div className="flex items-baseline justify-between mb-5">
           <h2 className="text-[13px] font-semibold tracking-tight text-foreground">Get started</h2>
-          <button onClick={() => completeSetup()} className="text-[11px] text-muted-foreground hover:text-foreground transition-colors">
+          <button onClick={() => completeSetup()} className="rounded px-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
             Skip
           </button>
         </div>
