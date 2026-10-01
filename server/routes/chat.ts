@@ -12,6 +12,7 @@ import {
   usesFirstPartyProviderSdk,
 } from '../provider-config';
 import { HarnessTurn, lastUserText } from '../lib/harness/agent-turn';
+import { buildNubTools } from '../lib/nub/tools';
 import { runOpenClawTurn } from '../openclaw';
 import { resolveAttachedLocalRepoPath } from '../lib/github-utils';
 import { ensureRepoClone } from '../repo-clone-manager';
@@ -1112,10 +1113,14 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
     // tools are enabled, since those are explicitly opted-in by the user.
     const isToolSafeProvider = usesFirstPartyProviderSdk(provider) || TOOL_CAPABLE_COMPATIBLE_PROVIDERS.has(provider);
     const includeBaseTools = hasServerRepoContext || isToolSafeProvider || hasLocalTools || planMode;
+    // The user's nub agent, when linked, joins the tool loop (never in plan mode:
+    // an ask can make the agent act).
+    const nubTools = (hasServerRepoContext || hasLocalTools) && !planMode ? await buildNubTools() : {};
     const allTools = {
       ...(includeBaseTools ? planModeFileTools : {}),
       ...filteredRepoTools,
       ...localTools,
+      ...nubTools,
     };
 
     const useServerAgentLoop = hasServerRepoContext || hasLocalTools;

@@ -451,3 +451,84 @@ async def workspace_mcp_server_logs(name: str, request: Request):
     except Exception as e:  # noqa: BLE001 - surfaced to the client as a 500
         return JSONResponse(status_code=500, content={"error": f"could not read logs: {e}"})
     return JSONResponse(content={"server": name, "lines": lines})
+
+
+# ─── Spark's nub MCP server ─────────────────────────────────────────────────
+# When the user signs in to Nub in Spark, Spark's server exposes the nub agent
+# as an MCP endpoint on loopback and asks the bridge to point Hermes at it.
+# config.yaml is the only place every transport reads MCP servers from (ACP
+# ignores per-request custom tools), so the entry lives there.
+
+NUB_MCP_NAME = "nub"
+_NUB_MCP_PATH = "/api/nub/mcp"
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+class NubMcpRequest(BaseModel):
+    url: str
+    token: str
+
+
+def _is_spark_nub_url(url: object) -> bool:
+    """True for an http loopback URL ending in Spark's nub MCP path."""
+    from urllib.parse import urlparse
+
+    if not isinstance(url, str):
+        return False
+    parsed = urlparse(url)
+    return (
+        parsed.scheme == "http"
+        and (parsed.hostname or "") in _LOOPBACK_HOSTS
+        and parsed.path.rstrip("/") == _NUB_MCP_PATH
+    )
+
+
+@router.post("/workspace/nub-mcp")
+async def workspace_nub_mcp_register(request: Request, body: NubMcpRequest):
+    """Add or re-point the `nub` MCP server at Spark's loopback endpoint."""
+    if not _is_spark_nub_url(body.url) or not body.token.strip():
+        return JSONResponse(status_code=400, content={"error": "url must be Spark's loopback nub MCP endpoint"})
+    hermes_home = bridge_workspace._resolve_hermes_home(bridge_workspace._resolve_profile_name(request))
+    dump, data = _load_hermes_config_editable(hermes_home)
+    servers = data.get("mcp_servers")
+    if not isinstance(servers, dict):
+        servers = {}
+        data["mcp_servers"] = servers
+    existing = servers.get(NUB_MCP_NAME)
+    if isinstance(existing, dict) and not _is_spark_nub_url(existing.get("url")):
+        # Someone else's server already uses the name; leave it alone.
+        return JSONResponse(status_code=409, content={"error": f"'{NUB_MCP_NAME}' is already configured"})
+    entry = {
+        "url": body.url,
+        "headers": {"Authorization": f"Bearer {body.token.strip()}"},
+        # One ask waits on a full nub agent turn.
+        "timeout": 300,
+    }
+    if existing == entry:
+        return JSONResponse(content={"ok": True, "changed": False, "reloaded": False})
+    servers[NUB_MCP_NAME] = entry
+    try:
+        dump()
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"Failed to write config: {e}"})
+    reloaded = _reload_agent_mcp()
+    print(f"[hermes-bridge] Pointed MCP server '{NUB_MCP_NAME}' at Spark (reloaded={reloaded})", flush=True)
+    return JSONResponse(content={"ok": True, "changed": True, "reloaded": reloaded})
+
+
+@router.delete("/workspace/nub-mcp")
+async def workspace_nub_mcp_unregister(request: Request):
+    """Remove the `nub` MCP server, only if Spark added it."""
+    hermes_home = bridge_workspace._resolve_hermes_home(bridge_workspace._resolve_profile_name(request))
+    dump, data = _load_hermes_config_editable(hermes_home)
+    servers = data.get("mcp_servers")
+    existing = servers.get(NUB_MCP_NAME) if isinstance(servers, dict) else None
+    if not isinstance(existing, dict) or not _is_spark_nub_url(existing.get("url")):
+        return JSONResponse(content={"ok": True, "removed": False})
+    del servers[NUB_MCP_NAME]
+    try:
+        dump()
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"Failed to write config: {e}"})
+    reloaded = _reload_agent_mcp()
+    return JSONResponse(content={"ok": True, "removed": True, "reloaded": reloaded})
