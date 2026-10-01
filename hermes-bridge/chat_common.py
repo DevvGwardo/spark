@@ -262,7 +262,13 @@ def _format_tool_end_text(tool_name: str, tool_output: str) -> str:
     return f"> *{display} — done*\n\n"
 
 
-def make_delta_chunk(chunk_id: str, model: str, delta: dict, finish_reason: Optional[str] = None) -> dict:
+def make_delta_chunk(
+    chunk_id: str,
+    model: str,
+    delta: dict,
+    finish_reason: Optional[str] = None,
+    usage: Optional[dict] = None,
+) -> dict:
     chunk: dict = {
         "id": chunk_id,
         "object": "chat.completion.chunk",
@@ -276,9 +282,10 @@ def make_delta_chunk(chunk_id: str, model: str, delta: dict, finish_reason: Opti
     }
     # Include usage in the final chunk so the AI SDK's OpenAI-compatible
     # parser recognises this as a proper completion and maps finish_reason
-    # to finishReason instead of defaulting to 'unknown'.
+    # to finishReason instead of defaulting to 'unknown'. Transports that
+    # collect per-turn usage (spec 4.5) pass it; the rest report zeros.
     if finish_reason is not None:
-        chunk["usage"] = usage_event(0, 0, 0)
+        chunk["usage"] = usage if usage is not None else usage_event(0, 0, 0)
     return chunk
 
 

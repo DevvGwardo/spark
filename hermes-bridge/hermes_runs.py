@@ -726,10 +726,16 @@ def translate_run_event(event: dict[str, Any]) -> list[tuple[str, Any, ...]]:
         return [("text", f"\n\n**Error:** {error}\n")]
 
     if ev == "run.completed":
+        out: list[tuple[str, Any, ...]] = []
         output = event.get("output")
         if isinstance(output, str) and output.strip():
-            return [("text", output)]
-        return []
+            out.append(("text", output))
+        usage = event.get("usage")
+        if isinstance(usage, dict) and any(usage.values()):
+            # Spec 4.5: the gateway's per-run token counters (priced by the
+            # transport, which knows the model).
+            out.append(("usage", usage))
+        return out
 
     return []
 

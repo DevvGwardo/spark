@@ -12,6 +12,7 @@ cannot honor the request.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
 import os
@@ -25,6 +26,7 @@ from fastapi.responses import StreamingResponse
 
 import approval_registry
 import brain_client
+import pricing
 import bridge_state
 import bridge_workspace
 import mcp_telemetry
@@ -112,12 +114,13 @@ class AgentTurn:
 class AgentLoopTransport(BaseChatTransport):
     name = "agent-loop"
     # Approvals via hermes' approval callback (4.3), Stop via the real agent's
-    # interrupt flag (4.4); resume works because the adapter keys state.db on
-    # session_id. Usage is still hard-coded to 0 (4.5).
+    # interrupt flag (4.4), per-turn tokens/cost from the agent's counters
+    # (4.5); resume works because the adapter keys state.db on session_id.
     capabilities = TransportCapabilities(
         approvals=True,
         cancel=True,
         stops_on_client_disconnect=True,
+        usage_in_stream=True,
         session_resume=True,
     )
 
@@ -136,6 +139,8 @@ class AgentLoopTransport(BaseChatTransport):
         self._agent: Any = None
         self._agent_lock = threading.Lock()
         self._channel_closed = False
+        # Spec 4.5: set from the ("usage", ...) queue event, read by the final chunk.
+        self._usage: Optional[dict] = None
 
     # ── entry point ──────────────────────────────────────────────────────
 
@@ -344,7 +349,30 @@ class AgentLoopTransport(BaseChatTransport):
         self._qput(("fallback_switch", fallback_switch_event(provider, model)))
 
     def on_transport_status(self, requested: str, actual: str, reason: str | None = None):
-        self._qput(("transport_status", transport_status_event(requested, actual, reason)))
+        caps = self.capabilities_for(actual).as_dict()
+        self._qput(("transport_status", transport_status_event(requested, actual, reason, caps)))
+
+    def capabilities_for(self, actual: str) -> TransportCapabilities:
+        """The capability row of the transport actually serving the turn (4.8)."""
+        if actual == "runs":
+            from chat_transports.runs import RunsTransport
+
+            return RunsTransport.capabilities
+        caps = AgentLoopTransport.capabilities
+        if not (self.ctx.using_real_agent and agent_loop_approvals_enabled()):
+            # The fallback agent has no approval gate to bridge.
+            caps = dataclasses.replace(caps, approvals=False)
+        return caps
+
+    def effective_capabilities(self) -> TransportCapabilities:
+        return self.capabilities_for(self.name)
+
+    def usage(self) -> Optional[dict]:
+        return self._usage
+
+    def on_usage(self, usage: Optional[dict]) -> None:
+        if usage:
+            self._qput(("usage", usage))
 
     def on_stream_retry(self, attempt: int, max_attempts: int, reason: str, delay_ms: int):
         # The agent-loop retried an upstream stream — surface it once per retry.
@@ -602,10 +630,11 @@ class AgentLoopTransport(BaseChatTransport):
 
         history = turn.history
         print(f"[hermes-bridge] User message: {turn.user_message[:100]}... history_msgs={len(history)} has_system={any(m.get('role') == 'system' for m in history)}", flush=True)
-        agent.run_conversation(
+        result = agent.run_conversation(
             user_message=turn.user_message,
             conversation_history=history,
         )
+        self.on_usage(pricing.usage_from_agent_result(result, body.model, ctx.resolved_provider))
         print("[hermes-bridge] Agent conversation completed.", flush=True)
         # Brain MCP: pulse on successful completion
         brain_client._brain_pulse("working", "completed")
@@ -644,6 +673,9 @@ class AgentLoopTransport(BaseChatTransport):
             })
         elif kind in _PASSTHROUGH_KINDS:
             yield delta_frame(chunk_id, model, {kind: event[1]})
+        elif kind == "usage":
+            # Not a frame of its own: it rides on the final chunk.
+            self._usage = event[1]
         elif kind == "thinking":
             iteration = event[1]
             yield delta_frame(chunk_id, model, {
@@ -723,18 +755,19 @@ class AgentLoopTransport(BaseChatTransport):
             "estimated_cost_usd": round(event_count * 0.001, 4),
         }))
         # Brain MCP: per-request metrics keyed by chunk_id for per-request auditing
+        usage = self._usage or {}
         try:
             brain_client._brain_set(f"bridge:metrics:{chunk_id}", json.dumps({
-                "tokens": 0,
+                "tokens": int(usage.get("total_tokens") or 0),
                 "api_calls": event_count,
-                "cost": round(event_count * 0.001, 4),
+                "cost": usage.get("estimated_cost_usd"),
                 "elapsed_ms": elapsed_ms,
                 "model": body.model,
                 "repo_mode": ctx.has_repo_tools,
             }))
         except Exception:
             pass
-        for frame in stop_frames(chunk_id, body.model):
+        for frame in stop_frames(chunk_id, body.model, usage=self._usage):
             yield frame
 
         if self.cancel_requested and not agent_task.done():

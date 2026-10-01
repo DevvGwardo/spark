@@ -23,9 +23,14 @@ from moa_config import MOA_PROVIDER_ID
 class RunsTransport(AgentLoopTransport):
     name = "runs"
     # Cancel: the gateway run is stopped (POST /v1/runs/{id}/stop) and an
-    # agent-loop fallback is interrupted. Approvals are gateway-dependent
-    # (approval.* events arrive as server_tool_event), so not advertised.
-    capabilities = TransportCapabilities(cancel=True, stops_on_client_disconnect=True)
+    # agent-loop fallback is interrupted. Usage comes from run.completed.
+    # Approvals are gateway-dependent (approval.* events arrive as
+    # server_tool_event), so not advertised.
+    capabilities = TransportCapabilities(
+        cancel=True,
+        stops_on_client_disconnect=True,
+        usage_in_stream=True,
+    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -98,6 +103,9 @@ class RunsTransport(AgentLoopTransport):
                 flush=True,
             )
             route_runs = False
+            # The earlier transport_status said "runs"; correct it (and the
+            # capability row the UI keys its affordances on).
+            self.on_transport_status("runs", "agent-loop", parity_reason)
 
         if route_runs:
             user_message = turn.user_message
@@ -174,6 +182,9 @@ class RunsTransport(AgentLoopTransport):
         ))
 
         def _emit_run_event(*args):
+            if args and args[0] == "usage":
+                self.on_usage(_gateway_usage(args[1], body.model, resolved_provider))
+                return
             self._qput(args)
 
         try:
@@ -197,3 +208,18 @@ class RunsTransport(AgentLoopTransport):
             success=True,
             summary=f"model={body.model} mode=runs run_id={run_id}",
         )
+
+
+def _gateway_usage(raw: dict, model: str, provider: str) -> dict:
+    """Price the gateway's run.completed usage (input/output are OpenAI-style totals)."""
+    import pricing
+
+    return pricing.turn_usage(
+        model,
+        provider,
+        prompt_tokens=raw.get("input_tokens") or raw.get("prompt_tokens") or 0,
+        completion_tokens=raw.get("output_tokens") or raw.get("completion_tokens") or 0,
+        total_tokens=raw.get("total_tokens"),
+        cache_read_tokens=raw.get("cache_read_tokens") or 0,
+        cache_write_tokens=raw.get("cache_write_tokens") or 0,
+    )

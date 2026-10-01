@@ -205,3 +205,114 @@ def cost_for_tokens(
         + cache_write_tokens * price.rate_cache_write()
         + reasoning_tokens * price.output
     ) / 1_000_000.0
+
+
+def turn_usage(
+    model: Optional[str],
+    billing_provider: Optional[str] = None,
+    *,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    cache_read_tokens: int = 0,
+    cache_write_tokens: int = 0,
+    reasoning_tokens: int = 0,
+    prompt_tokens: Optional[int] = None,
+    completion_tokens: Optional[int] = None,
+    total_tokens: Optional[int] = None,
+    reported_cost_usd: Optional[float] = None,
+) -> dict:
+    """Per-turn usage for the chat stream's final chunk (spec 4.5).
+
+    Token buckets follow the Usage panel's convention (``bridge_workspace``):
+    ``input_tokens`` excludes cache reads/writes and ``reasoning_tokens`` are
+    billed as output on top of ``output_tokens``. ``prompt_tokens`` /
+    ``completion_tokens`` are the OpenAI-style totals shown to the client and
+    default to the sum of their buckets.
+
+    Cost is recomputed from the price table, the same way the Usage panel
+    does, so a turn and the panel agree. When the model cannot be priced the
+    agent's own estimate is used if plausible, else the cost is omitted.
+    """
+    from bridge_events import usage_event
+
+    def _n(value) -> int:
+        try:
+            return max(0, int(value or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    inp, out = _n(input_tokens), _n(output_tokens)
+    c_read, c_write, reason = _n(cache_read_tokens), _n(cache_write_tokens), _n(reasoning_tokens)
+    prompt = _n(prompt_tokens) if prompt_tokens is not None else inp + c_read + c_write
+    completion = _n(completion_tokens) if completion_tokens is not None else out + reason
+    if not inp and not out and (prompt or completion):
+        # Only OpenAI-style totals are known (ACP PromptResponse, gateway
+        # runs): derive the buckets. A completion total already contains any
+        # reasoning tokens, so they are not billed a second time.
+        inp = max(prompt - c_read - c_write, 0)
+        out = completion
+        billed_reasoning = 0
+    else:
+        billed_reasoning = reason
+    total = _n(total_tokens) if total_tokens else prompt + completion
+
+    cost: Optional[float] = None
+    source: Optional[str] = None
+    price = price_for(model, billing_provider)
+    if price is not None:
+        cost = cost_for_tokens(
+            price,
+            input_tokens=inp,
+            output_tokens=out,
+            cache_read_tokens=c_read,
+            cache_write_tokens=c_write,
+            reasoning_tokens=billed_reasoning,
+        )
+        source = "pricing"
+    elif reported_cost_usd is not None:
+        try:
+            reported = float(reported_cost_usd)
+        except (TypeError, ValueError):
+            reported = -1.0
+        ceiling = (prompt + completion) / 1_000_000.0 * MAX_PLAUSIBLE_RATE_PER_MTOK
+        if 0.0 <= reported <= ceiling:
+            cost, source = reported, "agent"
+
+    return usage_event(
+        prompt,
+        completion,
+        total,
+        round(cost, 6) if cost is not None else None,
+        cached_input_tokens=c_read,
+        reasoning_tokens=reason if reason else None,
+        cost_source=source,
+    )
+
+
+def usage_from_agent_result(result, model: Optional[str], billing_provider: Optional[str] = None) -> Optional[dict]:
+    """Usage from a hermes ``AIAgent.run_conversation`` result dict, or None.
+
+    hermes reports the agent's per-session counters on the result
+    (``input_tokens`` … ``estimated_cost_usd``); the bridge builds one agent
+    per turn, so they are per-turn figures.
+    """
+    if not isinstance(result, dict):
+        return None
+    keys = ("input_tokens", "output_tokens", "prompt_tokens", "completion_tokens", "total_tokens")
+    if not any(isinstance(result.get(k), (int, float)) and result.get(k) for k in keys):
+        return None
+    has_buckets = isinstance(result.get("input_tokens"), (int, float)) or isinstance(result.get("output_tokens"), (int, float))
+    return turn_usage(
+        model,
+        billing_provider,
+        input_tokens=result.get("input_tokens") or 0,
+        output_tokens=result.get("output_tokens") or 0,
+        cache_read_tokens=result.get("cache_read_tokens") or 0,
+        cache_write_tokens=result.get("cache_write_tokens") or 0,
+        reasoning_tokens=result.get("reasoning_tokens") or 0,
+        # Without the canonical buckets, fall back to the OpenAI-style totals.
+        prompt_tokens=None if has_buckets else result.get("prompt_tokens"),
+        completion_tokens=None if has_buckets else result.get("completion_tokens"),
+        total_tokens=result.get("total_tokens"),
+        reported_cost_usd=result.get("estimated_cost_usd"),
+    )

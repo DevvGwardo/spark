@@ -1,3 +1,4 @@
+import type { HermesTransportCapabilities } from '@/stores/hermes-store';
 import type { UIMessage as AIMessage } from '@ai-sdk/react';
 import { useChangesetStore } from '@/stores/changeset-store';
 import { db, type Message as StoredMessage } from '@/lib/db';
@@ -221,10 +222,39 @@ export interface FallbackSwitchEvent {
   model: string;
 }
 
+export type HermesTransportName = 'runs' | 'agent-loop' | 'acp';
+
 export interface HermesTransportStatusEvent {
-  requested: 'runs' | 'agent-loop';
-  actual: 'runs' | 'agent-loop';
+  requested: HermesTransportName;
+  actual: HermesTransportName;
   reason?: string;
+  /** The serving transport's capability row (bridge spec 4.8); absent on older bridges. */
+  capabilities?: HermesTransportCapabilities;
+}
+
+const HERMES_TRANSPORT_NAMES: ReadonlySet<string> = new Set(['runs', 'agent-loop', 'acp']);
+
+function isHermesTransportName(value: unknown): value is HermesTransportName {
+  return typeof value === 'string' && HERMES_TRANSPORT_NAMES.has(value);
+}
+
+/** Parse the bridge's snake_case capability row; null unless every flag is a boolean. */
+export function parseHermesTransportCapabilities(value: unknown): HermesTransportCapabilities | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const raw = value as Record<string, unknown>;
+  const flags = {
+    approvals: raw.approvals,
+    cancel: raw.cancel,
+    stopsOnClientDisconnect: raw.stops_on_client_disconnect,
+    usageInStream: raw.usage_in_stream,
+    sessionResume: raw.session_resume,
+  };
+  if (!Object.values(flags).every((flag) => typeof flag === 'boolean')) {
+    return null;
+  }
+  return flags as HermesTransportCapabilities;
 }
 
 export function parseFallbackSwitchDelta(value: unknown): FallbackSwitchEvent | null {
@@ -249,15 +279,22 @@ export function parseHermesTransportStatusDelta(value: unknown): HermesTransport
     requested,
     actual,
     reason,
-  } = value as { requested?: unknown; actual?: unknown; reason?: unknown };
-  if ((requested !== 'runs' && requested !== 'agent-loop') || (actual !== 'runs' && actual !== 'agent-loop')) {
+    capabilities,
+  } = value as { requested?: unknown; actual?: unknown; reason?: unknown; capabilities?: unknown };
+  if (!isHermesTransportName(requested) || !isHermesTransportName(actual)) {
     return null;
   }
+  const parsedCapabilities = parseHermesTransportCapabilities(capabilities);
   return {
     requested,
     actual,
     reason: typeof reason === 'string' && reason.trim() ? reason.trim() : undefined,
+    ...(parsedCapabilities ? { capabilities: parsedCapabilities } : {}),
   };
+}
+
+function hermesTransportLabel(name: HermesTransportName): string {
+  return name === 'runs' ? 'gateway /v1/runs' : name === 'acp' ? 'agent (ACP)' : 'agent loop';
 }
 
 export function formatFallbackSwitchToast(event: FallbackSwitchEvent): string {
@@ -266,12 +303,10 @@ export function formatFallbackSwitchToast(event: FallbackSwitchEvent): string {
 
 export function formatHermesTransportStatus(event: HermesTransportStatusEvent): string {
   if (event.requested === event.actual) {
-    return event.actual === 'runs'
-      ? 'Using Hermes gateway /v1/runs.'
-      : 'Using Hermes agent loop.';
+    return `Using Hermes ${hermesTransportLabel(event.actual)}.`;
   }
-  const requestedLabel = event.requested === 'runs' ? 'gateway /v1/runs' : 'agent loop';
-  const actualLabel = event.actual === 'runs' ? 'gateway /v1/runs' : 'agent loop';
+  const requestedLabel = hermesTransportLabel(event.requested);
+  const actualLabel = hermesTransportLabel(event.actual);
   const suffix = event.reason ? ` ${event.reason}` : '';
   return `Requested ${requestedLabel}; using ${actualLabel}.${suffix ? ` ${suffix}` : ''}`;
 }
@@ -291,7 +326,7 @@ export function isFallbackSwitchData(
 
 export function isHermesTransportStatusData(
   value: unknown,
-): value is { type: 'transport_status'; requested: 'runs' | 'agent-loop'; actual: 'runs' | 'agent-loop'; reason?: string } {
+): value is { type: 'transport_status'; requested: HermesTransportName; actual: HermesTransportName; reason?: string; capabilities?: unknown } {
   if (!value || typeof value !== 'object') {
     return false;
   }
