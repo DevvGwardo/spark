@@ -1,26 +1,50 @@
 """Spark's nub MCP entry: the bridge points Hermes's config.yaml at Spark's
 loopback endpoint, and only ever edits or removes the entry it owns."""
 
+import asyncio
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 import yaml
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
 from routes import mcp as mcp_routes
 
 URL = "http://127.0.0.1:3001/api/nub/mcp"
 
 
+class _Response:
+    """Status + JSON of a handler's JSONResponse (real, or test_main's stub)."""
+
+    def __init__(self, response):
+        self.status_code = response.status_code
+        content = getattr(response, "content", None)
+        self._json = content if content is not None else json.loads(response.body)
+
+    def json(self):
+        return self._json
+
+
+class _Client:
+    """Calls the route handlers directly. test_main stubs FastAPI for the whole
+    suite (decorators become no-ops), so TestClient isn't available here."""
+
+    def post(self, path, json):
+        assert path == "/workspace/nub-mcp"
+        body = mcp_routes.NubMcpRequest(**json)
+        return _Response(asyncio.run(mcp_routes.workspace_nub_mcp_register(None, body)))
+
+    def delete(self, path):
+        assert path == "/workspace/nub-mcp"
+        return _Response(asyncio.run(mcp_routes.workspace_nub_mcp_unregister(None)))
+
+
 class NubMcpRouteTests(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
-        app = FastAPI()
-        app.include_router(mcp_routes.router)
-        self.client = TestClient(app)
+        self.client = _Client()
         patches = [
             mock.patch.object(mcp_routes.bridge_workspace, "_resolve_hermes_home", return_value=self.home),
             mock.patch.object(mcp_routes.bridge_workspace, "_resolve_profile_name", return_value=None),
