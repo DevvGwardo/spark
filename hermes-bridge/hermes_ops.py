@@ -8,6 +8,7 @@ JSON/text parse. Keep secrets out of responses.
 
 from __future__ import annotations
 
+import logging
 import ipaddress
 import json
 import os
@@ -22,6 +23,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import parse_qs, quote, urlencode, urlparse, urlunparse
+
+logger = logging.getLogger(__name__)
 
 _SAFE_CLI_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,120}$")
 _SAFE_CLI_GOAL = re.compile(r"^[A-Za-z0-9][\w .,:;@'\"!?()/+-]{0,500}$")
@@ -50,7 +53,7 @@ def _run_hermes(args: list[str], *, timeout: int = 30, hermes_home: Optional[Pat
         return 127, "", "hermes CLI not found"
     except subprocess.TimeoutExpired:
         return 124, "", "hermes command timed out"
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - CLI wrapper reports any failure as rc=1 with the message
         return 1, "", str(exc)
 
 
@@ -369,7 +372,7 @@ def _checkpoint_manager(hermes_home: Path):
             import tools.checkpoint_manager as cm
 
             mgr = cm.CheckpointManager(enabled=True)
-        except Exception:
+        except Exception:  # noqa: BLE001 - hermes-agent is optional; mgr=None signals unavailable
             mgr = None
         yield mgr
 
@@ -422,7 +425,7 @@ def list_checkpoint_entries(
             }
         try:
             raw = mgr.list_checkpoints(resolved)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - failure is returned to the caller in the error response
             return {
                 "ok": False,
                 "workdir": resolved,
@@ -514,7 +517,7 @@ def restore_checkpoint(
 
         try:
             checkpoints = mgr.list_checkpoints(resolved)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - failure is returned to the caller in the error response
             return {"ok": False, "error": str(exc)[:500]}
 
         if not checkpoints:
@@ -534,7 +537,7 @@ def restore_checkpoint(
 
         try:
             result = mgr.restore(resolved, commit_hash)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - failure is returned to the caller in the error response
             return {"ok": False, "error": str(exc)[:500], "workdir": resolved, "index": idx}
 
     return {
@@ -630,7 +633,7 @@ def _read_bundle_file(path: Path) -> Optional[dict[str, Any]]:
         import yaml
 
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable/invalid YAML treated as absent config
         return None
     if not isinstance(data, dict):
         return None
@@ -905,7 +908,7 @@ def get_pets_status(hermes_home: Optional[Path] = None) -> dict[str, Any]:
         if cfg_path.is_file():
             with open(cfg_path) as f:
                 config = yaml.safe_load(f) or {}
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable config falls back to empty defaults
         config = {}
     display = config.get("display") if isinstance(config.get("display"), dict) else {}
     pet_cfg = display.get("pet") if isinstance(display.get("pet"), dict) else {}
@@ -1068,7 +1071,7 @@ def probe_gateway_capabilities(
         with urllib.request.urlopen(req, timeout=3) as resp:
             health_body = resp.read().decode("utf-8", errors="replace")
             health_ok = resp.status < 400
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - probe failure is reported as reachable=False
         result = {
             "reachable": False,
             "base_url": base_url,
@@ -1088,9 +1091,9 @@ def probe_gateway_capabilities(
             raw = json.loads(resp.read().decode("utf-8", errors="replace"))
             if isinstance(raw, dict):
                 features = raw.get("features") if isinstance(raw.get("features"), dict) else raw
-    except Exception:
+    except Exception:  # noqa: BLE001 - capabilities probe failed; health result is still valid; logged at debug
         # health worked but capabilities may be under /health detailed
-        pass
+        logger.debug("capabilities probe failed; health result is still valid", exc_info=True)
 
     runs = bool(features.get("run_submission") or features.get("runs"))
     result = {
@@ -1200,7 +1203,7 @@ def fork_gateway_session(
         if "error" not in payload:
             payload = {"error": _parse_gateway_error_body(err_body)}
         return exc.code, payload
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - gateway failure is surfaced to the client as a 502
         return 502, {"error": str(exc)[:300]}
 
 
@@ -1548,7 +1551,7 @@ def _list_projects_from_db(
             return projects, active_id
         finally:
             conn.close()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - DB failure is returned to the caller as an error string
         return [], str(exc)[:300]
 
 
@@ -2082,7 +2085,7 @@ def _sanitize_portal_url(url: str) -> Optional[str]:
         return None
     try:
         parsed = urlparse(text)
-    except Exception:
+    except Exception:  # noqa: BLE001 - unparseable URL treated as unsafe
         return None
     if parsed.scheme.lower() not in _SAFE_HTTP_SCHEMES or not parsed.hostname:
         return None
@@ -2361,7 +2364,7 @@ def _hermes_home_override_api(hermes_home: Optional[Path] = None):
             reset_hermes_home_override,
             set_hermes_home_override,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - hermes-agent is optional; None signals unavailable
         return None
     return set_hermes_home_override, reset_hermes_home_override
 
@@ -2414,7 +2417,7 @@ def _load_nous_auth_helpers():
         from hermes_cli import auth as auth_mod
 
         return auth_mod
-    except Exception:
+    except Exception:  # noqa: BLE001 - hermes-agent is optional; None signals unavailable
         return None
 
 
@@ -2437,7 +2440,7 @@ def _sanitize_verification_url(url: str) -> Optional[str]:
         return None
     try:
         parsed = urlparse(text)
-    except Exception:
+    except Exception:  # noqa: BLE001 - unparseable URL treated as unsafe
         return None
     if parsed.scheme.lower() not in _SAFE_HTTP_SCHEMES or not parsed.hostname:
         return None
@@ -2545,7 +2548,7 @@ def _single_poll_nous_token(
                     "device_code": device_code,
                 },
             )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - network failure is returned as an error status
         return "error", None, str(exc)[:300]
 
     if response.status_code == 200:
@@ -2556,7 +2559,7 @@ def _single_poll_nous_token(
 
     try:
         error_payload = response.json()
-    except Exception:
+    except Exception:  # noqa: BLE001 - non-JSON error body falls back to HTTP status message
         return "error", None, f"Token endpoint returned HTTP {response.status_code}"
 
     if not isinstance(error_payload, dict):
@@ -2601,7 +2604,7 @@ def portal_oauth_start(hermes_home: Optional[Path] = None) -> dict[str, Any]:
     if imported:
         try:
             _persist_imported_nous_state(auth_mod, imported, hermes_home=home)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - failure is returned to the client as an error response
             return {"ok": False, "error": str(exc)[:300]}
         return {
             "ok": True,
@@ -2632,7 +2635,7 @@ def portal_oauth_start(hermes_home: Optional[Path] = None) -> dict[str, Any]:
                 client_id=client_id,
                 scope=scope,
             )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - failure is returned to the client as an error response
         return {"ok": False, "error": str(exc)[:300]}
 
     session_id = secrets.token_urlsafe(16)
@@ -2790,7 +2793,7 @@ def portal_oauth_poll(
         sess["status"] = "complete"
         with _portal_oauth_sessions_lock:
             _portal_oauth_sessions[session_id] = sess
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - failure is recorded on the OAuth session as an error status
         sess["status"] = "error"
         sess["error_message"] = str(exc)[:300]
         with _portal_oauth_sessions_lock:

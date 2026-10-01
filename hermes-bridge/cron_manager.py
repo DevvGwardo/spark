@@ -301,7 +301,7 @@ try:
     )
     from cron.scheduler import tick as _hermes_cron_tick
     _HERMES_CRON_AVAILABLE = True
-except Exception as e:
+except Exception as e:  # noqa: BLE001 - optional Hermes cron backend; failure triggers the helper-interpreter fallback and is reported
     _HERMES_CRON_IMPORT_ERROR = str(e)
     helper_error = None
     if os.path.exists(_HERMES_CRON_HELPER_PYTHON):
@@ -323,7 +323,7 @@ except Exception as e:
                 f"[cron] Hermes cron backend enabled via helper interpreter {_HERMES_CRON_HELPER_PYTHON}",
                 flush=True,
             )
-        except Exception as helper_exc:
+        except Exception as helper_exc:  # noqa: BLE001 - helper interpreter is a fallback; failure is recorded in helper_error and reported
             helper_error = str(helper_exc)
 
     if not _HERMES_CRON_AVAILABLE:
@@ -479,7 +479,7 @@ def _iso_timestamp(value: Optional[str]) -> Optional[float]:
         return None
     try:
         return datetime.fromisoformat(value).timestamp()
-    except Exception:
+    except (ValueError, TypeError):
         return None
 
 
@@ -585,7 +585,7 @@ def _run_hermes_tick_now():
         return
     try:
         _hermes_cron_tick(verbose=False)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - one failed tick must not stop the scheduler loop
         print(f"[cron] Hermes tick failed: {e}", flush=True)
 
 

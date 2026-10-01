@@ -14,6 +14,7 @@ is never initialized (e.g. in tests), the module degrades to in-memory only.
 
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 import threading
@@ -21,6 +22,8 @@ import time
 from collections import deque
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 _lock = threading.Lock()
 
@@ -106,8 +109,8 @@ def resolve_server(tool_name: str, known_servers: Optional[List[str]] = None) ->
             server = _mcp_tool_server_names.get(tool_name)
         if server:
             return server
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - server lookup via live MCP registry failed; using prefix-match fallback; logged at debug
+        logger.debug("server lookup via live MCP registry failed; using prefix-match fallback", exc_info=True)
     # Fallback: prefix-match against known server names (longest first so
     # underscore-containing names win over their prefixes).
     if known_servers:
@@ -194,7 +197,7 @@ def init_persistence(db_path) -> bool:
             _db = conn
         _restore_from_db()
         return True
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - persistence is optional; disabled with a log line
         print(f"[mcp-telemetry] persistence disabled: {e}", flush=True)
         _db = None
         return False
@@ -217,7 +220,7 @@ def _restore_from_db() -> None:
         ).fetchall()
         try:
             name_rows = _db.execute("SELECT sanitized,raw FROM server_names").fetchall()
-        except Exception:
+        except Exception:  # noqa: BLE001 - older DBs may lack server_names; use empty map
             name_rows = []
     for san, raw in name_rows:
         _name_map[san] = raw
@@ -290,7 +293,7 @@ def _persist_call(server: str, stats: tuple, bucket: list, entry: dict) -> None:
             )
             _db.execute("DELETE FROM server_buckets WHERE minute < ?", (minute - _BUCKET_MINUTES,))
             _db.commit()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - best-effort telemetry persistence
             print(f"[mcp-telemetry] persist failed: {e}", flush=True)
 
 
@@ -314,8 +317,8 @@ def _remember_names(status: List[dict]) -> None:
                     new,
                 )
                 _db.commit()
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - server name persistence failed (best-effort telemetry); logged at debug
+                logger.debug("server name persistence failed (best-effort telemetry)", exc_info=True)
 
 
 def _live_status() -> List[dict]:
@@ -324,7 +327,7 @@ def _live_status() -> List[dict]:
         from tools.mcp_tool_discovery import get_mcp_status
         status = get_mcp_status()
         return status if isinstance(status, list) else []
-    except Exception:
+    except Exception:  # noqa: BLE001 - optional integration; empty status on failure
         return []
 
 
@@ -334,7 +337,7 @@ def _tools_by_server() -> Dict[str, List[str]]:
         from tools.mcp_tool import _mcp_tool_server_names, _lock as _agent_lock
         with _agent_lock:
             items = list(_mcp_tool_server_names.items())
-    except Exception:
+    except Exception:  # noqa: BLE001 - optional integration; empty map on failure
         return {}
     out: Dict[str, List[str]] = {}
     for tool, server in items:
@@ -404,7 +407,7 @@ def read_server_logs(hermes_home: Path, server_name: str, limit: int = 200) -> L
                 f.seek(size - _LOG_TAIL_BYTES)
                 f.readline()  # drop the partial first line
             text = f.read().decode("utf-8", errors="replace")
-    except Exception:
+    except Exception:  # noqa: BLE001 - log tail is best-effort; unreadable log returns empty
         return []
     want = _sanitize(server_name)
     lines: deque = deque(maxlen=max(1, min(limit, 1000)))

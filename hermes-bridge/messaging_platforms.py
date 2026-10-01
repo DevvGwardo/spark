@@ -5,6 +5,7 @@ Reads/writes platform credentials to ~/.hermes/.env and ~/.hermes/config.yaml.
 Tracks connection status via gateway_state.json.
 """
 
+import logging
 import os
 import re
 import json
@@ -14,6 +15,8 @@ from pathlib import Path
 from typing import Optional
 
 import config_io
+
+logger = logging.getLogger(__name__)
 
 _HERMES_HOME = Path(os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes")))
 _ENV_PATH = _HERMES_HOME / ".env"
@@ -333,8 +336,8 @@ def _read_env_file() -> dict[str, str]:
             if "=" in line:
                 key, _, value = line.partition("=")
                 env[key.strip()] = value.strip().strip('"').strip("'")
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - env file parse failed; returning partial env; logged at debug
+        logger.debug("env file parse failed; returning partial env", exc_info=True)
     return env
 
 
@@ -404,10 +407,10 @@ def _read_yaml_config() -> dict:
                         config[key] = False
                     else:
                         config[key] = value
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - config parse failed; returning partial config; logged at debug
+            logger.debug("config parse failed; returning partial config", exc_info=True)
         return config
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable config returns empty dict
         return {}
 
 
@@ -440,7 +443,7 @@ def _read_gateway_state() -> dict:
         return {"platforms": {}}
     try:
         return json.loads(_GATEWAY_STATE_PATH.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable gateway state returns default
         return {"platforms": {}}
 
 

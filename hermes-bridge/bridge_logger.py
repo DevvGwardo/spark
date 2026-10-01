@@ -53,7 +53,7 @@ class BridgeLogger:
         try:
             line = json.dumps(record, default=str, ensure_ascii=False)
             print(line, file=self._stream, flush=True)
-        except Exception:
+        except Exception:  # noqa: BLE001 - logger must never break the app; falls back to plain print
             # Fallback: never let logging break the app
             print(
                 f"[hermes-bridge] [{level}] {module}: {msg}",

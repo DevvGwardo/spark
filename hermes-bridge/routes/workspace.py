@@ -4,6 +4,7 @@ Moved verbatim from main.py (spec 4.1). Names that tests patch are owned by one
 module and other modules reach them as ``<module>.<name>`` so a single
 ``patch.object(<module>, name)`` reaches every caller, as patching main did.
 """
+import logging
 import json
 import os
 from pathlib import Path
@@ -22,6 +23,7 @@ from bridge_workspace import (
     _workspace_usage_payload,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -40,12 +42,13 @@ def _load_hermes_saved_providers() -> list:
     try:
         with open(auth_path, "r") as f:
             auth = json.load(f)
-    except Exception:
+    except (OSError, ValueError):
         return []
 
     try:
         from hermes_cli.auth import get_auth_provider_display_name as _display
-    except Exception:
+    except Exception:  # noqa: BLE001 - optional import; falls back to the raw label
+        logger.debug("hermes_cli.auth display-name helper unavailable", exc_info=True)
         _display = None
 
     def name_for(pid: str, label: str) -> str:
@@ -54,8 +57,8 @@ def _load_hermes_saved_providers() -> list:
                 n = _display(pid)
                 if n and n != pid:
                     return n
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - cosmetic lookup; falls back to the raw label
+                logger.debug("display-name lookup failed for %s", pid, exc_info=True)
         return label or pid
 
     active = (auth.get("active_provider") or "").strip()

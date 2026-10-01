@@ -4,6 +4,7 @@ Moved verbatim from main.py (spec 4.1). Names that tests patch are owned by one
 module and other modules reach them as ``<module>.<name>`` so a single
 ``patch.object(<module>, name)`` reaches every caller, as patching main did.
 """
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -22,6 +23,7 @@ from moa_config import (
 )
 from provider_config import _PROVIDER_CONFIG
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -73,8 +75,8 @@ def _load_provider_visibility(hermes_home: Optional[Path] = None) -> dict:
                     enabled = bool(flag)
                 if not enabled:
                     disabled.add(pid)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort config read; nothing is excluded or disabled on failure
+        logger.debug("provider visibility config read failed; using defaults", exc_info=True)
     return {"excluded": excluded, "disabled": disabled}
 
 
@@ -145,7 +147,8 @@ def _list_providers_payload(request: Request):
             continue
         try:
             models = bridge_providers._models_for_provider(pid)
-        except Exception:
+        except Exception:  # noqa: BLE001 - one broken provider must not break the list; shown with no models
+            logger.debug("model listing failed for provider %s", pid, exc_info=True)
             models = []
         data.append({
             "id": pid,
@@ -210,7 +213,7 @@ async def put_moa_config(request: Request):
     """Create/update MoA presets in the active profile's config.yaml."""
     try:
         body = await request.json()
-    except Exception:
+    except ValueError:
         return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
     if not isinstance(body, dict):
         return JSONResponse(status_code=400, content={"error": "Body must be a JSON object"})
@@ -220,7 +223,7 @@ async def put_moa_config(request: Request):
         saved = await _ops_thread(_save_moa_config, body, hermes_home=profile_home)
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - surfaced to the client as a 500
         print(f"[hermes-bridge] Failed to save MoA config: {exc}", flush=True)
         return JSONResponse(status_code=500, content={"error": f"Failed to save MoA config: {exc}"})
 

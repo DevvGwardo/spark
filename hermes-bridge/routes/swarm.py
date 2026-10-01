@@ -168,7 +168,7 @@ async def swarm_endpoint(request: Request, body: SwarmRequest):
             )
             _finalize_session(success)
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - reported in-stream to the client as a pipeline error
             error_text = f"\n\n**Swarm Pipeline Error:** {str(e)}\n"
             yield sse_chunk(make_delta_chunk(chunk_id, body.model, {"content": error_text}))
             yield sse_chunk(make_delta_chunk(chunk_id, body.model, {

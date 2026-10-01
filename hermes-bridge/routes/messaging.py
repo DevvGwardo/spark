@@ -34,7 +34,7 @@ router = APIRouter()
 async def messaging_list_platforms():
     try:
         return JSONResponse(content={"platforms": _list_platforms()})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - surfaced to the client as a 500
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -57,7 +57,7 @@ async def messaging_update_env(platform_id: str, request: Request):
         return JSONResponse(content={"platform": result})
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - surfaced to the client as a 500
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -72,7 +72,7 @@ async def messaging_update_config(platform_id: str, request: Request):
         return JSONResponse(content={"platform": result})
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - surfaced to the client as a 500
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -83,7 +83,7 @@ async def messaging_disconnect_platform(platform_id: str):
         return JSONResponse(content={"platform": result})
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - surfaced to the client as a 500
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -94,7 +94,7 @@ async def messaging_test_platform(platform_id: str):
         return JSONResponse(content=result)
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - surfaced to the client as a 500
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -119,7 +119,7 @@ async def messaging_restart_gateway(platform_id: str):
         return JSONResponse(status_code=504, content={"error": "restart timed out"})
     except FileNotFoundError:
         return JSONResponse(status_code=500, content={"error": "hermes command not found"})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - surfaced to the client as a 500
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -131,7 +131,7 @@ async def messaging_oauth_status(platform_id: str):
     try:
         result = _get_oauth_status(platform_id)
         return JSONResponse(content=result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - surfaced to the client as a 500
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -147,7 +147,7 @@ async def messaging_oauth_complete(platform_id: str, request: Request):
         return JSONResponse(content=result)
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - surfaced to the client as a 500
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -180,7 +180,7 @@ async def discord_oauth_callback(request: Request):
             "setTimeout(() => window.close(), 1500);"
             "</script></body></html>",
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - rendered into the popup error page as a 500
         return HTMLResponse(
             status_code=500,
             content=f"<html><body><h2>Error</h2><p>{str(e)}</p>"
@@ -212,7 +212,7 @@ async def slack_oauth_callback(request: Request):
             "setTimeout(() => window.close(), 1500);"
             "</script></body></html>",
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - rendered into the popup error page as a 500
         return HTMLResponse(
             status_code=500,
             content=f"<html><body><h2>Error</h2><p>{str(e)}</p>"

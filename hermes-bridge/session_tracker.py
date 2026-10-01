@@ -91,7 +91,7 @@ def _iso_to_unix(iso_str: str) -> float:
     """Convert ISO timestamp string to unix seconds."""
     try:
         return datetime.fromisoformat(iso_str).timestamp()
-    except Exception:
+    except (ValueError, TypeError):
         return datetime.now(timezone.utc).timestamp()
 
 def _now_iso() -> str:

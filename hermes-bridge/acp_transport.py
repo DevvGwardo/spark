@@ -195,7 +195,7 @@ class BridgeAcpClient:
     async def session_update(self, session_id: str, update: Any, **kwargs: Any) -> None:
         try:
             self._dispatch(session_id, update)
-        except Exception as exc:  # never let a translate error kill the loop
+        except Exception as exc:  # noqa: BLE001 - a translate error must not kill the receive loop (logged below)
             logger.warning("acp session_update dispatch failed: %s", exc, exc_info=True)
 
     async def request_permission(
@@ -391,22 +391,22 @@ class _AcpHandle:
                 self.conn.close_session(self.session_id),
                 timeout=CLOSE_SESSION_TIMEOUT_SECONDS,
             )
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort teardown; process is killed next
+            logger.debug("acp close_session failed", exc_info=True)
         if self.proc is not None:
             try:
                 if self.proc.returncode is None:
                     self.proc.kill()
-            except Exception:
+            except ProcessLookupError:
                 pass
             try:
                 await self.proc.wait()
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - best-effort reap during teardown
+                logger.debug("acp proc.wait failed", exc_info=True)
         if self.stderr_file is not None:
             try:
                 self.stderr_file.close()
-            except Exception:
+            except OSError:
                 pass
             self.stderr_file = None
 
@@ -725,7 +725,7 @@ async def _spawn_session(
             if method_id:
                 try:
                     await conn.authenticate(method_id)
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - auth is optional; session setup proceeds and surfaces real failures later
                     logger.warning("acp authenticate(%s) failed: %s", method_id, exc)
 
         ns = await conn.new_session(cwd=cwd or ".")
@@ -737,7 +737,7 @@ async def _spawn_session(
             model_id = build_session_model_id(provider, model)
             try:
                 await conn.set_session_model(model_id, session_id)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - model selection is best-effort; session keeps its default model
                 logger.warning("acp set_session_model(%s) failed: %s", model_id, exc)
     except BaseException:
         # Setup failed partway — never leave an orphaned hermes-acp or a
@@ -746,16 +746,16 @@ async def _spawn_session(
             try:
                 if proc.returncode is None:
                     proc.kill()
-            except Exception:
+            except ProcessLookupError:
                 pass
             try:
                 await proc.wait()
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - best-effort reap; original error is re-raised below
+                logger.debug("acp proc.wait failed during setup cleanup", exc_info=True)
         if stderr_file is not None:
             try:
                 stderr_file.close()
-            except Exception:
+            except OSError:
                 pass
         raise
 
@@ -777,8 +777,8 @@ async def _close_handle_quietly(handle: _AcpHandle) -> None:
     """Close a handle in the background; never raises, never blocks callers."""
     try:
         await handle.close()
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - documented never-raises background close
+        logger.debug("acp background handle close failed", exc_info=True)
 
 
 def run_prompt_blocking(
@@ -893,8 +893,8 @@ async def reap_idle_sessions() -> int:
         try:
             await handle.close()
             closed += 1
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - one bad handle must not block closing the rest
+            logger.debug("acp handle close failed", exc_info=True)
     return closed
 
 
@@ -909,5 +909,5 @@ async def shutdown_all() -> None:
     for handle in handles:
         try:
             await handle.close()
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - one bad handle must not block closing the rest
+            logger.debug("acp handle close failed during shutdown", exc_info=True)

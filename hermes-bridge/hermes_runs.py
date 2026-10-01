@@ -647,8 +647,8 @@ def translate_run_event(event: dict[str, Any]) -> list[tuple[str, Any, ...]]:
                 )
                 if frame:
                     events.append(("computer_use_frame", frame))
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort enrichment; event is still emitted without a frame
+            logger.debug("computer_use frame extraction failed", exc_info=True)
         return events
 
     if ev == "tool.completed":
@@ -676,8 +676,8 @@ def translate_run_event(event: dict[str, Any]) -> list[tuple[str, Any, ...]]:
                     )
                     if frame:
                         events.append(("computer_use_frame", frame))
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - best-effort enrichment; event is still emitted without a frame
+                logger.debug("computer_use frame extraction failed", exc_info=True)
         return events
 
     if ev == "reasoning.available":

@@ -9,6 +9,7 @@ import os
 os.environ["HERMES_DISABLE_LAZY_INSTALLS"] = "1"
 from bridge_logger import log as _log
 import asyncio
+import logging
 import sys
 import time
 from typing import Optional
@@ -34,6 +35,8 @@ from bridge_config import (
 )
 from bridge_providers import DEFAULT_MODEL, MAX_AGENT_ITERATIONS
 from bridge_state import _bridge_metrics_snapshot
+
+logger = logging.getLogger(__name__)
 
 app: FastAPI = None  # created after brain-lifespan is defined
 
@@ -100,7 +103,7 @@ async def _bridge_lifespan(app):
                 max_iterations=MAX_AGENT_ITERATIONS,
             )
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - optional integration; a malformed brain config must not stop the bridge from serving
         # start_brain already swallows its own failures; this is belt-and-braces so
         # a malformed config can never stop the bridge from serving.
         _log.error("brain", "brain startup failed", error=str(e))
@@ -110,7 +113,7 @@ async def _bridge_lifespan(app):
     # ran and the cron scheduler never ticked.
     try:
         _init_mcp_telemetry()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - optional telemetry; startup must continue
         print(f"[mcp-telemetry] startup init failed: {e}", flush=True)
     _cron_scheduler_task = _start_cron_scheduler()
 
@@ -142,7 +145,7 @@ async def _bridge_lifespan(app):
             await _cron_scheduler_task
         except asyncio.CancelledError:
             pass  # expected — we just cancelled it
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - shutdown must continue; scheduler error is reported
             print(f"[cron] scheduler shutdown error: {e}", flush=True)
     _cron_scheduler_task = None
 
@@ -154,8 +157,8 @@ async def _bridge_lifespan(app):
         import acp_transport
 
         await acp_transport.shutdown_all()
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort teardown of optional integration at shutdown
+        logger.debug("acp_transport shutdown failed", exc_info=True)
 
 
 app = FastAPI(title="Hermes Bridge", lifespan=_bridge_lifespan)
@@ -313,7 +316,7 @@ def _init_mcp_telemetry():
         db_path = bridge_workspace._HERMES_HOME / "mcp-telemetry.db"
         ok = mcp_telemetry.init_persistence(db_path)
         print(f"[mcp-telemetry] persistence {'enabled' if ok else 'unavailable'} ({db_path})", flush=True)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - optional telemetry persistence; startup must continue
         print(f"[mcp-telemetry] startup init failed: {e}", flush=True)
 
 

@@ -170,7 +170,7 @@ async def fork_session(session_id: str, request: Request):
 
     try:
         body = await request.json()
-    except Exception:
+    except ValueError:
         body = {}
     if not isinstance(body, dict):
         body = {}

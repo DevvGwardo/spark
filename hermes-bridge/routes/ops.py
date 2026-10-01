@@ -33,7 +33,7 @@ async def put_fallback(request: Request):
     import hermes_ops
     try:
         body = await request.json()
-    except Exception:
+    except ValueError:
         return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
     chain = body.get("providers") if isinstance(body, dict) else None
     if not isinstance(chain, list):
@@ -75,7 +75,7 @@ async def get_delegation_live_manifest(delegation_id: str, request: Request):
         return JSONResponse(status_code=400, content={"error": str(exc)})
     except FileNotFoundError as exc:
         return JSONResponse(status_code=404, content={"error": str(exc)})
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - surfaced to the client as a 500
         return JSONResponse(status_code=500, content={"error": f"manifest read failed: {exc}"})
     return {"object": "delegation.live.manifest", **manifest}
 
@@ -100,7 +100,7 @@ async def get_delegation_live_task_log(delegation_id: str, task_index: int, requ
         return JSONResponse(status_code=400, content={"error": str(exc)})
     except FileNotFoundError as exc:
         return JSONResponse(status_code=404, content={"error": str(exc)})
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - surfaced to the client as a 500
         return JSONResponse(status_code=500, content={"error": f"log read failed: {exc}"})
     return {"object": "delegation.live.tail", **payload}
 
@@ -125,7 +125,7 @@ async def post_checkpoints_restore(request: Request):
     import hermes_ops
     try:
         body = await request.json()
-    except Exception:
+    except ValueError:
         return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
     if not isinstance(body, dict):
         return JSONResponse(status_code=400, content={"error": "body must be an object"})
@@ -193,7 +193,7 @@ async def post_bundles_create(request: Request):
     import hermes_ops
     try:
         body = await request.json()
-    except Exception:
+    except ValueError:
         body = {}
     if not isinstance(body, dict):
         return JSONResponse(status_code=400, content={"error": "Body must be a JSON object"})
@@ -218,7 +218,7 @@ async def post_bundles_delete(request: Request):
     import hermes_ops
     try:
         body = await request.json()
-    except Exception:
+    except ValueError:
         body = {}
     name = str((body or {}).get("name") or "").strip()
     try:
@@ -252,7 +252,7 @@ async def put_goals(request: Request):
     import hermes_ops
     try:
         body = await request.json()
-    except Exception:
+    except ValueError:
         return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
     if not isinstance(body, dict):
         return JSONResponse(status_code=400, content={"error": "Body must be a JSON object"})
@@ -279,7 +279,7 @@ async def put_tool_search(request: Request):
     import hermes_ops
     try:
         body = await request.json()
-    except Exception:
+    except ValueError:
         return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
     if not isinstance(body, dict):
         return JSONResponse(status_code=400, content={"error": "Body must be a JSON object"})
@@ -348,7 +348,7 @@ async def post_pets_select(request: Request):
     import hermes_ops
     try:
         body = await request.json()
-    except Exception:
+    except ValueError:
         body = {}
     pet_id = (body or {}).get("pet_id") or (body or {}).get("id") or ""
     try:
@@ -362,7 +362,7 @@ async def post_claw_migrate(request: Request):
     import hermes_ops
     try:
         body = await request.json()
-    except Exception:
+    except ValueError:
         body = {}
     dry_run = True if not isinstance(body, dict) else body.get("dry_run", True) is not False
     migrate_secrets = bool(body.get("migrate_secrets")) if isinstance(body, dict) else False
@@ -401,7 +401,7 @@ async def post_auth_pool_reset(request: Request):
     import hermes_ops
     try:
         body = await request.json()
-    except Exception:
+    except ValueError:
         return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
     if not isinstance(body, dict) or not body.get("provider"):
         return JSONResponse(status_code=400, content={"error": "provider is required"})
@@ -419,7 +419,7 @@ async def post_auth_pool_remove(request: Request):
     import hermes_ops
     try:
         body = await request.json()
-    except Exception:
+    except ValueError:
         return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
     if not isinstance(body, dict):
         return JSONResponse(status_code=400, content={"error": "body must be an object"})
@@ -447,7 +447,7 @@ async def post_auth_pool_add(request: Request):
     import hermes_ops
     try:
         body = await request.json()
-    except Exception:
+    except ValueError:
         return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
     if not isinstance(body, dict):
         return JSONResponse(status_code=400, content={"error": "body must be an object"})
@@ -546,7 +546,7 @@ async def cancel_gateway_run(request: Request):
 
     try:
         body = await request.json()
-    except Exception:
+    except ValueError:
         return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
     if not isinstance(body, dict):
         return JSONResponse(status_code=400, content={"error": "Body must be a JSON object"})
@@ -564,7 +564,7 @@ async def approve_gateway_run(request: Request):
 
     try:
         body = await request.json()
-    except Exception:
+    except ValueError:
         return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
     if not isinstance(body, dict):
         return JSONResponse(status_code=400, content={"error": "Body must be a JSON object"})
@@ -588,7 +588,7 @@ async def post_kanban_swarm(request: Request):
     import hermes_ops
     try:
         body = await request.json()
-    except Exception:
+    except ValueError:
         return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
     if not isinstance(body, dict):
         return JSONResponse(status_code=400, content={"error": "Body must be a JSON object"})
@@ -623,7 +623,7 @@ async def post_projects_create(request: Request):
     import hermes_ops
     try:
         body = await request.json()
-    except Exception:
+    except ValueError:
         return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
     if not isinstance(body, dict):
         return JSONResponse(status_code=400, content={"error": "Body must be a JSON object"})
@@ -646,7 +646,7 @@ async def post_projects_use(request: Request):
     import hermes_ops
     try:
         body = await request.json()
-    except Exception:
+    except ValueError:
         body = {}
     project = None
     if isinstance(body, dict):
@@ -664,7 +664,7 @@ async def post_projects_bind_board(request: Request):
     import hermes_ops
     try:
         body = await request.json()
-    except Exception:
+    except ValueError:
         return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
     if not isinstance(body, dict):
         return JSONResponse(status_code=400, content={"error": "Body must be a JSON object"})

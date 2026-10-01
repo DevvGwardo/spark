@@ -126,13 +126,13 @@ def _manual_cleanup_worktree(info: dict[str, Any]) -> bool:
                 timeout=15,
                 cwd=repo_root,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - cleanup is best-effort; failure is logged
             print(f"[worktree] git worktree remove failed: {exc}", flush=True)
 
     if Path(wt_path).exists():
         try:
             shutil.rmtree(wt_path)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - failure is logged and reported via return value
             print(f"[worktree] shutil.rmtree failed: {exc}", flush=True)
             return False
 
@@ -145,7 +145,7 @@ def _manual_cleanup_worktree(info: dict[str, Any]) -> bool:
                 timeout=10,
                 cwd=repo_root,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - cleanup is best-effort; failure is logged
             print(f"[worktree] branch delete failed: {exc}", flush=True)
 
     print(f"[worktree] Manual cleanup complete: {wt_path}", flush=True)
@@ -170,7 +170,7 @@ def cleanup_worktree(info: Optional[dict[str, Any]] = None) -> bool:
         if callable(cleanup_fn):
             cleanup_fn(target)
             cleaned = not Path(str(target.get("path") or "")).exists()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - CLI cleanup is best-effort; failure is logged and manual cleanup follows
         print(f"[worktree] CLI cleanup failed: {exc}", flush=True)
 
     if not cleaned:

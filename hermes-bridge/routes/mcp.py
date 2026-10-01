@@ -4,6 +4,7 @@ Moved verbatim from main.py (spec 4.1). Names that tests patch are owned by one
 module and other modules reach them as ``<module>.<name>`` so a single
 ``patch.object(<module>, name)`` reaches every caller, as patching main did.
 """
+import logging
 import os
 from pathlib import Path
 from typing import Optional
@@ -18,6 +19,7 @@ import config_io
 import mcp_telemetry
 from bridge_errors import INTERNAL, VALIDATION, BridgeError
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -113,7 +115,8 @@ def _read_hermes_config(hermes_home: Path) -> dict:
         with open(path) as f:
             cfg = yaml.safe_load(f)
         return cfg if isinstance(cfg, dict) else {}
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort read; callers fall back to an empty config
+        logger.debug("MCP config read failed; treating as empty", exc_info=True)
         return {}
 
 
@@ -320,7 +323,8 @@ def _build_mcp_tool_index(hermes_home: Path) -> list[dict]:
         discover_mcp_tools()
         with _agent_lock:
             pairs = list(_mcp_tool_server_names.items())
-    except Exception:
+    except Exception:  # noqa: BLE001 - optional integration; index falls back to empty
+        logger.debug("MCP tool discovery failed; returning empty index", exc_info=True)
         pairs = []
         registry = None  # type: ignore[assignment]
 
@@ -417,7 +421,7 @@ async def workspace_mcp_telemetry(request: Request):
     global activity feed. Metrics persist across bridge restarts via SQLite."""
     try:
         snap = mcp_telemetry.snapshot()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - surfaced to the client as a 500
         return JSONResponse(status_code=500, content={"error": f"telemetry unavailable: {e}"})
     return JSONResponse(content=snap)
 
@@ -429,7 +433,7 @@ async def workspace_mcp_tool_index(request: Request):
     hermes_home = bridge_workspace._resolve_hermes_home(bridge_workspace._resolve_profile_name(request))
     try:
         tools = await anyio.to_thread.run_sync(_build_mcp_tool_index, hermes_home)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - surfaced to the client as a 500
         return JSONResponse(status_code=500, content={"error": f"tool index unavailable: {e}"})
     return JSONResponse(content={"tools": tools, "total": len(tools)})
 
@@ -444,6 +448,6 @@ async def workspace_mcp_server_logs(name: str, request: Request):
         limit = 200
     try:
         lines = mcp_telemetry.read_server_logs(hermes_home, name, limit=limit)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - surfaced to the client as a 500
         return JSONResponse(status_code=500, content={"error": f"could not read logs: {e}"})
     return JSONResponse(content={"server": name, "lines": lines})
