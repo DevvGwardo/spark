@@ -98,7 +98,7 @@ export function McpToolIndexPanel({
             placeholder="Search tools…"
             aria-label="Search MCP tools"
             className={cn(
-              'w-full rounded-lg border border-border/35 bg-background/40 py-1.5 pl-7 pr-2 text-[11px] text-foreground outline-none transition-colors placeholder:text-muted-foreground/35 focus:border-[#ff8f3f]/40',
+              'w-full rounded-lg border border-border/35 bg-background/40 py-1.5 pl-7 pr-2 text-[11px] text-foreground outline-none transition-colors placeholder:text-muted-foreground/35 focus:border-primary/40',
               compact && 'py-1 text-[10px]',
             )}
           />

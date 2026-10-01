@@ -88,7 +88,7 @@ export const HermesModelPicker: React.FC = () => {
           onClick={useAgentDefault}
           className={followAgentModel ? 'bg-accent' : ''}
         >
-          <Bot className="mr-1.5 h-3 w-3 shrink-0 text-[#ff8f3f]" />
+          <Bot className="mr-1.5 h-3 w-3 shrink-0 text-primary" />
           <span className="flex-1 truncate text-xs">
             Agent default
             {defaultModel && (

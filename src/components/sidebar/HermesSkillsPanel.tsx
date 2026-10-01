@@ -58,7 +58,7 @@ function SearchField({
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
-        className="w-full rounded-xl border border-border/40 bg-background/40 py-2 pl-9 pr-3 text-[12px] text-foreground outline-none transition-colors placeholder:text-muted-foreground/35 focus:border-[#ff8f3f]/30"
+        className="w-full rounded-xl border border-border/40 bg-background/40 py-2 pl-9 pr-3 text-[12px] text-foreground outline-none transition-colors placeholder:text-muted-foreground/35 focus:border-primary/30"
       />
     </div>
   );
@@ -277,7 +277,7 @@ export function HermesSkillsPanel() {
                       className={cn(
                         'rounded-xl border transition-colors',
                         expanded
-                          ? 'border-[#ff8f3f]/30 bg-[#ff8f3f]/7'
+                          ? 'border-primary/30 bg-primary/[0.07]'
                           : 'border-border/30 bg-background/30 hover:bg-[hsl(var(--sidebar-active))]'
                       )}
                     >
@@ -426,7 +426,7 @@ export function HermesSkillsPanel() {
                             <HubBadge className="border-border/40 bg-background/40 text-muted-foreground/70">
                               {skill.category}
                             </HubBadge>
-                            <HubBadge className="border-[#ff8f3f]/20 bg-[#ff8f3f]/10 text-[#ffbe8a]">
+                            <HubBadge className="border-primary/20 bg-primary/10 text-primary">
                               {HUB_SOURCE_LABELS[skill.source]}
                             </HubBadge>
                           </div>
@@ -439,7 +439,7 @@ export function HermesSkillsPanel() {
                             'inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-medium transition-colors',
                             isInstalled
                               ? 'bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/20'
-                              : 'bg-[#ff8f3f]/12 text-[#ffbe8a] ring-1 ring-[#ff8f3f]/20 hover:bg-[#ff8f3f]/18',
+                              : 'bg-primary/[0.12] text-primary ring-1 ring-primary/20 hover:bg-primary/[0.18]',
                             (Boolean(installingSkillName) || isInstalled) && 'cursor-default'
                           )}
                         >

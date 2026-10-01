@@ -191,7 +191,7 @@ export function HermesOverviewPanel() {
                     </div>
                     <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-background/90">
                       <div
-                        className="h-full rounded-full bg-[linear-gradient(90deg,#ff8f3f_0%,#ffcf8c_100%)]"
+                        className="h-full rounded-full bg-gradient-to-r from-primary to-primary/60"
                         style={{
                           width: `${Math.max(8, Math.min(100, (model.total_tokens / Math.max(overview.counts.input_tokens + overview.counts.output_tokens, 1)) * 100))}%`,
                         }}
