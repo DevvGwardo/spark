@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { ArrowRight, ArrowLeft, Eye, EyeOff, Check, Loader2, KeyRound, Lock, ChevronDown, ChevronUp } from 'lucide-react';
 import { useSettingsStore, type Provider } from '@/stores/settings-store';
 import { PROVIDERS, PROVIDER_ORDER } from '@/lib/providers';
+import { NubSignIn } from '@/components/settings/NubSignIn';
 import { validateApiKey } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { openExternalUrl } from '@/lib/open-external';
@@ -596,6 +597,14 @@ export const SetupWizard: React.FC = () => {
     }
   };
 
+  // Nub signs in instead of taking a pasted key; NubSignIn has already stored
+  // the key in provider settings by the time this runs.
+  const handleNubLinked = () => {
+    setApiKey(useSettingsStore.getState().providers.nub.apiKey);
+    setSelectedModel(PROVIDERS.nub.defaultModel);
+    goToStep(2);
+  };
+
   const handleComplete = () => {
     setActiveProvider(selectedProvider);
     updateProviderConfig(selectedProvider, {
@@ -651,7 +660,7 @@ export const SetupWizard: React.FC = () => {
   // --- Step 0: Provider selection ---
   const renderProviderGrid = () => {
     const isHermesSelected = selectedProvider === 'hermes';
-    const others: Provider[] = [...PROVIDER_ORDER, 'openclaw'];
+    const others: Provider[] = [...PROVIDER_ORDER.filter((p) => p !== 'nub'), 'openclaw'];
 
     return (
       <div key="provider" data-step-content>
@@ -709,6 +718,28 @@ export const SetupWizard: React.FC = () => {
           <span className="text-[10px] text-muted-foreground uppercase tracking-widest font-medium">or</span>
           <div className="flex-1 h-px bg-border" />
         </div>
+
+        {/* Nub: people with a nub agent sign in with it, no key */}
+        <button
+          type="button"
+          onClick={() => handleProviderSelect('nub')}
+          aria-pressed={selectedProvider === 'nub'}
+          className={cn(
+            'mb-2 w-full flex items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition-colors duration-100',
+            selectedProvider === 'nub' ? 'border-primary/40 bg-primary/[0.06]' : 'border-border bg-muted/50 hover:bg-muted',
+          )}
+        >
+          <ProviderIcon provider="nub" size={24} />
+          <span className="flex-1 min-w-0">
+            <span className="block text-[12px] font-medium text-foreground">Sign in with Nub</span>
+            <span className="block text-[11px] text-muted-foreground truncate">Use your nub agent account — no API key</span>
+          </span>
+          {selectedProvider === 'nub' && (
+            <div className="w-3.5 h-3.5 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
+              <Check className="h-2 w-2 text-primary-foreground" />
+            </div>
+          )}
+        </button>
 
         {/* Toggle other providers */}
         <button
@@ -782,7 +813,7 @@ export const SetupWizard: React.FC = () => {
       <div key="apikey" data-step-content className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <h2 className="text-[13px] font-semibold tracking-tight text-foreground">
-            {shouldShowHermesInstallFlow ? 'Hermes Agent' : 'API key'}
+            {providerInfo.signIn === 'nub' ? 'Sign in' : shouldShowHermesInstallFlow ? 'Hermes Agent' : 'API key'}
           </h2>
           <button onClick={() => goToStep(0)} className="text-[11px] font-medium text-primary hover:underline flex items-center gap-1">
             <ArrowLeft className="h-3 w-3" /> Change provider
@@ -794,7 +825,9 @@ export const SetupWizard: React.FC = () => {
           <span className="text-[13px] font-medium text-foreground">{providerInfo.label}</span>
         </div>
 
-        {shouldShowHermesInstallFlow ? (
+        {providerInfo.signIn === 'nub' ? (
+          <NubSignIn onLinked={handleNubLinked} />
+        ) : shouldShowHermesInstallFlow ? (
           <div className="flex flex-col gap-3">
             <div className="rounded-xl border border-border bg-muted/50 px-3.5 py-3">
               <div className="flex items-center justify-between gap-2">
@@ -1042,7 +1075,7 @@ export const SetupWizard: React.FC = () => {
           </>
         )}
 
-        {!shouldShowHermesInstallFlow && (
+        {!shouldShowHermesInstallFlow && providerInfo.signIn !== 'nub' && (
           <div className="flex items-center justify-center gap-1.5">
             <Lock className="h-2.5 w-2.5 text-muted-foreground" aria-hidden />
             <span className="text-[10px] text-muted-foreground">Stored locally, never sent to Spark</span>
