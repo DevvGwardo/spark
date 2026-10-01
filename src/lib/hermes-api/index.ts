@@ -1,4 +1,11 @@
-import { getApiBaseUrl } from './api';
+/**
+ * Hermes bridge REST client, split by domain (hardening spec 6.5).
+ *
+ * Import from `@/lib/hermes-api`; this barrel re-exports every domain module.
+ * The transport internals in `./core` (`hermesFetch`, `abortAfter`,
+ * `coalesceHermesFetch`) are deliberately not re-exported.
+ */
+import { getApiBaseUrl } from '../api';
 import { getActiveProfile } from '@/stores/profiles-store';
 
 const BRIDGE_BASE = '/api/hermes';
