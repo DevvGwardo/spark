@@ -482,6 +482,11 @@ const ChatVirtuosoFooter = React.memo(function ChatVirtuosoFooter({
   );
 });
 
+// Module-level on purpose: Virtuoso remounts the Footer whenever the component
+// type changes, which would reset AcpApprovalBanner's focus and in-flight state
+// and re-announce its role="alert" on every streamed token. Pass per-render
+// data through Virtuoso `context`, never by recreating this object or an inline
+// Footer. Guarded by src/test/chat-area-approval-a11y.test.tsx.
 const CHAT_VIRTUOSO_COMPONENTS = { Footer: ChatVirtuosoFooter };
 
 interface ChatAreaProps {
