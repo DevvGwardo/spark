@@ -30,7 +30,10 @@ BRIDGE_SOURCES = [MAIN] + [
         "chat_impl.py",
         "acp_chat.py",
     )
-] + sorted(Path(__file__).with_name("routes").glob("*.py"))
+] + sorted(Path(__file__).with_name("routes").glob("*.py")) + sorted(
+    # The chat transports split out of chat_impl/acp_chat (spec 4.2).
+    Path(__file__).with_name("chat_transports").glob("*.py")
+)
 
 
 class ConstructorShapeTests(unittest.TestCase):
@@ -282,15 +285,24 @@ class MainUsesConstructorsTests(unittest.TestCase):
         Their payloads belong to hermes-agent, so the bridge forwards the object it
         received rather than reconstructing a field list it does not own.
         """
-        src = self._all_text()
-        for key, var in (
-            ("computer_use_frame", "frame"),
-            ("agent_notice", "notice"),
-            ("agent_notice_clear", "clear"),
-        ):
-            self.assertRegex(
-                src,
-                rf'"{key}": {var}\b',
+        # The agent-loop renderer forwards these queue payloads unchanged under
+        # a delta key of the same name (`{kind: event[1]}`), so assert they are
+        # in that forward-verbatim set rather than grepping for a literal.
+        path = Path(__file__).with_name("chat_transports") / "agent_loop.py"
+        forwarded = set()
+        for node in ast.walk(self._ast(path)):
+            if (
+                isinstance(node, ast.Assign)
+                and any(isinstance(t, ast.Name) and t.id == "_PASSTHROUGH_KINDS" for t in node.targets)
+            ):
+                forwarded = {
+                    c.value for c in ast.walk(node.value)
+                    if isinstance(c, ast.Constant) and isinstance(c.value, str)
+                }
+        self.assertTrue(forwarded, "agent_loop._PASSTHROUGH_KINDS not found")
+        for key in ("computer_use_frame", "agent_notice", "agent_notice_clear"):
+            self.assertIn(
+                key, forwarded,
                 f"{key} should forward the adapter payload, not rebuild it",
             )
 

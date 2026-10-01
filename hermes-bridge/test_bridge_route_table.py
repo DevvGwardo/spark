@@ -208,7 +208,11 @@ class NoImportMainTests(unittest.TestCase):
         "chat_common.py",
         "chat_impl.py",
         "acp_chat.py",
-    ] + sorted(str(p.relative_to(BRIDGE_DIR)) for p in (BRIDGE_DIR / "routes").glob("*.py"))
+    ] + sorted(
+        str(p.relative_to(BRIDGE_DIR))
+        for sub in ("routes", "chat_transports")
+        for p in (BRIDGE_DIR / sub).glob("*.py")
+    )
 
     def test_split_modules_do_not_import_main(self):
         offenders = []

@@ -1,8 +1,9 @@
 """Chat transport tests (spec 4.2).
 
-Covers the request-time runs-routing reason (which used to raise NameError),
-and — once the transports split lands — the single selection function and the
-shared SSE drain.
+Covers the single transport-selection function (table test), the shared
+``drain_to_sse`` loop, the capability matrix, the SSE event order of the
+agent-loop and ACP transports, and the request-time runs-routing reason
+(which used to raise NameError).
 """
 
 import asyncio
@@ -101,6 +102,326 @@ class RunsFlagNotRoutedReasonTests(unittest.TestCase):
         status = self._transport_status(payload)
         self.assertEqual((status["requested"], status["actual"]), ("runs", "agent-loop"))
         self.assertIs(parity.call_args_list[0].kwargs["toolsets_overridden"], False)
+
+
+# ── selection ────────────────────────────────────────────────────────────
+
+
+class SelectTransportTableTests(unittest.TestCase):
+    """select_transport is the only place a transport is chosen."""
+
+    def test_table(self):
+        from chat_transports.acp import AcpTransport
+        from chat_transports.agent_loop import AgentLoopTransport
+        from chat_transports.passthrough import PassthroughTransport
+        from chat_transports.runs import RunsTransport
+        from chat_transports.selection import select_transport
+        from chat_transports.swarm import SwarmTransport
+
+        # (execution_mode, runs decision, expected transport, runs decision consulted?)
+        table = [
+            ("agent-loop", False, AgentLoopTransport, True),
+            ("agent-loop", True, RunsTransport, True),
+            ("swarm", False, SwarmTransport, False),
+            ("swarm", True, SwarmTransport, False),
+            ("passthrough", False, PassthroughTransport, False),
+            ("passthrough", True, PassthroughTransport, False),
+            ("acp", False, AcpTransport, False),
+            ("acp", True, AcpTransport, False),
+            # Unknown modes have always meant the agent loop.
+            ("something-else", False, AgentLoopTransport, True),
+            ("something-else", True, RunsTransport, True),
+            ("", False, AgentLoopTransport, True),
+        ]
+        for mode, runs, expected, consulted in table:
+            with self.subTest(mode=mode, runs=runs):
+                calls = []
+
+                def decide(runs=runs):
+                    calls.append(1)
+                    return runs
+
+                self.assertIs(select_transport(mode, route_via_runs=decide), expected)
+                # The runs decision probes the gateway; it must only run for
+                # the agent-loop family, and at most once.
+                self.assertEqual(len(calls), 1 if consulted else 0)
+
+    def test_chat_impl_dispatches_only_through_select_transport(self):
+        """No mode branching left in chat_impl: the transport table is the router."""
+        from pathlib import Path
+
+        src = Path(__file__).with_name("chat_impl.py").read_text()
+        for needle in ('execution_mode == "swarm"', 'execution_mode == "acp"',
+                       'execution_mode == "passthrough"'):
+            self.assertNotIn(needle, src)
+        self.assertIn("select_transport(execution_mode", src)
+
+
+class CapabilityMatrixTests(unittest.TestCase):
+    """Declared capabilities match the spec §2.2 G6 matrix (today's truth)."""
+
+    def test_matrix(self):
+        from chat_transports.acp import AcpTransport
+        from chat_transports.agent_loop import AgentLoopTransport
+        from chat_transports.base import BaseChatTransport, ChatTransport
+        from chat_transports.passthrough import PassthroughTransport
+        from chat_transports.runs import RunsTransport
+        from chat_transports.swarm import SwarmTransport
+
+        expected = {
+            AgentLoopTransport: dict(approvals=False, cancel=False, session_resume=True),
+            AcpTransport: dict(approvals=True, cancel=False, session_resume=False),
+            RunsTransport: dict(approvals=False, cancel=True, session_resume=False),
+            SwarmTransport: dict(approvals=False, cancel=False, session_resume=False),
+            PassthroughTransport: dict(approvals=False, cancel=False, session_resume=False),
+        }
+        names = set()
+        for cls, caps in expected.items():
+            with self.subTest(transport=cls.__name__):
+                self.assertTrue(issubclass(cls, BaseChatTransport))
+                self.assertTrue(isinstance(cls.__new__(cls), ChatTransport))
+                for flag, value in caps.items():
+                    self.assertEqual(getattr(cls.capabilities, flag), value, flag)
+                # Nobody stops on disconnect or reports usage yet (spec 4.4/4.5).
+                self.assertFalse(cls.capabilities.stops_on_client_disconnect)
+                self.assertFalse(cls.capabilities.usage_in_stream)
+                names.add(cls.name)
+        self.assertEqual(names, {"agent-loop", "acp", "runs", "swarm", "passthrough"})
+
+    def test_unsupported_cancel_reports_false(self):
+        from chat_transports.agent_loop import AgentLoopTransport
+
+        transport = AgentLoopTransport.__new__(AgentLoopTransport)
+        self.assertFalse(asyncio.run(transport.cancel()))
+
+
+# ── drain ────────────────────────────────────────────────────────────────
+
+
+class DrainToSseTests(unittest.TestCase):
+    def _collect(self, produce, *, heartbeat_seconds=5.0):
+        from chat_transports.drain import DrainStats, EventChannel, drain_to_sse
+
+        def render(event):
+            return [f"{event[0]}:{event[1]}"] * (2 if event[0] == "double" else 1)
+
+        async def run():
+            channel = EventChannel()
+            stats = DrainStats()
+            producer = asyncio.ensure_future(asyncio.to_thread(produce, channel))
+            frames = [
+                frame
+                async for frame in drain_to_sse(
+                    channel.queue, render, heartbeat_seconds=heartbeat_seconds, stats=stats,
+                )
+            ]
+            await producer
+            return frames, stats.events
+
+        return asyncio.run(run())
+
+    def test_forwards_every_event_in_order_then_stops_at_close(self):
+        def produce(channel):
+            for i in range(200):
+                channel.put(("text", i))
+            channel.put(("double", "x"))
+            channel.close()
+            channel.put(("text", "after-close"))  # dropped: the stream already ended
+
+        frames, events = self._collect(produce)
+        self.assertEqual(frames, [f"text:{i}" for i in range(200)] + ["double:x", "double:x"])
+        self.assertEqual(events, 201)
+
+    def test_heartbeat_on_silence_only(self):
+        import time as _time
+
+        def produce(channel):
+            channel.put(("text", "a"))
+            _time.sleep(0.35)  # silence longer than the heartbeat interval
+            channel.put(("text", "b"))
+            channel.close()
+
+        frames, _ = self._collect(produce, heartbeat_seconds=0.1)
+        self.assertEqual(frames[0], "text:a")
+        self.assertEqual(frames[-1], "text:b")
+        beats = frames[1:-1]
+        self.assertTrue(beats, "expected a keepalive during the silence")
+        self.assertTrue(all(f == ": heartbeat\n\n" for f in beats), frames)
+        self.assertLessEqual(len(beats), 4, "heartbeats must follow the interval, not spin")
+
+    def test_drain_waits_on_the_queue_not_on_sleep(self):
+        """The old loops slept 50ms between polls; the drain never sleeps."""
+        import time as _time
+
+        def produce(channel):
+            channel.put(("text", "a"))
+            _time.sleep(0.05)  # drain is parked on queue.get here
+            channel.put(("text", "b"))
+            channel.close()
+
+        with patch("asyncio.sleep", side_effect=AssertionError("drain must not sleep-poll")):
+            frames, events = self._collect(produce)
+        self.assertEqual(frames, ["text:a", "text:b"])
+        self.assertEqual(events, 2)
+
+    def test_one_drain_loop_and_no_sleep_polling(self):
+        from pathlib import Path
+
+        pkg = Path(__file__).with_name("chat_transports")
+        for path in sorted(pkg.glob("*.py")):
+            with self.subTest(module=path.name):
+                self.assertNotIn("asyncio.sleep", path.read_text())
+        for name in ("agent_loop.py", "acp.py"):
+            self.assertIn("drain_to_sse(", (pkg / name).read_text())
+        for name in ("chat_impl.py", "acp_chat.py"):
+            self.assertNotIn("event_queue", Path(__file__).with_name(name).read_text())
+
+
+# ── SSE order per transport ──────────────────────────────────────────────
+
+
+def _delta_keys(payload: bytes) -> list:
+    keys = []
+    for frame in payload.decode().split("\n\n"):
+        if frame.startswith("data: ") and frame != "data: [DONE]":
+            choice = json.loads(frame[6:])["choices"][0]
+            keys.append("+".join(sorted(choice["delta"])) or f"<{choice['finish_reason']}>")
+        elif frame:
+            keys.append(frame)
+    return keys
+
+
+_CLI_CFG = {"default": "x", "provider": "openrouter", "base_url": "https://openrouter.ai/api/v1"}
+
+
+class AgentLoopSseOrderTests(unittest.TestCase):
+    def test_event_order(self):
+        class Adapter:
+            def __init__(self, **kw):
+                self.kw = kw
+                self.on_thinking = None
+                self.on_reasoning = None
+
+            def run_conversation(self, user_message, conversation_history):
+                kw = self.kw
+                self.on_thinking(1)
+                self.on_reasoning("why")
+                kw["on_text"]("hello")
+                kw["on_tool_start"]("terminal", '{"command":"ls"}')
+                kw["on_tool_end"]("terminal", '{"command":"ls"}', "ok")
+                kw["on_stream_retry"](1, 3, "timeout", 500)
+                kw["on_computer_use_frame"]({"image": "abc"})
+                kw["on_notice"]({"key": "k", "level": "warn", "message": "m"})
+                kw["on_notice_clear"]("k")
+                self.on_thinking(2)
+
+        body = main.ChatCompletionRequest.model_validate({
+            "model": "meta-llama/llama-3-70b-instruct",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": True,
+        })
+        with patch.dict(sys.modules, {"hermes_adapter": types.SimpleNamespace(HermesAgentAdapter=Adapter)}), \
+             patch("bridge_providers._load_cli_model_config", return_value=_CLI_CFG), \
+             patch("bridge_providers._get_active_provider", return_value=None):
+            response, payload = asyncio.run(_invoke_chat_and_read_stream(
+                _FakeRequest({"authorization": "Bearer k"}), body,
+            ))
+        self.assertEqual(response.media_type, "text/event-stream")
+        self.assertEqual(_delta_keys(payload), [
+            "role", "agent_status", "transport_status", "agent_status", "reasoning",
+            "content", "tool_call_begin", "content", "tool_activity",
+            "tool_call_end", "content", "tool_activity", "stream_retry",
+            "computer_use_frame", "agent_notice", "agent_notice_clear",
+            "agent_status", "content", "<stop>", "data: [DONE]",
+        ])
+
+
+class PersistOnDisconnectTests(unittest.TestCase):
+    """A client that goes away mid-stream does not stop the turn (spec 4.4 keeps
+    this as the ``background: true`` behavior); the worker still finalizes."""
+
+    def test_agent_loop_finishes_and_finalizes_after_disconnect(self):
+        import threading
+
+        import session_tracker
+
+        release = threading.Event()
+        finished = threading.Event()
+
+        class Adapter:
+            def __init__(self, **kw):
+                self.kw = kw
+                self.on_thinking = None
+                self.on_reasoning = None
+
+            def run_conversation(self, user_message, conversation_history):
+                self.kw["on_text"]("before")
+                release.wait(5)
+                self.kw["on_text"]("after")
+                finished.set()
+
+        body = main.ChatCompletionRequest.model_validate({
+            "model": "meta-llama/llama-3-70b-instruct",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": True,
+        })
+        request = _FakeRequest({"authorization": "Bearer k", "x-hermes-conversation-id": "conv-disconnect"})
+
+        async def run():
+            response = await main.chat_completions(request, body)
+            stream = response.body_iterator
+            seen = []
+            async for frame in stream:
+                seen.append(frame)
+                if '"before"' in frame:
+                    break
+            await stream.aclose()  # client disconnect
+            release.set()
+            for _ in range(200):
+                if finished.is_set() and session_tracker._sessions["conv-disconnect"]["status"] != "active":
+                    break
+                await asyncio.sleep(0.01)
+            return seen
+
+        with patch.dict(sys.modules, {"hermes_adapter": types.SimpleNamespace(HermesAgentAdapter=Adapter)}), \
+             patch("bridge_providers._load_cli_model_config", return_value=_CLI_CFG), \
+             patch("bridge_providers._get_active_provider", return_value=None):
+            seen = asyncio.run(run())
+        self.assertTrue(any('"before"' in f for f in seen))
+        self.assertTrue(finished.is_set(), "the turn must keep running after the client leaves")
+        session = session_tracker._sessions["conv-disconnect"]
+        self.assertEqual(session["status"], "completed")
+        self.assertIn("after", session["chat"][-1]["content"])
+
+
+class AcpSseOrderTests(unittest.TestCase):
+    def test_event_order_and_error_text(self):
+        def run_prompt_blocking(**kw):
+            emit = kw["emit"]
+            emit("text", "hi")
+            emit("tool_start", "read_file", "{}")
+            emit("tool_end", "read_file", "{}", "out")
+            emit("approval_request", {"id": "acp-1"})
+            emit("plan", [types.SimpleNamespace(content="step", status="pending")])
+            raise RuntimeError("acp died")
+
+        body = main.ChatCompletionRequest.model_validate({
+            "model": "m", "messages": [{"role": "user", "content": "go"}], "stream": True,
+        })
+        with patch("acp_transport.acp_available", return_value=(True, "")), \
+             patch("acp_transport.run_prompt_blocking", side_effect=run_prompt_blocking), \
+             patch("acp_chat._ensure_acp_reaper", return_value=None), \
+             patch("bridge_providers._load_cli_model_config", return_value=_CLI_CFG), \
+             patch("bridge_providers._get_active_provider", return_value=None):
+            response, payload = asyncio.run(_invoke_chat_and_read_stream(
+                _FakeRequest({"authorization": "Bearer k", "x-hermes-execution-mode": "acp"}), body,
+            ))
+        self.assertEqual(_delta_keys(payload), [
+            "role", "agent_status", "content", "content", "tool_activity",
+            "content", "tool_activity", "approval_request", "content",
+            "plan_update", "content", "<stop>", "data: [DONE]",
+        ])
+        self.assertIn("[Error: acp died]", payload.decode())
 
 
 if __name__ == "__main__":
