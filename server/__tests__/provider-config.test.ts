@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  createProviderModel,
   getModelDiscoveryHeaders,
   HERMES_TOOL_CAPABLE_MODELS,
   OPENAI_COMPATIBLE,
@@ -38,6 +39,20 @@ describe('provider-config', () => {
 
   it('uses a tool-capable Hermes validation model', () => {
     expect(VALIDATION_MODELS.hermes).toBe(HERMES_TOOL_CAPABLE_MODELS[0])
+  })
+
+  it('sends compatible providers to Chat Completions and only OpenAI to Responses', () => {
+    const wire = (provider: string) =>
+      (createProviderModel(provider, 'm', 'k') as unknown as { provider: string }).provider
+    expect(wire('openai')).toBe('openai.responses')
+    expect(wire('openrouter')).toBe('openai.chat')
+    expect(wire('hermes')).toBe('openai.chat')
+    expect(wire('nub')).toBe('openai.chat')
+  })
+
+  it('points nub at the maiavm OpenAI-compatible API', () => {
+    expect(OPENAI_COMPATIBLE.nub).toBe('https://www.maiavm.com/api/v1')
+    expect(MODEL_DISCOVERY_URLS.nub).toBe(OPENAI_COMPATIBLE.nub)
   })
 
   it('validates OpenAI keys against the default GPT-5.4 model', () => {

@@ -10,6 +10,8 @@ import { existsSync, readdirSync } from 'fs';
 const RUN_COMMAND_TIMEOUT_MS = 90_000; // 90 seconds
 const EXECUTE_PYTHON_TIMEOUT_MS = 90_000;
 const MAX_OUTPUT_LENGTH = 15_000;
+/** Share of the output budget kept from the start; the rest comes from the end. */
+const OUTPUT_HEAD_SHARE = 0.4;
 const MAX_FILE_READ_LENGTH = 20_000;
 
 // ─── Sensitive path blocklist ───────────────────────────────────────────────
@@ -102,17 +104,28 @@ export interface LocalToolHooks {
   onExecuted?: (info: ToolExecutionInfo) => void;
 }
 
+/**
+ * Keeps the head and the tail of long output. Build and test failures put the
+ * part that matters (the error, the summary) at the end, so a head-only cut
+ * hid exactly what the model needed.
+ */
 function truncateOutput(output: string): { output: string; truncated: boolean; truncatedLines: number } {
-  if (output.length > MAX_OUTPUT_LENGTH) {
-    const kept = output.slice(0, MAX_OUTPUT_LENGTH);
-    const droppedLines = output.split('\n').length - kept.split('\n').length;
-    return {
-      output: kept + `\n\n[Output truncated at ${MAX_OUTPUT_LENGTH.toLocaleString()} chars]`,
-      truncated: true,
-      truncatedLines: Math.max(0, droppedLines - 1),
-    };
+  if (output.length <= MAX_OUTPUT_LENGTH) {
+    return { output, truncated: false, truncatedLines: 0 };
   }
-  return { output, truncated: false, truncatedLines: 0 };
+  const headLength = Math.floor(MAX_OUTPUT_LENGTH * OUTPUT_HEAD_SHARE);
+  const tailLength = MAX_OUTPUT_LENGTH - headLength;
+  const head = output.slice(0, headLength);
+  const tail = output.slice(output.length - tailLength);
+  const dropped = output.slice(headLength, output.length - tailLength);
+  const droppedLines = dropped.split('\n').length - 1;
+  return {
+    output:
+      `${head}\n\n[… ${dropped.length.toLocaleString()} chars (${droppedLines.toLocaleString()} lines) omitted from the middle; ` +
+      `showing the first ${headLength.toLocaleString()} and last ${tailLength.toLocaleString()} chars …]\n\n${tail}`,
+    truncated: true,
+    truncatedLines: droppedLines,
+  };
 }
 
 function formatExecOutput(stdout: string, stderr: string): string {
