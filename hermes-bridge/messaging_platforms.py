@@ -5,6 +5,7 @@ Reads/writes platform credentials to ~/.hermes/.env and ~/.hermes/config.yaml.
 Tracks connection status via gateway_state.json.
 """
 
+import logging
 import os
 import re
 import json
@@ -12,6 +13,10 @@ import subprocess
 import urllib.parse
 from pathlib import Path
 from typing import Optional
+
+import config_io
+
+logger = logging.getLogger(__name__)
 
 _HERMES_HOME = Path(os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes")))
 _ENV_PATH = _HERMES_HOME / ".env"
@@ -331,18 +336,25 @@ def _read_env_file() -> dict[str, str]:
             if "=" in line:
                 key, _, value = line.partition("=")
                 env[key.strip()] = value.strip().strip('"').strip("'")
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - env file parse failed; returning partial env; logged at debug
+        logger.debug("env file parse failed; returning partial env", exc_info=True)
     return env
 
 
 def _write_env_file(env: dict[str, str]) -> None:
-    """Write dict back to ~/.hermes/.env, preserving comment lines and ordering."""
-    if not _ENV_PATH.exists():
-        _ENV_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _ENV_PATH.write_text("", encoding="utf-8")
+    """Write dict back to ~/.hermes/.env, preserving comment lines and ordering.
 
-    lines = _ENV_PATH.read_text(encoding="utf-8").splitlines()
+    Atomic and locked (config_io); no ``.bak`` copies — the file holds secrets
+    and backups would multiply them. A new file is created owner-only.
+    """
+    with config_io.file_lock(_ENV_PATH):
+        lines = _ENV_PATH.read_text(encoding="utf-8").splitlines() if _ENV_PATH.exists() else []
+        config_io.atomic_write_text(
+            _ENV_PATH, _render_env_lines(lines, env), backup=False, mode=0o600, _locked=True
+        )
+
+
+def _render_env_lines(lines: list[str], env: dict[str, str]) -> str:
     new_lines: list[str] = []
     seen_keys: set[str] = set()
 
@@ -366,7 +378,7 @@ def _write_env_file(env: dict[str, str]) -> None:
         if key not in seen_keys:
             new_lines.append(f"{key}={value}")
 
-    _ENV_PATH.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    return "\n".join(new_lines) + "\n"
 
 
 def _read_yaml_config() -> dict:
@@ -395,10 +407,10 @@ def _read_yaml_config() -> dict:
                         config[key] = False
                     else:
                         config[key] = value
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - config parse failed; returning partial config; logged at debug
+            logger.debug("config parse failed; returning partial config", exc_info=True)
         return config
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable config returns empty dict
         return {}
 
 
@@ -425,25 +437,13 @@ def _set_nested(config: dict, dotted_key: str, value) -> None:
     current[parts[-1]] = value
 
 
-def _write_yaml_config(config: dict) -> None:
-    """Write config dict back to ~/.hermes/config.yaml."""
-    try:
-        import yaml
-        _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(_CONFIG_PATH, "w", encoding="utf-8") as f:
-            yaml.dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
-    except ImportError:
-        # Fallback: won't handle nested well but won't crash
-        print("[messaging] PyYAML not installed — config.yaml may lose formatting", flush=True)
-
-
 def _read_gateway_state() -> dict:
     """Read gateway_state.json for platform status."""
     if not _GATEWAY_STATE_PATH.exists():
         return {"platforms": {}}
     try:
         return json.loads(_GATEWAY_STATE_PATH.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable gateway state returns default
         return {"platforms": {}}
 
 
@@ -592,11 +592,10 @@ def update_platform_config(platform_id: str, updates: dict[str, any]) -> dict:
         if key not in valid_keys:
             raise ValueError(f"Invalid config key '{key}' for platform '{platform_id}'")
 
-    config = _read_yaml_config()
-    for key, value in updates.items():
-        _set_nested(config, key, value)
-
-    _write_yaml_config(config)
+    # Round-trip edit (comments survive), locked + atomic + bounded backups.
+    with config_io.edit_yaml(_CONFIG_PATH) as config:
+        for key, value in updates.items():
+            _set_nested(config, key, value)
 
     return get_platform(platform_id)
 
@@ -615,17 +614,16 @@ def disconnect_platform(platform_id: str) -> dict:
     _write_env_file(env)
 
     # Remove config keys
-    config = _read_yaml_config()
-    for key in platform_def.get("config_keys", {}):
-        parts = key.split(".")
-        current = config
-        for part in parts[:-1]:
-            current = current.get(part, {})
-            if not isinstance(current, dict):
-                break
-        else:
-            current.pop(parts[-1], None)
-    _write_yaml_config(config)
+    with config_io.edit_yaml(_CONFIG_PATH) as config:
+        for key in platform_def.get("config_keys", {}):
+            parts = key.split(".")
+            current = config
+            for part in parts[:-1]:
+                current = current.get(part, {})
+                if not isinstance(current, dict):
+                    break
+            else:
+                current.pop(parts[-1], None)
 
     return get_platform(platform_id)
 

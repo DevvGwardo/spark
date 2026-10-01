@@ -15,7 +15,14 @@ from bridge_config import DEFAULT_TOOLSETS
 from bridge_events import agent_status_event, swarm_result_server_tool_event
 from bridge_providers import DEFAULT_MODEL
 from bridge_state import _mark_request_finished
-from chat_common import ChatMessage, make_delta_chunk, _resolve_workspace_id, sse_chunk
+import bridge_providers
+from chat_common import (
+    ChatMessage,
+    _finalize_tracked_session,
+    _resolve_workspace_id,
+    make_delta_chunk,
+    sse_chunk,
+)
 from session_tracker import _normalize_chat_messages
 
 router = APIRouter()
@@ -63,6 +70,20 @@ async def swarm_endpoint(request: Request, body: SwarmRequest):
 
     chunk_id = f"chatcmpl-swarm-{os.urandom(8).hex()}"
     started_at = time.monotonic()
+
+    def _finalize_session(success: bool, error_message: str | None = None) -> None:
+        # When /v1/chat/completions forwards a swarm-mode turn here, it has already
+        # registered a tracked session keyed on the same workspace id; close it out.
+        # A direct /v1/swarm call has no tracked session and this is a no-op.
+        # (This name used to be an undefined reference to chat_impl's closure, so
+        # every swarm turn ended with a NameError inside the stream.)
+        _, using_real_agent = bridge_providers._resolve_chat_agent_class()
+        _finalize_tracked_session(
+            workspace_id,
+            success=success,
+            error_message=error_message,
+            persist_stub=not using_real_agent,
+        )
 
     async def swarm_stream():
         # Opening role chunk
@@ -147,7 +168,7 @@ async def swarm_endpoint(request: Request, body: SwarmRequest):
             )
             _finalize_session(success)
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - reported in-stream to the client as a pipeline error
             error_text = f"\n\n**Swarm Pipeline Error:** {str(e)}\n"
             yield sse_chunk(make_delta_chunk(chunk_id, body.model, {"content": error_text}))
             yield sse_chunk(make_delta_chunk(chunk_id, body.model, {
@@ -162,7 +183,7 @@ async def swarm_endpoint(request: Request, body: SwarmRequest):
                 success=False,
                 summary=f"model={body.model} mode=swarm error={str(e)[:80]}",
             )
-            _finalize_session(False)
+            _finalize_session(False, str(e)[:200])
 
         yield sse_chunk(make_delta_chunk(chunk_id, body.model, {}, finish_reason="stop"))
         yield "data: [DONE]\n\n"

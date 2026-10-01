@@ -38,7 +38,7 @@ def probe_bridge_health(*, timeout: float = 2.0) -> dict[str, Any]:
             "api_url": DEFAULT_BRIDGE_API_URL,
             "detail": str(exc.reason)[:200],
         }
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - health probe reports any failure as an error status
         return {
             "reachable": False,
             "status": "error",

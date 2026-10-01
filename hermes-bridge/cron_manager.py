@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import subprocess
@@ -9,8 +10,6 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import Request
-
-_cron_jobs: dict[str, dict] = {}
 
 # --- Hermes cron backend integration ---
 _HERMES_AGENT_DIR = os.environ.get(
@@ -302,7 +301,7 @@ try:
     )
     from cron.scheduler import tick as _hermes_cron_tick
     _HERMES_CRON_AVAILABLE = True
-except Exception as e:
+except Exception as e:  # noqa: BLE001 - optional Hermes cron backend; failure triggers the helper-interpreter fallback and is reported
     _HERMES_CRON_IMPORT_ERROR = str(e)
     helper_error = None
     if os.path.exists(_HERMES_CRON_HELPER_PYTHON):
@@ -324,7 +323,7 @@ except Exception as e:
                 f"[cron] Hermes cron backend enabled via helper interpreter {_HERMES_CRON_HELPER_PYTHON}",
                 flush=True,
             )
-        except Exception as helper_exc:
+        except Exception as helper_exc:  # noqa: BLE001 - helper interpreter is a fallback; failure is recorded in helper_error and reported
             helper_error = str(helper_exc)
 
     if not _HERMES_CRON_AVAILABLE:
@@ -334,7 +333,7 @@ except Exception as e:
             else str(e)
         )
         print(
-            f"[cron] Hermes cron backend unavailable, falling back to bridge-local store: {detail}",
+            f"[cron] Hermes cron backend unavailable; /cron routes will return 503: {detail}",
             flush=True,
         )
         # Stubs so the names main.py imports always exist. With the Hermes
@@ -480,7 +479,7 @@ def _iso_timestamp(value: Optional[str]) -> Optional[float]:
         return None
     try:
         return datetime.fromisoformat(value).timestamp()
-    except Exception:
+    except (ValueError, TypeError):
         return None
 
 
@@ -586,18 +585,19 @@ def _run_hermes_tick_now():
         return
     try:
         _hermes_cron_tick(verbose=False)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - one failed tick must not stop the scheduler loop
         print(f"[cron] Hermes tick failed: {e}", flush=True)
 
 
 def _cron_job_count() -> int:
-    if _HERMES_CRON_AVAILABLE:
-        try:
-            return len(_hermes_list_jobs(include_disabled=True) or [])
-        except Exception:
-            pass
-
-    return len(_cron_jobs)
+    """Number of hermes cron jobs; 0 when the backend is unavailable or errors."""
+    if not _HERMES_CRON_AVAILABLE:
+        return 0
+    try:
+        return len(_hermes_list_jobs(include_disabled=True) or [])
+    except Exception:  # noqa: BLE001 - an overview counter must not fail the page
+        logging.getLogger(__name__).debug("cron job count failed", exc_info=True)
+        return 0
 
 
 

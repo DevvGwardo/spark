@@ -21,7 +21,7 @@ def _read_config_yaml(hermes_home: Optional[Path] = None) -> dict:
         with open(config_path) as f:
             data = yaml.safe_load(f)
         return data if isinstance(data, dict) else {}
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable/malformed config yields empty defaults
         return {}
 
 

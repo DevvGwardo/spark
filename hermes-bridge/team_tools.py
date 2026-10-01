@@ -190,7 +190,7 @@ def _fetch(path: str, method: str = "GET", body: dict | None = None, retries: in
                 return None
             import time
             time.sleep(1)
-        except Exception:
+        except Exception:  # noqa: BLE001 - retried; returns None after the final attempt
             if attempt == retries - 1:
                 return None
             import time

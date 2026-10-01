@@ -21,6 +21,7 @@ All brain calls are fire-and-forget — the bridge continues if brain is unavail
 
 from __future__ import annotations
 
+import logging
 import asyncio
 import json
 import os
@@ -29,6 +30,8 @@ import threading
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
+
+logger = logging.getLogger(__name__)
 
 # The mcp SDK is not used for transport (raw JSON-RPC is used instead, because the
 # SDK's stdio transport was broken), but its availability is still the historical
@@ -143,7 +146,7 @@ async def _brain_reader() -> None:
     while True:
         try:
             line = await _brain_proc.stdout.readline()
-        except Exception:
+        except Exception:  # noqa: BLE001 - any stream failure ends the reader loop and disables brain
             # Stream failure — treat as end of stream and disable brain.
             break
         if not line:
@@ -151,7 +154,7 @@ async def _brain_reader() -> None:
             break
         try:
             msg = json.loads(line.decode())
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - one malformed line must not kill the reader loop
             # A single malformed line must not kill the reader for the
             # process lifetime (previously: `except Exception: break`,
             # which left _brain_initialized True and made every _brain_rpc
@@ -185,7 +188,7 @@ async def _brain_rpc(method: str, params: dict) -> Optional[dict]:
         await _brain_proc.stdin.drain()
         result = await asyncio.wait_for(fut, timeout=10)
         return result.get("result")
-    except Exception:
+    except Exception:  # noqa: BLE001 - brain RPC is optional; pending future dropped and caller gets None
         _brain_pending.pop(mid, None)
         return None
 
@@ -232,7 +235,7 @@ async def start_brain(config: BrainConfig) -> bool:
             stderr=asyncio.subprocess.PIPE,
             env=_brain_subprocess_env(),
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - brain MCP is optional; spawn failure is logged and startup continues
         print(f"[hermes-bridge] Brain MCP spawn failed: {e}", flush=True)
         _brain_proc = None
         return False
@@ -337,8 +340,8 @@ async def start_brain(config: BrainConfig) -> bool:
         result = await _brain_rpc("tools/call", {"name": "brain_contract_check", "arguments": {}})
         if result:
             print(f"[hermes-bridge] Contract check passed: {result}", flush=True)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - brain contract check failed (non-fatal); logged at debug
+        logger.debug("brain contract check failed (non-fatal)", exc_info=True)
 
     global _brain_initialized
     _brain_initialized = True
@@ -372,8 +375,8 @@ async def _bridge_heartbeat() -> None:
             _brain_set("bridge:health", json.dumps(health))
         except asyncio.CancelledError:
             break
-        except Exception:
-            pass  # Silently continue on errors
+        except Exception:  # noqa: BLE001 - brain health heartbeat failed; retry next tick; logged at debug
+            logger.debug("brain health heartbeat failed; retry next tick", exc_info=True)  # Silently continue on errors
 
 
 async def stop_brain() -> None:
@@ -388,16 +391,16 @@ async def stop_brain() -> None:
             await _heartbeat_task
         except asyncio.CancelledError:
             pass  # expected — we just cancelled it
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - heartbeat task raised during shutdown; logged at debug
+            logger.debug("heartbeat task raised during shutdown", exc_info=True)
     if _brain_reader_task:
         _brain_reader_task.cancel()
     if _brain_proc:
         try:
             _brain_proc.terminate()
             await asyncio.wait_for(_brain_proc.wait(), timeout=3)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - brain process terminate failed during shutdown; logged at debug
+            logger.debug("brain process terminate failed during shutdown", exc_info=True)
     _brain_initialized = False
 
 
@@ -431,7 +434,7 @@ def _brain_get(key: str, scope: str = "global") -> Optional[str]:
             result = future.result(timeout=5)
         else:
             result = None
-    except Exception:
+    except Exception:  # noqa: BLE001 - brain is optional; sync wrapper returns None on any failure
         return None
     return _extract_text(result)
 
@@ -446,8 +449,8 @@ def _brain_set(key: str, value: str, scope: str = "global") -> None:
                 _brain_call_async("brain_set", {"key": key, "value": value, "scope": scope}),
                 _main_event_loop,
             )
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - brain_set scheduling failed (best-effort); logged at debug
+        logger.debug("brain_set scheduling failed (best-effort)", exc_info=True)
 
 
 def _brain_post(content: str, channel: str = "general") -> None:
@@ -460,8 +463,8 @@ def _brain_post(content: str, channel: str = "general") -> None:
                 _brain_call_async("brain_post", {"content": content, "channel": channel}),
                 _main_event_loop,
             )
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - brain_post scheduling failed (best-effort); logged at debug
+        logger.debug("brain_post scheduling failed (best-effort)", exc_info=True)
 
 
 def _brain_pulse(status: str = "working", progress: str = "") -> None:
@@ -474,8 +477,8 @@ def _brain_pulse(status: str = "working", progress: str = "") -> None:
                 _brain_call_async("brain_pulse", {"status": status, "progress": progress}),
                 _main_event_loop,
             )
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - brain_pulse scheduling failed (best-effort); logged at debug
+        logger.debug("brain_pulse scheduling failed (best-effort)", exc_info=True)
 
 
 def _brain_claim(resource: str, ttl: int = 60) -> Optional[bool]:
@@ -492,7 +495,7 @@ def _brain_claim(resource: str, ttl: int = 60) -> Optional[bool]:
                 _main_event_loop,
             )
             return True  # Fire-and-forget from threads; claim will auto-expire via TTL
-    except Exception:
+    except Exception:  # noqa: BLE001 - brain is optional; claim failure returns None
         return None
     return None
 
@@ -509,8 +512,8 @@ def _brain_release(resource: str) -> None:
                 _brain_call_async("brain_release", {"resource": resource}),
                 _main_event_loop,
             )
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - brain_release scheduling failed (best-effort); logged at debug
+        logger.debug("brain_release scheduling failed (best-effort)", exc_info=True)
 
 
 def _brain_dm(target: str, content: str) -> None:
@@ -523,8 +526,8 @@ def _brain_dm(target: str, content: str) -> None:
                 _brain_call_async("brain_dm", {"target": target, "content": content}),
                 _main_event_loop,
             )
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - brain_dm scheduling failed (best-effort); logged at debug
+        logger.debug("brain_dm scheduling failed (best-effort)", exc_info=True)
 
 
 def _brain_contract_set(key: str, value: str, scope: str = "global") -> None:
@@ -537,8 +540,8 @@ def _brain_contract_set(key: str, value: str, scope: str = "global") -> None:
                 _brain_call_async("brain_contract_set", {"key": key, "value": value, "scope": scope}),
                 _main_event_loop,
             )
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - brain_contract_set scheduling failed (best-effort); logged at debug
+        logger.debug("brain_contract_set scheduling failed (best-effort)", exc_info=True)
 
 
 def _brain_contract_get(key: str, scope: str = "global") -> Optional[str]:
@@ -554,7 +557,7 @@ def _brain_contract_get(key: str, scope: str = "global") -> Optional[str]:
             result = future.result(timeout=5)
         else:
             result = None
-    except Exception:
+    except Exception:  # noqa: BLE001 - brain is optional; sync wrapper returns None on any failure
         return None
     return _extract_text(result)
 

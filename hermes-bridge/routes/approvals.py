@@ -30,5 +30,5 @@ async def acp_approval_route(approval_id: str, body: dict = None):
         if not delivered:
             return JSONResponse(status_code=404, content={"error": {"message": f"Unknown or expired approval: {approval_id}"}})
         return {"ok": True, "approval_id": approval_id, "option_id": option_id}
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - surfaced to the client as a 500
         return JSONResponse(status_code=500, content={"error": {"message": str(e)}})

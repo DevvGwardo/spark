@@ -5,11 +5,14 @@ This module is standalone (no hermes-agent dependency) so it can be tested
 independently of the adapter's other imports.
 """
 
+import logging
 import json
 import os
 import httpx
 from typing import Optional
 from urllib.parse import quote
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Brain gateway configuration
@@ -89,8 +92,8 @@ def _get_brain_token() -> Optional[str]:
         if token:
             _BRAIN_GATEWAY_TOKEN = token
             return token
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - brain gateway token lookup failed; falling back to env var; logged at debug
+        logger.debug("brain gateway token lookup failed; falling back to env var", exc_info=True)
     # Fallback: dedicated env var for the brain gateway token
     # (NOT MINIMAX_API_KEY — that is the LLM API key, not the gateway token)
     _BRAIN_GATEWAY_TOKEN = os.environ.get("HERMES_BRAIN_TOKEN", "")
@@ -147,7 +150,7 @@ def _brain_http_call(
             flush=True,
         )
         return None
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - brain is optional; failure is logged and caller gets None
         print(
             f"[brain-cache] brain HTTP call failed for {method} {path}: {e}",
             flush=True,
@@ -177,7 +180,7 @@ def _retry_brain_call(func, *args, retries: int = 2, backoff: float = 0.5, **kwa
                 _brain_circuit.record_success()
                 return result
             _brain_circuit.record_failure()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - brain call failure is logged and retried; circuit breaker records it
             print(
                 f"[brain-cache] brain call attempt {attempt + 1} failed: {e}",
                 flush=True,

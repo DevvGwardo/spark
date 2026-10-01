@@ -274,7 +274,7 @@ def _fetch(path: str, method: str = "GET", body: dict | None = None, retries: in
                 resp = client.request(**kwargs, url=url)
                 resp.raise_for_status()
                 return resp.json()
-        except Exception:
+        except Exception:  # noqa: BLE001 - retried; returns None after the final attempt
             if attempt == retries - 1:
                 return None
             import time
@@ -355,7 +355,7 @@ def kanban_update_status(status: str, report_summary: str | None = None) -> str:
         if result is None:
             return "Error: Failed to update card status (API unreachable)."
         return f"Card status updated to '{status}'." + (" Report saved." if report_summary else "")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - tool returns the error text to the agent
         return f"Error updating card status: {str(e)}"
 
 
@@ -373,7 +373,7 @@ def kanban_append_report(notes: str) -> str:
         if result is None:
             return "Error: Failed to append notes (API unreachable)."
         return "Notes appended to card."
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - tool returns the error text to the agent
         return f"Error appending notes: {str(e)}"
 
 
