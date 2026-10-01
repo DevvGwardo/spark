@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   Activity,
   Archive,
@@ -18,88 +18,116 @@ import {
   Sparkles,
   Stethoscope,
 } from 'lucide-react';
+import { fetchSkillBundle, type CheckpointEntry, type HermesPlugin, type SkillBundle } from '@/lib/hermes-api';
 import {
-  createSkillBundle,
-  deleteSkillBundle,
-  disablePlugin,
-  doctorComputerUse,
-  doctorHooks,
-  enablePlugin,
-  fetchCheckpoints,
-  fetchComputerUseStatus,
-  fetchCuratorStatus,
-  fetchGatewayCapabilities,
-  fetchHermesDashboardUrl,
-  fetchHooksStatus,
-  fetchInsights,
-  fetchLspStatus,
-  fetchMemoryStatus,
-  fetchPetsGallery,
-  fetchPetsStatus,
-  fetchPluginsStatus,
-  fetchSecretsStatus,
-  fetchSecurityAudit,
-  fetchSkillBundle,
-  fetchSkillBundles,
-  installComputerUse,
-  pruneCheckpoints,
-  reloadSkillBundles,
-  restoreCheckpoint,
-  runCurator,
-  selectPet,
-  type CheckpointsStatus,
-  type CheckpointEntry,
-  type ComputerUseStatus,
-  type CuratorStatus,
-  type GatewayCapabilities,
-  type HermesPlugin,
-  type HooksStatus,
-  type LspStatus,
-  type MemoryStatus,
-  type PetsStatus,
-  type PetGalleryEntry,
-  type SecretsStatus,
-  type SecurityAuditReport,
-  type SkillBundle,
-} from '@/lib/hermes-api';
+  useCheckpoints,
+  useComputerUseStatus,
+  useCreateSkillBundle,
+  useCuratorStatus,
+  useDeleteSkillBundle,
+  useDoctorComputerUse,
+  useDoctorHooks,
+  useGatewayCapabilities,
+  useHermesDashboardUrl,
+  useHooksStatus,
+  useInsights,
+  useInstallComputerUse,
+  useLspStatus,
+  useMemoryStatus,
+  usePetsGallery,
+  usePetsStatus,
+  usePluginsStatus,
+  usePruneCheckpoints,
+  useReloadSkillBundles,
+  useRestoreCheckpoint,
+  useRunCurator,
+  useSecretsStatus,
+  useSecurityAudit,
+  useSelectPet,
+  useSkillBundles,
+  useTogglePlugin,
+} from '@/lib/hermes-queries';
+import { HermesErrorState } from '@/components/hermes/HermesErrorState';
 import { openExternalUrl } from '@/lib/open-external';
 import { cn } from '@/lib/utils';
 import { useHermesStore } from '@/stores/hermes-store';
 import { HermesProjectsSwitcher } from './HermesProjectsSwitcher';
+
+const PLUGINS_LIMIT = 120;
 
 /**
  * Dense ops cards for the System sidebar — memory provider, checkpoints,
  * curator, computer-use, bundles, and usage insights.
  */
 export function HermesOpsExtras() {
-  const [memory, setMemory] = useState<MemoryStatus | null>(null);
-  const [checkpoints, setCheckpoints] = useState<CheckpointsStatus | null>(null);
-  const [curator, setCurator] = useState<CuratorStatus | null>(null);
-  const [computer, setComputer] = useState<ComputerUseStatus | null>(null);
-  const [bundles, setBundles] = useState<SkillBundle[]>([]);
+  // Every status source degrades to its "Unavailable" copy on failure, so
+  // query errors are deliberately not surfaced here — `error` is reserved for
+  // the action handlers below, the only failures the user needs to see.
+  const memoryQuery = useMemoryStatus();
+  const checkpointsQuery = useCheckpoints();
+  const curatorQuery = useCuratorStatus();
+  const computerQuery = useComputerUseStatus();
+  const gatewayQuery = useGatewayCapabilities();
+  const primaryQueries = [memoryQuery, checkpointsQuery, curatorQuery, computerQuery, gatewayQuery];
+  // The secondary cards (several are slow CLI shell-outs) wait for the primary
+  // batch so the cards that matter most paint first.
+  const primarySettled = primaryQueries.every((q) => !q.isPending || q.fetchStatus === 'idle');
+  const secondary = { enabled: primarySettled };
+  const bundlesQuery = useSkillBundles(secondary);
+  const insightsQuery = useInsights(7, secondary);
+  const petsQuery = usePetsStatus(secondary);
+  const pluginsQuery = usePluginsStatus(PLUGINS_LIMIT, secondary);
+  const hooksQuery = useHooksStatus(secondary);
+  const lspQuery = useLspStatus(secondary);
+  const secretsQuery = useSecretsStatus(secondary);
+  const dashboardQuery = useHermesDashboardUrl(secondary);
+
+  const memory = memoryQuery.data ?? null;
+  const checkpoints = checkpointsQuery.data ?? null;
+  const curator = curatorQuery.data ?? null;
+  const computer = computerQuery.data ?? null;
+  const gateway = gatewayQuery.data ?? null;
+  const bundles = bundlesQuery.data ?? [];
+  const insights = insightsQuery.data ?? '';
+  const pets = petsQuery.data ?? null;
+  const pluginsStatus = pluginsQuery.data ?? null;
+  const plugins = pluginsStatus?.plugins ?? [];
+  const pluginsSummary = pluginsStatus
+    ? { total: pluginsStatus.total, enabled: pluginsStatus.enabled_count }
+    : null;
+  const hooks = hooksQuery.data ?? null;
+  const lsp = lspQuery.data ?? null;
+  const secrets = secretsQuery.data ?? null;
+  const dashboardUrl = dashboardQuery.data ?? null;
+  const loading = primaryQueries.some((q) => q.isFetching);
+
+  const pruneMutation = usePruneCheckpoints();
+  const restoreMutation = useRestoreCheckpoint();
+  const curatorMutation = useRunCurator();
+  const installCuMutation = useInstallComputerUse();
+  const doctorCuMutation = useDoctorComputerUse();
+  const doctorHooksMutation = useDoctorHooks();
+  const togglePluginMutation = useTogglePlugin(PLUGINS_LIMIT);
+  const securityMutation = useSecurityAudit();
+  const selectPetMutation = useSelectPet();
+  const createBundleMutation = useCreateSkillBundle();
+  const deleteBundleMutation = useDeleteSkillBundle();
+  const reloadBundlesMutation = useReloadSkillBundles();
+  const security = securityMutation.data ?? null;
+
   const [bundlesOpen, setBundlesOpen] = useState(false);
   const [bundleDetail, setBundleDetail] = useState<SkillBundle | null>(null);
   const [bundleName, setBundleName] = useState('');
   const [bundleSkills, setBundleSkills] = useState('');
-  const [dashboardUrl, setDashboardUrl] = useState<string | null>(null);
-  const [petGallery, setPetGallery] = useState<PetGalleryEntry[]>([]);
-  const [insights, setInsights] = useState<string>('');
-  const [pets, setPets] = useState<PetsStatus | null>(null);
-  const [gateway, setGateway] = useState<GatewayCapabilities | null>(null);
-  const [plugins, setPlugins] = useState<HermesPlugin[]>([]);
-  const [pluginsSummary, setPluginsSummary] = useState<{ total: number; enabled: number } | null>(null);
-  const [hooks, setHooks] = useState<HooksStatus | null>(null);
-  const [lsp, setLsp] = useState<LspStatus | null>(null);
-  const [secrets, setSecrets] = useState<SecretsStatus | null>(null);
-  const [security, setSecurity] = useState<SecurityAuditReport | null>(null);
   const [doctorReport, setDoctorReport] = useState<string>('');
   const [hooksReport, setHooksReport] = useState<string>('');
-  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  /** Last action failure, or a client-side validation message. */
+  const [error, setError] = useState<unknown>(null);
   const [petsOpen, setPetsOpen] = useState(false);
   const [pluginsOpen, setPluginsOpen] = useState(false);
   const [petId, setPetId] = useState('');
+  const petGallery = usePetsGallery(24, { enabled: petsOpen }).data ?? [];
   const useRuns = useHermesStore((s) => s.useRuns);
   const setUseRuns = useHermesStore((s) => s.setUseRuns);
   const computerEnabled = useHermesStore((s) => s.toolsets.computer);
@@ -109,178 +137,60 @@ export function HermesOpsExtras() {
       : 'runs (gateway when request supports it)'
     : 'agent-loop (default)';
 
-  // Each source is pre-caught to `null`, and every render branch has an
-  // "Unavailable" fallback, so a `Promise.all` here can never reject. There is
-  // deliberately no try/catch — `error` is reserved for the action handlers
-  // below, which is the only thing that can actually fail in a way the user
-  // needs to see.
-  const loadPrimary = useCallback(async () => {
-    setLoading(true);
-    const [m, c, cu, comp, g] = await Promise.all([
-      fetchMemoryStatus().catch(() => null),
-      fetchCheckpoints().catch(() => null),
-      fetchCuratorStatus().catch(() => null),
-      fetchComputerUseStatus().catch(() => null),
-      fetchGatewayCapabilities().catch(() => null),
-    ]);
-    setMemory(m);
-    setCheckpoints(c);
-    setCurator(cu);
-    setComputer(comp);
-    setGateway(g);
-    setLoading(false);
-  }, []);
-
-  const loadSecondary = useCallback(async () => {
-    try {
-      const [b, i, p, pl, hk, ls, sec, dash] = await Promise.all([
-        fetchSkillBundles().catch(() => ({ bundles: [] as SkillBundle[] })),
-        fetchInsights(7).catch(() => ({ report: '' })),
-        fetchPetsStatus().catch(() => null),
-        fetchPluginsStatus(120).catch(() => null),
-        fetchHooksStatus().catch(() => null),
-        fetchLspStatus().catch(() => null),
-        fetchSecretsStatus().catch(() => null),
-        fetchHermesDashboardUrl().catch(() => ({ ok: false, url: null })),
-      ]);
-      setBundles(b.bundles || []);
-      setInsights(i.report || '');
-      setPets(p);
-      setPlugins(pl?.plugins || []);
-      setPluginsSummary(pl ? { total: pl.total, enabled: pl.enabled_count } : null);
-      setHooks(hk);
-      setLsp(ls);
-      setSecrets(sec);
-      setDashboardUrl(dash.ok && dash.url ? dash.url : null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load ops status');
-    }
-  }, []);
-
-  const load = useCallback(async () => {
-    await loadPrimary();
-    void loadSecondary();
-  }, [loadPrimary, loadSecondary]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  const onPrune = async () => {
-    setBusy('prune');
-    try {
-      await pruneCheckpoints();
-      setCheckpoints(await fetchCheckpoints());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Prune failed');
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const onRestore = async (entry: CheckpointEntry) => {
-    setBusy(`restore-${entry.index}`);
+  const load = () => {
     setError(null);
+    for (const q of [
+      ...primaryQueries,
+      bundlesQuery, insightsQuery, petsQuery, pluginsQuery, hooksQuery, lspQuery, secretsQuery, dashboardQuery,
+    ]) {
+      void q.refetch();
+    }
+  };
+
+  /** Run one action with the shared busy/error bookkeeping. */
+  const runAction = async (key: string, action: () => Promise<unknown>, clearError = true) => {
+    setBusy(key);
+    if (clearError) setError(null);
     try {
-      const result = await restoreCheckpoint(entry.index, checkpoints?.workdir ?? undefined);
-      if (!result.ok) {
-        throw new Error(result.error || 'Restore failed');
-      }
-      setCheckpoints(await fetchCheckpoints(checkpoints?.workdir ?? undefined));
+      await action();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Restore failed');
+      setError(err);
     } finally {
       setBusy(null);
     }
   };
 
-  const onCurator = async () => {
-    setBusy('curator');
-    try {
-      await runCurator();
-      setCurator(await fetchCuratorStatus());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Curator run failed');
-    } finally {
-      setBusy(null);
-    }
-  };
+  const onPrune = () => runAction('prune', () => pruneMutation.mutateAsync(), false);
 
-  const onInstallCu = async () => {
-    setBusy('cu-install');
-    try {
-      const res = await installComputerUse();
-      setComputer(res.status);
+  const onRestore = (entry: CheckpointEntry) =>
+    runAction(`restore-${entry.index}`, () =>
+      restoreMutation.mutateAsync({ index: entry.index, workdir: checkpoints?.workdir ?? undefined }),
+    );
+
+  const onCurator = () => runAction('curator', () => curatorMutation.mutateAsync(), false);
+
+  const onInstallCu = () =>
+    runAction('cu-install', async () => {
+      const res = await installCuMutation.mutateAsync();
       setDoctorReport(res.output || '');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Computer-use install failed');
-    } finally {
-      setBusy(null);
-    }
-  };
+    }, false);
 
-  const onDoctorCu = async () => {
-    setBusy('cu-doctor');
-    try {
-      const res = await doctorComputerUse();
-      setComputer(res.status);
+  const onDoctorCu = () =>
+    runAction('cu-doctor', async () => {
+      const res = await doctorCuMutation.mutateAsync();
       setDoctorReport(res.report || '');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Doctor failed');
-    } finally {
-      setBusy(null);
-    }
-  };
+    }, false);
 
-  const onDoctorHooks = async () => {
-    setBusy('hooks-doctor');
-    setError(null);
-    try {
-      const res = await doctorHooks();
-      setHooks({
-        ok: res.ok,
-        total: res.hooks?.length ?? 0,
-        issue_hints: res.issue_count,
-        hooks: res.hooks || [],
-      });
+  const onDoctorHooks = () =>
+    runAction('hooks-doctor', async () => {
+      const res = await doctorHooksMutation.mutateAsync();
       setHooksReport(res.report || '');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Hooks doctor failed');
-    } finally {
-      setBusy(null);
-    }
-  };
+    });
 
-  const onTogglePlugin = async (plugin: HermesPlugin) => {
-    setBusy(`plugin-${plugin.name}`);
-    setError(null);
-    try {
-      const res = plugin.enabled
-        ? await disablePlugin(plugin.name)
-        : await enablePlugin(plugin.name);
-      setPlugins(res.plugins || []);
-      setPluginsSummary({
-        total: res.total ?? res.plugins?.length ?? 0,
-        enabled: res.enabled_count ?? 0,
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Plugin toggle failed');
-    } finally {
-      setBusy(null);
-    }
-  };
+  const onTogglePlugin = (plugin: HermesPlugin) =>
+    runAction(`plugin-${plugin.name}`, () => togglePluginMutation.mutateAsync(plugin));
 
-  const onSecurityAudit = async () => {
-    setBusy('security');
-    setError(null);
-    try {
-      setSecurity(await fetchSecurityAudit());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Security audit failed');
-    } finally {
-      setBusy(null);
-    }
-  };
+  const onSecurityAudit = () => runAction('security', () => securityMutation.mutateAsync());
 
   const onSelectPet = async (id?: string) => {
     const chosen = (id ?? petId).trim();
@@ -288,25 +198,10 @@ export function HermesOpsExtras() {
       setError('Enter a pet id');
       return;
     }
-    setBusy('pet');
-    setError(null);
-    try {
-      const res = await selectPet(chosen);
-      setPets(res.status);
+    await runAction('pet', async () => {
+      await selectPetMutation.mutateAsync(chosen);
       setPetId('');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Pet select failed');
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const loadPetGallery = async () => {
-    try {
-      setPetGallery(await fetchPetsGallery(24));
-    } catch {
-      setPetGallery([]);
-    }
+    });
   };
 
   const onOpenDashboard = () => {
@@ -314,22 +209,15 @@ export function HermesOpsExtras() {
     openExternalUrl(url);
   };
 
-  const onShowBundle = async (name: string) => {
-    setBusy(`bundle-show-${name}`);
-    setError(null);
-    try {
+  const onShowBundle = (name: string) =>
+    runAction(`bundle-show-${name}`, async () => {
       const res = await fetchSkillBundle(name);
       if (!res.ok || !res.bundle) {
         throw new Error(res.error || 'Bundle not found');
       }
       setBundleDetail(res.bundle);
       setBundlesOpen(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load bundle');
-    } finally {
-      setBusy(null);
-    }
-  };
+    });
 
   const onCreateBundle = async () => {
     const name = bundleName.trim();
@@ -341,60 +229,25 @@ export function HermesOpsExtras() {
       setError('Bundle name and at least one skill id required');
       return;
     }
-    setBusy('bundle-create');
-    setError(null);
-    try {
-      const res = await createSkillBundle({ name, skills });
-      if (!res.ok) {
-        throw new Error(res.error || 'Create failed');
-      }
-      setBundles(res.bundles || []);
+    await runAction('bundle-create', async () => {
+      const res = await createBundleMutation.mutateAsync({ name, skills });
       setBundleName('');
       setBundleSkills('');
       setBundleDetail(res.bundle);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Bundle create failed');
-    } finally {
-      setBusy(null);
-    }
+    });
   };
 
-  const onDeleteBundle = async (name: string) => {
-    setBusy(`bundle-del-${name}`);
-    setError(null);
-    try {
-      const res = await deleteSkillBundle(name);
-      if (!res.ok) {
-        throw new Error(res.error || 'Delete failed');
-      }
-      setBundles(res.bundles || []);
+  const onDeleteBundle = (name: string) =>
+    runAction(`bundle-del-${name}`, async () => {
+      await deleteBundleMutation.mutateAsync(name);
       if (bundleDetail?.name === name) {
         setBundleDetail(null);
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Bundle delete failed');
-    } finally {
-      setBusy(null);
-    }
-  };
+    });
 
-  const onReloadBundles = async () => {
-    setBusy('bundle-reload');
-    setError(null);
-    try {
-      const res = await reloadSkillBundles();
-      if (!res.ok) {
-        throw new Error(res.error || 'Reload failed');
-      }
-      setBundles(res.bundles || []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Bundle reload failed');
-    } finally {
-      setBusy(null);
-    }
-  };
+  const onReloadBundles = () => runAction('bundle-reload', () => reloadBundlesMutation.mutateAsync());
 
-  if (loading && !memory && !checkpoints) {
+  if (memoryQuery.isPending && checkpointsQuery.isPending) {
     return (
       <div className="flex items-center gap-2 px-3 py-2 text-[11px] text-muted-foreground/60">
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -411,7 +264,7 @@ export function HermesOpsExtras() {
         </span>
         <button
           type="button"
-          onClick={() => void load()}
+          onClick={load}
           className="rounded p-1 text-muted-foreground/50 hover:text-foreground"
           title="Refresh ops"
         >
@@ -419,11 +272,7 @@ export function HermesOpsExtras() {
         </button>
       </div>
 
-      {error && (
-        <div className="rounded-lg border border-destructive/25 bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">
-          {error}
-        </div>
-      )}
+      <HermesErrorState error={error} variant="inline" />
 
       <HermesProjectsSwitcher />
 
@@ -688,11 +537,7 @@ export function HermesOpsExtras() {
         <button
           type="button"
           onClick={() => {
-            const next = !petsOpen;
-            setPetsOpen(next);
-            if (next && petGallery.length === 0) {
-              void loadPetGallery();
-            }
+            setPetsOpen((open) => !open);
           }}
           aria-expanded={petsOpen}
           className="flex w-full items-center justify-between gap-2 p-2.5 text-left"

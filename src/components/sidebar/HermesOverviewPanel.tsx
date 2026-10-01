@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
 import { Activity, Check, Code2, Database, ExternalLink, Loader2, Orbit, RefreshCw, Rocket, Sparkles, X } from 'lucide-react';
-import { fetchHermesDashboardUrl, fetchHermesWorkspaceOverview, type HermesWorkspaceOverview } from '@/lib/hermes-api';
+import { useHermesDashboardUrl, useHermesWorkspaceOverview } from '@/lib/hermes-queries';
+import { HermesErrorState } from '@/components/hermes/HermesErrorState';
 import { openExternalUrl } from '@/lib/open-external';
 import { relativeTime } from '@/lib/relative-time';
 import { formatCompactNumber, formatBytes } from '@/components/sidebar/hermesSidebarUtils';
@@ -15,37 +15,17 @@ const METRIC_CARDS = [
 ] as const;
 
 export function HermesOverviewPanel() {
-  const [overview, setOverview] = useState<HermesWorkspaceOverview | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const overviewQuery = useHermesWorkspaceOverview();
+  const overview = overviewQuery.data ?? null;
+  const loading = overviewQuery.isFetching;
+  const error = overviewQuery.error;
+  const loadOverview = () => { void overviewQuery.refetch(); };
   // Null until the bridge tells us the real host. Previously this defaulted to
   // a hardcoded 127.0.0.1:9119, which silently opened the wrong address
   // whenever Spark ran against a remote Hermes host and this fetch failed.
-  const [dashboardUrl, setDashboardUrl] = useState<string | null>(null);
+  const dashboardUrl = useHermesDashboardUrl().data ?? null;
 
-  const loadOverview = async () => {
-    setLoading(true);
-    try {
-      const data = await fetchHermesWorkspaceOverview();
-      setOverview(data);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load Hermes overview');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void loadOverview();
-    void fetchHermesDashboardUrl()
-      .then((dash) => {
-        if (dash.ok && dash.url) setDashboardUrl(dash.url);
-      })
-      .catch(() => undefined);
-  }, []);
-
-  if (loading && !overview) {
+  if (overviewQuery.isPending) {
     return (
       <div className="flex flex-1 items-center justify-center px-4 text-[12px] text-muted-foreground/60">
         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -56,9 +36,12 @@ export function HermesOverviewPanel() {
 
   if (error && !overview) {
     return (
-      <div className="mx-3 mt-3 rounded-xl border border-destructive/25 bg-destructive/10 p-3 text-[12px] text-destructive">
-        {error}
-      </div>
+      <HermesErrorState
+        error={error}
+        onRetry={loadOverview}
+        fallbackMessage="Failed to load Hermes overview"
+        className="mx-3 mt-3"
+      />
     );
   }
 
@@ -83,7 +66,7 @@ export function HermesOverviewPanel() {
             Dashboard
           </button>
           <button
-            onClick={() => { void loadOverview(); }}
+            onClick={loadOverview}
             className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground/60 transition-colors hover:bg-[hsl(var(--sidebar-active))] hover:text-foreground"
             title="Refresh overview"
           >
@@ -92,11 +75,12 @@ export function HermesOverviewPanel() {
         </div>
       </div>
 
-      {error && (
-        <div className="mx-3 mb-2 rounded-xl border border-destructive/25 bg-destructive/10 p-2 text-[11px] text-destructive">
-          {error}
-        </div>
-      )}
+      <HermesErrorState
+        error={error}
+        onRetry={loadOverview}
+        fallbackMessage="Failed to load Hermes overview"
+        className="mx-3 mb-2"
+      />
 
       {overview && (
         <div className="flex-1 space-y-3 overflow-y-auto px-3 pb-3">

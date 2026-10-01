@@ -31,6 +31,7 @@ import { useRoomStore } from '@/stores/room-store';
 import { CreateRoomDialog } from '@/components/rooms/CreateRoomDialog';
 import { useProfilesStore } from '@/stores/profiles-store';
 import { ConversationSearchBar } from '@/components/sidebar/ConversationSearchBar';
+import { BridgeGate } from '@/components/hermes/BridgeGate';
 
 // Every sub-tab panel is code-split: the sidebar loads none of them until one
 // is actually opened.
@@ -1109,25 +1110,25 @@ export const ChatSidebar: React.FC = () => {
       ) : (
         <Suspense fallback={<PanelFallback />}>
       {activeSubTab === 'overview' ? (
-        <HermesOverviewPanel />
+        <BridgeGate><HermesOverviewPanel /></BridgeGate>
       ) : activeSubTab === 'queue' ? (
         <HermesQueuePanel />
       ) : activeSubTab === 'chats' ? (
-        <HermesChatsPanel />
+        <BridgeGate><HermesChatsPanel /></BridgeGate>
       ) : activeSubTab === 'profiles' ? (
         <ProfilesPanel />
       ) : activeSubTab === 'memories' ? (
-        <HermesMemoriesPanel />
+        <BridgeGate><HermesMemoriesPanel /></BridgeGate>
       ) : activeSubTab === 'skills' ? (
-        <HermesSkillsPanel />
+        <BridgeGate><HermesSkillsPanel /></BridgeGate>
       ) : activeSubTab === 'usage' ? (
-        <HermesUsagePanel />
+        <BridgeGate><HermesUsagePanel /></BridgeGate>
       ) : activeSubTab === 'system' ? (
-        <HermesSystemPanel />
+        <BridgeGate><HermesSystemPanel /></BridgeGate>
       ) : activeSubTab === 'images' ? (
         <ImagesPanel />
       ) : activeSubTab === 'mcp' ? (
-        <HermesMCPPanel />
+        <BridgeGate><HermesMCPPanel /></BridgeGate>
       ) : activeSubTab === 'kanban' ? (
         <KanbanPanel />
       ) : activeSubTab === 'ralph' ? (

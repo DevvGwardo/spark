@@ -222,10 +222,19 @@ async function hermesFetch<T = unknown>(
   }
 
   if (!response.ok) {
+    // Legacy routes send `{ error: string }`; enveloped ones send
+    // `{ error: { code, message, retryable } }`. `data` keeps the full body, so
+    // `toHermesError` (hermes-errors.ts) can still read the code.
+    const envelopeMessage =
+      data.error && typeof data.error === 'object'
+        ? (data.error as { message?: unknown }).message
+        : undefined;
     const error =
       typeof data.error === 'string' && data.error
         ? data.error
-        : `Server returned ${response.status}`;
+        : typeof envelopeMessage === 'string' && envelopeMessage
+          ? envelopeMessage
+          : `Server returned ${response.status}`;
     throw new HermesApiError(error, response.status, data);
   }
 
