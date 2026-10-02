@@ -95,3 +95,94 @@ honors prefers-reduced-motion) with zero behavior regressions. Branch
       come from API fetches returning the SPA HTML because no backend runs on
       :3001; they're environmental.
   EVIDENCE: /private/tmp/claude-501/-Volumes-T7-Shield-mac-offload-Projects-flash-codex/85f482f3-5906-4495-a1bf-af31a87267de/scratchpad/spark-ui/{setup,setup-other,workbench,settings-general,settings-providers}-{dark,light}.png
+
+---
+
+# Gates: UI/UX pass 2 (command palette, sidebar header, GitHub views, overlay errors)
+
+Scope: The surfaces pass 1 didn't reach. Removes UI that looked interactive or
+authoritative without being wired up. Branch `feat/nub-harness`, base `f3cb961`.
+
+- [x] G12: The command palette (⌘K) is a styled cmdk dialog wired to real actions,
+      not "coming soon" toasts: new thread, repo issues, both terminals, sidebar,
+      theme, remote access, recent and pinned threads, every Hermes sidebar
+      section, and settings sections. It ranks results with a strict
+      prefix/word/substring filter (`src/lib/palette-filter.ts`) instead of
+      cmdk's subsequence scorer, which matched "set" against nearly every row.
+  CHECK: node -e "const s=require('fs').readFileSync('src/components/overlay/CommandPalette.tsx','utf8');console.log([!s.includes('coming soon'),s.includes('<Command.Dialog'),s.includes('filter={paletteFilter}'),s.includes('openConversation(c.id)'),s.includes('setSettingsOpen(true, id)')].every(Boolean)?'palette-ok':'palette-incomplete')"
+  EXPECT: palette-ok
+  EVIDENCE: palette-ok
+
+- [x] G13: The sidebar header's icon-only buttons are square (`w-9 shrink-0`).
+      Before this they had a height but no width and collapsed to the icon. One
+      definition plus three uses.
+  CHECK: grep -c 'TOOLBAR_ICON_BUTTON' src/components/sidebar/ChatSidebar.tsx
+  EXPECT: 4
+  EVIDENCE: 4
+
+- [x] G14: The GitHub views use theme tokens. CreatePRModal has no hex/rgba
+      literals left, and RepoIssueBrowser keeps only its avatar hash palette.
+      Light mode, the user accent and AA text contrast all apply.
+  CHECK: echo "$(grep -cE '#[0-9A-Fa-f]{6}|rgba\(' src/components/github/CreatePRModal.tsx) $(grep -nE '#[0-9A-Fa-f]{6}' src/components/github/RepoIssueBrowser.tsx | grep -v AVATAR_COLORS | wc -l | tr -d ' ')"
+  EXPECT: 0 0
+  EVIDENCE: 0 0
+
+- [x] G15: The fake chrome is gone. Issue browser: bell (no handler), "H"
+      avatar, dead quick-search box (its state was never read), decorative
+      composer icons. PR form: the hardcoded "No conflicts" chip, the B/I/code/link
+      spans, and the reviewers/labels fields (the server has no support for
+      them). PR stats now show real line deltas (`getChangeLineDelta`) instead of
+      file counts dressed up as `+N −M`.
+  CHECK: grep -cE 'Bell\b|cmdSearchQuery|No conflicts|Add reviewers|Add labels|<Bold|<AtSign|>H</div>' src/components/github/RepoIssueBrowser.tsx src/components/github/CreatePRModal.tsx | awk -F: '{s+=$2} END {print s}'
+  EXPECT: 0
+  EVIDENCE: 0
+
+- [x] G16: The error boundaries around AppLayout overlays (setup wizard,
+      settings, issue browser, and the PR modal, which had no boundary at all)
+      render a fixed `alertdialog` with Close/Escape (dismisses the overlay and
+      recovers) and Reload. Before, a crash rendered in document flow and pushed
+      the whole shell down about 200px.
+  CHECK: grep -c 'ErrorBoundary overlay' src/components/layout/AppLayout.tsx
+  EXPECT: 4
+  EVIDENCE: 4
+
+- [x] G17: GitHub state hues have per-theme `--gh-{open,blue,indigo,purple}`
+      tokens that meet AA as text. Light vs white: 5.07 / 5.20 / 6.18 / 5.67.
+      Dark vs --background: 9.06 / 6.90 / 5.91 / 6.30. The old literals were
+      1.91 (green on white) and about 3.9 (blue/indigo on dark). Status text in
+      the PR modal pairs a 700/800 light shade with its original dark shade.
+  CHECK: grep -cE -- '--gh-(open|blue|indigo|purple):' src/index.css
+  EXPECT: 8
+  EVIDENCE: 8
+
+- [x] G18: The focused tests pass: palette actions/filter/threads/provider
+      gating (6), overlay error boundary (5), and the PR modal (12, including
+      the new real-deltas/no-placeholders test).
+  CHECK: npx vitest run src/test/command-palette.test.tsx src/test/error-boundary-overlay.test.tsx src/test/create-pr-modal.test.tsx 2>&1 | grep -E "Tests +[0-9]+ passed" | tail -1
+  EXPECT: /Tests  23 passed/
+  EVIDENCE: Tests  23 passed (23)
+
+- [x] G19: The full unit suite is green: 1304 at base plus 6 new = 1310.
+  CHECK: npx vitest run 2>&1 | grep -E "Tests +[0-9]+ passed" | tail -1
+  EXPECT: /Tests  1310 passed/
+  EVIDENCE: Tests  1310 passed | 27 skipped (1337)
+
+- [x] G20: Typecheck is clean. Lint has 0 errors and matches the base warning
+      count (128). This pass adds none.
+  CHECK: npm run typecheck >/dev/null 2>&1 && echo TYPECHECK-OK; npm run lint 2>&1 | grep problems
+  EXPECT: TYPECHECK-OK and "0 errors, 128 warnings"
+  EVIDENCE: TYPECHECK-OK | ✖ 128 problems (0 errors, 128 warnings)
+
+- [x] G21: Visual check. Headless Chromium at 1440x900, dark and light, against
+      `npx vite --port 8090` with the github-integration endpoint mocked
+      through Playwright routes. The palette opens centered with a visible
+      selection. The issue browser has light surfaces, the accent, a readable
+      Open badge and no dead chrome. The PR modal (create, checks run, review)
+      shows real deltas, no placeholders, and readable warning/failure text in
+      light mode. The PR modal was mounted through a throwaway harness page that
+      was deleted afterwards.
+      Not run: `npm run test:e2e`. It boots the embedded server, whose kanban
+      runner spawns agents; that's out of scope for this pass. The only e2e
+      touchpoints (⌘K and `[aria-label="Browse repo issues"]` in
+      screenshots.spec.ts) are unchanged.
+  EVIDENCE: /private/tmp/claude-501/-Users-devgwardo/dcb3c241-e316-45af-b9bb-d38c5e67df58/scratchpad/spark-ui-2/{main,palette,palette-search,issues,issues-repo,pr-create,pr-checks,pr-review}-{dark,light}.png
