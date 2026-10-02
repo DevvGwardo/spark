@@ -347,6 +347,12 @@ const headerSecondaryLabel = selectedCronJobId
             ? 'Analyzer'
             : 'Knowledge';
 
+  const closePrModal = useCallback(() => {
+    setPrModalOpen(false);
+    setPrPanelId(null);
+    setPrModalMode('create');
+  }, []);
+
   const handlePrSuccess = useCallback(() => {
     clearChanges(prScopeId);
     // Don't close the modal — let the user see the success screen with the GitHub link
@@ -506,16 +512,21 @@ const headerSecondaryLabel = selectedCronJobId
           }}
         />
       )}
-      {!isSetupComplete && <Suspense fallback={<LazyFallback />}><ErrorBoundary><SetupWizard /></ErrorBoundary></Suspense>}
-      <Suspense fallback={<LazyFallback />}><ErrorBoundary><SettingsModal /></ErrorBoundary></Suspense>
-      <CommandPalette open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen} />
+      {!isSetupComplete && <Suspense fallback={<LazyFallback />}><ErrorBoundary overlay><SetupWizard /></ErrorBoundary></Suspense>}
+      <Suspense fallback={<LazyFallback />}><ErrorBoundary overlay onDismiss={() => useUIStore.getState().setSettingsOpen(false)}><SettingsModal /></ErrorBoundary></Suspense>
+      <CommandPalette
+        open={commandPaletteOpen}
+        onOpenChange={setCommandPaletteOpen}
+        onOpenRemoteAccess={() => setRemoteAccessOpen(true)}
+      />
       <RemoteAccessModal open={remoteAccessOpen} onOpenChange={setRemoteAccessOpen} />
-      <Suspense fallback={<LazyFallback />}><ErrorBoundary><RepoIssueBrowser isOpen={repoBrowserOpen} onClose={() => setRepoBrowserOpen(false)} /></ErrorBoundary></Suspense>
+      <Suspense fallback={<LazyFallback />}><ErrorBoundary overlay onDismiss={() => setRepoBrowserOpen(false)}><RepoIssueBrowser isOpen={repoBrowserOpen} onClose={() => setRepoBrowserOpen(false)} /></ErrorBoundary></Suspense>
       {prActiveRepo && (
         <Suspense fallback={<LazyFallback />}>
+        <ErrorBoundary overlay onDismiss={closePrModal}>
         <CreatePRModal
           isOpen={prModalOpen}
-          onClose={() => { setPrModalOpen(false); setPrPanelId(null); setPrModalMode('create'); }}
+          onClose={closePrModal}
           owner={prActiveRepo.owner}
           repo={prActiveRepo.name}
           baseOwner={prActiveRepo.baseOwner}
@@ -527,6 +538,7 @@ const headerSecondaryLabel = selectedCronJobId
           onPullRequestCreated={handlePullRequestCreated}
           onSuccess={handlePrSuccess}
         />
+        </ErrorBoundary>
         </Suspense>
       )}
 

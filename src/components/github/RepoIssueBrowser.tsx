@@ -2,21 +2,21 @@ import React, { startTransition, useDeferredValue, useEffect, useMemo, useRef, u
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   AlertCircle,
-  AtSign,
-  Bell,
+  ArrowDown,
+  ArrowUp,
   BookMarked,
   Bug,
   Check,
-  Code2,
-  Copy,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  Copy,
   Download,
   ExternalLink,
   GitBranch,
   GitFork,
+  Github,
   GitPullRequest,
   Languages,
   Loader2,
@@ -32,10 +32,7 @@ import {
   Sparkles,
   Star,
   Timer,
-  Type,
   X,
-  ArrowDown,
-  ArrowUp,
 } from 'lucide-react';
 import {
   addCommentReaction,
@@ -67,30 +64,32 @@ import { useSettingsStore } from '@/stores/settings-store';
 import { useUIStore } from '@/stores/ui-store';
 
 // ─── Design tokens ───────────────────────────────────────────
+// Routed through the theme variables so light mode, the user accent and AA
+// contrast all apply here like everywhere else. The GitHub state hues use the
+// --gh-* tokens, which are tuned per theme to stay AA as text.
 const V4 = {
-  bgPage: '#1A1A1A',
-  bgCard: '#16161A',
-  bgElevated: '#1A1A1E',
-  bgDetail: '#0F0F12',
-  bgHover: 'rgba(255,255,255,0.03)',
-  bgSelected: 'rgba(255,255,255,0.05)',
-  borderSubtle: '#2A2A2E',
-  borderStrong: '#3A3A40',
-  textPrimary: '#FAFAF9',
-  textSecondary: '#6B6B70',
-  textTertiary: '#4A4A50',
-  textMuted: '#8E8E93',
-  accentAmber: '#F59E0B',
-  accentAmberDark: '#E88B00',
-  accentGreen: '#32D583',
-  accentIndigo: '#6366F1',
-  accentCoral: '#E85A4F',
-  accentRed: '#EF4444',
-  accentPurple: '#8B5CF6',
-  accentBlue: '#3178C6',
-  fontHeading: "'Geist Sans', -apple-system, BlinkMacSystemFont, sans-serif",
+  bgPage: 'hsl(var(--background))',
+  bgCard: 'hsl(var(--card))',
+  bgElevated: 'hsl(var(--muted))',
+  bgDetail: 'hsl(var(--background))',
+  bgSelected: 'hsl(var(--foreground) / 0.05)',
+  borderSubtle: 'hsl(var(--border))',
+  textPrimary: 'hsl(var(--foreground))',
+  textSecondary: 'hsl(var(--text-tertiary))',
+  textTertiary: 'hsl(var(--muted-foreground))',
+  textMuted: 'hsl(var(--muted-foreground))',
+  accentAmber: 'hsl(var(--primary))',
+  accentAmberDark: 'hsl(var(--primary))',
+  accentGreen: 'hsl(var(--gh-open))',
+  accentIndigo: 'hsl(var(--gh-indigo))',
+  accentRed: 'hsl(var(--destructive))',
+  accentPurple: 'hsl(var(--gh-purple))',
+  accentBlue: 'hsl(var(--gh-blue))',
   fontBody: "'Geist Sans', -apple-system, BlinkMacSystemFont, sans-serif",
 } as const;
+
+/** Translucent wash of a token color (works for hsl() vars, unlike hex-alpha suffixes). */
+const tint = (color: string, percent: number) => `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 
 const overlayMotion = {
   initial: { opacity: 0, scale: 0.95 },
@@ -282,7 +281,6 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
   const [createIssueError, setCreateIssueError] = useState<string | null>(null);
   // V4 overlay state
   const [overlayOpen, setOverlayOpen] = useState<'filter' | 'sort' | 'actions' | 'repoSwitcher' | null>(null);
-  const [cmdSearchQuery, setCmdSearchQuery] = useState('');
 
   // ─── Effects ─────────────────────────────────────────────
   useEffect(() => {
@@ -702,28 +700,24 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
       >
         {/* ─── HEADER ─────────────────────────────────────── */}
         <div className="flex h-14 shrink-0 items-center gap-3.5 border-b px-6" style={{ borderColor: V4.borderSubtle }}>
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl" style={{ background: `linear-gradient(135deg, ${V4.accentAmber}, ${V4.accentAmberDark})`, boxShadow: '0 0 16px rgba(245,158,11,0.25)' }}>
-            <Sparkles className="h-[18px] w-[18px]" style={{ color: V4.bgPage }} />
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg border" style={{ background: V4.bgCard, borderColor: V4.borderSubtle }}>
+            <Github className="h-4 w-4" style={{ color: V4.textPrimary }} />
           </div>
           <div>
-            <h2 className="text-[17px] font-semibold leading-tight" style={{ fontFamily: V4.fontBody, color: V4.textPrimary }}>Repo Issues</h2>
+            <h2 className="text-[15px] font-semibold leading-tight" style={{ fontFamily: V4.fontBody, color: V4.textPrimary }}>Repo Issues</h2>
             <p className="text-[11px]" style={{ color: V4.textSecondary }}>Browse and manage repository issues</p>
           </div>
           <div className="flex-1" />
-          <div className="flex h-[34px] w-[280px] items-center gap-2 rounded-lg border px-3 focus-within:ring-1 focus-within:ring-primary/40" style={{ background: V4.bgCard, borderColor: V4.borderSubtle }}>
-            <Search className="h-3.5 w-3.5 shrink-0" style={{ color: V4.textTertiary }} />
-            <input value={cmdSearchQuery} onChange={(e) => setCmdSearchQuery(e.target.value)} placeholder="Quick search or jump to..." className="flex-1 bg-transparent text-xs outline-none placeholder:text-[#4A4A50]" style={{ color: V4.textPrimary }} />
-            <kbd className="rounded border px-1.5 py-0.5 text-[10px]" style={{ borderColor: V4.borderStrong, color: V4.textTertiary, background: V4.bgElevated }}>⌘K</kbd>
-          </div>
-          <button className="flex h-[34px] w-[34px] items-center justify-center rounded-lg border transition-colors hover:bg-white/[0.03]" style={{ background: V4.bgCard, borderColor: V4.borderSubtle }}>
-            <Bell className="h-4 w-4" style={{ color: V4.textSecondary }} />
-          </button>
-          <button onClick={() => { onClose(); setSettingsOpen(true); }} className="flex h-[34px] w-[34px] items-center justify-center rounded-lg border transition-colors hover:bg-white/[0.03]" style={{ background: V4.bgCard, borderColor: V4.borderSubtle }}>
+          <button
+            onClick={() => { onClose(); setSettingsOpen(true, 'github'); }}
+            className="flex h-8 w-8 items-center justify-center rounded-lg border transition-colors hover:bg-foreground/[0.03]"
+            style={{ background: V4.bgCard, borderColor: V4.borderSubtle }}
+            title="GitHub settings"
+            aria-label="GitHub settings"
+          >
             <Settings className="h-4 w-4" style={{ color: V4.textSecondary }} />
           </button>
-          <div className="h-6 w-px" style={{ background: V4.borderSubtle }} />
-          <div className="flex h-8 w-8 items-center justify-center rounded-full text-[13px] font-semibold text-white" style={{ background: `linear-gradient(135deg, ${V4.accentIndigo}, ${V4.accentPurple})` }}>H</div>
-          <button onClick={onClose} className="flex h-[34px] w-[34px] items-center justify-center rounded-lg transition-colors hover:bg-white/[0.03]" aria-label="Close">
+          <button onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-foreground/[0.03]" aria-label="Close">
             <X className="h-4 w-4" style={{ color: V4.textTertiary }} />
           </button>
         </div>
@@ -736,7 +730,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
               <h3 className="text-sm font-semibold" style={{ color: V4.textPrimary }}>GitHub access is required</h3>
               <p className="mt-1 text-xs" style={{ color: V4.textSecondary }}>Add a GitHub PAT in settings before browsing repositories or loading issues.</p>
             </div>
-            <button onClick={() => { onClose(); setSettingsOpen(true); }} className="rounded-lg border px-4 py-2 text-sm font-medium transition-colors hover:bg-white/[0.03]" style={{ borderColor: V4.borderSubtle, color: V4.textPrimary }}>
+            <button onClick={() => { onClose(); setSettingsOpen(true); }} className="rounded-lg border px-4 py-2 text-sm font-medium transition-colors hover:bg-foreground/[0.03]" style={{ borderColor: V4.borderSubtle, color: V4.textPrimary }}>
               Open settings
             </button>
           </div>
@@ -747,7 +741,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
               <div className="p-4">
                 <div className="flex h-9 items-center gap-2 rounded-lg border px-3 focus-within:ring-1 focus-within:ring-primary/40" style={{ background: V4.bgCard, borderColor: V4.borderSubtle }}>
                   <Search className="h-3.5 w-3.5 shrink-0" style={{ color: V4.textTertiary }} />
-                  <input value={repoQuery} onChange={(e) => setRepoQuery(e.target.value)} placeholder="Search repos..." className="w-full bg-transparent text-[13px] outline-none placeholder:text-[#4A4A50]" style={{ color: V4.textPrimary }} />
+                  <input value={repoQuery} onChange={(e) => setRepoQuery(e.target.value)} placeholder="Search repos..." className="w-full bg-transparent text-[13px] outline-none placeholder:text-muted-foreground" style={{ color: V4.textPrimary }} />
                 </div>
               </div>
 
@@ -757,7 +751,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                   <span className="text-[11px] font-semibold uppercase tracking-[1px]" style={{ fontFamily: V4.fontBody, color: V4.textSecondary }}>Activity</span>
                   <div className="flex h-[52px] items-end gap-[2px] rounded-xl border p-2" style={{ background: V4.bgCard, borderColor: V4.borderSubtle }}>
                     {Array.from({ length: 30 }, (_, i) => (
-                      <div key={i} className="flex-1 animate-pulse motion-reduce:animate-none rounded-[2px]" style={{ height: ACTIVITY_SKELETON_HEIGHTS[i], backgroundColor: '#F59E0B18', minWidth: 3 }} />
+                      <div key={i} className="flex-1 animate-pulse motion-reduce:animate-none rounded-[2px]" style={{ height: ACTIVITY_SKELETON_HEIGHTS[i], backgroundColor: tint(V4.accentAmber, 10), minWidth: 3 }} />
                     ))}
                   </div>
                 </div>
@@ -784,8 +778,8 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                       const max = Math.max(...activityData.days, 1);
                       const ratio = count / max;
                       const height = Math.max(2, Math.round(ratio * 40));
-                      const alpha = count === 0 ? '18' : ratio < 0.2 ? '33' : ratio < 0.4 ? '55' : ratio < 0.65 ? '80' : ratio < 0.85 ? 'BB' : '';
-                      return <div key={i} className="flex-1 rounded-[2px]" style={{ height, backgroundColor: `#F59E0B${alpha}`, minWidth: 3 }} />;
+                      const strength = count === 0 ? 10 : ratio < 0.2 ? 20 : ratio < 0.4 ? 33 : ratio < 0.65 ? 50 : ratio < 0.85 ? 73 : 100;
+                      return <div key={i} className="flex-1 rounded-[2px]" style={{ height, backgroundColor: tint(V4.accentAmber, strength), minWidth: 3 }} />;
                     })}
                   </div>
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -813,12 +807,13 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
 
               <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4">
                 {repoError && (
-                  <div className="mb-2 rounded-lg border px-3 py-2 text-[11px]" style={{ borderColor: '#EF444430', background: '#EF444410', color: '#FCA5A5' }}>{repoError}</div>
+                  <div className="mb-2 rounded-lg border px-3 py-2 text-[11px]" style={{ borderColor: tint(V4.accentRed, 19), background: tint(V4.accentRed, 6), color: V4.accentRed }}>{repoError}</div>
                 )}
                 {repoLoading ? (
                   <div className="flex items-center justify-center py-10"><Loader2 className="h-5 w-5 animate-spin" style={{ color: V4.textTertiary }} /></div>
                 ) : repos.length === 0 ? (
-                  <div className="flex h-full flex-col items-center justify-center px-4 text-center">
+                  // The error banner above already explains an empty list.
+                  repoError ? null : <div className="flex h-full flex-col items-center justify-center px-4 text-center">
                     <GitBranch className="h-8 w-8" style={{ color: V4.borderSubtle }} />
                     <p className="mt-3 text-[13px] font-medium" style={{ color: V4.textPrimary }}>No repositories found</p>
                     <p className="mt-1 text-[11px]" style={{ color: V4.textTertiary }}>Try a different repo name or owner.</p>
@@ -839,7 +834,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                         >
                           <GitBranch className="mt-0.5 h-4 w-4 shrink-0" style={{ color: isSelected ? V4.accentAmber : V4.textTertiary }} />
                           <div className="min-w-0 flex-1">
-                            <span className={cn('block truncate text-[13px]', isSelected ? 'font-semibold' : 'font-medium')} style={{ color: isSelected ? V4.textPrimary : '#DDDDDDB3' }}>{repo.name}</span>
+                            <span className={cn('block truncate text-[13px]', isSelected ? 'font-semibold' : 'font-medium')} style={{ color: isSelected ? V4.textPrimary : V4.textSecondary }}>{repo.name}</span>
                             <span className="block truncate text-[11px]" style={{ color: V4.textSecondary }}>{repo.owner.login}</span>
                             {repo.description && <p className="mt-0.5 line-clamp-2 text-[11px] leading-[1.4]" style={{ color: V4.textSecondary }}>{repo.description}</p>}
                           </div>
@@ -884,9 +879,9 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                         </div>
                       </div>
                       {workingCopyLabel && (
-                        <div className="inline-flex w-fit items-center gap-1.5 rounded-lg border px-2.5 py-1.5" style={{ borderColor: '#3B82F630', background: '#3B82F610' }}>
-                          <GitFork className="h-3 w-3 text-[#3B82F6]" />
-                          <span className="text-[11px] text-[#3B82F6]">{workingCopyLabel}</span>
+                        <div className="inline-flex w-fit items-center gap-1.5 rounded-lg border px-2.5 py-1.5" style={{ borderColor: tint(V4.accentBlue, 19), background: tint(V4.accentBlue, 6) }}>
+                          <GitFork className="h-3 w-3" style={{ color: V4.accentBlue }} />
+                          <span className="text-[11px]" style={{ color: V4.accentBlue }}>{workingCopyLabel}</span>
                         </div>
                       )}
                       <div className="flex flex-wrap items-center gap-2">
@@ -902,7 +897,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                           onClick={() => void handleCloneRepo()}
                           disabled={selectedRepo.localClone.exists || actionLoading !== null}
                           className="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-all duration-150 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
-                          style={{ borderColor: `${V4.accentAmber}33`, color: V4.accentAmber }}
+                          style={{ borderColor: tint(V4.accentAmber, 20), color: V4.accentAmber }}
                         >
                           <Download className="h-3 w-3" />
                           {actionLoading === 'clone' ? 'Cloning...' : selectedRepo.localClone.exists ? 'Clone ready' : 'Clone'}
@@ -917,13 +912,13 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                           {actionLoading === 'fork' ? 'Forking...' : workingRepo && workingRepo.full_name !== selectedRepo.full_name ? 'Fork ready' : 'Fork & Clone'}
                         </button>
                         <div className="flex-1" />
-                        <a href={selectedRepo.html_url} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center rounded-lg border p-1.5 transition-colors hover:bg-white/[0.03]" style={{ borderColor: V4.borderSubtle, color: V4.textSecondary }}>
+                        <a href={selectedRepo.html_url} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center rounded-lg border p-1.5 transition-colors hover:bg-foreground/[0.03]" style={{ borderColor: V4.borderSubtle, color: V4.textSecondary }}>
                           <ExternalLink className="h-3 w-3" />
                         </a>
                       </div>
                     </div>
                     {actionError && (
-                      <div className="mt-3 rounded-lg border px-3 py-2 text-[11px]" style={{ borderColor: '#EF444430', background: '#EF444410', color: '#FCA5A5' }}>{actionError}</div>
+                      <div className="mt-3 rounded-lg border px-3 py-2 text-[11px]" style={{ borderColor: tint(V4.accentRed, 19), background: tint(V4.accentRed, 6), color: V4.accentRed }}>{actionError}</div>
                     )}
                   </div>
 
@@ -935,7 +930,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                         value={issueQuery}
                         onChange={(e) => { setIssueQuery(e.target.value); startTransition(() => setIssuePage(1)); }}
                         placeholder="Search issues..."
-                        className="w-full bg-transparent text-xs outline-none placeholder:text-[#4A4A50]"
+                        className="w-full bg-transparent text-xs outline-none placeholder:text-muted-foreground"
                         style={{ color: V4.textPrimary }}
                       />
                     </div>
@@ -955,10 +950,10 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                           >
                             {option.label}
                             {option.value === 'open' && openCount > 0 && (
-                              <span className="rounded-lg px-1.5 py-px text-[10px] font-medium" style={{ background: `${V4.accentAmber}20`, color: V4.accentAmber }}>{openCount.toLocaleString()}</span>
+                              <span className="rounded-lg px-1.5 py-px text-[10px] font-medium" style={{ background: tint(V4.accentAmber, 13), color: V4.accentAmber }}>{openCount.toLocaleString()}</span>
                             )}
                             {option.value === 'closed' && closedCount > 0 && (
-                              <span className="rounded-lg px-1.5 py-px text-[10px] font-medium" style={{ background: `${V4.accentRed}22`, color: V4.accentRed }}>{closedCount.toLocaleString()}</span>
+                              <span className="rounded-lg px-1.5 py-px text-[10px] font-medium" style={{ background: tint(V4.accentRed, 13), color: V4.accentRed }}>{closedCount.toLocaleString()}</span>
                             )}
                           </button>
                         );
@@ -967,7 +962,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                       <div className="relative">
                         <button
                           onClick={() => setShowSortDropdown((prev) => !prev)}
-                          className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] transition-colors hover:bg-white/[0.03]"
+                          className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] transition-colors hover:bg-foreground/[0.03]"
                           style={{ borderColor: V4.borderSubtle, color: V4.textSecondary }}
                         >
                           {selectedSortLabel.split(' ').pop()}
@@ -993,7 +988,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                                     <button
                                       key={key}
                                       onClick={() => { setIssueSort(option.value); setIssueDirection(option.direction); setIssuePage(1); setShowSortDropdown(false); }}
-                                      className="flex w-full items-center gap-2.5 px-3 py-2 text-[12px] transition-colors hover:bg-white/[0.03]"
+                                      className="flex w-full items-center gap-2.5 px-3 py-2 text-[12px] transition-colors hover:bg-foreground/[0.03]"
                                       style={{ color: isActive ? V4.textPrimary : V4.textSecondary }}
                                     >
                                       <Icon className="h-3.5 w-3.5" style={{ color: isActive ? V4.accentAmber : V4.textTertiary }} />
@@ -1057,7 +1052,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                               value={createIssueTitle}
                               onChange={(e) => setCreateIssueTitle(e.target.value)}
                               placeholder="Describe the bug, task, or improvement"
-                              className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none transition-colors placeholder:text-[#4A4A50] focus:border-[#F59E0B66]"
+                              className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/40"
                               style={{ borderColor: V4.borderSubtle, background: V4.bgPage, color: V4.textPrimary }}
                               onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void handleCreateIssue(); } }}
                             />
@@ -1070,13 +1065,13 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                               onChange={(e) => setCreateIssueBody(e.target.value)}
                               placeholder="What should someone know before they pick this up?"
                               rows={6}
-                              className="w-full resize-none rounded-lg border px-3 py-2 text-[13px] leading-6 outline-none transition-colors placeholder:text-[#4A4A50] focus:border-[#F59E0B66]"
+                              className="w-full resize-none rounded-lg border px-3 py-2 text-[13px] leading-6 outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/40"
                               style={{ borderColor: V4.borderSubtle, background: V4.bgPage, color: V4.textPrimary }}
                               onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void handleCreateIssue(); } }}
                             />
                           </div>
                           {createIssueError && (
-                            <div className="rounded-lg border px-3 py-2 text-[11px]" style={{ borderColor: '#EF444430', background: '#EF444410', color: '#FCA5A5' }}>{createIssueError}</div>
+                            <div className="rounded-lg border px-3 py-2 text-[11px]" style={{ borderColor: tint(V4.accentRed, 19), background: tint(V4.accentRed, 6), color: V4.accentRed }}>{createIssueError}</div>
                           )}
                         </div>
                         <div className="flex items-center justify-between border-t px-3.5 py-2.5" style={{ borderColor: V4.borderSubtle }}>
@@ -1098,7 +1093,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                   {/* Issue list */}
                   <div className="min-h-0 flex-1 overflow-y-auto">
                     {issuesError && (
-                      <div className="mx-6 mt-3 rounded-lg border px-3 py-2 text-[11px]" style={{ borderColor: '#EF444430', background: '#EF444410', color: '#FCA5A5' }}>{issuesError}</div>
+                      <div className="mx-6 mt-3 rounded-lg border px-3 py-2 text-[11px]" style={{ borderColor: tint(V4.accentRed, 19), background: tint(V4.accentRed, 6), color: V4.accentRed }}>{issuesError}</div>
                     )}
                     {issuesLoading ? (
                       <div className="flex items-center justify-center py-16"><Loader2 className="h-5 w-5 animate-spin" style={{ color: V4.textTertiary }} /></div>
@@ -1110,7 +1105,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                           {deferredIssueQuery || activeLabels.length > 0 ? 'Adjust the issue filter, sorting, or search query.' : 'Create the first issue for this repository or adjust the current filters.'}
                         </p>
                         {!createIssueOpen && (
-                          <button onClick={openCreateIssueDraft} className="mt-4 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[11px] font-medium transition-colors hover:bg-white/[0.03]" style={{ borderColor: V4.borderSubtle, color: V4.textPrimary }}>
+                          <button onClick={openCreateIssueDraft} className="mt-4 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[11px] font-medium transition-colors hover:bg-foreground/[0.03]" style={{ borderColor: V4.borderSubtle, color: V4.textPrimary }}>
                             <Plus className="h-3 w-3" /> New issue
                           </button>
                         )}
@@ -1128,7 +1123,6 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                                 background: isSelected ? V4.bgCard : 'transparent',
                                 borderLeft: isSelected ? `3px solid ${V4.accentAmber}` : '3px solid transparent',
                                 borderBottom: `1px solid ${V4.borderSubtle}`,
-                                boxShadow: isSelected ? '0 0 20px rgba(245,158,11,0.06)' : 'none',
                               }}
                             >
                               <div className="flex flex-col gap-1.5 px-5 py-3.5">
@@ -1163,10 +1157,10 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
 
                   {/* Pagination */}
                   <div className="flex items-center gap-2 border-t px-6 py-3" style={{ background: V4.bgCard, borderColor: V4.borderSubtle }}>
-                    <button onClick={() => setIssuePage((p) => Math.max(1, p - 1))} disabled={!issueHasPreviousPage || issuesLoading} className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] transition-colors hover:bg-white/[0.03] disabled:cursor-not-allowed disabled:opacity-40" style={{ borderColor: V4.borderSubtle, color: V4.textTertiary }}>
+                    <button onClick={() => setIssuePage((p) => Math.max(1, p - 1))} disabled={!issueHasPreviousPage || issuesLoading} className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] transition-colors hover:bg-foreground/[0.03] disabled:cursor-not-allowed disabled:opacity-40" style={{ borderColor: V4.borderSubtle, color: V4.textTertiary }}>
                       <ChevronLeft className="h-3 w-3" /> Prev
                     </button>
-                    <button onClick={() => setIssuePage((p) => p + 1)} disabled={!issueHasNextPage || issuesLoading} className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] transition-colors hover:bg-white/[0.03] disabled:cursor-not-allowed disabled:opacity-40" style={{ borderColor: V4.borderSubtle, color: V4.textSecondary }}>
+                    <button onClick={() => setIssuePage((p) => p + 1)} disabled={!issueHasNextPage || issuesLoading} className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] transition-colors hover:bg-foreground/[0.03] disabled:cursor-not-allowed disabled:opacity-40" style={{ borderColor: V4.borderSubtle, color: V4.textSecondary }}>
                       Next <ChevronRight className="h-3 w-3" />
                     </button>
                     <div className="flex-1" />
@@ -1189,14 +1183,14 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                         <h4 className="min-w-0 flex-1 text-[16px] font-semibold leading-[1.4]" style={{ color: V4.textPrimary }}>
                           {showTranslation && translatedTitle ? translatedTitle : selectedIssue.title}
                         </h4>
-                        <a href={selectedIssue.html_url} target="_blank" rel="noreferrer" className="inline-flex shrink-0 items-center justify-center rounded-lg border p-1.5 transition-colors hover:bg-white/[0.03]" style={{ borderColor: V4.borderSubtle, color: V4.textTertiary }}>
+                        <a href={selectedIssue.html_url} target="_blank" rel="noreferrer" className="inline-flex shrink-0 items-center justify-center rounded-lg border p-1.5 transition-colors hover:bg-foreground/[0.03]" style={{ borderColor: V4.borderSubtle, color: V4.textTertiary }}>
                           <ExternalLink className="h-3 w-3" />
                         </a>
                       </div>
                       <div className="flex items-center gap-2 text-xs" style={{ color: V4.textTertiary }}>
                         <span className="font-mono text-[11px]">#{selectedIssue.number}</span>
                         <span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium" style={{
-                          background: selectedIssue.state === 'open' ? `${V4.accentGreen}20` : `${V4.accentRed}20`,
+                          background: selectedIssue.state === 'open' ? tint(V4.accentGreen, 13) : tint(V4.accentRed, 13),
                           color: selectedIssue.state === 'open' ? V4.accentGreen : V4.accentRed,
                         }}>
                           <span className="h-[6px] w-[6px] rounded-full" style={{ background: selectedIssue.state === 'open' ? V4.accentGreen : V4.accentRed }} />
@@ -1229,11 +1223,11 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                       <GhostBtn onClick={() => void handleExplainIssue()} disabled={actionLoading !== null}>
                         {actionLoading === 'explain' ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Explain'}
                       </GhostBtn>
-                      <button onClick={() => void handleCopyContext()} disabled={copied} className="inline-flex items-center justify-center rounded-lg border p-1.5 transition-colors hover:bg-white/[0.03]" style={{ borderColor: V4.borderSubtle, color: copied ? V4.accentAmber : V4.textTertiary }}>
+                      <button onClick={() => void handleCopyContext()} disabled={copied} className="inline-flex items-center justify-center rounded-lg border p-1.5 transition-colors hover:bg-foreground/[0.03]" style={{ borderColor: V4.borderSubtle, color: copied ? V4.accentAmber : V4.textTertiary }}>
                         {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
                       </button>
                       {!createdBranch && (
-                        <button onClick={() => void handleCreateBranch()} disabled={actionLoading !== null} className="inline-flex items-center justify-center rounded-lg border p-1.5 transition-colors hover:bg-white/[0.03] disabled:cursor-not-allowed disabled:opacity-50" style={{ borderColor: V4.borderSubtle, color: V4.textTertiary }}>
+                        <button onClick={() => void handleCreateBranch()} disabled={actionLoading !== null} className="inline-flex items-center justify-center rounded-lg border p-1.5 transition-colors hover:bg-foreground/[0.03] disabled:cursor-not-allowed disabled:opacity-50" style={{ borderColor: V4.borderSubtle, color: V4.textTertiary }}>
                           {actionLoading === 'branch' ? <Loader2 className="h-3 w-3 animate-spin" /> : <GitBranch className="h-3 w-3" />}
                         </button>
                       )}
@@ -1244,8 +1238,8 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                         disabled={isTranslating}
                         className={cn('inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-all duration-150 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50')}
                         style={{
-                          borderColor: showTranslation ? `${V4.accentIndigo}40` : V4.borderSubtle,
-                          background: showTranslation ? `${V4.accentIndigo}15` : 'transparent',
+                          borderColor: showTranslation ? tint(V4.accentIndigo, 25) : V4.borderSubtle,
+                          background: showTranslation ? tint(V4.accentIndigo, 8) : 'transparent',
                           color: showTranslation ? V4.accentIndigo : V4.textSecondary,
                         }}
                       >
@@ -1259,7 +1253,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                       </GhostBtn>
                     </div>
                     {createdBranch && (
-                      <div className="inline-flex items-center gap-1.5 rounded-lg px-3 py-[7px]" style={{ background: `${V4.accentAmber}15` }}>
+                      <div className="inline-flex items-center gap-1.5 rounded-lg px-3 py-[7px]" style={{ background: tint(V4.accentAmber, 8) }}>
                         <GitBranch className="h-3 w-3 shrink-0" style={{ color: V4.accentAmber }} />
                         <span className="min-w-0 truncate font-mono text-[11px] font-medium" style={{ color: V4.accentAmber }}>{createdBranch}</span>
                         <button onClick={() => { void navigator.clipboard.writeText(createdBranch); }} className="shrink-0 transition-colors hover:opacity-80" style={{ color: V4.accentAmber }}><Copy className="h-2.5 w-2.5" /></button>
@@ -1282,7 +1276,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                         </div>
                         <div className="flex flex-col gap-2">
                           {linkedPRs.map((pr) => (
-                            <a key={pr.number} href={pr.html_url} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-xl border px-3 py-2 text-xs transition-colors hover:bg-white/[0.03]" style={{ background: V4.bgCard, borderColor: V4.borderSubtle, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+                            <a key={pr.number} href={pr.html_url} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-xl border px-3 py-2 text-xs transition-colors hover:bg-foreground/[0.03]" style={{ background: V4.bgCard, borderColor: V4.borderSubtle, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
                               <span className={cn('h-[6px] w-[6px] shrink-0 rounded-full')} style={{ background: pr.state === 'open' ? V4.accentGreen : pr.draft ? V4.accentBlue : V4.accentPurple }} />
                               <span className="shrink-0 font-mono text-[11px] font-medium" style={{ color: V4.accentPurple }}>#{pr.number}</span>
                               <span className="min-w-0 flex-1 truncate" style={{ color: V4.textMuted }}>{pr.title}</span>
@@ -1323,7 +1317,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                                       <div className={cn('flex items-center gap-2 transition-opacity', reactionPickerCommentId === comment.id ? 'opacity-100' : 'opacity-0 group-hover/comment:opacity-100')}>
                                         <button onClick={() => { setReplyingTo(comment); setCommentText(''); setReactionPickerCommentId(null); }} className="rounded-md border px-1.5 py-1 transition-colors hover:bg-white/[0.06]" style={{ borderColor: V4.borderSubtle, color: V4.textTertiary }}><Reply className="h-3.5 w-3.5" /></button>
                                         <div className="relative">
-                                          <button onClick={() => setReactionPickerCommentId(reactionPickerCommentId === comment.id ? null : comment.id)} className={cn('rounded-md border px-1.5 py-1 transition-colors')} style={{ borderColor: reactionPickerCommentId === comment.id ? `${V4.accentAmber}30` : V4.borderSubtle, background: reactionPickerCommentId === comment.id ? `${V4.accentAmber}15` : 'transparent', color: reactionPickerCommentId === comment.id ? V4.accentAmber : V4.textTertiary }}>
+                                          <button onClick={() => setReactionPickerCommentId(reactionPickerCommentId === comment.id ? null : comment.id)} className={cn('rounded-md border px-1.5 py-1 transition-colors')} style={{ borderColor: reactionPickerCommentId === comment.id ? tint(V4.accentAmber, 19) : V4.borderSubtle, background: reactionPickerCommentId === comment.id ? tint(V4.accentAmber, 8) : 'transparent', color: reactionPickerCommentId === comment.id ? V4.accentAmber : V4.textTertiary }}>
                                             <SmilePlus className="h-3.5 w-3.5" />
                                           </button>
                                           <AnimatePresence>
@@ -1343,7 +1337,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                                   {comment.reactions && Object.entries(comment.reactions).some(([, v]) => v > 0) && (
                                     <div className="mt-2 flex flex-wrap gap-1">
                                       {reactionEmojis.filter(({ content }) => (comment.reactions?.[content] || 0) > 0).map(({ content, emoji }) => (
-                                        <button key={content} onClick={() => setReactionPickerCommentId(reactionPickerCommentId === comment.id ? null : comment.id)} className="inline-flex items-center gap-1 rounded-[10px] border px-2 py-0.5 text-[10px] transition-colors hover:border-[#F59E0B30] hover:bg-[#F59E0B08]" style={{ borderColor: V4.borderSubtle }}>
+                                        <button key={content} onClick={() => setReactionPickerCommentId(reactionPickerCommentId === comment.id ? null : comment.id)} className="inline-flex items-center gap-1 rounded-[10px] border px-2 py-0.5 text-[10px] transition-colors hover:border-primary/20 hover:bg-primary/5" style={{ borderColor: V4.borderSubtle }}>
                                           <span>{emoji}</span><span style={{ color: V4.textSecondary }}>{comment.reactions?.[content]}</span>
                                         </button>
                                       ))}
@@ -1377,7 +1371,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                             onChange={(e) => setCommentText(e.target.value)}
                             placeholder={replyingTo ? `Reply to ${replyingTo.user.login}...` : 'Write a comment...'}
                             rows={2}
-                            className="w-full resize-none bg-transparent text-[13px] leading-relaxed outline-none placeholder:text-[#4A4A50]"
+                            className="w-full resize-none bg-transparent text-[13px] leading-relaxed outline-none placeholder:text-muted-foreground"
                             style={{ color: V4.textPrimary }}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { if (replyingTo) { void handleSubmitReply(); } else { void handleSubmitComment(); } }
@@ -1386,11 +1380,7 @@ export const RepoIssueBrowser: React.FC<RepoIssueBrowserProps> = ({ isOpen, onCl
                           />
                         </div>
                         <div className="flex items-center justify-between px-3 py-2">
-                          <div className="flex items-center gap-2">
-                            <Type className="h-3.5 w-3.5" style={{ color: V4.textTertiary }} />
-                            <AtSign className="h-3.5 w-3.5" style={{ color: V4.textTertiary }} />
-                            <Code2 className="h-3.5 w-3.5" style={{ color: V4.textTertiary }} />
-                          </div>
+                          <span className="font-mono text-[10px]" style={{ color: V4.textTertiary }}>Markdown · ⌘↵ to send</span>
                           <button
                             onClick={() => { if (replyingTo) { void handleSubmitReply(); } else { void handleSubmitComment(); } }}
                             disabled={(commentSubmitting || replySubmitting) || !commentText.trim()}

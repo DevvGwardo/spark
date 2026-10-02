@@ -2,24 +2,18 @@ import React, { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import {
   AlertCircle,
   ArrowRight,
-  Bold,
   CheckCircle2,
-  Code,
   ExternalLink,
   FileCode,
   GitBranch,
   GitMerge,
   GitPullRequest,
-  Italic,
-  Link as LinkIcon,
   Loader2,
   RefreshCw,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
-  Tag,
   TimerReset,
-  UserPlus,
   X,
   XCircle,
 } from 'lucide-react';
@@ -27,6 +21,7 @@ import { useSettingsStore } from '@/stores/settings-store';
 import { useActivityStore } from '@/stores/activity-store';
 import { cn } from '@/lib/utils';
 import { getApiBaseUrl } from '@/lib/api';
+import { getChangeLineDelta } from '@/lib/change-diff';
 import { Progress } from '@/components/ui/progress';
 import type { PullRequestRecord } from '@/lib/pull-request';
 
@@ -138,9 +133,9 @@ function makeDefaultBranchName() {
 }
 
 function getStatusIcon(status: CheckStatus) {
-  if (status === 'success') return <CheckCircle2 className="h-4 w-4 text-emerald-400" />;
-  if (status === 'failure') return <XCircle className="h-4 w-4 text-rose-400" />;
-  return <Loader2 className="h-4 w-4 animate-spin text-amber-300" />;
+  if (status === 'success') return <CheckCircle2 className="h-4 w-4 text-emerald-700 dark:text-emerald-400" />;
+  if (status === 'failure') return <XCircle className="h-4 w-4 text-rose-700 dark:text-rose-400" />;
+  return <Loader2 className="h-4 w-4 animate-spin text-amber-700 dark:text-amber-300" />;
 }
 
 function getMergeButtonLabel(method: MergeMethod) {
@@ -268,6 +263,17 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
     () => JSON.stringify(files.map((file) => [file.path, file.action || 'edit', file.content, file.originalContent || ''])),
     [files],
   );
+  // Real line deltas (same math as the changes sidebar), not file counts.
+  const fileDeltas = useMemo(() => new Map(files.map((file) => [file.path, getChangeLineDelta({ ...file, action: file.action || 'edit' })])), [files]);
+  const lineTotals = useMemo(() => {
+    let added = 0;
+    let removed = 0;
+    for (const delta of fileDeltas.values()) {
+      added += delta.added;
+      removed += delta.removed;
+    }
+    return { added, removed };
+  }, [fileDeltas]);
 
   const allProvidersPayload = useMemo(
     () => Object.fromEntries(
@@ -722,19 +728,19 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/70 backdrop-blur-md" onClick={onClose} />
-      <div className="relative mx-4 flex max-h-[88vh] w-full max-w-[620px] flex-col overflow-hidden rounded-[20px] border border-[#1E1E22] bg-background shadow-2xl">
+      <div className="relative mx-4 flex max-h-[88vh] w-full max-w-[620px] flex-col overflow-hidden rounded-[20px] border border-border bg-background shadow-2xl">
         {/* Header */}
-        <div className="flex items-center gap-3 border-b border-[#1E1E22] px-6 py-[18px]">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#16161A]">
-            <GitMerge className="h-5 w-5 text-[#6B6B70]" />
+        <div className="flex items-center gap-3 border-b border-border px-6 py-[18px]">
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-card">
+            <GitMerge className="h-5 w-5 text-muted-foreground" />
           </div>
-          <h2 className="text-base font-semibold text-[#FAFAF9]">
+          <h2 className="text-base font-semibold text-foreground">
             {createdPr ? 'Review Pull Request' : 'Create Pull Request'}
           </h2>
           <div className="flex-1" />
           <button
             onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#16161A] text-[#6B6B70] transition-colors hover:bg-[#1E1E22] hover:text-[#FAFAF9]"
+            className="flex h-8 w-8 items-center justify-center rounded-lg bg-card text-muted-foreground transition-colors hover:bg-foreground/[0.05] hover:text-foreground"
           >
             <X className="h-[18px] w-[18px]" />
           </button>
@@ -750,151 +756,106 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
               {/* Top Section */}
               <div className="space-y-5 bg-background p-6">
                 {/* Branch Info */}
-                <div className="flex items-center gap-2.5 rounded-xl border border-[#1E1E22] bg-[#111115] p-3.5">
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-[#2A2A2E] bg-[#16161A] px-3 py-1.5 text-[13px] font-medium text-[#FAFAF9] focus-within:border-primary/40">
-                    <GitBranch className="h-3.5 w-3.5 text-[#6B6B70]" />
+                <div className="flex items-center gap-2.5 rounded-xl border border-border bg-background p-3.5">
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-input bg-card px-3 py-1.5 text-[13px] font-medium text-foreground focus-within:border-primary/40">
+                    <GitBranch className="h-3.5 w-3.5 text-muted-foreground" />
                     <input
                       type="text"
                       value={branchName}
                       onChange={(event) => setBranchName(event.target.value)}
-                      className="min-w-0 max-w-[180px] bg-transparent text-[13px] font-medium text-[#FAFAF9] focus:outline-none"
+                      className="min-w-0 max-w-[180px] bg-transparent text-[13px] font-medium text-foreground focus:outline-none"
                       placeholder="feature/ai-changes"
                     />
                   </span>
-                  <ArrowRight className="h-4 w-4 shrink-0 text-[#4A4A50]" />
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-[#2A2A2E] bg-[#16161A] px-3 py-1.5 text-[13px] font-medium text-[#FAFAF9]">
-                    <GitBranch className="h-3.5 w-3.5 text-[#6B6B70]" />
+                  <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-input bg-card px-3 py-1.5 text-[13px] font-medium text-foreground">
+                    <GitBranch className="h-3.5 w-3.5 text-muted-foreground" />
                     {baseBranch}
                   </span>
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-[#32D58315] px-3 py-1.5 text-xs font-medium text-[#32D583]">
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                    No conflicts
-                  </span>
-                  <span className="text-xs font-medium text-[#6B6B70]">
+                  <span className="text-xs font-medium text-muted-foreground">
                     {files.length} file{files.length !== 1 ? 's' : ''}
-                    {files.filter((f) => f.action !== 'delete').length > 0 && ` · +${files.filter((f) => f.action !== 'delete').length}`}
-                    {files.filter((f) => f.action === 'delete').length > 0 && ` −${files.filter((f) => f.action === 'delete').length}`}
+                    <span className="ml-1.5 font-mono text-[hsl(var(--gh-open))]">+{lineTotals.added}</span>
+                    <span className="ml-1 font-mono text-destructive">−{lineTotals.removed}</span>
                   </span>
                 </div>
 
                 {/* Title */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <label className="text-[13px] font-medium text-[#6B6B70]">Title</label>
+                    <label className="text-[13px] font-medium text-muted-foreground">Title</label>
                     <button
                       type="button"
                       onClick={() => void handleGenerateMetadata()}
                       disabled={generateMetadataLoading || files.length === 0}
-                      className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium text-[#6B6B70] transition-colors hover:bg-[#1E1E22] hover:text-[#DDDDDDB3] disabled:cursor-not-allowed disabled:opacity-40"
+                      className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-foreground/[0.05] hover:text-[hsl(var(--text-secondary))] disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       {generateMetadataLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
                       Generate with AI
                     </button>
                   </div>
                   {generateMetadataError && (
-                    <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-100">
+                    <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-800 dark:text-amber-100">
                       {generateMetadataError}
                     </div>
                   )}
-                  <div className="flex items-center rounded-xl border border-primary/25 bg-[#16161A] px-4 py-3.5 focus-within:border-primary/40">
+                  <div className="flex items-center rounded-xl border border-primary/25 bg-card px-4 py-3.5 focus-within:border-primary/40">
                     <input
                       type="text"
                       value={title}
                       onChange={(event) => setTitle(event.target.value)}
-                      className="min-w-0 flex-1 bg-transparent text-sm text-[#FAFAF9] placeholder:text-[#4A4A50] focus:outline-none"
+                      className="min-w-0 flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
                       placeholder="feat: polish the workspace shell"
                       required
                     />
-                    <span className="ml-3 shrink-0 text-xs font-medium text-[#4A4A50]">{title.length}/72</span>
+                    <span className="ml-3 shrink-0 text-xs font-medium text-muted-foreground">{title.length}/72</span>
                   </div>
                 </div>
 
                 {/* Description */}
                 <div className="space-y-2">
-                  <label className="text-[13px] font-medium text-[#6B6B70]">Description</label>
+                  <label className="text-[13px] font-medium text-muted-foreground">Description</label>
                   <textarea
                     value={body}
                     onChange={(event) => setBody(event.target.value)}
-                    className="h-[120px] w-full rounded-xl border border-[#2A2A2E] bg-[#16161A] px-4 py-3.5 text-sm text-[#FAFAF9] placeholder:text-[#4A4A50] resize-none focus:outline-none focus:border-[#3A3A3E]"
+                    className="h-[120px] w-full rounded-xl border border-input bg-card px-4 py-3.5 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:border-primary/40"
                     placeholder="Summarize what changed..."
                   />
-                  <div className="flex items-center gap-2">
-                    <span className="flex h-7 w-7 items-center justify-center rounded-md bg-[#16161A] text-[#6B6B70]">
-                      <Bold className="h-3.5 w-3.5" />
-                    </span>
-                    <span className="flex h-7 w-7 items-center justify-center rounded-md bg-[#16161A] text-[#6B6B70]">
-                      <Italic className="h-3.5 w-3.5" />
-                    </span>
-                    <span className="flex h-7 w-7 items-center justify-center rounded-md bg-[#16161A] text-[#6B6B70]">
-                      <Code className="h-3.5 w-3.5" />
-                    </span>
-                    <span className="flex h-7 w-7 items-center justify-center rounded-md bg-[#16161A] text-[#6B6B70]">
-                      <LinkIcon className="h-3.5 w-3.5" />
-                    </span>
-                    <span className="text-[11px] font-medium text-[#4A4A50]">Supports Markdown</span>
-                  </div>
+                  <p className="text-[11px] font-medium text-muted-foreground">Supports Markdown</p>
                 </div>
               </div>
 
               {/* Bottom Section */}
               <div className="space-y-5 px-6 pb-6">
-                {/* Metadata Row — Reviewers & Labels */}
-                <div className="flex gap-4">
-                  <div className="flex-1 space-y-2">
-                    <label className="text-[13px] font-medium text-[#6B6B70]">Reviewers</label>
-                    <div className="flex h-11 items-center gap-2.5 rounded-xl border border-[#1E1E22] bg-[#111115] px-3.5">
-                      <UserPlus className="h-4 w-4 text-[#4A4A50]" />
-                      <span className="text-[13px] text-[#4A4A50]">Add reviewers</span>
-                      <div className="ml-auto flex -space-x-1.5">
-                        {[0, 1, 2].map((i) => (
-                          <div key={i} className="h-[22px] w-[22px] rounded-full border border-[#2A2A2E] bg-[#1E1E22]" />
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex-1 space-y-2">
-                    <label className="text-[13px] font-medium text-[#6B6B70]">Labels</label>
-                    <div className="flex h-11 items-center gap-2.5 rounded-xl border border-[#1E1E22] bg-[#111115] px-3.5">
-                      <Tag className="h-4 w-4 text-[#4A4A50]" />
-                      <span className="text-[13px] text-[#4A4A50]">Add labels</span>
-                    </div>
-                  </div>
-                </div>
 
                 {/* Files Changed */}
                 <div className="space-y-2.5">
                   <div className="flex items-center gap-2">
-                    <label className="text-[13px] font-medium text-[#6B6B70]">Files changed</label>
-                    <span className="rounded-lg bg-[#1E1E22] px-2 py-0.5 text-[11px] font-medium text-[#8B8B90]">
+                    <label className="text-[13px] font-medium text-muted-foreground">Files changed</label>
+                    <span className="rounded-lg bg-foreground/[0.06] px-2 py-0.5 text-[11px] font-medium text-[hsl(var(--text-tertiary))]">
                       {files.length}
                     </span>
                     <div className="flex-1" />
-                    {files.filter((f) => f.action !== 'delete').length > 0 && (
-                      <span className="font-mono text-[11px] font-medium text-[#32D583]">
-                        +{files.filter((f) => f.action !== 'delete').length}
-                      </span>
-                    )}
+                    <span className="font-mono text-[11px] font-medium">
+                      <span className="text-[hsl(var(--gh-open))]">+{lineTotals.added}</span>{' '}
+                      <span className="text-destructive">−{lineTotals.removed}</span>
+                    </span>
                   </div>
-                  <div className="max-h-44 overflow-y-auto rounded-xl border border-[#1E1E22] bg-[#111115]">
+                  <div className="max-h-44 overflow-y-auto rounded-xl border border-border bg-background">
                     {files.map((file) => (
                       <div
                         key={file.path}
-                        className="flex h-[42px] items-center gap-3 border-b border-[#1A1A1E] px-4 last:border-b-0"
+                        className="flex h-[42px] items-center gap-3 border-b border-border px-4 last:border-b-0"
                       >
-                        <FileCode className="h-3.5 w-3.5 shrink-0 text-[#4A4A50]" />
-                        <span className="min-w-0 truncate font-mono text-xs text-[#DDDDDDB3]">{file.path}</span>
+                        <FileCode className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="min-w-0 truncate font-mono text-xs text-[hsl(var(--text-secondary))]">{file.path}</span>
                         <div className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-[11px] font-medium">
                           {file.action === 'delete' ? (
-                            <span className="text-[#F87171]">deleted</span>
+                            <span className="text-destructive">deleted</span>
                           ) : (
                             <>
-                              <span className="text-[#32D583]">
-                                +{file.content.split('\n').length}
-                              </span>
-                              {file.originalContent != null && (
-                                <span className="text-[#F87171]">
-                                  -{file.originalContent.split('\n').length}
-                                </span>
+                              <span className="text-[hsl(var(--gh-open))]">+{fileDeltas.get(file.path)?.added ?? 0}</span>
+                              {(fileDeltas.get(file.path)?.removed ?? 0) > 0 && (
+                                <span className="text-destructive">−{fileDeltas.get(file.path)?.removed}</span>
                               )}
                             </>
                           )}
@@ -905,14 +866,14 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
                 </div>
 
                 {/* Pre-submit Checks — unified card for progress + results */}
-                <div className="rounded-xl border border-[#1E1E22] bg-[#111115]">
+                <div className="rounded-xl border border-border bg-background">
                   <div className="flex items-center gap-3.5 p-4">
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[#32D58312]">
-                      <ShieldCheck className="h-[18px] w-[18px] text-[#32D583]" />
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[hsl(var(--gh-open)/0.1)]">
+                      <ShieldCheck className="h-[18px] w-[18px] text-[hsl(var(--gh-open))]" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="text-[13px] font-semibold text-[#DDDDDDB3]">Pre-submit checks</div>
-                      <p className="text-xs text-[#4A4A50]">
+                      <div className="text-[13px] font-semibold text-[hsl(var(--text-secondary))]">Pre-submit checks</div>
+                      <p className="text-xs text-muted-foreground">
                         {verificationLoading
                           ? activeStepLabel || 'Starting verification...'
                           : verificationResult ? verificationHeadline : 'Run lint, tests & review before opening'}
@@ -922,7 +883,7 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
                       type="button"
                       onClick={() => void handleRunVerification()}
                       disabled={verificationLoading || files.length === 0}
-                      className="inline-flex shrink-0 items-center justify-center rounded-lg border border-[#2A2A2E] bg-[#1E1E22] px-3.5 py-[7px] text-xs font-medium text-[#DDDDDDB3] transition-colors hover:bg-[#2A2A2E] disabled:cursor-not-allowed disabled:opacity-40"
+                      className="inline-flex shrink-0 items-center justify-center rounded-lg border border-input bg-foreground/[0.06] px-3.5 py-[7px] text-xs font-medium text-[hsl(var(--text-secondary))] transition-colors hover:bg-foreground/[0.05] disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       {verificationLoading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
                       {verificationResult ? 'Re-run checks' : 'Run checks'}
@@ -932,17 +893,17 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
                   {/* Inline progress steps while loading */}
                   {verificationLoading && (
                     <div role="status" aria-live="polite">
-                      <div className="border-t border-[#1E1E22] px-4 py-2.5">
+                      <div className="border-t border-border px-4 py-2.5">
                         <div className="mb-1 flex items-center justify-between text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
                           <span>{activeVerificationDisplay}</span>
                           <span className="font-mono text-foreground/85">{Math.round(verificationProgress)}%</span>
                         </div>
                         <Progress
                           value={verificationProgress}
-                          className="h-1.5 bg-background/70 [&>div]:bg-[linear-gradient(90deg,rgba(245,208,84,0.95),rgba(16,185,129,0.95))]"
+                          className="h-1.5 bg-background/70 [&>div]:bg-primary"
                         />
                       </div>
-                      <div className="divide-y divide-[#1E1E22] border-t border-[#1E1E22]">
+                      <div className="divide-y divide-border border-t border-border">
                         {VERIFICATION_DISPLAY_STEPS.map((displayStep) => {
                           const isActive = activeStep === displayStep.step;
                           const isComplete = completedSteps.has(displayStep.step);
@@ -954,20 +915,20 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
                             >
                               <div className="flex items-center gap-2">
                                 {isActive ? (
-                                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-amber-300" />
+                                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-amber-700 dark:text-amber-300" />
                                 ) : isComplete ? (
-                                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+                                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-700 dark:text-emerald-400" />
                                 ) : (
-                                  <div className="h-4 w-4 shrink-0 rounded-full border border-[#2A2A2E]" />
+                                  <div className="h-4 w-4 shrink-0 rounded-full border border-input" />
                                 )}
                                 <span className={cn(
                                   'font-medium',
-                                  isActive ? 'text-foreground' : isComplete ? 'text-foreground/80' : 'text-[#4A4A50]',
+                                  isActive ? 'text-foreground' : isComplete ? 'text-foreground/80' : 'text-muted-foreground',
                                 )}>
                                   {displayStep.label}
                                 </span>
                               </div>
-                              <span className="text-xs text-[#4A4A50]">
+                              <span className="text-xs text-muted-foreground">
                                 {isActive ? 'running' : isComplete ? 'done' : ''}
                               </span>
                             </div>
@@ -979,24 +940,24 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
 
                   {/* Error banner */}
                   {verificationError && (
-                    <div className="border-t border-[#1E1E22] px-3 py-2 text-sm text-rose-300">
+                    <div className="border-t border-border px-3 py-2 text-sm text-rose-700 dark:text-rose-300">
                       {verificationError}
                     </div>
                   )}
 
                   {/* Results — rendered inside the same card */}
                   {verificationResult && (
-                    <div className="border-t border-[#1E1E22]">
+                    <div className="border-t border-border">
                       <div
                         className={cn(
                           'px-3 py-2 text-sm',
                           verificationResult.review.status === 'skipped'
-                            ? 'bg-amber-500/10 text-amber-100'
+                            ? 'bg-amber-500/10 text-amber-800 dark:text-amber-100'
                             : verificationResult.summary.status === 'failed'
-                              ? 'bg-rose-500/10 text-rose-200'
+                              ? 'bg-rose-500/10 text-rose-800 dark:text-rose-200'
                               : verificationResult.summary.status === 'warning'
-                                ? 'bg-amber-500/10 text-amber-100'
-                                : 'bg-emerald-500/10 text-emerald-200',
+                                ? 'bg-amber-500/10 text-amber-800 dark:text-amber-100'
+                                : 'bg-emerald-500/10 text-emerald-800 dark:text-emerald-200',
                         )}
                       >
                         {verificationResult.review.status === 'skipped' && (
@@ -1005,7 +966,7 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
                         {verificationResult.review.summary}
                       </div>
 
-                      <div className="divide-y divide-[#1E1E22]">
+                      <div className="divide-y divide-border">
                         {verificationResult.commands.map((command) => (
                           <details
                             key={`${command.name}-${command.command}`}
@@ -1015,12 +976,12 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
                                 {getStatusIcon(command.status === 'skipped' ? 'pending' : command.status === 'passed' ? 'success' : 'failure')}
                                 <span className="font-medium">{command.name}</span>
                               </div>
-                              <span className="text-xs text-[#4A4A50]">{command.command}</span>
+                              <span className="text-xs text-muted-foreground">{command.command}</span>
                             </summary>
-                            <div className="border-t border-[#1E1E22] px-3 py-2 text-xs text-[#6B6B70]">
+                            <div className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
                               <div>{command.summary}</div>
                               {command.output ? (
-                                <pre className="mt-2 max-h-40 overflow-auto rounded-lg border border-[#1E1E22] bg-[#0B0B0E] p-2 text-[11px] leading-relaxed text-[#DDDDDDB3]">
+                                <pre className="mt-2 max-h-40 overflow-auto rounded-lg border border-border bg-background p-2 text-[11px] leading-relaxed text-[hsl(var(--text-secondary))]">
                                   {command.output}
                                 </pre>
                               ) : null}
@@ -1030,24 +991,24 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
                       </div>
 
                       {verificationResult.review.findings.length > 0 ? (
-                        <div className="divide-y divide-[#1E1E22] border-t border-[#1E1E22]">
+                        <div className="divide-y divide-border border-t border-border">
                           {verificationResult.review.findings.map((finding, index) => (
                             <div
                               key={`${finding.title}-${index}`}
                               className="px-3 py-2 text-sm"
                             >
                               <div className="flex items-center gap-2">
-                                <span className="rounded-lg border border-[#1E1E22] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[#6B6B70]">
+                                <span className="rounded-lg border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
                                   {finding.severity}
                                 </span>
-                                <span className="font-medium text-[#FAFAF9]">{finding.title}</span>
+                                <span className="font-medium text-foreground">{finding.title}</span>
                               </div>
-                              <p className="mt-1.5 text-[#6B6B70]">{finding.summary}</p>
+                              <p className="mt-1.5 text-muted-foreground">{finding.summary}</p>
                               {finding.file ? (
-                                <div className="mt-1.5 font-mono text-xs text-[#4A4A50]">{finding.file}</div>
+                                <div className="mt-1.5 font-mono text-xs text-muted-foreground">{finding.file}</div>
                               ) : null}
                               {finding.suggestion ? (
-                                <p className="mt-1.5 text-xs text-[#4A4A50]">{finding.suggestion}</p>
+                                <p className="mt-1.5 text-xs text-muted-foreground">{finding.suggestion}</p>
                               ) : null}
                             </div>
                           ))}
@@ -1058,14 +1019,14 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
                 </div>
 
                 {error && (
-                  <div className="mt-4 flex items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
+                  <div className="mt-4 flex items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-700 dark:text-rose-300">
                     <AlertCircle className="h-4 w-4 shrink-0" />
                     <span>{error}</span>
                   </div>
                 )}
 
                 {!verificationComplete && (
-                  <div className="mt-4 flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                  <div className="mt-4 flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-100">
                     <ShieldAlert className="h-4 w-4 shrink-0" />
                     <span>Run review &amp; checks before creating the pull request.</span>
                   </div>
@@ -1074,14 +1035,14 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
                 {/* Footer — inside scroll area */}
                 <div
                   data-testid="create-pr-modal-footer"
-                  className="flex h-16 items-center justify-between border-t border-[#1A1A1E] pt-5"
+                  className="flex h-16 items-center justify-between border-t border-border pt-5"
                 >
-                  <label className="flex items-center gap-2 text-[13px] text-[#6B6B70]">
+                  <label className="flex items-center gap-2 text-[13px] text-muted-foreground">
                     <input
                       type="checkbox"
                       checked={isDraft}
                       onChange={(event) => setIsDraft(event.target.checked)}
-                      className="h-4 w-4 rounded border-[#2A2A2E] bg-[#111115] accent-primary"
+                      className="h-4 w-4 rounded border-input bg-background accent-primary"
                     />
                     Create as draft
                   </label>
@@ -1089,14 +1050,14 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
                     <button
                       type="button"
                       onClick={onClose}
-                      className="rounded-[10px] border border-[#1E1E22] px-5 py-[9px] text-sm font-medium text-[#6B6B70] transition-colors hover:bg-[#16161A] hover:text-[#FAFAF9]"
+                      className="rounded-[10px] border border-border px-5 py-[9px] text-sm font-medium text-muted-foreground transition-colors hover:bg-foreground/[0.05] hover:text-foreground"
                     >
                       Cancel
                     </button>
                     <button
                       type="submit"
                       disabled={createDisabled}
-                      className="inline-flex items-center gap-2 rounded-[10px] bg-primary px-6 py-[9px] text-sm font-semibold text-[#0B0B0E] shadow-[0_6px_20px_rgba(255,132,0,0.25)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
+                      className="inline-flex items-center gap-2 rounded-[10px] bg-primary px-6 py-[9px] text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <GitPullRequest className="h-4 w-4" />}
                       {createLabel}
@@ -1107,23 +1068,23 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
             </form>
           ) : (
             <div className="space-y-5 p-6">
-              <div className="rounded-xl border border-[#1E1E22] bg-[#111115] p-5">
+              <div className="rounded-xl border border-border bg-background p-5">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div>
-                    <div className="flex items-center gap-2 text-xs text-[#6B6B70]">
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
                       Pull Request #{createdPr.number}
-                      <span className="rounded-lg border border-[#1E1E22] px-2 py-0.5 text-[10px] text-[#DDDDDDB3]">
+                      <span className="rounded-lg border border-border px-2 py-0.5 text-[10px] text-[hsl(var(--text-secondary))]">
                         {prStatus?.pr.merged ? 'Merged' : createdPr.state}
                       </span>
                     </div>
-                    <h3 className="mt-2 text-lg font-semibold tracking-tight text-[#FAFAF9]">{createdPr.title}</h3>
-                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[#6B6B70]">
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-[#2A2A2E] bg-[#16161A] px-3 py-1.5 font-mono text-[#FAFAF9]">
-                        <GitBranch className="h-3 w-3 text-[#6B6B70]" />
+                    <h3 className="mt-2 text-lg font-semibold tracking-tight text-foreground">{createdPr.title}</h3>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-input bg-card px-3 py-1.5 font-mono text-foreground">
+                        <GitBranch className="h-3 w-3 text-muted-foreground" />
                         {createdPr.headBranch} → {createdPr.baseBranch}
                       </span>
                       {prStatus?.pr.mergeableState && (
-                        <span className="rounded-full border border-[#2A2A2E] bg-[#16161A] px-3 py-1.5 capitalize text-[#DDDDDDB3]">
+                        <span className="rounded-full border border-input bg-card px-3 py-1.5 capitalize text-[hsl(var(--text-secondary))]">
                           merge state: {prStatus.pr.mergeableState.replace(/_/g, ' ')}
                         </span>
                       )}
@@ -1134,7 +1095,7 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
                     <button
                       type="button"
                       onClick={() => void loadPullRequestStatus()}
-                      className="inline-flex items-center gap-2 rounded-[10px] border border-[#1E1E22] px-3 py-2 text-sm font-medium text-[#6B6B70] transition-colors hover:bg-[#16161A] hover:text-[#FAFAF9]"
+                      className="inline-flex items-center gap-2 rounded-[10px] border border-border px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-foreground/[0.05] hover:text-foreground"
                     >
                       <RefreshCw className={cn('h-4 w-4', statusLoading && 'animate-spin')} />
                       Refresh
@@ -1143,7 +1104,7 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
                       href={createdPr.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-2 rounded-[10px] border border-[#1E1E22] px-3 py-2 text-sm font-medium text-[#6B6B70] transition-colors hover:bg-[#16161A] hover:text-[#FAFAF9]"
+                      className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-[10px] border border-border px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-foreground/[0.05] hover:text-foreground"
                     >
                       View on GitHub
                       <ExternalLink className="h-4 w-4" />
@@ -1154,27 +1115,27 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
 
               <div className="grid gap-5">
                 <div className="space-y-4">
-                  <section className="rounded-xl border border-[#1E1E22] bg-[#111115] p-5">
+                  <section className="rounded-xl border border-border bg-background p-5">
                     <div className="flex items-center justify-between gap-4">
                       <div className="flex items-center gap-3">
                         {prStatus?.checks.overall === 'failing' ? (
-                          <ShieldAlert className="h-5 w-5 text-rose-400" />
+                          <ShieldAlert className="h-5 w-5 text-rose-700 dark:text-rose-400" />
                         ) : prStatus?.checks.overall === 'passing' ? (
-                          <ShieldCheck className="h-5 w-5 text-emerald-400" />
+                          <ShieldCheck className="h-5 w-5 text-emerald-700 dark:text-emerald-400" />
                         ) : (
-                          <TimerReset className="h-5 w-5 text-amber-300" />
+                          <TimerReset className="h-5 w-5 text-amber-700 dark:text-amber-300" />
                         )}
                         <div>
-                          <div className="text-[13px] font-medium text-[#6B6B70]">
+                          <div className="text-[13px] font-medium text-muted-foreground">
                             Status Checks
                           </div>
-                          <div className="mt-1 text-lg font-semibold text-[#FAFAF9]">
+                          <div className="mt-1 text-lg font-semibold text-foreground">
                             {prStatus ? getChecksHeadline(prStatus.checks.summary) : 'Loading checks…'}
                           </div>
                         </div>
                       </div>
                       {prStatus && (
-                        <div className="rounded-lg border border-[#1E1E22] px-3 py-1 text-xs text-[#6B6B70]">
+                        <div className="rounded-lg border border-border px-3 py-1 text-xs text-muted-foreground">
                           {prStatus.checks.summary.passed} passed
                           {prStatus.checks.summary.failed > 0 ? ` · ${prStatus.checks.summary.failed} failed` : ''}
                           {prStatus.checks.summary.pending > 0 ? ` · ${prStatus.checks.summary.pending} pending` : ''}
@@ -1183,7 +1144,7 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
                     </div>
 
                     {statusError && (
-                      <div className="mt-4 flex items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
+                      <div className="mt-4 flex items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-700 dark:text-rose-300">
                         <AlertCircle className="h-4 w-4 shrink-0" />
                         <span>{statusError}</span>
                       </div>
@@ -1191,7 +1152,7 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
 
                     <div className="mt-4 space-y-3">
                       {statusLoading && !prStatus ? (
-                        <div className="flex items-center gap-2 rounded-xl border border-[#1E1E22] bg-[#0B0B0E] px-4 py-3 text-sm text-[#6B6B70]">
+                        <div className="flex items-center gap-2 rounded-xl border border-border bg-background px-4 py-3 text-sm text-muted-foreground">
                           <Loader2 className="h-4 w-4 animate-spin" />
                           Pulling latest checks from GitHub…
                         </div>
@@ -1200,20 +1161,20 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
                           <details
                             key={provider.name}
                             open
-                            className="overflow-hidden rounded-xl border border-[#1E1E22] bg-[#0B0B0E]"
+                            className="overflow-hidden rounded-xl border border-border bg-background"
                           >
                             <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm">
                               <div className="flex items-center gap-3">
                                 {provider.failed > 0 ? (
-                                  <XCircle className="h-4 w-4 text-rose-400" />
+                                  <XCircle className="h-4 w-4 text-rose-700 dark:text-rose-400" />
                                 ) : provider.pending > 0 ? (
-                                  <Loader2 className="h-4 w-4 animate-spin text-amber-300" />
+                                  <Loader2 className="h-4 w-4 animate-spin text-amber-700 dark:text-amber-300" />
                                 ) : (
-                                  <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                                  <CheckCircle2 className="h-4 w-4 text-emerald-700 dark:text-emerald-400" />
                                 )}
-                                <span className="font-medium text-[#FAFAF9]">{provider.name}</span>
+                                <span className="font-medium text-foreground">{provider.name}</span>
                               </div>
-                              <span className="text-xs text-[#6B6B70]">
+                              <span className="text-xs text-muted-foreground">
                                 {provider.failed > 0
                                   ? `${provider.failed} failed`
                                   : provider.pending > 0
@@ -1221,18 +1182,18 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
                                     : `${provider.passed}/${provider.total} passed`}
                               </span>
                             </summary>
-                            <div className="border-t border-[#1E1E22] px-4 py-2">
+                            <div className="border-t border-border px-4 py-2">
                               {provider.checks.map((check) => (
                                 <div
                                   key={`${provider.name}-${check.name}`}
-                                  className="flex items-start justify-between gap-3 border-b border-[#1A1A1E] py-2 text-sm last:border-b-0"
+                                  className="flex items-start justify-between gap-3 border-b border-border py-2 text-sm last:border-b-0"
                                 >
                                   <div className="flex min-w-0 items-start gap-3">
                                     {getStatusIcon(check.status)}
                                     <div className="min-w-0">
-                                      <div className="truncate font-medium text-[#FAFAF9]">{check.name}</div>
+                                      <div className="truncate font-medium text-foreground">{check.name}</div>
                                       {check.summary && (
-                                        <div className="mt-0.5 text-xs text-[#4A4A50]">{check.summary}</div>
+                                        <div className="mt-0.5 text-xs text-muted-foreground">{check.summary}</div>
                                       )}
                                     </div>
                                   </div>
@@ -1241,7 +1202,7 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
                                       href={check.detailsUrl}
                                       target="_blank"
                                       rel="noopener noreferrer"
-                                      className="shrink-0 rounded-lg border border-[#1E1E22] px-2 py-1 text-[11px] text-[#6B6B70] transition-colors hover:bg-[#16161A] hover:text-[#FAFAF9]"
+                                      className="shrink-0 rounded-lg border border-border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-foreground/[0.05] hover:text-foreground"
                                     >
                                       Open
                                     </a>
@@ -1252,7 +1213,7 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
                           </details>
                         ))
                       ) : (
-                        <div className="rounded-xl border border-[#1E1E22] bg-[#0B0B0E] px-4 py-3 text-sm text-[#6B6B70]">
+                        <div className="rounded-xl border border-border bg-background px-4 py-3 text-sm text-muted-foreground">
                           No checks are attached yet. Refresh after your GitHub providers finish reporting.
                         </div>
                       )}
@@ -1261,20 +1222,20 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
                 </div>
 
                 <div className="space-y-4">
-                  <section className="rounded-xl border border-[#1E1E22] bg-[#111115] p-5">
-                    <div className="text-[13px] font-medium text-[#6B6B70]">
+                  <section className="rounded-xl border border-border bg-background p-5">
+                    <div className="text-[13px] font-medium text-muted-foreground">
                       Merge Controls
                     </div>
                     <div className="mt-4 space-y-4">
                       <div className="grid grid-cols-2 gap-4">
                         <div>
-                          <label className="mb-2 block text-[13px] font-medium text-[#6B6B70]">
+                          <label className="mb-2 block text-[13px] font-medium text-muted-foreground">
                             Merge strategy
                           </label>
                           <select
                             value={mergeMethod}
                             onChange={(event) => setMergeMethod(event.target.value as MergeMethod)}
-                            className="w-full rounded-xl border border-[#1E1E22] bg-[#16161A] px-3 py-3 text-sm text-[#FAFAF9] focus:outline-none focus:border-[#2A2A2E]"
+                            className="w-full rounded-xl border border-border bg-card px-3 py-3 text-sm text-foreground focus:outline-none focus:border-primary/40"
                           >
                             <option value="squash">Squash and merge</option>
                             <option value="merge">Create merge commit</option>
@@ -1283,49 +1244,49 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
                         </div>
 
                         <div>
-                          <label className="mb-2 block text-[13px] font-medium text-[#6B6B70]">
+                          <label className="mb-2 block text-[13px] font-medium text-muted-foreground">
                             Commit message
                           </label>
                           <input
                             type="text"
                             value={mergeTitle}
                             onChange={(event) => setMergeTitle(event.target.value)}
-                            className="w-full rounded-xl border border-[#1E1E22] bg-[#16161A] px-3 py-3 text-sm text-[#FAFAF9] focus:outline-none focus:border-[#2A2A2E]"
+                            className="w-full rounded-xl border border-border bg-card px-3 py-3 text-sm text-foreground focus:outline-none focus:border-primary/40"
                           />
                         </div>
                       </div>
 
                       <div>
-                        <label className="mb-2 block text-[13px] font-medium text-[#6B6B70]">
+                        <label className="mb-2 block text-[13px] font-medium text-muted-foreground">
                           Description
                         </label>
                         <textarea
                           value={mergeBody}
                           onChange={(event) => setMergeBody(event.target.value)}
                           rows={5}
-                          className="w-full rounded-xl border border-[#1E1E22] bg-[#16161A] px-3 py-3 text-sm text-[#FAFAF9] placeholder:text-[#4A4A50] resize-none focus:outline-none focus:border-[#2A2A2E]"
+                          className="w-full rounded-xl border border-border bg-card px-3 py-3 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:border-primary/40"
                           placeholder="Add context for the final merge commit."
                         />
                       </div>
 
                       {mergeBlockedReason ? (
-                        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-100">
                           {mergeBlockedReason}
                         </div>
                       ) : (
-                        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+                        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-800 dark:text-emerald-200">
                           Checks are clear. This pull request is ready to merge.
                         </div>
                       )}
 
                       {mergeError && (
-                        <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
+                        <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-700 dark:text-rose-300">
                           {mergeError}
                         </div>
                       )}
 
                       {mergeSuccess && (
-                        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+                        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-800 dark:text-emerald-200">
                           {mergeSuccess}
                         </div>
                       )}
@@ -1339,11 +1300,11 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
 
         {/* Footer — only for post-creation (merge) view */}
         {createdPr && (
-          <div className="flex h-16 items-center justify-between border-t border-[#1A1A1E] px-6">
+          <div className="flex h-16 items-center justify-between border-t border-border px-6">
             <button
               type="button"
               onClick={onClose}
-              className="rounded-[10px] border border-[#1E1E22] px-5 py-[9px] text-sm font-medium text-[#6B6B70] transition-colors hover:bg-[#16161A] hover:text-[#FAFAF9]"
+              className="rounded-[10px] border border-border px-5 py-[9px] text-sm font-medium text-muted-foreground transition-colors hover:bg-foreground/[0.05] hover:text-foreground"
             >
               Close
             </button>
@@ -1354,8 +1315,8 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
               className={cn(
                 'inline-flex items-center gap-2 rounded-[10px] px-5 py-[9px] text-sm font-semibold transition-opacity',
                 mergeDisabled
-                  ? 'cursor-not-allowed border border-[#1E1E22] bg-[#16161A] text-[#4A4A50]'
-                  : 'bg-primary text-[#0B0B0E] shadow-[0_6px_20px_rgba(255,132,0,0.25)] hover:opacity-90',
+                  ? 'cursor-not-allowed border border-border bg-card text-muted-foreground'
+                  : 'bg-primary text-primary-foreground hover:opacity-90',
               )}
             >
               {mergeLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <GitPullRequest className="h-4 w-4" />}

@@ -400,6 +400,35 @@ describe('CreatePRModal', () => {
     expect(within(scrollRegion).getByRole('button', { name: /^create pr$/i })).toBeInTheDocument();
   });
 
+  it('shows real line deltas and no placeholder controls', () => {
+    render(
+      <CreatePRModal
+        isOpen
+        onClose={() => {}}
+        owner="octo"
+        repo="cloudchat"
+        baseBranch="main"
+        files={[
+          { path: 'src/edit.ts', action: 'edit', originalContent: 'a\nb', content: 'a\nc\nd' },
+          { path: 'src/new.ts', action: 'create', content: 'x\ny' },
+          { path: 'src/gone.ts', action: 'delete', content: '', originalContent: 'z' },
+        ]}
+      />,
+    );
+
+    // Totals are line diffs (+2/-1 edit, +2 create, -1 delete), not file counts.
+    expect(screen.getAllByText('+4')).toHaveLength(2);
+    expect(screen.getAllByText('−2')).toHaveLength(2);
+    const editRow = screen.getByText('src/edit.ts').parentElement as HTMLElement;
+    expect(within(editRow).getByText('+2')).toBeInTheDocument();
+    expect(within(editRow).getByText('−1')).toBeInTheDocument();
+
+    // Nothing that looks interactive or authoritative without being wired up.
+    expect(screen.queryByText('No conflicts')).toBeNull();
+    expect(screen.queryByText('Add reviewers')).toBeNull();
+    expect(screen.queryByText('Add labels')).toBeNull();
+  });
+
   it('merges the pull request from the modal once checks pass', async () => {
     let merged = false;
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
