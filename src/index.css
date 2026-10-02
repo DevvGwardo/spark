@@ -38,6 +38,13 @@
 
     --success: 152 100% 50%;
 
+    /* GitHub state hues for text and dots (issue/PR open, PR, draft, translate).
+       Light values are AA on white; dark values are AA on --background. */
+    --gh-open: 142 72% 29%;
+    --gh-blue: 221 83% 53%;
+    --gh-indigo: 243 75% 59%;
+    --gh-purple: 262 83% 58%;
+
     --radius: 0.5rem;
 
     --sidebar-bg: 220 10% 97%;
@@ -104,6 +111,11 @@
     --sidebar-active: 0 0% 11.8%;
 
     --success: 152 100% 50%;
+
+    --gh-open: 151 65% 52%;
+    --gh-blue: 213 94% 68%;
+    --gh-indigo: 234 89% 74%;
+    --gh-purple: 255 92% 76%;
 
     --code-bg: 0 0% 10%;
 
