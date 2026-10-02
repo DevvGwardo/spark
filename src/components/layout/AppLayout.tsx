@@ -508,7 +508,11 @@ const headerSecondaryLabel = selectedCronJobId
       )}
       {!isSetupComplete && <Suspense fallback={<LazyFallback />}><ErrorBoundary><SetupWizard /></ErrorBoundary></Suspense>}
       <Suspense fallback={<LazyFallback />}><ErrorBoundary><SettingsModal /></ErrorBoundary></Suspense>
-      <CommandPalette open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen} />
+      <CommandPalette
+        open={commandPaletteOpen}
+        onOpenChange={setCommandPaletteOpen}
+        onOpenRemoteAccess={() => setRemoteAccessOpen(true)}
+      />
       <RemoteAccessModal open={remoteAccessOpen} onOpenChange={setRemoteAccessOpen} />
       <Suspense fallback={<LazyFallback />}><ErrorBoundary><RepoIssueBrowser isOpen={repoBrowserOpen} onClose={() => setRepoBrowserOpen(false)} /></ErrorBoundary></Suspense>
       {prActiveRepo && (
