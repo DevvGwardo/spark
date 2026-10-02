@@ -2,9 +2,8 @@ import React, { Suspense, useEffect, useRef, useState, useMemo } from 'react';
 import { useShallow } from 'zustand/shallow';
 import {
   Plus, Trash2, Settings, Columns2, Pin, MessageSquare, Lock, Circle, GitFork,
-  ChevronRight, ChevronDown, Zap, Clock, House, BookOpen, Sparkles, BarChart3, User,
-  Network, Plug, MessagesSquare, Image, Download, Upload, Archive, ArchiveRestore,
-  Tag, X, Kanban, CornerDownLeft, ListChecks, Users, Server, Github, Repeat,
+  ChevronRight, ChevronDown, Network, Download, Upload, Archive, ArchiveRestore, Tag, X,
+  Users, Github,
 } from 'lucide-react';
 import { GhostIcon } from '@/components/chat/GhostIcon';
 import { useChatStore } from '@/stores/chat-store';
@@ -24,7 +23,6 @@ import { exportConversationJson, exportConversationMarkdown, importConversationJ
 import { toast } from '@/lib/toast';
 import { handleDeepLinkNavigate, handleQuickCapture } from '@/lib/deep-link';
 import { tagColor } from '@/lib/tag-color';
-import type { SubTab } from '@/stores/ui-store';
 import { relativeTime } from '@/lib/relative-time';
 import { useChatQueueStore } from '@/stores/chat-queue-store';
 import { useRoomStore } from '@/stores/room-store';
@@ -32,6 +30,7 @@ import { CreateRoomDialog } from '@/components/rooms/CreateRoomDialog';
 import { useProfilesStore } from '@/stores/profiles-store';
 import { ConversationSearchBar } from '@/components/sidebar/ConversationSearchBar';
 import { BridgeGate } from '@/components/hermes/BridgeGate';
+import { HERMES_SUB_TABS, PRIMARY_TAB_COUNT } from '@/components/sidebar/sidebar-sections';
 
 // Every sub-tab panel is code-split: the sidebar loads none of them until one
 // is actually opened.
@@ -108,43 +107,15 @@ function groupConversationsByProject(conversations: Conversation[]): Conversatio
   return groups;
 }
 
-// Ordered by how often each surface gets opened, not alphabetically. The first
-// `PRIMARY_TAB_COUNT` entries sit in the always-visible grid row; the rest are
-// behind the "More" toggle, which auto-expands when one of them is active.
-//
-// `logs`, `webhooks` and `pairing` used to live here, but every one of their
-// bridge endpoints returns 404, so each was a permanent error banner.
-const HERMES_SUB_TABS: Array<{ key: SubTab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
-  { key: 'threads', label: 'Threads', icon: MessageSquare },
-  { key: 'overview', label: 'Overview', icon: House },
-  { key: 'queue', label: 'Queue', icon: CornerDownLeft },
-  { key: 'kanban', label: 'Board', icon: Kanban },
-  { key: 'ralph', label: 'Ralph', icon: Repeat },
-  { key: 'chats', label: 'Sessions', icon: Zap },
-  { key: 'memories', label: 'Memories', icon: BookOpen },
-  { key: 'skills', label: 'Skills', icon: Sparkles },
-  { key: 'cron', label: 'Cron', icon: Clock },
-  { key: 'profiles', label: 'Profiles', icon: User },
-  { key: 'rooms', label: 'Rooms', icon: MessagesSquare },
-  { key: 'teams', label: 'Teams', icon: Users },
-  { key: 'tasks', label: 'Tasks', icon: ListChecks },
-  { key: 'usage', label: 'Usage', icon: BarChart3 },
-  { key: 'mcp', label: 'MCP', icon: Plug },
-  { key: 'images', label: 'Images', icon: Image },
-  { key: 'system', label: 'System', icon: Server },
-];
-
-/**
- * Tabs shown before the "More" toggle. Three plus the toggle fills one row of
- * the 4-column grid exactly; four would strand the toggle alone on a second row.
- */
-const PRIMARY_TAB_COUNT = 3;
 
 /** Shared chrome for every button in the sidebar's top action bar. */
 const TOOLBAR_BUTTON =
   'inline-flex h-9 items-center justify-center rounded-[8px] border border-[hsl(var(--border))] ' +
   'bg-[hsl(var(--card))] text-[13px] text-foreground transition-colors duration-150 ' +
   'hover:bg-[hsl(var(--accent))]';
+
+/** Square icon-only variant. Without a fixed width these collapse to the icon. */
+const TOOLBAR_ICON_BUTTON = `${TOOLBAR_BUTTON} w-9 shrink-0 text-muted-foreground hover:text-foreground`;
 
 export const ChatSidebar: React.FC = () => {
   const {
@@ -549,7 +520,7 @@ export const ChatSidebar: React.FC = () => {
           />
           <button
             onClick={() => importInputRef.current?.click()}
-            className={TOOLBAR_BUTTON}
+            className={TOOLBAR_ICON_BUTTON}
             title="Import conversation"
             aria-label="Import conversation"
             style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
@@ -558,7 +529,7 @@ export const ChatSidebar: React.FC = () => {
           </button>
           <button
             onClick={() => setRepoBrowserOpen(true)}
-            className={TOOLBAR_BUTTON}
+            className={TOOLBAR_ICON_BUTTON}
             title="Browse repo issues"
             aria-label="Browse repo issues"
             style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
@@ -567,7 +538,7 @@ export const ChatSidebar: React.FC = () => {
           </button>
           <button
             onClick={() => setSettingsOpen(true)}
-            className={TOOLBAR_BUTTON}
+            className={TOOLBAR_ICON_BUTTON}
             title="Settings"
             aria-label="Open settings"
             style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
