@@ -196,7 +196,7 @@ export function PortalSettingsPanel({
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className={cn(fieldLabelClass, 'flex items-center gap-1.5')}>
-            <Sparkles className="h-3.5 w-3.5 text-[#FF8400]/90" />
+            <Sparkles className="h-3.5 w-3.5 text-primary/90" />
             Nous Portal
           </p>
           <p className="mt-1 text-xs text-muted-foreground">

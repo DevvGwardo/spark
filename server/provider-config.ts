@@ -206,7 +206,24 @@ export const OPENAI_COMPATIBLE: Record<string, string> = {
   sambanova: 'https://api.sambanova.ai/v1',
   'z-ai': 'https://open.bigmodel.cn/api/paas/v4',
   hermes: getHermesBridgeV1(),
+  nub: `${getNubOrigin()}/api/v1`,
 };
+
+/**
+ * maiavm (hermes-deploy) origin behind the `nub` provider and the nub sign-in.
+ * Override with NUB_ORIGIN for staging or a local hermes-deploy.
+ */
+export function getNubOrigin(): string {
+  const raw = process.env.NUB_ORIGIN?.trim().replace(/\/+$/, '');
+  return raw || 'https://www.maiavm.com';
+}
+
+/**
+ * OpenAI-compatible providers whose models reliably accept tools, so they get
+ * the tool loop without a repo or local tools being active. Nub serves one
+ * pinned, tool-capable model.
+ */
+export const TOOL_CAPABLE_COMPATIBLE_PROVIDERS: ReadonlySet<string> = new Set(['nub']);
 
 export const ANTHROPIC_COMPATIBLE: Record<string, string> = {
   anthropic: 'https://api.anthropic.com/v1',
@@ -287,9 +304,11 @@ export const MODEL_DISCOVERY_URLS: Partial<Record<string, string>> = {
   sambanova: OPENAI_COMPATIBLE.sambanova,
   'z-ai': OPENAI_COMPATIBLE['z-ai'],
   hermes: OPENAI_COMPATIBLE.hermes,
+  nub: OPENAI_COMPATIBLE.nub,
 };
 
 export const VALIDATION_MODELS: Record<string, string> = {
+  nub: 'glm-5.3-flash',
   openai: 'gpt-5.4',
   anthropic: 'claude-opus-4-7',
   google: 'gemini-2.5-flash',
@@ -439,7 +458,10 @@ export function createProviderModel(
     fetch: createProviderFetch(provider),
   });
 
-  return openai(model) as unknown as LanguageModel;
+  // `openai(model)` means the Responses API (/responses). Only OpenAI serves
+  // it; every compatible endpoint (gateways, the Hermes bridge, nub) speaks
+  // Chat Completions, so they must use the chat model explicitly.
+  return (provider === 'openai' ? openai(model) : openai.chat(model)) as unknown as LanguageModel;
 }
 
 export interface ReviewProviderResolution {

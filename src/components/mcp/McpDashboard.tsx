@@ -36,7 +36,7 @@ import {
 } from '@/lib/hermes-api';
 import { cn } from '@/lib/utils';
 
-const ACCENT = '#ff8f3f';
+const ACCENT = 'hsl(var(--primary))';
 const POLL_MS = 2500;
 const LOG_POLL_MS = 3000;
 const CHART_MINUTES = 30;
@@ -67,7 +67,7 @@ function StatusDot({ kind }: { kind: StatusKind }) {
   return (
     <span className="relative inline-flex h-2 w-2 shrink-0">
       {kind === 'connecting' && (
-        <span className={cn('absolute inline-flex h-full w-full animate-ping rounded-full opacity-60', m.dot)} />
+        <span className={cn('absolute inline-flex h-full w-full animate-ping motion-reduce:animate-none rounded-full opacity-60', m.dot)} />
       )}
       <span className={cn('relative inline-flex h-2 w-2 rounded-full', m.dot, m.glow)} />
     </span>
@@ -236,7 +236,7 @@ function ServerCard({
   return (
     <button
       onClick={onClick}
-      className="group flex flex-col rounded-xl border border-border/30 bg-background/30 p-3.5 text-left transition-all hover:border-[#ff8f3f]/40 hover:bg-background/50"
+      className="group flex flex-col rounded-xl border border-border/30 bg-background/30 p-3.5 text-left transition-all hover:border-primary/40 hover:bg-background/50"
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
@@ -286,7 +286,7 @@ function ServerCard({
         <span className="truncate">
           {stats?.last_tool ? shortTool(stats.last_tool) : 'no activity yet'}
         </span>
-        <span className="inline-flex items-center gap-0.5 shrink-0 text-muted-foreground/35 transition-colors group-hover:text-[#ff8f3f]">
+        <span className="inline-flex items-center gap-0.5 shrink-0 text-muted-foreground/35 transition-colors group-hover:text-primary">
           {relTime(stats?.last_call_at, now)}
           <ChevronRight className="h-3 w-3" />
         </span>
@@ -506,7 +506,7 @@ function ServerDetail({
                 </span>
                 {logsLoading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground/50" />}
                 <span className="inline-flex items-center gap-1 text-[9px] text-emerald-400/70">
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" /> streaming
+                  <span className="h-1.5 w-1.5 animate-pulse motion-reduce:animate-none rounded-full bg-emerald-500" /> streaming
                 </span>
               </div>
               <label className="flex cursor-pointer items-center gap-1.5 text-[10px] text-muted-foreground/55">
@@ -514,7 +514,7 @@ function ServerDetail({
                   type="checkbox"
                   checked={autoScroll}
                   onChange={(e) => setAutoScroll(e.target.checked)}
-                  className="h-3 w-3 accent-[#ff8f3f]"
+                  className="h-3 w-3 accent-primary"
                 />
                 auto-scroll
               </label>
@@ -527,7 +527,7 @@ function ServerDetail({
               ) : (
                 logs.map((l, i) =>
                   l.marker ? (
-                    <div key={i} className="my-1 text-[10px] uppercase tracking-wide text-[#ff8f3f]/60">
+                    <div key={i} className="my-1 text-[10px] uppercase tracking-wide text-primary/60">
                       {l.line}
                     </div>
                   ) : (
@@ -652,7 +652,7 @@ export function McpDashboard() {
           <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-2 text-[11px] text-muted-foreground/50">
               <span className="inline-flex items-center gap-1.5">
-                <span className={cn('h-1.5 w-1.5 rounded-full', live ? 'animate-pulse bg-emerald-500' : 'bg-muted-foreground/40')} />
+                <span className={cn('h-1.5 w-1.5 rounded-full', live ? 'animate-pulse motion-reduce:animate-none bg-emerald-500' : 'bg-muted-foreground/40')} />
                 {live ? 'Live' : 'Paused'}
               </span>
               <span>·</span>

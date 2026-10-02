@@ -3,8 +3,10 @@ import { motion } from 'framer-motion';
 import { ArrowRight, ArrowLeft, Eye, EyeOff, Check, Loader2, KeyRound, Lock, ChevronDown, ChevronUp } from 'lucide-react';
 import { useSettingsStore, type Provider } from '@/stores/settings-store';
 import { PROVIDERS, PROVIDER_ORDER } from '@/lib/providers';
+import { NubSignIn } from '@/components/settings/NubSignIn';
 import { validateApiKey } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { openExternalUrl } from '@/lib/open-external';
 import { parseLocalProviderRuntimeError } from '@/lib/local-provider-runtime';
 import { detectHermesBridge, type HermesBridgeStatus } from '@/lib/detect-hermes';
 import {
@@ -45,6 +47,23 @@ const PROVIDER_HELP_URLS: Partial<Record<Provider, string>> = {
   hermes: 'openrouter.ai/keys',
 };
 
+/** Provider key page; opens in the system browser on desktop. */
+function ProviderKeyHelpLink({ url }: { url: string }) {
+  const href = `https://${url}`;
+  return (
+    <a
+      href={href}
+      onClick={(event) => {
+        event.preventDefault();
+        openExternalUrl(href);
+      }}
+      className="text-foreground/80 underline-offset-2 hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+    >
+      {url}
+    </a>
+  );
+}
+
 export const SetupWizard: React.FC = () => {
   const modalRef = React.useRef<HTMLDivElement>(null);
   const { isSetupComplete, completeSetup, setActiveProvider, updateProviderConfig } = useSettingsStore();
@@ -56,6 +75,7 @@ export const SetupWizard: React.FC = () => {
   const [selectedProvider, setSelectedProvider] = useState<Provider>('hermes');
   const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
+  const [continuingFromProvider, setContinuingFromProvider] = useState(false);
   const [selectedModel, setSelectedModel] = useState(PROVIDERS.hermes.defaultModel);
   const [validatedModels, setValidatedModels] = useState<string[]>([]);
   const [validating, setValidating] = useState(false);
@@ -95,6 +115,22 @@ export const SetupWizard: React.FC = () => {
     const t = setTimeout(measureHeight, 20);
     return () => clearTimeout(t);
   }, [step, measureHeight, showOtherProviders, showManualKeyEntry, oauthLoading, installingHermesAgent, installingBridgeDeps, startingHermesBridge, hermesInstallError, hermesInstallLog, localBridgeSetupStatus]);
+
+  // Steps can grow on their own (e.g. Nub sign-in moving to its waiting
+  // panel), which the state-driven measurements above don't see.
+  useEffect(() => {
+    if (typeof ResizeObserver === 'undefined') return;
+    const t = setTimeout(() => {
+      const inner = contentRef.current?.querySelector('[data-step-content]');
+      if (!inner) return;
+      observer.observe(inner);
+    }, 20);
+    const observer = new ResizeObserver(() => measureHeight());
+    return () => {
+      clearTimeout(t);
+      observer.disconnect();
+    };
+  }, [step, measureHeight]);
 
   const refreshLocalBridgeSetupStatus = useCallback(async () => {
     const bridge = window.electronAPI?.bridge;
@@ -352,6 +388,7 @@ export const SetupWizard: React.FC = () => {
 
     if (selectedProvider === 'openclaw') {
       void (async () => {
+        setContinuingFromProvider(true);
         try {
           const result = await validateApiKey('openclaw', '');
           if (!result.valid) {
@@ -366,6 +403,8 @@ export const SetupWizard: React.FC = () => {
           goToStep(2);
         } catch (error) {
           setValidationError(error instanceof Error ? error.message : 'Start the OpenClaw runtime before continuing.');
+        } finally {
+          setContinuingFromProvider(false);
         }
       })();
       return;
@@ -375,6 +414,7 @@ export const SetupWizard: React.FC = () => {
       void (async () => {
         if (providerContinueLockRef.current) return;
         providerContinueLockRef.current = true;
+        setContinuingFromProvider(true);
         try {
           const bridgeStatus = await detectHermesBridge();
           setHermesBridgeStatus(bridgeStatus);
@@ -417,6 +457,7 @@ export const SetupWizard: React.FC = () => {
           setValidationError('Failed to detect Hermes bridge status.');
         } finally {
           providerContinueLockRef.current = false;
+          setContinuingFromProvider(false);
         }
       })();
       return;
@@ -572,6 +613,14 @@ export const SetupWizard: React.FC = () => {
     }
   };
 
+  // Nub signs in instead of taking a pasted key; NubSignIn has already stored
+  // the key in provider settings by the time this runs.
+  const handleNubLinked = () => {
+    setApiKey(useSettingsStore.getState().providers.nub.apiKey);
+    setSelectedModel(PROVIDERS.nub.defaultModel);
+    goToStep(2);
+  };
+
   const handleComplete = () => {
     setActiveProvider(selectedProvider);
     updateProviderConfig(selectedProvider, {
@@ -602,7 +651,7 @@ export const SetupWizard: React.FC = () => {
                 ? 'hsl(var(--primary))'
                 : isCompleted
                   ? 'hsl(var(--primary) / 0.5)'
-                  : '#2A2A2A',
+                  : 'hsl(var(--border))',
             }}
             transition={SPRING}
           />
@@ -615,6 +664,7 @@ export const SetupWizard: React.FC = () => {
     const info = PROVIDERS[provider];
     return (
       <div
+        aria-hidden
         className="flex items-center justify-center rounded-lg font-semibold text-white flex-shrink-0"
         style={{ width: size, height: size, backgroundColor: info.iconColor, fontSize: size * 0.4 }}
       >
@@ -626,13 +676,13 @@ export const SetupWizard: React.FC = () => {
   // --- Step 0: Provider selection ---
   const renderProviderGrid = () => {
     const isHermesSelected = selectedProvider === 'hermes';
-    const others: Provider[] = [...PROVIDER_ORDER, 'openclaw'];
+    const others: Provider[] = [...PROVIDER_ORDER.filter((p) => p !== 'nub'), 'openclaw'];
 
     return (
       <div key="provider" data-step-content>
         <div className="flex items-baseline justify-between mb-5">
           <h2 className="text-[13px] font-semibold tracking-tight text-foreground">Get started</h2>
-          <button onClick={() => completeSetup()} className="text-[11px] text-[#555] hover:text-[#888] transition-colors">
+          <button onClick={() => completeSetup()} className="rounded px-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
             Skip
           </button>
         </div>
@@ -644,28 +694,24 @@ export const SetupWizard: React.FC = () => {
           whileTap={{ scale: 0.99 }}
           transition={SPRING}
           className={cn(
-            'w-full text-left rounded-2xl p-4 transition-colors duration-200 border',
+            'w-full text-left rounded-2xl p-4 transition-colors duration-150 border',
             isHermesSelected
-              ? 'bg-[#8B5CF6]/8 border-[#8B5CF6]/25 shadow-[0_0_30px_rgba(139,92,246,0.06)]'
-              : 'bg-[#161616] border-[#252525] hover:border-[#8B5CF6]/15 hover:bg-[#181818]'
+              ? 'bg-primary/[0.06] border-primary/40'
+              : 'bg-muted/50 border-border hover:border-foreground/20 hover:bg-muted'
           )}
         >
           <div className="flex items-center gap-3.5">
-            <motion.div
-              className="w-12 h-12 rounded-xl bg-gradient-to-br from-[#8B5CF6] to-[#6D28D9] flex items-center justify-center flex-shrink-0 shadow-lg shadow-purple-500/10"
-              animate={isHermesSelected ? { boxShadow: '0 0 22px 2px rgba(139,92,246,0.35)' } : { boxShadow: '0 10px 15px -3px rgba(139,92,246,0.10)' }}
-              transition={EASE_OUT}
-            >
-              <span className="text-white font-bold text-lg">H</span>
-            </motion.div>
+            <div className="w-12 h-12 rounded-xl bg-foreground flex items-center justify-center flex-shrink-0">
+              <span className="text-background font-bold text-lg">H</span>
+            </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
                 <span className="text-[14px] font-semibold text-foreground">Hermes Agent</span>
-                <span className="text-[9px] font-medium px-2 py-0.5 rounded-full bg-[#8B5CF6]/15 text-[#A78BFA]">
+                <span className="text-[9px] font-medium px-2 py-0.5 rounded-full border border-primary/30 bg-primary/10 text-foreground/80">
                   Recommended
                 </span>
               </div>
-              <p className="text-[11px] text-[#777] mt-1 leading-relaxed">
+              <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
                 400+ models via OpenRouter &middot; tool use &middot; autonomous tool agent
               </p>
             </div>
@@ -674,9 +720,9 @@ export const SetupWizard: React.FC = () => {
                 initial={{ scale: 0, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 transition={SPRING}
-                className="w-5 h-5 rounded-full bg-[#8B5CF6] flex items-center justify-center flex-shrink-0"
+                className="w-5 h-5 rounded-full bg-primary flex items-center justify-center flex-shrink-0"
               >
-                <Check className="h-3 w-3 text-white" />
+                <Check className="h-3 w-3 text-primary-foreground" />
               </motion.div>
             )}
           </div>
@@ -684,15 +730,37 @@ export const SetupWizard: React.FC = () => {
 
         {/* Or divider */}
         <div className="flex items-center gap-3 my-4 px-1">
-          <div className="flex-1 h-px bg-[#222]" />
-          <span className="text-[10px] text-[#444] uppercase tracking-widest font-medium">or</span>
-          <div className="flex-1 h-px bg-[#222]" />
+          <div className="flex-1 h-px bg-border" />
+          <span className="text-[10px] text-muted-foreground uppercase tracking-widest font-medium">or</span>
+          <div className="flex-1 h-px bg-border" />
         </div>
+
+        {/* Nub: people with a nub agent sign in with it, no key */}
+        <button
+          type="button"
+          onClick={() => handleProviderSelect('nub')}
+          aria-pressed={selectedProvider === 'nub'}
+          className={cn(
+            'mb-2 w-full flex items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition-colors duration-100',
+            selectedProvider === 'nub' ? 'border-primary/40 bg-primary/[0.06]' : 'border-border bg-muted/50 hover:bg-muted',
+          )}
+        >
+          <ProviderIcon provider="nub" size={24} />
+          <span className="flex-1 min-w-0">
+            <span className="block text-[12px] font-medium text-foreground">Sign in with Nub</span>
+            <span className="block text-[11px] text-muted-foreground truncate">Use your nub agent account — no API key</span>
+          </span>
+          {selectedProvider === 'nub' && (
+            <div className="w-3.5 h-3.5 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
+              <Check className="h-2 w-2 text-primary-foreground" />
+            </div>
+          )}
+        </button>
 
         {/* Toggle other providers */}
         <button
           onClick={() => setShowOtherProviders(!showOtherProviders)}
-          className="w-full flex items-center justify-center gap-2 py-2.5 text-[12px] text-[#888] hover:text-[#aaa] transition-colors rounded-xl hover:bg-[#161616]"
+          className="w-full flex items-center justify-center gap-2 py-2.5 text-[12px] text-muted-foreground hover:text-foreground transition-colors rounded-xl hover:bg-muted"
         >
           {showOtherProviders ? 'Hide other providers' : 'Connect with another provider'}
           {showOtherProviders ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
@@ -700,7 +768,7 @@ export const SetupWizard: React.FC = () => {
 
         {/* Other providers list */}
         {showOtherProviders && (
-          <div className="flex flex-col gap-[3px] rounded-xl border border-[#222] overflow-hidden mt-2 max-h-[260px] overflow-y-auto overscroll-contain">
+          <div className="flex flex-col gap-[3px] rounded-xl border border-border overflow-hidden mt-2 max-h-[260px] overflow-y-auto overscroll-contain">
             {others.map((p) => {
               const info = PROVIDERS[p];
               const isSelected = selectedProvider === p;
@@ -710,13 +778,13 @@ export const SetupWizard: React.FC = () => {
                   onClick={() => handleProviderSelect(p)}
                   className={cn(
                     'flex items-center gap-2.5 px-3 py-2.5 text-left transition-colors duration-100',
-                    isSelected ? 'bg-primary/8' : 'bg-[#141414] hover:bg-[#1A1A1A]'
+                    isSelected ? 'bg-primary/[0.08]' : 'bg-muted/50 hover:bg-muted'
                   )}
                 >
                   <ProviderIcon provider={p} size={24} />
                   <span className="text-[12px] font-medium text-foreground flex-1 truncate">{info.label}</span>
                   {info.badge && (
-                    <span className="text-[9px] font-medium text-[#666] px-1.5 py-0.5 rounded bg-[#222]">{info.badge}</span>
+                    <span className="text-[9px] font-medium text-muted-foreground px-1.5 py-0.5 rounded bg-muted">{info.badge}</span>
                   )}
                   {isSelected && (
                     <div className="w-3.5 h-3.5 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
@@ -737,12 +805,17 @@ export const SetupWizard: React.FC = () => {
 
         <motion.button
           onClick={handleContinueFromProvider}
-          whileHover={{ scale: 1.01 }}
-          whileTap={{ scale: 0.98 }}
+          disabled={continuingFromProvider}
+          aria-busy={continuingFromProvider}
+          whileHover={continuingFromProvider ? undefined : { scale: 1.01 }}
+          whileTap={continuingFromProvider ? undefined : { scale: 0.98 }}
           transition={SPRING}
-          className="mt-4 w-full flex items-center justify-center gap-2 h-11 rounded-xl bg-primary text-primary-foreground text-[13px] font-medium hover:opacity-90 transition-colors duration-200"
+          className="mt-4 w-full flex items-center justify-center gap-2 h-11 rounded-xl bg-primary text-primary-foreground text-[13px] font-medium hover:opacity-90 transition-colors duration-150 disabled:cursor-wait disabled:opacity-70"
         >
-          Continue <ArrowRight className="h-3.5 w-3.5" />
+          {continuingFromProvider
+            ? <><Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden /> Checking…</>
+            : <>Continue <ArrowRight className="h-3.5 w-3.5" /></>
+          }
         </motion.button>
       </div>
     );
@@ -756,7 +829,7 @@ export const SetupWizard: React.FC = () => {
       <div key="apikey" data-step-content className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <h2 className="text-[13px] font-semibold tracking-tight text-foreground">
-            {shouldShowHermesInstallFlow ? 'Hermes Agent' : 'API key'}
+            {providerInfo.signIn === 'nub' ? 'Sign in' : shouldShowHermesInstallFlow ? 'Hermes Agent' : 'API key'}
           </h2>
           <button onClick={() => goToStep(0)} className="text-[11px] font-medium text-primary hover:underline flex items-center gap-1">
             <ArrowLeft className="h-3 w-3" /> Change provider
@@ -768,11 +841,13 @@ export const SetupWizard: React.FC = () => {
           <span className="text-[13px] font-medium text-foreground">{providerInfo.label}</span>
         </div>
 
-        {shouldShowHermesInstallFlow ? (
+        {providerInfo.signIn === 'nub' ? (
+          <NubSignIn onLinked={handleNubLinked} />
+        ) : shouldShowHermesInstallFlow ? (
           <div className="flex flex-col gap-3">
-            <div className="rounded-xl border border-[#2A2A2A] bg-[#141414] px-3.5 py-3">
+            <div className="rounded-xl border border-border bg-muted/50 px-3.5 py-3">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-[11px] leading-relaxed text-[#666]">
+                <p className="text-[11px] leading-relaxed text-muted-foreground">
                   {isHermesBridgeReadyToStart
                     ? 'Hermes is installed locally, but the bridge is offline. Start it for this launch and continue.'
                     : 'Hermes bridge is offline. Spark can fix the local setup from here before continuing.'}
@@ -788,13 +863,13 @@ export const SetupWizard: React.FC = () => {
             </div>
 
             {localBridgeSetupStatus && (
-              <div className="rounded-xl border border-[#2A2A2A] bg-[#111111] px-3 py-2.5">
-                <div className="grid grid-cols-2 gap-2 text-[10px] text-[#8A8A8A]">
+              <div className="rounded-xl border border-border bg-muted/30 px-3 py-2.5">
+                <div className="grid grid-cols-2 gap-2 text-[10px] text-muted-foreground">
                   {hermesSetupChecklist.map((item) => (
-                    <div key={item.key} className="rounded-lg border border-[#222] bg-[#151515] px-2.5 py-2">
+                    <div key={item.key} className="rounded-lg border border-border bg-muted/60 px-2.5 py-2">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="font-medium text-[#B8B8B8]">{item.label}</span>
-                        <span className={cn('text-[9px] uppercase tracking-wide', item.satisfied ? 'text-[#00FF88]' : 'text-[#FFB86B]')}>
+                        <span className="font-medium text-foreground/80">{item.label}</span>
+                        <span className={cn('text-[9px] uppercase tracking-wide', item.satisfied ? 'text-emerald-700 dark:text-success' : 'text-amber-700 dark:text-[#FFB86B]')}>
                           {item.satisfied ? 'Ready' : 'Needed'}
                         </span>
                       </div>
@@ -806,13 +881,13 @@ export const SetupWizard: React.FC = () => {
             )}
 
             {!localBridgeSetupStatus && (
-              <div className="rounded-xl border border-[#2A2A2A] bg-[#111111] px-3 py-2.5 text-[11px] leading-relaxed text-[#8A8A8A]">
+              <div className="rounded-xl border border-border bg-muted/30 px-3 py-2.5 text-[11px] leading-relaxed text-muted-foreground">
                 Spark could not inspect the local Hermes setup yet. Refresh to retry the local checks.
               </div>
             )}
 
             {isHermesSetupMissingGit && (
-              <p className="text-[11px] text-[#B8B8B8]">
+              <p className="text-[11px] text-foreground/80">
                 Install{' '}
                 <a
                   href={GIT_DOWNLOADS_URL}
@@ -827,8 +902,8 @@ export const SetupWizard: React.FC = () => {
             )}
 
             {(isHermesSetupBusy || hermesInstallLog.length > 0) && (
-              <div className="rounded-xl border border-[#2A2A2A] bg-[#111111] px-3 py-2.5">
-                <div className="flex flex-col gap-1 font-mono text-[10px] leading-[1.45] text-[#8A8A8A]">
+              <div className="rounded-xl border border-border bg-muted/30 px-3 py-2.5">
+                <div className="flex flex-col gap-1 font-mono text-[10px] leading-[1.45] text-muted-foreground">
                   {hermesInstallLog.map((line, index) => (
                     <span key={`${line}-${index}`} className="truncate">{line}</span>
                   ))}
@@ -851,7 +926,7 @@ export const SetupWizard: React.FC = () => {
             )}
 
             {!hermesInstallError && localBridgeSetupStatus?.lastStartError && (
-              <p className="text-[11px] text-[#FFB86B] animate-in fade-in slide-in-from-top-1 duration-200">
+              <p className="text-[11px] text-amber-700 dark:text-[#FFB86B] animate-in fade-in slide-in-from-top-1 duration-200">
                 {localBridgeSetupStatus.lastStartError}
               </p>
             )}
@@ -862,7 +937,7 @@ export const SetupWizard: React.FC = () => {
               className={cn(
                 'w-full flex items-center justify-center gap-2 h-11 rounded-xl text-[13px] font-medium transition-all duration-200 active:scale-[0.98]',
                 isHermesSetupBusy || !localBridgeSetupStatus || !localBridgeSetupStatus.pythonPath || isHermesSetupMissingGit
-                  ? 'bg-[#222] text-[#909090]'
+                  ? 'bg-muted text-muted-foreground'
                   : 'bg-primary text-primary-foreground hover:opacity-90'
               )}
             >
@@ -880,8 +955,8 @@ export const SetupWizard: React.FC = () => {
           </div>
         ) : shouldOfferOpenRouterOAuth ? (
           <div className="flex flex-col gap-3">
-            <div className="rounded-xl border border-[#2A2A2A] bg-[#141414] px-3.5 py-3">
-              <p className="text-[11px] leading-relaxed text-[#666]">
+            <div className="rounded-xl border border-border bg-muted/50 px-3.5 py-3">
+              <p className="text-[11px] leading-relaxed text-muted-foreground">
                 {selectedProvider === 'hermes' && hermesBridgeStatus
                   ? getHermesMissingCredentialMessage(hermesBridgeStatus)
                   : 'Continue with OpenRouter to connect your account without pasting a key.'}
@@ -898,7 +973,7 @@ export const SetupWizard: React.FC = () => {
               className={cn(
                 'w-full flex items-center justify-center gap-2 h-11 rounded-xl text-[13px] font-medium transition-all duration-200 active:scale-[0.98]',
                 oauthBusy
-                  ? 'bg-[#222] text-[#909090]'
+                  ? 'bg-muted text-muted-foreground'
                   : 'bg-primary text-primary-foreground hover:opacity-90'
               )}
             >
@@ -912,32 +987,38 @@ export const SetupWizard: React.FC = () => {
 
             <button
               onClick={() => setShowManualKeyEntry((current) => !current)}
-              className="w-full flex items-center justify-center gap-2 py-2.5 text-[12px] text-[#888] hover:text-[#aaa] transition-colors rounded-xl hover:bg-[#161616]"
+              className="w-full flex items-center justify-center gap-2 py-2.5 text-[12px] text-muted-foreground hover:text-foreground transition-colors rounded-xl hover:bg-muted"
             >
               Have a key? Enter manually
               {showManualKeyEntry ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
             </button>
 
             {showManualKeyEntry && (
-              <div className="rounded-xl border border-[#2A2A2A] bg-[#141414] px-3.5 py-3 flex flex-col gap-3">
+              <div className="rounded-xl border border-border bg-muted/50 px-3.5 py-3 flex flex-col gap-3">
                 <div className="relative">
-                  <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#555]" />
+                  <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                   <input
                     type={showKey ? 'text' : 'password'}
                     value={apiKey}
                     onChange={(e) => { setApiKey(e.target.value); setValidationError(''); }}
                     placeholder="sk-..."
                     autoFocus
-                    className="w-full h-10 pl-9 pr-10 rounded-xl border border-[#2A2A2A] bg-[#161616] text-[13px] font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 transition-all duration-200 placeholder:text-[#444]"
+                    className="w-full h-10 pl-9 pr-10 rounded-xl border border-border bg-background text-[13px] font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 transition-all duration-200 placeholder:text-muted-foreground/60"
                   />
-                  <button onClick={() => setShowKey(!showKey)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#555] hover:text-foreground transition-colors">
+                  <button
+                    type="button"
+                    onClick={() => setShowKey(!showKey)}
+                    aria-label={showKey ? 'Hide API key' : 'Show API key'}
+                    aria-pressed={showKey}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 rounded text-muted-foreground hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
                     {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
                   </button>
                 </div>
 
                 {PROVIDER_HELP_URLS[selectedProvider] && (
-                  <span className="text-[10px] text-[#555]">
-                    Get your key at <span className="text-[#888]">{PROVIDER_HELP_URLS[selectedProvider]}</span>
+                  <span className="text-[10px] text-muted-foreground">
+                    Get your key at <ProviderKeyHelpLink url={PROVIDER_HELP_URLS[selectedProvider]} />
                   </span>
                 )}
 
@@ -947,8 +1028,8 @@ export const SetupWizard: React.FC = () => {
                   className={cn(
                     'w-full flex items-center justify-center gap-2 h-10 rounded-xl text-[12px] font-medium transition-all duration-200 active:scale-[0.98]',
                     apiKey.trim() && !validating
-                      ? 'border border-[#2A2A2A] bg-[#191919] text-foreground hover:border-[#3A3A3A]'
-                      : 'border border-[#222] bg-[#151515] text-[#555] cursor-not-allowed'
+                      ? 'border border-border bg-background text-foreground hover:border-foreground/25'
+                      : 'border border-border bg-muted/60 text-muted-foreground cursor-not-allowed'
                   )}
                 >
                   {validating
@@ -962,23 +1043,29 @@ export const SetupWizard: React.FC = () => {
         ) : (
           <>
             <div className="relative">
-              <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#555]" />
+              <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
               <input
                 type={showKey ? 'text' : 'password'}
                 value={apiKey}
                 onChange={(e) => { setApiKey(e.target.value); setValidationError(''); }}
                 placeholder="sk-..."
                 autoFocus
-                className="w-full h-10 pl-9 pr-10 rounded-xl border border-[#2A2A2A] bg-[#161616] text-[13px] font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 transition-all duration-200 placeholder:text-[#444]"
+                className="w-full h-10 pl-9 pr-10 rounded-xl border border-border bg-background text-[13px] font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 transition-all duration-200 placeholder:text-muted-foreground/60"
               />
-              <button onClick={() => setShowKey(!showKey)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#555] hover:text-foreground transition-colors">
+              <button
+                    type="button"
+                    onClick={() => setShowKey(!showKey)}
+                    aria-label={showKey ? 'Hide API key' : 'Show API key'}
+                    aria-pressed={showKey}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 rounded text-muted-foreground hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
                 {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
               </button>
             </div>
 
             {PROVIDER_HELP_URLS[selectedProvider] && (
-              <span className="text-[10px] text-[#555]">
-                Get your key at <span className="text-[#888]">{PROVIDER_HELP_URLS[selectedProvider]}</span>
+              <span className="text-[10px] text-muted-foreground">
+                Get your key at <ProviderKeyHelpLink url={PROVIDER_HELP_URLS[selectedProvider]} />
               </span>
             )}
 
@@ -993,7 +1080,7 @@ export const SetupWizard: React.FC = () => {
                 'w-full flex items-center justify-center gap-2 h-11 rounded-xl text-[13px] font-medium transition-all duration-200 active:scale-[0.98]',
                 apiKey.trim() && !validating
                   ? 'bg-primary text-primary-foreground hover:opacity-90'
-                  : 'bg-[#222] text-[#555] cursor-not-allowed'
+                  : 'bg-muted text-muted-foreground cursor-not-allowed'
               )}
             >
               {validating
@@ -1004,10 +1091,10 @@ export const SetupWizard: React.FC = () => {
           </>
         )}
 
-        {!shouldShowHermesInstallFlow && (
+        {!shouldShowHermesInstallFlow && providerInfo.signIn !== 'nub' && (
           <div className="flex items-center justify-center gap-1.5">
-            <Lock className="h-2.5 w-2.5 text-[#444]" />
-            <span className="text-[10px] text-[#444]">Stored locally, never sent to Spark</span>
+            <Lock className="h-2.5 w-2.5 text-muted-foreground" aria-hidden />
+            <span className="text-[10px] text-muted-foreground">Stored locally, never sent to Spark</span>
           </div>
         )}
       </div>
@@ -1019,38 +1106,36 @@ export const SetupWizard: React.FC = () => {
     <Stagger key="finish" data-step-content className="flex flex-col items-center gap-5">
       <StaggerItem>
         <motion.div
-          className="relative w-14 h-14 rounded-2xl flex items-center justify-center"
-          style={{ backgroundColor: '#00FF8815' }}
+          className="relative w-14 h-14 rounded-2xl flex items-center justify-center bg-success/10"
           variants={popIn}
         >
           <motion.span
-            className="absolute inset-0 rounded-2xl"
-            style={{ backgroundColor: '#00FF8830' }}
+            className="absolute inset-0 rounded-2xl bg-success/20"
             initial={{ opacity: 0.6, scale: 1 }}
-            animate={{ opacity: 0, scale: 1.6 }}
-            transition={{ duration: 0.9, ease: 'easeOut', delay: 0.15 }}
+            animate={{ opacity: 0, scale: 1.3 }}
+            transition={{ duration: 0.18, ease: 'easeOut' }}
           />
           <motion.div
             initial={{ scale: 0, rotate: -20 }}
             animate={{ scale: 1, rotate: 0 }}
             transition={{ ...SPRING, delay: 0.08 }}
           >
-            <Check className="h-6 w-6" style={{ color: '#00FF88' }} />
+            <Check className="h-6 w-6 text-emerald-600 dark:text-success" />
           </motion.div>
         </motion.div>
       </StaggerItem>
       <StaggerItem className="text-center">
         <h2 className="text-[15px] font-semibold text-foreground mb-1">You're all set</h2>
-        <p className="text-[12px] text-[#666]">Start a new thread to begin chatting.</p>
+        <p className="text-[12px] text-muted-foreground">Start a new thread to begin chatting.</p>
       </StaggerItem>
-      <StaggerItem className="w-full rounded-xl border border-[#2A2A2A] bg-[#161616] px-4 py-3">
+      <StaggerItem className="w-full rounded-xl border border-border bg-background px-4 py-3">
         <div className="flex items-center gap-3">
           <ProviderIcon provider={selectedProvider} size={32} />
           <div className="flex-1 min-w-0">
             <p className="text-[13px] font-medium text-foreground">{providerInfo.label}</p>
-            {apiKey && <p className="text-[10px] text-[#555] font-mono truncate">{maskedKey}</p>}
+            {apiKey && <p className="text-[10px] text-muted-foreground font-mono truncate">{maskedKey}</p>}
           </div>
-          <span className="text-[10px] font-medium px-2 py-0.5 rounded-full" style={{ backgroundColor: '#00FF8815', color: '#00FF88' }}>
+          <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-success/10 text-emerald-700 dark:text-success">
             {selectedProvider === 'hermes' && !apiKey.trim() && hasHermesBridgeCreds ? 'Signed in via Hermes' : 'Connected'}
           </span>
         </div>

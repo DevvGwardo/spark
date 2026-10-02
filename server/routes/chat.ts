@@ -1,5 +1,5 @@
 import type { Express } from 'express';
-import { streamText, tool, type ModelMessage, type Tool as CoreTool, type UIMessageStreamWriter, stepCountIs, createUIMessageStream, pipeUIMessageStreamToResponse, toUIMessageStream } from 'ai';
+import { streamText, tool, type FinishReason, type ModelMessage, type Tool as CoreTool, type UIMessageStreamWriter, stepCountIs, createUIMessageStream, pipeUIMessageStreamToResponse, toUIMessageStream } from 'ai';
 import { z } from 'zod';
 import { buildServerRepoTools, type ServerToolEvent } from '../agent-loop';
 import {
@@ -8,8 +8,11 @@ import {
   resolveHermesExecutionMode,
   resolveHermesUseRuns,
   resolveRuntimeProvider,
+  TOOL_CAPABLE_COMPATIBLE_PROVIDERS,
   usesFirstPartyProviderSdk,
 } from '../provider-config';
+import { HarnessTurn, lastUserText } from '../lib/harness/agent-turn';
+import { buildNubTools } from '../lib/nub/tools';
 import { runOpenClawTurn } from '../openclaw';
 import { resolveAttachedLocalRepoPath } from '../lib/github-utils';
 import { ensureRepoClone } from '../repo-clone-manager';
@@ -1108,12 +1111,16 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
     // always support tools. For compatible providers, only include tools
     // when there's an active server repo context (agentic mode) or local
     // tools are enabled, since those are explicitly opted-in by the user.
-    const isToolSafeProvider = usesFirstPartyProviderSdk(provider);
+    const isToolSafeProvider = usesFirstPartyProviderSdk(provider) || TOOL_CAPABLE_COMPATIBLE_PROVIDERS.has(provider);
     const includeBaseTools = hasServerRepoContext || isToolSafeProvider || hasLocalTools || planMode;
+    // The user's nub agent, when linked, joins the tool loop (never in plan mode:
+    // an ask can make the agent act).
+    const nubTools = (hasServerRepoContext || hasLocalTools) && !planMode ? await buildNubTools() : {};
     const allTools = {
       ...(includeBaseTools ? planModeFileTools : {}),
       ...filteredRepoTools,
       ...localTools,
+      ...nubTools,
     };
 
     const useServerAgentLoop = hasServerRepoContext || hasLocalTools;
@@ -1130,42 +1137,85 @@ All changes are staged for a PR — they are not applied directly to the repo.`;
 
         logger.info(`[chat] Starting streamText. maxTokens=${max_tokens ?? defaultMaxTokens} maxSteps=${useServerAgentLoop ? MAX_AGENT_STEPS : 1} tools=${hasTools ? Object.keys(allTools).join(',') : '(none)'} toolSafe=${isToolSafeProvider} localTools=${hasLocalTools}`);
         
-        const result = streamText({
-          model: aiModel,
-          messages: normalizedChatInput.messages as ModelMessage[],
-          temperature: temperature ?? 0.7,
-          topP: top_p ?? 0.9,
-          maxOutputTokens: max_tokens ?? defaultMaxTokens,
-          abortSignal: abortController.signal,
-          ...(providerOptions ? { providerOptions } : {}),
-          ...(hasTools ? { tools: wrappedToolsFinal } : {}),
-          ...(hasTools && useServerAgentLoop ? { stopWhen: stepCountIs(MAX_AGENT_STEPS) } : {}),
-          onFinish: (finishResult) => {
-            if (requestTimeout) {
-              clearTimeout(requestTimeout);
-            }
-            if (finishResult.usage) {
-              logger.info(JSON.stringify({
-                type: 'usage',
-                inputTokens: finishResult.usage.inputTokens,
-                outputTokens: finishResult.usage.outputTokens,
-                totalTokens: finishResult.usage.totalTokens,
-              }));
-              const usageEvent = buildUsageEvent(
-                {
-                  inputTokens: finishResult.usage.inputTokens || 0,
-                  outputTokens: finishResult.usage.outputTokens || 0,
-                },
-                model,
-              );
-              emitToolEvent(usageEvent as unknown as ServerToolEvent);
-            }
+        // flash-style guardrails (server/lib/harness): loop nudges between
+        // steps, tool-call repair, and up to MAX_CONTINUATIONS extra passes
+        // when the model stops with unverified edits, nothing done on a change
+        // request, or a tool call written as text.
+        const harness = hasTools && useServerAgentLoop
+          ? new HarnessTurn(
+              lastUserText(normalizedChatInput.messages as ModelMessage[]),
+              Object.keys(wrappedToolsFinal),
+              (event) => {
+                logger.info(`[chat] harness ${event.kind}: ${event.kind === 'nudge' ? event.reason : `${event.toolName} (${event.detail})`}`);
+                writer.write({ type: 'data-harness', data: event, transient: true });
+              },
+            )
+          : null;
 
-            streamClosed = true;
-          },
-        });
+        let passMessages = normalizedChatInput.messages as ModelMessage[];
+        let stepsUsed = 0;
+        let lastFinishReason: FinishReason | undefined;
+        for (let pass = 0; ; pass++) {
+          const result = streamText({
+            model: aiModel,
+            messages: passMessages,
+            temperature: temperature ?? 0.7,
+            topP: top_p ?? 0.9,
+            maxOutputTokens: max_tokens ?? defaultMaxTokens,
+            abortSignal: abortController.signal,
+            ...(providerOptions ? { providerOptions } : {}),
+            ...(hasTools ? { tools: wrappedToolsFinal } : {}),
+            ...(hasTools && useServerAgentLoop ? { stopWhen: stepCountIs(MAX_AGENT_STEPS - stepsUsed) } : {}),
+            ...(harness
+              ? {
+                  prepareStep: ({ steps, messages }) => harness.prepareStep(steps, messages),
+                  repairToolCall: async ({ toolCall }) => harness.repairToolCall(toolCall),
+                }
+              : {}),
+            onFinish: (finishResult) => {
+              if (finishResult.usage) {
+                logger.info(JSON.stringify({
+                  type: 'usage',
+                  inputTokens: finishResult.usage.inputTokens,
+                  outputTokens: finishResult.usage.outputTokens,
+                  totalTokens: finishResult.usage.totalTokens,
+                }));
+                const usageEvent = buildUsageEvent(
+                  {
+                    inputTokens: finishResult.usage.inputTokens || 0,
+                    outputTokens: finishResult.usage.outputTokens || 0,
+                  },
+                  model,
+                );
+                emitToolEvent(usageEvent as unknown as ServerToolEvent);
+              }
+            },
+          });
 
-        writer.merge(toUIMessageStream({ stream: result.fullStream }));
+          // One assistant message across passes: only the first pass starts
+          // it, and the finish chunk is written once after the last pass.
+          // Drained inline (not writer.merge) so the finish chunk below can't
+          // overtake this pass's last parts.
+          const reader = toUIMessageStream({ stream: result.fullStream, sendStart: pass === 0, sendFinish: false }).getReader();
+          for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+            writer.write(chunk.value);
+          }
+          const steps = await Promise.resolve(result.steps).catch(() => null);
+          if (!steps) break;
+          stepsUsed += steps.length;
+          lastFinishReason = steps[steps.length - 1]?.finishReason;
+          if (!harness || abortController.signal.aborted || stepsUsed >= MAX_AGENT_STEPS) break;
+          const nudge = harness.continuation(steps);
+          if (!nudge) break;
+          const response = await result.response;
+          passMessages = [...passMessages, ...response.messages, { role: 'user', content: nudge }];
+        }
+
+        if (requestTimeout) {
+          clearTimeout(requestTimeout);
+        }
+        streamClosed = true;
+        writer.write({ type: 'finish', ...(lastFinishReason ? { finishReason: lastFinishReason } : {}) });
       }
     });
 

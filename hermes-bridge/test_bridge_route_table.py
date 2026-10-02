@@ -116,6 +116,8 @@ EXPECTED_ROUTES = [
     ('GET', '/workspace/mcp-telemetry', 'workspace_mcp_telemetry'),
     ('GET', '/workspace/mcp-tool-index', 'workspace_mcp_tool_index'),
     ('GET', '/workspace/mcp-servers/{name}/logs', 'workspace_mcp_server_logs'),
+    ('POST', '/workspace/nub-mcp', 'workspace_nub_mcp_register'),
+    ('DELETE', '/workspace/nub-mcp', 'workspace_nub_mcp_unregister'),
     ('GET', '/workspace/skills', 'workspace_skills'),
     ('GET', '/workspace/skills/content', 'workspace_skill_detail'),
     ('GET', '/workspace/skills/hub', 'workspace_skills_hub'),

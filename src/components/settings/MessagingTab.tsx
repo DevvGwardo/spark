@@ -47,7 +47,7 @@ const PLATFORM_COLORS: Record<string, string> = {
 
 const cardClass = 'rounded-[10px] border border-[#2a2a2a] bg-white/[0.02] overflow-hidden';
 const fieldLabelClass = 'text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80';
-const textInputClass = 'w-full rounded-[10px] border border-[#2a2a2a] bg-[#141414] px-3 py-2 text-sm text-foreground outline-none transition-colors duration-100 placeholder:text-muted-foreground focus:border-[#FF8400]/40 focus:ring-1 focus:ring-[#FF8400]/20';
+const textInputClass = 'w-full rounded-[10px] border border-[#2a2a2a] bg-[#141414] px-3 py-2 text-sm text-foreground outline-none transition-colors duration-100 placeholder:text-muted-foreground focus:border-primary/40 focus:ring-1 focus:ring-primary/20';
 const buttonClass = 'rounded-[10px] px-4 py-2 text-[13px] font-medium transition-colors duration-100';
 const platformCardClass = 'rounded-[10px] bg-white/[0.016] border border-[#2a2a2a] px-4 py-[14px] flex items-center gap-[14px] w-full text-left transition-colors duration-100 hover:bg-white/[0.04] cursor-pointer';
 
@@ -117,7 +117,7 @@ function Toggle({
       onClick={() => onChange(!checked)}
       className={cn(
         'relative inline-flex h-[22px] w-[40px] shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200',
-        checked ? 'bg-[#FF8400]' : 'bg-[#333]',
+        checked ? 'bg-primary' : 'bg-[#333]',
       )}
     >
       <span
@@ -387,7 +387,7 @@ function PlatformDetail({
               disabled={oauthLoading || connecting}
               className={cn(
                 buttonClass,
-                'bg-[#FF8400] text-white hover:bg-[#FF9B33] disabled:opacity-50 flex items-center gap-2',
+                'bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2',
               )}
             >
               {oauthLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
@@ -399,7 +399,7 @@ function PlatformDetail({
           </div>
           {!oauthStatus && !oauthLoading && (
             <p className="text-[11px] text-[#555]">
-              Requires {platform.id === 'discord' ? 'DISCORD_CLIENT_ID' : 'SLACK_CLIENT_ID'} in <code className="text-[#FF8400]/60">~/.hermes/.env</code>.
+              Requires {platform.id === 'discord' ? 'DISCORD_CLIENT_ID' : 'SLACK_CLIENT_ID'} in <code className="text-primary/60">~/.hermes/.env</code>.
             </p>
           )}
           {oauthStatus && !oauthStatus.available && (
@@ -446,7 +446,7 @@ function PlatformDetail({
       {platform.id === 'telegram' && !platform.is_connected && (
         <div className="rounded-[10px] border border-[#0088cc]/20 bg-[#0088cc]/5 px-4 py-3 text-sm text-[#0088cc]/80 space-y-2">
           <p className="font-medium text-foreground text-[13px]">Get your Telegram bot token</p>
-          <p>Open Telegram, search for <strong>@BotFather</strong>, send <code className="text-[#FF8400]/80">/newbot</code>, follow the steps, and copy the token.</p>
+          <p>Open Telegram, search for <strong>@BotFather</strong>, send <code className="text-primary/80">/newbot</code>, follow the steps, and copy the token.</p>
           <button
             onClick={() => window.open('https://t.me/BotFather', '_blank')}
             className="mt-1 flex items-center gap-2 text-[12px] font-medium text-[#0088cc] hover:text-[#0088cc]/70 transition-colors"
@@ -488,7 +488,7 @@ function PlatformDetail({
       {platform.id === 'signal' && (
         <div className="rounded-[10px] border border-[#3A76F0]/20 bg-[#3A76F0]/5 px-4 py-3 text-sm text-[#3A76F0]/80 space-y-2">
           <p className="font-medium text-foreground text-[13px]">Install signal-cli first</p>
-          <p>Signal requires <code className="text-[#FF8400]/80">signal-cli</code> installed on your machine. Run:</p>
+          <p>Signal requires <code className="text-primary/80">signal-cli</code> installed on your machine. Run:</p>
           <code className="block bg-[#141414] rounded px-3 py-2 text-[11px] text-[#ccc] mt-1">
             hermes gateway setup --platform signal
           </code>
@@ -514,7 +514,7 @@ function PlatformDetail({
           href={platform.docs_url}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex items-center gap-2 text-[13px] text-[#FF8400] hover:text-[#FF9B33] transition-colors"
+          className="flex items-center gap-2 text-[13px] text-primary hover:text-primary/80 transition-colors"
         >
           <ExternalLink className="h-3.5 w-3.5" />
           Setup guide
@@ -606,7 +606,7 @@ function PlatformDetail({
           disabled={connecting}
           className={cn(
             buttonClass,
-            'bg-[#FF8400] text-white hover:bg-[#FF9B33] disabled:opacity-50 flex items-center gap-2',
+            'bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2',
           )}
         >
           {connecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
@@ -733,7 +733,7 @@ export default function MessagingTab() {
         ) : (
           <div className="flex items-center gap-2 text-sm text-[#888]">
             <AlertCircle className="h-4 w-4" />
-            <span>Gateway not detected — start it with <code className="text-[#FF8400]">hermes gateway start</code></span>
+            <span>Gateway not detected — start it with <code className="text-primary">hermes gateway start</code></span>
           </div>
         )}
         <button
@@ -754,11 +754,11 @@ export default function MessagingTab() {
             <>
               <span className="font-semibold">Hermes Bridge is offline.</span>
               {' '}Start it with{' '}
-              <code className="text-[#FF8400]">hermes bridge</code>
+              <code className="text-primary">hermes bridge</code>
               {' '}or{' '}
-              <code className="text-[#FF8400]">python main.py</code>
+              <code className="text-primary">python main.py</code>
               {' '}from the{' '}
-              <code className="text-[#FF8400]">hermes-bridge/</code>
+              <code className="text-primary">hermes-bridge/</code>
               {' '}directory, then refresh.
             </>
           ) : (
@@ -788,10 +788,10 @@ export default function MessagingTab() {
       {/* Info footer */}
       <div className="rounded-[10px] border border-[#2a2a2a] bg-white/[0.01] px-4 py-3">
         <p className="text-[11px] text-[#555] leading-relaxed">
-          Credentials are stored locally in <code className="text-[#FF8400]/70">~/.hermes/.env</code> and{' '}
-          <code className="text-[#FF8400]/70">~/.hermes/config.yaml</code>.
+          Credentials are stored locally in <code className="text-primary/70">~/.hermes/.env</code> and{' '}
+          <code className="text-primary/70">~/.hermes/config.yaml</code>.
           After configuring a platform, restart the gateway with{' '}
-          <code className="text-[#FF8400]/70">hermes gateway restart</code> to connect.
+          <code className="text-primary/70">hermes gateway restart</code> to connect.
         </p>
       </div>
     </div>
