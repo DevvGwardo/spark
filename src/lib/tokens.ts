@@ -71,3 +71,8 @@ export function formatTokenCount(tokens: number): string {
   if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}K`;
   return String(tokens);
 }
+
+/** Per-turn cost: `$0.0123` (four decimals under a dollar so cents stay visible), `$1.23` above. */
+export function formatTurnCost(usd: number): string {
+  return usd >= 1 ? `$${usd.toFixed(2)}` : `$${usd.toFixed(4)}`;
+}

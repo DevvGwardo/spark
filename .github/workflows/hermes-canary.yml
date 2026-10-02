@@ -1,0 +1,205 @@
+name: Hermes upstream canary
+
+# Spec 7.5: nightly early warning for upstream hermes-agent drift. Spark pins
+# hermes-agent to HERMES_AGENT_VERSION_TAG (shared/hermes-agent.ts) and every
+# other job runs against a fake agent tree, so nothing notices when upstream
+# `main` moves a module the bridge reaches into (tools.registry,
+# hermes_cli.commands, the ACP SDK call shapes) or rewrites the file the
+# runs-parity patch targets. This job installs hermes-agent `main` the same way
+# electron/hermes-agent-install.ts installs the pinned tag, applies the patch,
+# and runs the bridge startup smoke test, the upstream import-surface checks and
+# the event-contract fixture replays. On failure it opens (or comments on) one
+# issue labelled `hermes-canary`.
+
+on:
+  schedule:
+    - cron: '17 6 * * *' # nightly, 06:17 UTC
+  workflow_dispatch:
+    inputs:
+      hermes_ref:
+        description: hermes-agent branch or tag to test
+        required: false
+        default: main
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: hermes-canary
+  cancel-in-progress: false
+
+env:
+  HERMES_AGENT_REPO: https://github.com/NousResearch/hermes-agent.git
+  HERMES_AGENT_REF: ${{ inputs.hermes_ref || 'main' }}
+  HERMES_AGENT_PATCH: patches/hermes-api-server-runs-parity.patch
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          # hermes-agent declares its core dependencies only for Python 3.14
+          # (older interpreters get them from uv.lock via `hermes pm`), so a
+          # plain `pip install -e` on 3.12 leaves run_agent without dotenv & co.
+          python-version: '3.14'
+          cache: 'pip'
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Clone hermes-agent
+        id: clone
+        # Mirrors electron/hermes-agent-install.ts (same repo, same target
+        # dir), with the branch instead of HERMES_AGENT_VERSION_TAG.
+        run: |
+          target="$HOME/.hermes/hermes-agent"
+          git clone --depth 1 --branch "$HERMES_AGENT_REF" "$HERMES_AGENT_REPO" "$target"
+          sha="$(git -C "$target" rev-parse HEAD)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "dir=$target" >> "$GITHUB_OUTPUT"
+          echo "hermes-agent $HERMES_AGENT_REF @ $sha" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Apply runs-parity patch
+        id: patch
+        # Same check-then-apply as applyHermesPatch() in shared/hermes-agent.ts.
+        # A patch that no longer applies fails the canary (reported in the
+        # issue) but the remaining checks still run against unpatched main.
+        continue-on-error: true
+        working-directory: ${{ steps.clone.outputs.dir }}
+        run: |
+          patch="$GITHUB_WORKSPACE/$HERMES_AGENT_PATCH"
+          if git apply --check "$patch" 2>apply.err; then
+            git apply "$patch"
+            git apply --reverse --check "$patch"
+            echo "Applied $HERMES_AGENT_PATCH" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error title=Runs-parity patch no longer applies::$(tr '\n' ' ' < apply.err)"
+            {
+              echo "### $HERMES_AGENT_PATCH no longer applies"
+              echo '```'
+              cat apply.err
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        id: install
+        run: |
+          npm ci
+          pip install -r hermes-bridge/requirements.txt
+          pip install -e "${{ steps.clone.outputs.dir }}"
+
+      - name: Bridge startup smoke test
+        id: smoke
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: hermes-bridge
+        run: python -m pytest -q test_bridge_startup_smoke.py
+
+      - name: Upstream import surface and live boot against hermes-agent
+        id: surface
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: hermes-bridge
+        env:
+          HERMES_CANARY_AGENT_DIR: ${{ steps.clone.outputs.dir }}
+        run: python -m pytest -q -rs test_bridge_upstream_canary.py
+
+      - name: Event contract is current
+        id: contract
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run check:hermes-contract
+
+      - name: Replay contract fixtures (Python)
+        id: replay_py
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: hermes-bridge
+        run: |
+          python -m pytest -q \
+            test_sse_contract_fixtures.py \
+            test_bridge_events_contract.py \
+            test_bridge_errors_contract.py
+
+      - name: Replay contract fixtures (TypeScript)
+        id: replay_ts
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: |
+          npx vitest run server/__tests__/hermes-events-contract.test.ts \
+                         server/__tests__/hermes-errors-contract.test.ts \
+                         server/__tests__/hermes-event-fixtures.test.ts
+
+      - name: Fail when the patch did not apply
+        if: ${{ !cancelled() && steps.patch.outcome == 'failure' }}
+        run: |
+          echo "::error::$HERMES_AGENT_PATCH does not apply to hermes-agent $HERMES_AGENT_REF"
+          exit 1
+
+      - name: Open or update the hermes-canary issue
+        if: ${{ failure() }}
+        uses: actions/github-script@v8
+        env:
+          STEPS_JSON: ${{ toJSON(steps) }}
+          AGENT_SHA: ${{ steps.clone.outputs.sha }}
+        with:
+          script: |
+            const LABEL = 'hermes-canary';
+            const names = {
+              clone: 'Clone hermes-agent',
+              patch: 'Apply runs-parity patch',
+              install: 'Install dependencies',
+              smoke: 'Bridge startup smoke test',
+              surface: 'Upstream import surface and live boot',
+              contract: 'Event contract is current',
+              replay_py: 'Replay contract fixtures (Python)',
+              replay_ts: 'Replay contract fixtures (TypeScript)',
+            };
+            const steps = JSON.parse(process.env.STEPS_JSON || '{}');
+            const failed = Object.entries(steps)
+              .filter(([, s]) => s.outcome === 'failure')
+              .map(([id]) => names[id] || id);
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const ref = process.env.HERMES_AGENT_REF;
+            const sha = process.env.AGENT_SHA || 'unknown';
+            const body = [
+              `The nightly upstream canary failed against hermes-agent \`${ref}\` @ \`${sha}\`.`,
+              '',
+              `**Failing step(s):** ${failed.length ? failed.join(', ') : 'see run log'}`,
+              `**Run log:** ${runUrl}`,
+              '',
+              'Spark still pins `HERMES_AGENT_VERSION_TAG` (shared/hermes-agent.ts), so users are',
+              'unaffected until the pin moves. Fix the shim (or regenerate',
+              '`patches/hermes-api-server-runs-parity.patch`) before the next tag bump.',
+            ].join('\n');
+
+            try {
+              await github.rest.issues.createLabel({
+                ...context.repo, name: LABEL, color: 'b60205',
+                description: 'Nightly hermes-agent upstream compatibility canary',
+              });
+            } catch (e) {
+              if (e.status !== 422) throw e; // 422: label already exists
+            }
+
+            const { data: open } = await github.rest.issues.listForRepo({
+              ...context.repo, state: 'open', labels: LABEL, per_page: 1,
+            });
+            if (open.length) {
+              await github.rest.issues.createComment({
+                ...context.repo, issue_number: open[0].number, body,
+              });
+              core.notice(`Commented on #${open[0].number}`);
+            } else {
+              const { data: issue } = await github.rest.issues.create({
+                ...context.repo,
+                title: `Hermes canary: hermes-agent ${ref} broke ${failed[0] || 'the canary'}`,
+                labels: [LABEL],
+                body,
+              });
+              core.notice(`Opened #${issue.number}`);
+            }

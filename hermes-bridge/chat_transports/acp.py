@@ -21,6 +21,7 @@ from bridge_events import (
     agent_status_event,
     build_plan_update_event,
     tool_activity_event,
+    transport_status_event,
 )
 from bridge_providers import _provider_ids_for_chat_routing
 from bridge_state import _mark_request_finished
@@ -29,7 +30,6 @@ from chat_common import (
     _format_tool_end_text,
     _format_tool_start_text,
     _get_stream_chunk_size,
-    _resolve_workspace_id,
     _single_message_sse,
 )
 from chat_transports.base import BaseChatTransport, TransportCapabilities
@@ -63,11 +63,41 @@ if TYPE_CHECKING:  # fastapi is stubbed without Response in the unit tests
     from fastapi.responses import Response
 
 
+# Spec 4.4: after Stop the SSE stream ends within this many seconds even if
+# hermes-acp is slow to acknowledge session/cancel.
+CANCEL_GRACE_SECONDS = 1.5
+
+
 class AcpTransport(BaseChatTransport):
     name = "acp"
-    # G6: approvals yes (session/request_permission), no cancel, no usage,
-    # no resume after reap (only the last message is sent).
-    capabilities = TransportCapabilities(approvals=True)
+    # Approvals via session/request_permission, Stop via session/cancel,
+    # usage from the prompt response (+ usage_update cost), resume via
+    # load_session or a condensed-history replay after a reap/crash.
+    capabilities = TransportCapabilities(
+        approvals=True,
+        cancel=True,
+        stops_on_client_disconnect=True,
+        usage_in_stream=True,
+        session_resume=True,
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._channel = None
+        self._usage: Optional[dict] = None
+
+    def usage(self) -> Optional[dict]:
+        return self._usage
+
+    async def cancel(self) -> bool:
+        """ACP ``session/cancel`` for this conversation's in-flight prompt."""
+        import acp_transport
+
+        cancelled = await acp_transport.cancel_turn(self.ctx.workspace_id)
+        channel = self._channel
+        if channel is not None:
+            channel.loop.call_later(CANCEL_GRACE_SECONDS, channel.close)
+        return cancelled
 
     async def handle(self) -> Response:
         """Chat completions via the ACP transport (real hermes-agent)."""
@@ -76,7 +106,8 @@ class AcpTransport(BaseChatTransport):
         request = self.ctx.request
         body = self.ctx.body
 
-        available, reason = acp_transport.acp_available()
+        # Off the event loop (spec 5.1): PATH lookup, config and fs reads.
+        available, reason = await asyncio.to_thread(acp_transport.acp_available)
         if not available:
             print(f"[hermes-bridge] ACP mode requested but unavailable: {reason}", flush=True)
             # `_mark_request_started` already ran (before the mode branch) — close
@@ -107,8 +138,9 @@ class AcpTransport(BaseChatTransport):
         # "HTTP 400: <host>:<model> is not a valid model ID". When the pinned id is
         # no longer exposed by /v1/providers, drop the pin and let routing follow
         # config.yaml — same policy the agent-loop path applies via cli_is_custom.
-        if provider and provider not in _provider_ids_for_chat_routing(
-            bridge_workspace._resolve_hermes_home(request_profile)
+        if provider and provider not in await asyncio.to_thread(
+            _provider_ids_for_chat_routing,
+            bridge_workspace._resolve_hermes_home(request_profile),
         ):
             print(
                 f"[hermes-bridge] Dropping stale provider pin {provider!r} "
@@ -117,7 +149,9 @@ class AcpTransport(BaseChatTransport):
             )
             provider = None
 
-        workspace_id = _resolve_workspace_id(request, body)
+        # Resolved once in chat_impl: the registry, the ACP session and the
+        # session tracker must all agree on the conversation id.
+        workspace_id = self.ctx.workspace_id
         session_id = workspace_id
         # Resolve the session cwd to a real checkout: explicit header first, then
         # the managed clone for owner/name, then the historical fallbacks. (The
@@ -125,8 +159,8 @@ class AcpTransport(BaseChatTransport):
         # cleanup step may delete it. os.getcwd() then raises FileNotFoundError
         # and every chat request 500s — fall back to the home directory so
         # requests keep working regardless of what happens to the launch cwd.)
-        resolved_repo_root = acp_chat._resolve_acp_repo_root(
-            repo_root_header, repo_owner, repo_name
+        resolved_repo_root = await asyncio.to_thread(
+            acp_chat._resolve_acp_repo_root, repo_root_header, repo_owner, repo_name
         )
         try:
             cwd = resolved_repo_root or os.getcwd()
@@ -147,6 +181,9 @@ class AcpTransport(BaseChatTransport):
             if last_user_idx is not None
             else ""
         )
+        # Spec 4.6: what came before this turn, replayed (condensed) only when
+        # the conversation's ACP session had to be recreated.
+        prior_history = request_messages[:last_user_idx] if last_user_idx is not None else []
         # The ACP session only receives this one prompt string (history lives in
         # the hermes-acp session server-side), so repo signals that the server
         # sent as headers/body must be inlined here — otherwise the model starts
@@ -199,6 +236,7 @@ class AcpTransport(BaseChatTransport):
         started_at = time.monotonic()
         loop = asyncio.get_running_loop()
         channel = EventChannel(loop)
+        self._channel = channel
         _qput = channel.put
 
         def on_text(text: str):
@@ -244,8 +282,14 @@ class AcpTransport(BaseChatTransport):
                 _qput(("tool_call_end", payload[0]))
             elif kind == "stream_retry":
                 _qput(("stream_retry", payload[0]))
+            elif kind == "usage_update":
+                usage_state["update"] = payload[0]
+            elif kind == "usage":
+                usage_state["tokens"] = payload[0]
 
         request_outcome = {"success": True, "error": None}
+        # Spec 4.5: token counts (prompt response) and reported cost (usage_update).
+        usage_state: dict = {"tokens": None, "update": None}
 
         def _run_acp_sync():
             try:
@@ -258,10 +302,11 @@ class AcpTransport(BaseChatTransport):
                     provider=provider,
                     model=body.model,
                     plan_mode=plan_mode,
+                    history=prior_history,
                 )
                 print(f"[hermes-bridge] ACP conversation completed. conversation={workspace_id}", flush=True)
                 _finalize_session(True)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - any turn failure is reported in-stream and finalizes the session
                 error_message = str(e)
                 request_outcome["success"] = False
                 request_outcome["error"] = error_message
@@ -270,6 +315,7 @@ class AcpTransport(BaseChatTransport):
                 _qput(("text", f"\n\n[Error: {error_message}]"))
                 _finalize_session(False, error_message=error_message)
             finally:
+                self.unregister_run()
                 channel.close()
 
         def render(event: tuple) -> Iterable[str]:
@@ -314,6 +360,12 @@ class AcpTransport(BaseChatTransport):
 
         async def event_stream():
             yield delta_frame(chunk_id, body.model, {"role": "assistant"})
+            # Spec 4.8: the capability row the UI keys Stop/approvals on.
+            yield delta_frame(chunk_id, body.model, {
+                "transport_status": transport_status_event(
+                    "acp", "acp", None, self.effective_capabilities().as_dict(),
+                ),
+            })
             yield delta_frame(chunk_id, body.model, {
                 "agent_status": agent_status_event(
                     phase="starting",
@@ -324,15 +376,24 @@ class AcpTransport(BaseChatTransport):
 
             agent_task = asyncio.ensure_future(asyncio.to_thread(_run_acp_sync))
             stats = DrainStats()
-            # Wall-clock keepalive below the Express proxy's 30s activity timeout.
-            async for frame in drain_to_sse(
-                channel.queue,
-                render,
-                heartbeat_seconds=acp_chat.ACP_SSE_HEARTBEAT_SECONDS,
-                stats=stats,
-            ):
-                yield frame
+            completed = False
+            try:
+                # Wall-clock keepalive below the Express proxy's 30s activity timeout.
+                async for frame in drain_to_sse(
+                    channel.queue,
+                    render,
+                    heartbeat_seconds=acp_chat.ACP_SSE_HEARTBEAT_SECONDS,
+                    stats=stats,
+                ):
+                    yield frame
+                async for frame in finish(agent_task, stats):
+                    yield frame
+                completed = True
+            finally:
+                # Spec 4.4: disconnect cancels unless background was requested.
+                self.on_stream_closed(completed)
 
+        async def finish(agent_task, stats: DrainStats):
             elapsed_ms = int((time.monotonic() - started_at) * 1000)
             _mark_request_finished(
                 model=body.model,
@@ -343,8 +404,45 @@ class AcpTransport(BaseChatTransport):
                     + (f" error={request_outcome['error'][:80]}" if request_outcome["error"] else "")
                 ),
             )
-            for frame in stop_frames(chunk_id, body.model):
+            self._usage = _acp_turn_usage(usage_state, body.model, provider)
+            for frame in stop_frames(chunk_id, body.model, usage=self._usage):
                 yield frame
+            if self.cancel_requested and not agent_task.done():
+                # Stopped and hermes-acp has not acknowledged yet: don't hold
+                # the response open for the worker.
+                agent_task.add_done_callback(_consume_task_result)
+                return
             await agent_task
 
+        self.register_run(chunk_id)
         return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+def _consume_task_result(task) -> None:
+    if not task.cancelled() and task.exception() is not None:
+        print(f"[hermes-bridge] cancelled ACP worker ended with an error: {task.exception()}", flush=True)
+
+
+
+def _acp_turn_usage(state: dict, model: str, provider: Optional[str]) -> Optional[dict]:
+    """Price the ACP prompt response's tokens; fold in a USD cost the agent reported."""
+    import pricing
+
+    tokens = state.get("tokens") or {}
+    update = state.get("update") or {}
+    reported = None
+    if str(update.get("cost_currency") or "").upper() == "USD":
+        reported = update.get("cost_amount")
+    if not tokens:
+        return None
+    return pricing.turn_usage(
+        model,
+        provider,
+        prompt_tokens=tokens.get("input_tokens") or 0,
+        completion_tokens=tokens.get("output_tokens") or 0,
+        total_tokens=tokens.get("total_tokens"),
+        cache_read_tokens=tokens.get("cached_read_tokens") or 0,
+        cache_write_tokens=tokens.get("cached_write_tokens") or 0,
+        reasoning_tokens=tokens.get("thought_tokens") or 0,
+        reported_cost_usd=reported,
+    )

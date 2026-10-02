@@ -75,7 +75,10 @@ EXPECTED_ROUTES = [
     ('POST', '/portal/oauth/start', 'portal_oauth_start_route'),
     ('GET', '/portal/oauth/poll/{session_id}', 'portal_oauth_poll_route'),
     ('GET', '/gateway/capabilities', 'get_gateway_capabilities'),
-    ('POST', '/v1/runs/cancel', 'cancel_gateway_run'),
+    # Spec 4.4: runs-only cancel became the any-transport cancel; the original
+    # path stays registered first, /v1/chat/cancel is the new canonical name.
+    ('POST', '/v1/runs/cancel', 'cancel_chat_turn'),
+    ('POST', '/v1/chat/cancel', 'cancel_chat_turn'),
     ('POST', '/v1/runs/approve', 'approve_gateway_run'),
     ('POST', '/kanban/swarm', 'post_kanban_swarm'),
     ('GET', '/projects', 'get_projects'),

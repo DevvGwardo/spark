@@ -100,9 +100,9 @@ def delta_frame(chunk_id: str, model: str, delta: dict) -> str:
     return sse_chunk(make_delta_chunk(chunk_id, model, delta))
 
 
-def stop_frames(chunk_id: str, model: str) -> list[str]:
-    """The final ``finish_reason=stop`` chunk and the ``[DONE]`` marker."""
+def stop_frames(chunk_id: str, model: str, usage: Optional[dict] = None) -> list[str]:
+    """The final ``finish_reason=stop`` chunk (carrying the turn's usage) and ``[DONE]``."""
     return [
-        sse_chunk(make_delta_chunk(chunk_id, model, {}, finish_reason="stop")),
+        sse_chunk(make_delta_chunk(chunk_id, model, {}, finish_reason="stop", usage=usage)),
         "data: [DONE]\n\n",
     ]

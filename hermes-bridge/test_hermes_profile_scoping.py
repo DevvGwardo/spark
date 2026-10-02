@@ -256,29 +256,35 @@ class CheckpointManagerScopeTests(unittest.TestCase):
 
 
 class ActiveRunRegistryTests(unittest.TestCase):
-    """B7: a late-finishing run must not cancel a newer run's handle."""
+    """B7: a late-finishing run must not cancel a newer run's handle.
+
+    Since spec 4.4 the handles live in active_runs.REGISTRY keyed by
+    (conversation_id, run_id), so compare-and-delete is structural.
+    """
 
     def setUp(self):
+        import active_runs
         import hermes_runs
 
         self.runs = hermes_runs
-        with self.runs._active_runs_lock:
-            self.runs._active_runs.clear()
+        self.registry = active_runs.REGISTRY
+        self.registry.clear()
 
     def tearDown(self):
-        with self.runs._active_runs_lock:
-            self.runs._active_runs.clear()
+        self.registry.clear()
 
     def _register(self, conv, run_id):
         self.runs.register_active_run(
             conv, run_id=run_id, base_url="http://gateway", api_key=None
         )
 
+    def _run_ids(self, conv):
+        return [r.run_id for r in self.registry.runs_for(conv)]
+
     def test_unregister_with_matching_run_id_removes(self):
         self._register("conv-1", "run-1")
         self.runs.unregister_active_run("conv-1", "run-1")
-        with self.runs._active_runs_lock:
-            self.assertNotIn("conv-1", self.runs._active_runs)
+        self.assertEqual(self._run_ids("conv-1"), [])
 
     def test_unregister_with_stale_run_id_preserves_newer_run(self):
         """The B7 regression: the old run must not delete the new run's handle."""
@@ -289,12 +295,11 @@ class ActiveRunRegistryTests(unittest.TestCase):
         # The old run finishes late and tries to clean up.
         self.runs.unregister_active_run("conv-1", "run-old")
 
-        with self.runs._active_runs_lock:
-            self.assertIn(
-                "conv-1", self.runs._active_runs,
-                "the newer run's cancel handle was deleted by the older run",
-            )
-            self.assertEqual(self.runs._active_runs["conv-1"].run_id, "run-new")
+        self.assertEqual(
+            self._run_ids("conv-1"), ["run-new"],
+            "the newer run's cancel handle was deleted by the older run",
+        )
+        self.assertEqual(self.runs.active_gateway_run("conv-1").run_id, "run-new")
 
     def test_newer_run_remains_cancellable(self):
         """The practical consequence: Stop must still reach the live run."""
@@ -302,20 +307,24 @@ class ActiveRunRegistryTests(unittest.TestCase):
         self._register("conv-1", "run-new")
         self.runs.unregister_active_run("conv-1", "run-old")
         self.assertFalse(self.runs.is_run_cancelled("conv-1"))
-        with self.runs._active_runs_lock:
-            active = self.runs._active_runs["conv-1"]
-            active.cancelled.set()
+        self.runs.active_gateway_run("conv-1").cancelled.set()
         self.assertTrue(
             self.runs.is_run_cancelled("conv-1"),
             "the surviving run lost its cancel handle",
         )
 
+    def test_late_unregister_after_overlap_keeps_both_distinct(self):
+        """Keyed by (conversation, run): the late run removes only itself."""
+        self._register("conv-1", "run-old")
+        self._register("conv-1", "run-new")
+        self.runs.unregister_active_run("conv-1", "run-new")
+        self.assertEqual(self._run_ids("conv-1"), ["run-old"])
+
     def test_unregister_without_run_id_still_clears(self):
         """Explicit reset semantics are preserved for callers that need them."""
         self._register("conv-1", "run-1")
         self.runs.unregister_active_run("conv-1")
-        with self.runs._active_runs_lock:
-            self.assertNotIn("conv-1", self.runs._active_runs)
+        self.assertEqual(self._run_ids("conv-1"), [])
 
     def test_unregister_unknown_conversation_is_a_noop(self):
         self.runs.unregister_active_run("nope", "run-x")

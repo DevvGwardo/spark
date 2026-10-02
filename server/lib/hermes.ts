@@ -26,11 +26,16 @@ import { randomUUID } from 'crypto';
 // server-side and its final assistant message is persisted to the chat store
 // so it appears when the conversation is reopened. An explicit Stop from the
 // UI calls cancelHermesRun() to actually abort.
+//
+// The bridge side of that choice is explicit (hardening spec 4.4): these
+// requests carry `background: true`, so the bridge keeps the turn running if
+// this connection drops, and only an explicit POST /v1/chat/cancel stops it.
+// Requests without a conversation cannot be persisted, so they go without the
+// flag and the bridge cancels them when the connection goes away.
 const activeAgentRuns = new Map<string, {
   controller: AbortController;
   startedAt: number;
   text: string;
-  useRuns?: boolean;
 }>();
 
 
@@ -58,18 +63,24 @@ function hermesBridgeAuthHeaders(
   };
 }
 
-async function stopHermesGatewayRun(conversationId: string): Promise<void> {
+/**
+ * Stop the conversation's in-flight turn on the bridge, whatever its transport
+ * (agent-loop interrupt, ACP session/cancel, gateway run stop). Aborting the
+ * fetch alone is not enough: the request is `background: true`, so the bridge
+ * deliberately ignores the disconnect.
+ */
+async function stopHermesBridgeRun(conversationId: string): Promise<void> {
   try {
     // Through the shared client, which attaches the token this path never sent
-    // (G2). Fire-and-forget: a failed cancel must not break caller cleanup.
+    // (G2). Never throws: a failed cancel must not break caller cleanup.
     await bridge.json(
-      '/v1/runs/cancel',
+      '/v1/chat/cancel',
       { method: 'POST', body: JSON.stringify({ conversation_id: conversationId }) },
       { timeoutMs: 5_000, retryUntilReady: false },
     );
   } catch (error) {
     logger.warn(
-      `[chat] Failed to stop gateway run for conversation=${conversationId}: ${
+      `[chat] Failed to stop bridge run for conversation=${conversationId}: ${
         error instanceof Error ? error.message : error
       }`,
     );
@@ -79,9 +90,8 @@ async function stopHermesGatewayRun(conversationId: string): Promise<void> {
 export function cancelHermesRun(conversationId: string): boolean {
   const run = activeAgentRuns.get(conversationId);
   if (!run) return false;
-  if (run.useRuns) {
-    void stopHermesGatewayRun(conversationId);
-  }
+  // The bridge keys the cancel on the conversation, not on this connection.
+  void stopHermesBridgeRun(conversationId);
   run.controller.abort();
   activeAgentRuns.delete(conversationId);
   return true;
@@ -277,6 +287,7 @@ export function normalizeHermesUsage(usage: unknown): ProxyUsage {
         completion_tokens?: unknown;
         total_tokens?: unknown;
         cached_input_tokens?: unknown;
+        estimated_cost_usd?: unknown;
         prompt_tokens_details?: { cached_tokens?: unknown };
         usage?: { prompt_tokens?: unknown; completion_tokens?: unknown };
       }
@@ -295,11 +306,17 @@ export function normalizeHermesUsage(usage: unknown): ProxyUsage {
         ? record.prompt_tokens_details.cached_tokens
         : 0;
 
+  // Hermes bridge only (spec 4.5): the turn's cost, priced bridge-side by
+  // pricing.py from the same token counts.
+  const cost = record.estimated_cost_usd;
+  const costUsd = typeof cost === 'number' && Number.isFinite(cost) && cost >= 0 ? cost : undefined;
+
   return {
     promptTokens,
     completionTokens,
     totalTokens,
     cachedInputTokens: Math.max(0, cachedRaw),
+    ...(costUsd !== undefined ? { costUsd } : {}),
   };
 }
 
@@ -428,6 +445,21 @@ function logContractViolationOnce(key: string, detail: string): void {
 type CustomEventEntry = { key: string; payload: Record<string, unknown> };
 
 /**
+ * The final chunk's `usage` is a contracted event (UsageEvent) even though it
+ * sits in the standard OpenAI position, so it is validated here rather than in
+ * collectContractedEvents. Like every other contracted event it is forwarded
+ * even when invalid: losing the token counts would be worse than a loud log.
+ */
+function validateBridgeUsage(usage: unknown): unknown {
+  if (usage === undefined || usage === null) return usage;
+  const result = HERMES_EVENT_SCHEMAS.usage.safeParse(usage);
+  if (!result.success) {
+    logContractViolationOnce('usage', result.error.issues[0]?.message ?? 'invalid payload');
+  }
+  return usage;
+}
+
+/**
  * Pull contracted custom events out of one source object (a delta, or the payload
  * root), validating each against the generated schema and dispatching it.
  */
@@ -497,7 +529,7 @@ export function normalizeHermesAgentLoopPayload(payload: string): NormalizedProx
   const reasoning = typeof delta?.reasoning === 'string' ? delta.reasoning : undefined;
 
   return {
-    usage: normalizeHermesUsage(root.usage),
+    usage: normalizeHermesUsage(validateBridgeUsage(root.usage)),
     finishReason: choice?.finish_reason !== undefined && choice?.finish_reason !== null
       ? normalizeHermesFinishReason(choice.finish_reason)
       : undefined,
@@ -645,19 +677,19 @@ export async function proxyHermesAgentLoopToDataStream(input: {
   // aborting. Explicit Stop goes through cancelHermesRun().
   const canRunInBackground = !!input.conversationId;
   if (input.conversationId) {
-    // A newer run for the same conversation supersedes the old one.
+    // A newer run for the same conversation supersedes the old one, on every
+    // transport. The bridge cancel is awaited (bounded by its 5s timeout) so it
+    // cannot land after the new turn registers and stop that one instead.
     const prior = activeAgentRuns.get(input.conversationId);
     if (prior) {
-      if (prior.useRuns) {
-        void stopHermesGatewayRun(input.conversationId);
-      }
+      activeAgentRuns.delete(input.conversationId);
       prior.controller.abort();
+      await stopHermesBridgeRun(input.conversationId);
     }
     activeAgentRuns.set(input.conversationId, {
       controller: abortController,
       startedAt: Date.now(),
       text: '',
-      useRuns: !!input.hermesUseRuns,
     });
   }
   const disconnect = bindClientDisconnect(input.req, input.res, () => {
@@ -721,6 +753,8 @@ export async function proxyHermesAgentLoopToDataStream(input: {
             }
           : {}),
         ...(input.conversationId ? { conversation_id: input.conversationId } : {}),
+        // Spec 4.4: keep the turn alive if this connection drops (see above).
+        ...(canRunInBackground ? { background: true } : {}),
         ...(input.reasoningEffort ? { reasoning_effort: input.reasoningEffort } : {}),
         ...(input.hermesUseRuns ? { hermes_use_runs: true } : {}),
       }),

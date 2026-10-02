@@ -13,6 +13,8 @@ export interface ProxyUsage {
   totalTokens: number;
   /** Tokens served from a provider cache (0 when unknown). */
   cachedInputTokens?: number;
+  /** Turn cost in USD when the upstream priced it (Hermes bridge, spec 4.5). */
+  costUsd?: number;
 }
 
 /** One tool-call fragment from an OpenAI-compatible upstream stream. */
@@ -380,6 +382,7 @@ export async function proxySseToDataStream(input: ProxySseToDataStreamInput) {
         inputTokens: usage.promptTokens,
         outputTokens: usage.completionTokens,
         cachedInputTokens: usage.cachedInputTokens ?? 0,
+        ...(usage.costUsd !== undefined ? { costUsd: usage.costUsd } : {}),
       },
       input.modelName,
     );

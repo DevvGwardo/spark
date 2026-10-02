@@ -6,9 +6,12 @@ module and other modules reach them as ``<module>.<name>`` so a single
 ``patch.object(<module>, name)`` reaches every caller, as patching main did.
 """
 import asyncio
+import logging
 import os
 import re
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 # SSE comment keepalive for ACP streams. The Express SSE proxy
@@ -60,8 +63,8 @@ async def _acp_reaper_loop() -> None:
                 print(f"[hermes-bridge] ACP idle reaper closed {closed} session(s)", flush=True)
         except asyncio.CancelledError:
             raise
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - the reaper must outlive one bad sweep; it retries in 60s
+            logger.warning("ACP idle reaper sweep failed", exc_info=True)
 
 
 def _content_to_text(content) -> str:

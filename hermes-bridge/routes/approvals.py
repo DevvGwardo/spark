@@ -1,4 +1,7 @@
-"""Routes: /v1/approvals/{approval_id} (ACP permission decisions).
+"""Routes: /v1/approvals/{approval_id} (tool approval decisions).
+
+Resolves both ACP permission requests (``acp-*`` ids) and agent-loop approval
+prompts (``bridge-*`` ids, spec 4.3); both park in ``approval_registry``.
 
 Moved verbatim from main.py (spec 4.1). Names that tests patch are owned by one
 module and other modules reach them as ``<module>.<name>`` so a single
@@ -12,7 +15,7 @@ router = APIRouter()
 
 @router.post("/v1/approvals/{approval_id}")
 async def acp_approval_route(approval_id: str, body: dict = None):
-    """Resolve a pending ACP permission request with the user's decision.
+    """Resolve a pending approval (ACP or agent-loop) with the user's decision.
 
     Body: ``{"option_id": "allow_once" | "allow_session" | "allow_always" | "deny"}``
     Mirrors the UI's once/session/always scopes; the hermes ACP adapter maps

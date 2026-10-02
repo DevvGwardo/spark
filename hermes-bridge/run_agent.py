@@ -62,7 +62,7 @@ try:
     else:
         _hermes_toolset_warning = "hermes-agent toolsets not found — using baked-in tool definitions"
         print(f"[hermes-bridge] {_hermes_toolset_warning}", flush=True)
-except Exception as _e:
+except Exception as _e:  # noqa: BLE001 - optional hermes-agent bridge: any failure falls back to baked-in tools; logged
     _hermes_toolset_warning = f"hermes-agent bridge failed: {_e} — using baked-in tool definitions"
     print(f"[hermes-bridge] {_hermes_toolset_warning}", flush=True)
 
@@ -984,7 +984,7 @@ def _execute_tool(name: str, arguments: dict) -> str:
                 f"Available tools: {', '.join(sorted(all_known))}. "
                 f"Please retry with one of the available tools."
             )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - tool dispatch: the error is returned to the model as the result
         return f"Error executing {name}: {str(e)}"
 
 
@@ -1202,7 +1202,7 @@ def _execute_mcp_tool(
         return f"Error: MCP server at {server_url} timed out after {MCP_TOOL_TIMEOUT_SECONDS}s"
     except httpx.HTTPStatusError as exc:
         return f"Error: MCP server returned HTTP {exc.response.status_code}: {exc.response.text[:300]}"
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - tool handler: the error is returned to the model as the result
         return f"Error calling MCP tool '{tool_name}': {e}"
 
 
@@ -1258,6 +1258,9 @@ class AIAgent(RepoToolsMixin):
         self.repo_file_tree = repo_file_tree or []
         # Scopes the staged-edit brain buffer (same default as RepoToolProvider).
         self.workspace_id = workspace_id or 'default'
+        # Set by interrupt() (Stop button / client disconnect); checked at the
+        # top of every iteration of run_conversation.
+        self._interrupt_requested = False
         self.on_tool_start = on_tool_start
         self.on_tool_end = on_tool_end
         self.on_text = on_text
@@ -1386,7 +1389,7 @@ class AIAgent(RepoToolsMixin):
             return
         try:
             self.on_stream_retry(attempt, max_attempts, reason, delay_ms)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - a consumer error must not break the agent loop; logged
             print(f"[hermes-agent] on_stream_retry failed: {e}", flush=True)
 
     def _emit_event(self, event: dict) -> None:
@@ -1395,7 +1398,7 @@ class AIAgent(RepoToolsMixin):
             return
         try:
             self.on_server_tool_event(event)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - a consumer error must not break the agent loop; logged
             print(f"[hermes-agent] Failed to emit server tool event: {e}", flush=True)
 
     def _estimate_message_chars(self, messages: list[dict]) -> int:
@@ -1962,6 +1965,11 @@ class AIAgent(RepoToolsMixin):
             "Do not output prose, markdown, or code fences.]"
         )
 
+    def interrupt(self) -> bool:
+        """Stop the loop at the next iteration boundary (thread-safe flag)."""
+        self._interrupt_requested = True
+        return True
+
     def run_conversation(
         self,
         user_message: str,
@@ -2001,6 +2009,9 @@ class AIAgent(RepoToolsMixin):
         edit_contract_injected = False  # track planning contract injection
 
         for iteration in range(self.max_iterations):
+            if getattr(self, "_interrupt_requested", False):
+                print(f"[hermes-agent] Interrupted before iteration {iteration + 1}.", flush=True)
+                return None
             # Full context reset (once) when the session is long-running.
             # Harness pattern: resets with structured handoffs beat in-place
             # compaction for maintaining output quality (Anthropic research).
@@ -2221,7 +2232,7 @@ class AIAgent(RepoToolsMixin):
                     if tool_name in REPO_TOOL_NAMES:
                         try:
                             result = self._execute_repo_tool(tool_name, arguments)
-                        except Exception as e:
+                        except Exception as e:  # noqa: BLE001 - tool error is returned to the model as the result
                             result = f"Error executing {tool_name}: {str(e)}"
                     elif tool_name in self._mcp_tool_routes:
                         route = self._mcp_tool_routes[tool_name]
@@ -2261,7 +2272,7 @@ class AIAgent(RepoToolsMixin):
                     if tool_name in REPO_TOOL_NAMES:
                         try:
                             result = self._execute_repo_tool(tool_name, arguments)
-                        except Exception as e:
+                        except Exception as e:  # noqa: BLE001 - tool error is returned to the model as the result; logged
                             print(f"[hermes-agent] Repo tool error ({tool_name}): {e}", flush=True)
                             result = f"Error executing {tool_name}: {str(e)}"
 

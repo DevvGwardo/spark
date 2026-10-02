@@ -1,6 +1,6 @@
 # Hermes Integration Hardening Spec
 
-**Status:** Draft
+**Status:** Implemented (Phases 0–7, 2026-10-01). Open follow-up: #71
 **Owner:** @DevvGwardo
 **Created:** 2026-09-27
 **Hermes baseline:** hermes-agent `v2026.7.20` (0.19.0), pinned in `electron/bridge.ts:275`
@@ -61,15 +61,15 @@ Out of scope, because the Phase 6 doc already tracks them: making `/v1/runs` the
 | G15 | Two cron systems (the hermes-helper one and a bridge JSON one) | `main.py:824-1370`, `:6840-7185` |
 | G16 | Unbounded `_sessions` dict. Metrics counters are updated from threads with no lock and are also defined twice | `main.py:57`, `:1795`, `:2793` |
 
-**Transport capability matrix (current):**
+**Transport capability matrix (current, after Phase 4 items 4.3–4.6 and 4.8):**
 
 | Capability | agent-loop (adapter) | ACP | `/v1/runs` (flag) |
 |---|---|---|---|
-| Approvals | ✗ no `approval_callback` | ✓ | partial (depends on gateway) |
-| Cancel / Stop | ✗ | ✗ (timeout only) | ✓ |
-| Stops on client disconnect | ✗ | ✗ | ✗ |
-| Usage / cost in stream | ✗ (printed only; final usage hard-coded 0) | ✗ (`usage_update` ignored) | ✗ |
-| Session resume after reap/crash | ✓ via `session_id` | ✗ (last message only, no `load_session`) | n/a |
+| Approvals | ✓ hermes approval callback → `approval_request` → `/v1/approvals/{id}` (`bridge-*` ids) | ✓ `request_permission` → same registry and route | partial (gateway `approval.*` events arrive as `server_tool_event`; not advertised) |
+| Cancel / Stop | ✓ `AIAgent.interrupt`, via `POST /v1/chat/cancel` | ✓ ACP `session/cancel` | ✓ `POST /v1/runs/{id}/stop` |
+| Stops on client disconnect | ✓ unless `background: true` (desktop chat sets it) | ✓ unless `background: true` | ✓ unless `background: true` |
+| Usage / cost in stream | ✓ agent token counters, priced by `pricing.py`, on the final chunk | ✓ prompt-response usage + `usage_update` cost, priced | ✓ `run.completed` usage, priced |
+| Session resume after reap/crash | ✓ via `session_id` | ✓ `load_session` when advertised, else condensed-history replay | n/a |
 
 ### 2.3 Stale docs
 
@@ -314,15 +314,33 @@ Every PR runs `npm run typecheck && npm run lint && npm test` plus `pytest herme
 | 0 Correctness hotfixes | **Done** | All 9 defects fixed, each with a regression test. PR #52 + #53. |
 | 1 Event and error contract | **Done** | 1.1–1.5 landed. Error envelope + regex-free `ChatErrorBanner` + golden fixtures. |
 | 2 Single bridge client | **Done** | `BridgeClient` owns every bridge request; loopback now token-gated. PR #56. |
-| 3 Lifecycle | Not started | |
-| 4 Transport parity and decomposition | Not started | |
-| 5 Async hygiene | **Done** (bridge side) | 5.1–5.8 in `fix/bridge-async-hygiene`; chat_impl/acp_chat parts deferred to the 4.2 transports split. See Phase 5 outcome |
-| 6 Frontend data layer | Not started | |
-| 7 Tests, CI, and docs | In progress | 7.1/7.3/7.4 not started; see Phase 0 test inventory below |
+| 3 Lifecycle | **Done** | 3.1–3.4 PR #60 (`shared/bridge-supervisor.ts`, respawn, readiness, rotating log; `/diag` now confirms token ownership instead of disclosing it). 3.5 PR #64 (pinned-tag moves, patch re-apply + rollback, supervised restart) |
+| 4 Transport parity and decomposition | **Done** | 4.1 PR #62 (`main.py` 7,030 → 397 lines, `routes/*`). 4.2 PR #66 (`chat_transports/`, one `drain_to_sse`). 4.7 PR #65 (`repo_tools.py`). 4.3/4.4 PR #70, 4.5/4.6/4.8 PR #73. Matrix in §2.2 updated in PR #74 |
+| 5 Async hygiene | **Done** | Bridge side PR #67; chat-path leftovers (sync I/O, duplicate `bridge:metrics`, except-audit, ruff exclusions) PR #74 |
+| 6 Frontend data layer | **Done** | 6.1–6.4 PR #61 (`hermes-queries.ts`, `<BridgeGate>`, `<HermesErrorState>`). 6.5 PR #63 (`src/lib/hermes-api/`). 6.6 PR #59 |
+| 7 Tests, CI, and docs | **Done** | 7.1 + 7.5 PR #68 (62 route tests, nightly canary; 404/validation envelope bugs fixed), canary fix PR #72. 7.2 PR #74 (fake ACP agent). 7.3 PR #62 (startup smoke). 7.4 Phase 1. 7.6 PR #59 |
+
+### Phases 3–7 notes
+
+- **Behavior changes users can see:** agent-loop chat now prompts for dangerous
+  commands when `approvals.mode: manual` (runners without a callback — kanban,
+  Ralph — still auto-resolve); a new turn on a busy conversation cancels the old
+  one; `/cron` returns 503 when hermes cron cannot load (no bridge-local
+  fallback); config edits require `ruamel.yaml` and are refused with 409 if the
+  file changed mid-edit.
+- **Bugs found along the way:** every swarm turn raised `NameError`
+  (`_finalize_session`); runs-mode requests the gateway could not take returned
+  500 instead of falling back; `server_tool_event` / `fallback_switch` SSE keys
+  were crossed; ACP plan updates were dropped (`"plan"` vs `"plan_update"`);
+  routing 404s and validation errors bypassed the error envelope.
+- **Not verified against a live model:** approvals, Stop, usage/cost and ACP
+  resume are covered by fakes and fixtures only; each PR lists manual checks.
+- **Open:** #71 — `patches/hermes-api-server-runs-parity.patch` no longer applies
+  to hermes-agent `main`; regenerate before the next pin bump.
 
 ### Phase 5 outcome
 
-Branch `fix/bridge-async-hygiene`. Files owned by the concurrent 4.2 (chat
+PR #67 (branch `fix/bridge-async-hygiene`); the deferred items below landed in PR #74. Files owned by the concurrent 4.2 (chat
 transports) and 4.7 (adapter repo tools / `run_agent.py`) work were not touched;
 their share of each item is listed as deferred.
 

@@ -6,6 +6,7 @@ module and other modules reach them as ``<module>.<name>`` so a single
 """
 import asyncio
 import json
+import logging
 import os
 import sqlite3
 import time
@@ -27,6 +28,8 @@ from bridge_workspace import (
 )
 from provider_config import _get_circuit, NOUS_MODEL_PREFIX
 from session_tracker import _now_iso, _sessions, _sessions_lock
+
+logger = logging.getLogger(__name__)
 
 
 class ChatMessage(BaseModel):
@@ -193,7 +196,8 @@ def _format_tool_start_text(tool_name: str, tool_input: str) -> str:
             label = format_computer_use_action_label(args)
             if label:
                 summary = label
-        except Exception:
+        except Exception:  # noqa: BLE001 - display-only label; fall back to the raw action name
+            logger.debug("computer_use label formatting failed", exc_info=True)
             action = args.get("action", "")
             if action:
                 summary = str(action)
@@ -262,7 +266,13 @@ def _format_tool_end_text(tool_name: str, tool_output: str) -> str:
     return f"> *{display} — done*\n\n"
 
 
-def make_delta_chunk(chunk_id: str, model: str, delta: dict, finish_reason: Optional[str] = None) -> dict:
+def make_delta_chunk(
+    chunk_id: str,
+    model: str,
+    delta: dict,
+    finish_reason: Optional[str] = None,
+    usage: Optional[dict] = None,
+) -> dict:
     chunk: dict = {
         "id": chunk_id,
         "object": "chat.completion.chunk",
@@ -276,9 +286,10 @@ def make_delta_chunk(chunk_id: str, model: str, delta: dict, finish_reason: Opti
     }
     # Include usage in the final chunk so the AI SDK's OpenAI-compatible
     # parser recognises this as a proper completion and maps finish_reason
-    # to finishReason instead of defaulting to 'unknown'.
+    # to finishReason instead of defaulting to 'unknown'. Transports that
+    # collect per-turn usage (spec 4.5) pass it; the rest report zeros.
     if finish_reason is not None:
-        chunk["usage"] = usage_event(0, 0, 0)
+        chunk["usage"] = usage if usage is not None else usage_event(0, 0, 0)
     return chunk
 
 
@@ -324,9 +335,10 @@ async def _passthrough_chat_completions(
         if finalize_request is None:
             return
         try:
-            finalize_request(success)
-        except Exception:
-            pass
+            # Session finalize writes the state.db row (sqlite): off the loop.
+            await asyncio.to_thread(finalize_request, success)
+        except Exception:  # noqa: BLE001 - request accounting must not break the proxied response
+            logger.warning("passthrough finalize_request failed", exc_info=True)
 
     async def _close_client():
         close = getattr(client, "aclose", None)
@@ -419,8 +431,8 @@ def _set_session_title_if_empty(session_id: str, title: str) -> None:
             row = conn.execute("SELECT title FROM sessions WHERE id = ?", (session_id,)).fetchone()
             if row and not (row[0] or "").strip():
                 conn.execute("UPDATE sessions SET title = ? WHERE id = ?", (clean, session_id))
-    except Exception:
-        pass  # Best-effort; don't break request handling
+    except Exception:  # noqa: BLE001 - a missing/locked state.db only costs the session its title
+        logger.debug("session title update failed for %s", session_id, exc_info=True)
 
 
 def _finalize_tracked_session(

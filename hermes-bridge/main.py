@@ -189,12 +189,26 @@ async def _handle_bridge_error(request: Request, exc: BridgeError):
     return JSONResponse(status_code=exc.status_code, content=exc.to_envelope())
 
 
-@app.exception_handler(HTTPException)
-async def _handle_http_exception(request: Request, exc: HTTPException):
-    """Map FastAPI's HTTPException onto the same envelope.
+try:
+    # Registered on Starlette's base class so it also catches the 404/405 that
+    # routing raises for unmatched paths (starlette's HTTPException, which
+    # fastapi.HTTPException subclasses). Tests that stub fastapi keep starlette.
+    from starlette.exceptions import HTTPException as _BaseHTTPException
+except ImportError:  # pragma: no cover - starlette ships with fastapi
+    _BaseHTTPException = HTTPException
 
-    FastAPI raises this for 404s and validation failures, which would otherwise
-    reach the client as {"detail": ...} — a second, incompatible error shape.
+try:
+    from fastapi.exceptions import RequestValidationError
+except ImportError:  # fastapi stubbed out in unit tests
+    RequestValidationError = None
+
+
+@app.exception_handler(_BaseHTTPException)
+async def _handle_http_exception(request: Request, exc: HTTPException):
+    """Map HTTP exceptions (raised by routes or by routing itself) onto the envelope.
+
+    Unmatched routes and explicit HTTPExceptions would otherwise reach the
+    client as {"detail": ...} — a second, incompatible error shape.
     """
     # Map the status onto a code. A 401/403 is an auth failure; a 4xx that is not
     # 401/403/404 is a client-side validation problem.
@@ -218,6 +232,25 @@ async def _handle_http_exception(request: Request, exc: HTTPException):
         status_code=exc.status_code,
         content={"error": {"code": code, "message": message, "retryable": retryable}},
     )
+
+
+if RequestValidationError is not None:
+
+    @app.exception_handler(RequestValidationError)
+    async def _handle_validation_error(request: Request, exc):
+        """Request body/query validation failures → VALIDATION envelope (422)."""
+        # The contract's `details` has no slot for field errors, so the first
+        # one goes into the message ("body.content: Input should be ...").
+        errors = exc.errors()
+        message = "Request validation failed."
+        if errors:
+            first = errors[0]
+            loc = ".".join(str(part) for part in first.get("loc", ()))
+            message = f"Request validation failed: {loc}: {first.get('msg', 'invalid')}"
+        return JSONResponse(
+            status_code=422,
+            content={"error": {"code": VALIDATION, "message": message, "retryable": False}},
+        )
 
 
 @app.exception_handler(Exception)

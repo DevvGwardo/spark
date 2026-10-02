@@ -12,7 +12,9 @@ cannot honor the request.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
+import logging
 import os
 import threading
 import time
@@ -22,7 +24,9 @@ from typing import TYPE_CHECKING, Any, Iterable, Optional
 
 from fastapi.responses import StreamingResponse
 
+import approval_registry
 import brain_client
+import pricing
 import bridge_state
 import bridge_workspace
 import mcp_telemetry
@@ -48,6 +52,7 @@ from chat_common import (
     _format_tool_start_text,
     _get_stream_chunk_size,
 )
+from chat_transports.approvals import agent_loop_approvals_enabled, make_approval_callback
 from chat_transports.base import BaseChatTransport, ChatContext, TransportCapabilities
 from chat_transports.drain import (
     AGENT_LOOP_HEARTBEAT_SECONDS,
@@ -77,10 +82,18 @@ _PASSTHROUGH_KINDS = frozenset({
     # under the fallback_switch key and real fallback switches were dropped.
     "server_tool_event",
     "fallback_switch",
+    # Spec 4.3: hermes approval prompts, same event the ACP transport emits.
+    "approval_request",
 })
+
+# Spec 4.4: after Stop, the SSE stream ends within this many seconds even if
+# the agent is inside a call it cannot interrupt; the worker finishes later.
+CANCEL_GRACE_SECONDS = 1.5
 
 if TYPE_CHECKING:  # fastapi is stubbed without Response in the unit tests
     from fastapi.responses import Response
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -100,9 +113,16 @@ class AgentTurn:
 
 class AgentLoopTransport(BaseChatTransport):
     name = "agent-loop"
-    # G6: no approval_callback, no interrupt, final usage hard-coded to 0;
-    # session resume works because the adapter keys state.db on session_id.
-    capabilities = TransportCapabilities(session_resume=True)
+    # Approvals via hermes' approval callback (4.3), Stop via the real agent's
+    # interrupt flag (4.4), per-turn tokens/cost from the agent's counters
+    # (4.5); resume works because the adapter keys state.db on session_id.
+    capabilities = TransportCapabilities(
+        approvals=True,
+        cancel=True,
+        stops_on_client_disconnect=True,
+        usage_in_stream=True,
+        session_resume=True,
+    )
 
     def __init__(self, ctx: ChatContext, *, runs_plan: RunsPlan, **kwargs: Any):
         super().__init__(ctx, **kwargs)
@@ -114,6 +134,13 @@ class AgentLoopTransport(BaseChatTransport):
         self._tool_state_lock = threading.Lock()
         self._active_tool_state: dict = {}  # call_id -> {"ts": monotonic, "name": tool}
         self._pending_tool_ids: dict[str, list] = {}  # tool_name -> [call_ids] (FIFO fallback)
+        # The agent of the running turn (set on the worker thread) and the
+        # guard that makes closing the channel idempotent (worker vs Stop).
+        self._agent: Any = None
+        self._agent_lock = threading.Lock()
+        self._channel_closed = False
+        # Spec 4.5: set from the ("usage", ...) queue event, read by the final chunk.
+        self._usage: Optional[dict] = None
 
     # ── entry point ──────────────────────────────────────────────────────
 
@@ -132,14 +159,14 @@ class AgentLoopTransport(BaseChatTransport):
         # Brain MCP: register per-request session so overseer can address it directly
         try:
             await brain_client._brain_rpc("tools/call", {"name": "brain_register", "arguments": {"name": f"hermes-request-{chunk_id}"}})
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - brain MCP is optional observability; the turn runs without it
+            logger.debug("brain_register failed", exc_info=True)
         # Brain MCP: publish per-request job metadata keyed by chunk_id so the overseer
         # can correlate in-flight requests and inspect individual job state.
         try:
             brain_client._brain_set(f"bridge:active-request:{chunk_id}", ctx.active_job_meta)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - brain MCP is optional observability; the turn runs without it
+            logger.debug("brain active-request publish failed", exc_info=True)
         # Bound per request (not at module import) so tests that patch
         # worktree_support reach this request, as before the split.
         from worktree_support import (
@@ -150,7 +177,37 @@ class AgentLoopTransport(BaseChatTransport):
 
         self._worktree = (maybe_setup_worktree, adjust_toolsets_for_worktree, cleanup_worktree)
         self.channel = EventChannel(asyncio.get_running_loop())
+        # Registered before the stream starts so a Stop that races the first
+        # frame still reaches this turn.
+        self.register_run(chunk_id)
         return StreamingResponse(self._event_stream(), media_type="text/event-stream")
+
+    # ── cancel (spec 4.4) ────────────────────────────────────────────────
+
+    async def cancel(self) -> bool:
+        """Interrupt the running agent and end the stream promptly.
+
+        The real agent checks its interrupt flag between API calls and tool
+        steps. A parked approval is denied so the turn does not sit out the
+        approval timeout. If the agent is inside a call it cannot interrupt,
+        the stream still ends after ``CANCEL_GRACE_SECONDS``.
+        """
+        approval_registry.deny_all(self.ctx.workspace_id)
+        with self._agent_lock:
+            agent = self._agent
+        if agent is not None:
+            await asyncio.to_thread(_interrupt_agent, agent)
+        channel = self.channel
+        if channel is not None:
+            channel.loop.call_later(CANCEL_GRACE_SECONDS, self._close_channel)
+        return True
+
+    def _close_channel(self) -> None:
+        with self._agent_lock:
+            if self._channel_closed:
+                return
+            self._channel_closed = True
+        self.channel.close()
 
     # ── producer side: agent callbacks (worker thread) ──────────────────
 
@@ -292,7 +349,30 @@ class AgentLoopTransport(BaseChatTransport):
         self._qput(("fallback_switch", fallback_switch_event(provider, model)))
 
     def on_transport_status(self, requested: str, actual: str, reason: str | None = None):
-        self._qput(("transport_status", transport_status_event(requested, actual, reason)))
+        caps = self.capabilities_for(actual).as_dict()
+        self._qput(("transport_status", transport_status_event(requested, actual, reason, caps)))
+
+    def capabilities_for(self, actual: str) -> TransportCapabilities:
+        """The capability row of the transport actually serving the turn (4.8)."""
+        if actual == "runs":
+            from chat_transports.runs import RunsTransport
+
+            return RunsTransport.capabilities
+        caps = AgentLoopTransport.capabilities
+        if not (self.ctx.using_real_agent and agent_loop_approvals_enabled()):
+            # The fallback agent has no approval gate to bridge.
+            caps = dataclasses.replace(caps, approvals=False)
+        return caps
+
+    def effective_capabilities(self) -> TransportCapabilities:
+        return self.capabilities_for(self.name)
+
+    def usage(self) -> Optional[dict]:
+        return self._usage
+
+    def on_usage(self, usage: Optional[dict]) -> None:
+        if usage:
+            self._qput(("usage", usage))
 
     def on_stream_retry(self, attempt: int, max_attempts: int, reason: str, delay_ms: int):
         # The agent-loop retried an upstream stream — surface it once per retry.
@@ -338,7 +418,7 @@ class AgentLoopTransport(BaseChatTransport):
             )
             turn = self._prepare_turn(adjust_toolsets_for_worktree, wt_info, worktree_active)
             self._run_turn(turn)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - any turn failure is reported in-stream and finalizes the session
             error_message = str(e)
             print(f"[hermes-bridge] Agent error: {error_message}", flush=True)
             _append_session_chat_chunk(ctx.session_id, "assistant", f"\n\n[Error: {error_message}]")
@@ -351,7 +431,7 @@ class AgentLoopTransport(BaseChatTransport):
             if worktree_active and wt_info:
                 try:
                     cleanup_worktree(wt_info)
-                except Exception as wt_cleanup_err:
+                except Exception as wt_cleanup_err:  # noqa: BLE001 - cleanup failure is logged; the turn result stands
                     print(f"[hermes-bridge] Worktree cleanup error: {wt_cleanup_err}", flush=True)
             # Brain MCP: clean up per-request state to prevent zombies
             try:
@@ -369,9 +449,12 @@ class AgentLoopTransport(BaseChatTransport):
                     brain_client._brain_release(r)
                 # Pulse done status
                 brain_client._brain_pulse("done", f"completed chunk={self.chunk_id}")
-            except Exception:
-                pass  # Best-effort cleanup
-            self.channel.close()
+            except Exception:  # noqa: BLE001 - brain cleanup is best-effort; claims expire via TTL=120
+                logger.debug("brain per-request cleanup failed", exc_info=True)
+            with self._agent_lock:
+                self._agent = None
+            self.unregister_run()
+            self._close_channel()
 
     def _prepare_turn(self, adjust_toolsets_for_worktree, wt_info, worktree_active: bool) -> AgentTurn:
         ctx = self.ctx
@@ -521,18 +604,37 @@ class AgentLoopTransport(BaseChatTransport):
             agent_kwargs["hermes_home"] = str(bridge_workspace._resolve_hermes_home(ctx.request_profile))
             if ctx.run_budget_seconds:
                 agent_kwargs["run_budget_seconds"] = ctx.run_budget_seconds
+            if agent_loop_approvals_enabled():
+                # Spec 4.3: real-agent only (the fallback agent has no gate).
+                agent_kwargs["approval_callback"] = make_approval_callback(
+                    loop=self.channel.loop,
+                    conversation_id=ctx.workspace_id,
+                    emit=lambda event: self._qput(("approval_request", event)),
+                    is_cancelled=lambda: self.cancel_requested,
+                    cwd=(turn.wt_info or {}).get("path") or ctx.repo_root_header or None,
+                )
         if ctx.resolved_provider == MOA_PROVIDER_ID:
             agent_kwargs["provider_override"] = MOA_PROVIDER_ID
         agent = ctx.agent_class(**agent_kwargs)
         agent.on_thinking = self.on_thinking
         agent.on_reasoning = self.on_reasoning
+        with self._agent_lock:
+            self._agent = agent
+        if self.cancel_requested:
+            # Stop arrived while the turn was being set up: don't start it
+            # (hermes clears a pending interrupt when a turn begins).
+            print("[hermes-bridge] Turn cancelled before the agent started.", flush=True)
+            _update_bridge_metrics(success=True, decrement_active=True)
+            ctx.finalize_session(True)
+            return
 
         history = turn.history
         print(f"[hermes-bridge] User message: {turn.user_message[:100]}... history_msgs={len(history)} has_system={any(m.get('role') == 'system' for m in history)}", flush=True)
-        agent.run_conversation(
+        result = agent.run_conversation(
             user_message=turn.user_message,
             conversation_history=history,
         )
+        self.on_usage(pricing.usage_from_agent_result(result, body.model, ctx.resolved_provider))
         print("[hermes-bridge] Agent conversation completed.", flush=True)
         # Brain MCP: pulse on successful completion
         brain_client._brain_pulse("working", "completed")
@@ -571,6 +673,9 @@ class AgentLoopTransport(BaseChatTransport):
             })
         elif kind in _PASSTHROUGH_KINDS:
             yield delta_frame(chunk_id, model, {kind: event[1]})
+        elif kind == "usage":
+            # Not a frame of its own: it rides on the final chunk.
+            self._usage = event[1]
         elif kind == "thinking":
             iteration = event[1]
             yield delta_frame(chunk_id, model, {
@@ -606,13 +711,27 @@ class AgentLoopTransport(BaseChatTransport):
 
         agent_task = asyncio.ensure_future(asyncio.to_thread(self._run_sync))
         stats = DrainStats()
-        async for frame in drain_to_sse(
-            self.channel.queue,
-            lambda event: self._render(event, stream_started_at),
-            heartbeat_seconds=AGENT_LOOP_HEARTBEAT_SECONDS,
-            stats=stats,
-        ):
-            yield frame
+        completed = False
+        try:
+            async for frame in drain_to_sse(
+                self.channel.queue,
+                lambda event: self._render(event, stream_started_at),
+                heartbeat_seconds=AGENT_LOOP_HEARTBEAT_SECONDS,
+                stats=stats,
+            ):
+                yield frame
+            async for frame in self._finish_stream(agent_task, stats, stream_started_at):
+                yield frame
+            completed = True
+        finally:
+            # Spec 4.4: a client that leaves mid-turn cancels it unless the
+            # request asked for background mode.
+            self.on_stream_closed(completed)
+
+    async def _finish_stream(self, agent_task, stats: DrainStats, stream_started_at: float):
+        ctx = self.ctx
+        body = ctx.body
+        chunk_id = self.chunk_id
         event_count = stats.events
 
         # Final chunk
@@ -623,31 +742,49 @@ class AgentLoopTransport(BaseChatTransport):
         brain_client._brain_set("hermes-bridge:active_request", "")
         brain_client._brain_set("hermes-bridge:active_sessions", str(bridge_state._bridge_active_requests), "global")
         brain_client._brain_set("hermes-bridge:last_completion", f"model={body.model} events={event_count} elapsed_ms={elapsed_ms}", "global")
-        # Bridge metrics — publish final state via _update_bridge_metrics (called from
-        # the worker) plus api_calls for the completed request
-        brain_client._brain_set("bridge:metrics", json.dumps({
-            "active_requests": bridge_state._bridge_active_requests,
-            "error_rate": round(bridge_state._bridge_error_count / max(bridge_state._bridge_total_requests, 1), 4),
-            "uptime": round(time.time() - bridge_state._bridge_start_time, 1) if bridge_state._bridge_start_time > 0 else 0.0,
-            "start_time": bridge_state._bridge_start_time,
-            "total_requests": bridge_state._bridge_total_requests,
-            "error_count": bridge_state._bridge_error_count,
-            "api_calls": event_count,
-            "estimated_cost_usd": round(event_count * 0.001, 4),
-        }))
+        # The global bridge:metrics key is published by _update_bridge_metrics
+        # (bridge_state, under its lock) when the worker finishes. This used to
+        # publish it a second time from unlocked reads, with a made-up cost.
         # Brain MCP: per-request metrics keyed by chunk_id for per-request auditing
+        usage = self._usage or {}
         try:
             brain_client._brain_set(f"bridge:metrics:{chunk_id}", json.dumps({
-                "tokens": 0,
+                "tokens": int(usage.get("total_tokens") or 0),
                 "api_calls": event_count,
-                "cost": round(event_count * 0.001, 4),
+                "cost": usage.get("estimated_cost_usd"),
                 "elapsed_ms": elapsed_ms,
                 "model": body.model,
                 "repo_mode": ctx.has_repo_tools,
             }))
-        except Exception:
-            pass
-        for frame in stop_frames(chunk_id, body.model):
+        except Exception:  # noqa: BLE001 - per-request metrics are observability only
+            logger.debug("per-request metrics publish failed", exc_info=True)
+        for frame in stop_frames(chunk_id, body.model, usage=self._usage):
             yield frame
 
+        if self.cancel_requested and not agent_task.done():
+            # Stopped, and the agent is still unwinding an uninterruptible
+            # call: don't hold the response open for it.
+            agent_task.add_done_callback(_consume_task_result)
+            return
         await agent_task
+
+
+def _interrupt_agent(agent: Any) -> bool:
+    """Set the agent's interrupt flag (hermes ``AIAgent.interrupt`` or the fallback's)."""
+    interrupt = getattr(agent, "interrupt", None)
+    if not callable(interrupt):
+        return False
+    try:
+        interrupt()
+    except Exception:  # noqa: BLE001 - a failed interrupt still leaves the stream-side grace close
+        logger.warning("agent interrupt failed", exc_info=True)
+        return False
+    return True
+
+
+def _consume_task_result(task: "asyncio.Future") -> None:
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.warning("cancelled agent-loop worker ended with an error: %s", exc)

@@ -8,12 +8,12 @@ rejects a MoA run.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 
 import brain_client
 from bridge_events import hermes_run_server_tool_event
 from bridge_state import _mark_request_finished, _update_bridge_metrics
+from active_runs import REGISTRY
 from chat_transports.agent_loop import AgentLoopTransport, AgentTurn
 from chat_transports.base import TransportCapabilities
 from chat_transports.runs_plan import default_toolset_list, toolsets_overridden
@@ -22,18 +22,34 @@ from moa_config import MOA_PROVIDER_ID
 
 class RunsTransport(AgentLoopTransport):
     name = "runs"
-    # G6: cancel works (hermes_runs.stop_run via the active-run registry);
-    # approvals are gateway-dependent, so not advertised.
-    capabilities = TransportCapabilities(cancel=True)
+    # Cancel: the gateway run is stopped (POST /v1/runs/{id}/stop) and an
+    # agent-loop fallback is interrupted. Usage comes from run.completed.
+    # Approvals are gateway-dependent (approval.* events arrive as
+    # server_tool_event), so not advertised.
+    capabilities = TransportCapabilities(
+        cancel=True,
+        stops_on_client_disconnect=True,
+        usage_in_stream=True,
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._gateway_run_id: str | None = None
 
     async def cancel(self) -> bool:
-        """Stop the gateway run for this conversation (False if none is active).
+        """Stop this request's gateway run and/or its agent-loop fallback.
 
-        Not wired to client disconnect yet — spec 4.4 owns that decision.
+        The gateway run has its own registry entry; when the registry cancels
+        the whole conversation it has already been flagged (and stops through
+        its own hook), so it is only stopped here when this is a direct call.
         """
-        import hermes_runs
-
-        return await asyncio.to_thread(hermes_runs.cancel_active_run, self.ctx.workspace_id)
+        run_id = self._gateway_run_id
+        if run_id:
+            entry = REGISTRY.get(self.ctx.workspace_id, run_id)
+            if entry is not None and not entry.is_cancelled:
+                await REGISTRY.cancel(self.ctx.workspace_id, run_id)
+        # Interrupts an agent-loop fallback, and ends the stream promptly.
+        return await super().cancel()
 
     def _run_turn(self, turn: AgentTurn) -> None:
         import hermes_runs as _hermes_runs
@@ -87,6 +103,9 @@ class RunsTransport(AgentLoopTransport):
                 flush=True,
             )
             route_runs = False
+            # The earlier transport_status said "runs"; correct it (and the
+            # capability row the UI keys its affordances on).
+            self.on_transport_status("runs", "agent-loop", parity_reason)
 
         if route_runs:
             user_message = turn.user_message
@@ -154,13 +173,18 @@ class RunsTransport(AgentLoopTransport):
             run_id=run_id,
             base_url=_gateway_base,
             api_key=_gateway_key or None,
+            background=ctx.background,
         )
+        self._gateway_run_id = run_id
         self._qput((
             "server_tool_event",
             hermes_run_server_tool_event(run_id, workspace_id),
         ))
 
         def _emit_run_event(*args):
+            if args and args[0] == "usage":
+                self.on_usage(_gateway_usage(args[1], body.model, resolved_provider))
+                return
             self._qput(args)
 
         try:
@@ -169,7 +193,7 @@ class RunsTransport(AgentLoopTransport):
                 api_key=_gateway_key or None,
                 run_id=run_id,
                 emit=_emit_run_event,
-                should_stop=lambda: _hermes_runs.is_run_cancelled(workspace_id),
+                should_stop=lambda: _hermes_runs.is_run_cancelled(workspace_id, run_id),
             )
         finally:
             # Pass run_id so a late-finishing run cannot delete a newer
@@ -184,3 +208,18 @@ class RunsTransport(AgentLoopTransport):
             success=True,
             summary=f"model={body.model} mode=runs run_id={run_id}",
         )
+
+
+def _gateway_usage(raw: dict, model: str, provider: str) -> dict:
+    """Price the gateway's run.completed usage (input/output are OpenAI-style totals)."""
+    import pricing
+
+    return pricing.turn_usage(
+        model,
+        provider,
+        prompt_tokens=raw.get("input_tokens") or raw.get("prompt_tokens") or 0,
+        completion_tokens=raw.get("output_tokens") or raw.get("completion_tokens") or 0,
+        total_tokens=raw.get("total_tokens"),
+        cache_read_tokens=raw.get("cache_read_tokens") or 0,
+        cache_write_tokens=raw.get("cache_write_tokens") or 0,
+    )

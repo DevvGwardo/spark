@@ -158,7 +158,7 @@ class SelectTransportTableTests(unittest.TestCase):
 
 
 class CapabilityMatrixTests(unittest.TestCase):
-    """Declared capabilities match the spec §2.2 G6 matrix (today's truth)."""
+    """Declared capabilities match the spec §2.2 capability matrix."""
 
     def test_matrix(self):
         from chat_transports.acp import AcpTransport
@@ -169,11 +169,16 @@ class CapabilityMatrixTests(unittest.TestCase):
         from chat_transports.swarm import SwarmTransport
 
         expected = {
-            AgentLoopTransport: dict(approvals=False, cancel=False, session_resume=True),
-            AcpTransport: dict(approvals=True, cancel=False, session_resume=False),
-            RunsTransport: dict(approvals=False, cancel=True, session_resume=False),
-            SwarmTransport: dict(approvals=False, cancel=False, session_resume=False),
-            PassthroughTransport: dict(approvals=False, cancel=False, session_resume=False),
+            AgentLoopTransport: dict(approvals=True, cancel=True, stops_on_client_disconnect=True,
+                                     usage_in_stream=True, session_resume=True),
+            AcpTransport: dict(approvals=True, cancel=True, stops_on_client_disconnect=True,
+                               usage_in_stream=True, session_resume=True),
+            RunsTransport: dict(approvals=False, cancel=True, stops_on_client_disconnect=True,
+                                usage_in_stream=True, session_resume=False),
+            SwarmTransport: dict(approvals=False, cancel=False, stops_on_client_disconnect=False,
+                                 usage_in_stream=False, session_resume=False),
+            PassthroughTransport: dict(approvals=False, cancel=False, stops_on_client_disconnect=False,
+                                       usage_in_stream=False, session_resume=False),
         }
         names = set()
         for cls, caps in expected.items():
@@ -182,16 +187,14 @@ class CapabilityMatrixTests(unittest.TestCase):
                 self.assertTrue(isinstance(cls.__new__(cls), ChatTransport))
                 for flag, value in caps.items():
                     self.assertEqual(getattr(cls.capabilities, flag), value, flag)
-                # Nobody stops on disconnect or reports usage yet (spec 4.4/4.5).
-                self.assertFalse(cls.capabilities.stops_on_client_disconnect)
-                self.assertFalse(cls.capabilities.usage_in_stream)
+                self.assertEqual(set(cls.capabilities.as_dict()), set(caps))
                 names.add(cls.name)
         self.assertEqual(names, {"agent-loop", "acp", "runs", "swarm", "passthrough"})
 
     def test_unsupported_cancel_reports_false(self):
-        from chat_transports.agent_loop import AgentLoopTransport
+        from chat_transports.swarm import SwarmTransport
 
-        transport = AgentLoopTransport.__new__(AgentLoopTransport)
+        transport = SwarmTransport.__new__(SwarmTransport)
         self.assertFalse(asyncio.run(transport.cancel()))
 
 
@@ -384,8 +387,10 @@ class RunsSseTests(unittest.TestCase):
 
 
 class PersistOnDisconnectTests(unittest.TestCase):
-    """A client that goes away mid-stream does not stop the turn (spec 4.4 keeps
-    this as the ``background: true`` behavior); the worker still finalizes."""
+    """A ``background: true`` turn survives its client going away mid-stream
+    (spec 4.4 keeps today's persist-on-disconnect as an explicit choice); the
+    worker still finalizes. Without the flag a disconnect cancels the turn —
+    see test_transport_parity.py."""
 
     def test_agent_loop_finishes_and_finalizes_after_disconnect(self):
         import threading
@@ -411,6 +416,7 @@ class PersistOnDisconnectTests(unittest.TestCase):
             "model": "meta-llama/llama-3-70b-instruct",
             "messages": [{"role": "user", "content": "hi"}],
             "stream": True,
+            "background": True,
         })
         request = _FakeRequest({"authorization": "Bearer k", "x-hermes-conversation-id": "conv-disconnect"})
 
@@ -464,11 +470,81 @@ class AcpSseOrderTests(unittest.TestCase):
                 _FakeRequest({"authorization": "Bearer k", "x-hermes-execution-mode": "acp"}), body,
             ))
         self.assertEqual(_delta_keys(payload), [
-            "role", "agent_status", "content", "content", "tool_activity",
+            "role", "transport_status", "agent_status", "content", "content", "tool_activity",
             "content", "tool_activity", "approval_request", "content",
             "plan_update", "content", "<stop>", "data: [DONE]",
         ])
         self.assertIn("[Error: acp died]", payload.decode())
+
+
+class ChatPathHygieneTests(unittest.TestCase):
+    """Phase 5 leftovers on the chat path: routing off the event loop, and the
+    global bridge:metrics key published once per state change."""
+
+    def _agent_loop_turn(self, load_cli_cfg):
+        body = main.ChatCompletionRequest.model_validate({
+            "model": "meta-llama/llama-3-70b-instruct",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": True,
+        })
+        with patch.dict(sys.modules, {"hermes_adapter": types.SimpleNamespace(HermesAgentAdapter=_FakeAdapter)}), \
+             patch("bridge_providers._load_cli_model_config", side_effect=load_cli_cfg), \
+             patch("bridge_providers._get_active_provider", return_value=None):
+            return asyncio.run(_invoke_chat_and_read_stream(_FakeRequest({"authorization": "Bearer k"}), body))
+
+    def test_routing_config_reads_run_off_the_event_loop(self):
+        import threading
+
+        on_main = []
+
+        def load_cli_cfg(*_a, **_k):
+            on_main.append(threading.current_thread() is threading.main_thread())
+            return _CLI_CFG
+
+        response, _ = self._agent_loop_turn(load_cli_cfg)
+        self.assertEqual(response.media_type, "text/event-stream")
+        self.assertTrue(on_main)
+        self.assertFalse(any(on_main), "chat routing read config on the event loop thread")
+
+    def test_acp_preparation_runs_off_the_event_loop(self):
+        import threading
+
+        on_main = []
+
+        def acp_available():
+            on_main.append(threading.current_thread() is threading.main_thread())
+            return False, "not installed"
+
+        body = main.ChatCompletionRequest.model_validate({
+            "model": "m", "messages": [{"role": "user", "content": "go"}], "stream": True,
+        })
+        with patch("acp_transport.acp_available", side_effect=acp_available), \
+             patch("bridge_providers._load_cli_model_config", return_value=_CLI_CFG), \
+             patch("bridge_providers._get_active_provider", return_value=None):
+            response, _ = asyncio.run(_invoke_chat_and_read_stream(
+                _FakeRequest({"authorization": "Bearer k", "x-hermes-execution-mode": "acp"}), body,
+            ))
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(on_main, [False])
+
+    def test_bridge_metrics_published_only_by_bridge_state(self):
+        import brain_client
+
+        published = []
+        real_set = brain_client._brain_set
+
+        def record(key, value, scope="global"):
+            if key == "bridge:metrics":
+                published.append(value)
+            return real_set(key, value, scope)
+
+        with patch.object(brain_client, "_brain_set", side_effect=record):
+            self._agent_loop_turn(lambda *a, **k: _CLI_CFG)
+        # Request start (increment) and worker finish (decrement): no third,
+        # unlocked publish from the SSE tail with a made-up cost.
+        self.assertEqual(len(published), 2)
+        for value in published:
+            self.assertNotIn("estimated_cost_usd", json.loads(value))
 
 
 if __name__ == "__main__":

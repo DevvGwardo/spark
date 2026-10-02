@@ -156,6 +156,9 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
   const activeRepo = useChangesetStore((s) => s.getChangeset(scopeId).activeRepo);
   const repoFileTree = useChangesetStore((s) => s.getChangeset(scopeId).repoFileTree);
   const loop = useHermesStore((s) => s.loops[panelId]) ?? DEFAULT_LOOP_STATE;
+  // Spec 4.8: a Hermes transport that cannot stop a turn mid-flight says so in
+  // its transport_status; don't offer a Stop that would only hide the output.
+  const stopUnsupported = useHermesStore((s) => s.transportCapabilitiesByPanel[panelId]?.cancel === false);
   const setLoopEnabled = useHermesStore((s) => s.setLoopEnabled);
   const setLoopConfig = useHermesStore((s) => s.setLoopConfig);
   const [showLoopConfig, setShowLoopConfig] = useState(false);
@@ -763,7 +766,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
             statusLabel={agentStatusLabel ?? 'Working'}
             startedAt={streamStartedAt}
             embedded
-            onStop={onStop}
+            onStop={stopUnsupported ? undefined : onStop}
           />
 
           {/* Secondary stream-retry line (auto-cleared by the store on the
@@ -1235,9 +1238,10 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
                 )}
                 <button
                   onClick={onStop}
-                  className="h-[30px] w-[30px] shrink-0 flex items-center justify-center rounded-[8px] bg-primary text-primary-foreground hover:opacity-80 transition-opacity duration-100"
-                  title="Stop generating"
-                  aria-label="Stop generating"
+                  disabled={stopUnsupported}
+                  className="h-[30px] w-[30px] shrink-0 flex items-center justify-center rounded-[8px] bg-primary text-primary-foreground hover:opacity-80 transition-opacity duration-100 disabled:cursor-not-allowed disabled:opacity-40"
+                  title={stopUnsupported ? "This Hermes transport can't stop a turn mid-flight" : 'Stop generating'}
+                  aria-label={stopUnsupported ? 'Stop unavailable for this transport' : 'Stop generating'}
                 >
                   <Square className="h-3.5 w-3.5" />
                 </button>

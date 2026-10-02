@@ -34,6 +34,30 @@ describe('ContextMeter', () => {
     expect(container.innerHTML).toBe('');
   });
 
+  it('shows the last turn cost when the backend priced it (spec 4.5)', () => {
+    useContextUsageStore.getState().setUsage({
+      inputTokens: 2_000,
+      outputTokens: 350,
+      contextWindow: 200_000,
+      model: 'claude-sonnet-4',
+      costUsd: 0.00909,
+    });
+    const { container, getByLabelText } = render(<ContextMeter />);
+    expect(container.textContent).toContain('$0.0091');
+    expect(getByLabelText('Last turn cost $0.0091')).not.toBeNull();
+  });
+
+  it('shows no cost when none was reported', () => {
+    useContextUsageStore.getState().setUsage({
+      inputTokens: 2_000,
+      outputTokens: 350,
+      contextWindow: 200_000,
+      model: 'm',
+    });
+    const { container } = render(<ContextMeter />);
+    expect(container.textContent).not.toContain('$');
+  });
+
   it('renders usage with formatted token counts', () => {
     useContextUsageStore.getState().setUsage({
       inputTokens: 30_000,

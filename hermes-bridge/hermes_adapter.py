@@ -11,6 +11,8 @@ ImportError and uses the custom run_agent.py instead.
 """
 
 import json
+import contextlib
+import logging
 import os
 import re
 import sys
@@ -73,6 +75,8 @@ _cache_stats = CACHE_STATS
 # with request-specific handlers, so overlapping repo runs must not mutate it
 # concurrently or one run can call another run's repo/GitHub handlers.
 _repo_tool_registry_lock = threading.Lock()
+
+logger = logging.getLogger("hermes_adapter")
 
 
 def _get_cache_stats() -> dict:
@@ -197,15 +201,15 @@ print(f"[hermes-adapter] Loaded real Hermes agent from {_HERMES_AGENT_DIR}", flu
 def _register_fallback_web_tools() -> None:
     try:
         from tools.web_tools import check_web_api_key
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - any import failure of the optional module means "no fallback"; logged
         print(f"[hermes-adapter] Skipping web fallback — real web_tools not importable: {e}", flush=True)
         return
 
     try:
         if check_web_api_key():
             return  # Real backend available; leave the real handlers alone
-    except Exception:
-        pass  # Treat check errors as "not available"
+    except Exception:  # noqa: BLE001 - a failing key check is treated as "no real backend": install the fallback
+        logger.debug("web_tools key check failed", exc_info=True)
 
     # hermes-agent 0.20+ ships a keyless web tier (Tavily/Firecrawl/Keenable
     # round-robin + one-shot keyless rescue on failure) that is strictly better
@@ -222,7 +226,7 @@ def _register_fallback_web_tools() -> None:
                 flush=True,
             )
             return
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - probe failure keeps the DDG fallback; logged
         print(f"[hermes-adapter] Keyless-tier probe failed ({e}) — keeping DDG fallback", flush=True)
 
     import re
@@ -253,7 +257,7 @@ def _register_fallback_web_tools() -> None:
             with httpx.Client(timeout=15, follow_redirects=True) as client:
                 resp = client.get(url, headers={"User-Agent": _UA})
                 resp.raise_for_status()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - tool handler: the error is returned to the model as the result
             return json.dumps({"error": f"web_search failed: {e}"})
         results = []
         for href, title, snippet in _DDG_RESULT_RE.findall(resp.text)[:8]:
@@ -287,7 +291,7 @@ def _register_fallback_web_tools() -> None:
                 if len(text) > 5000:
                     text = text[:5000] + "\n\n[truncated at 5000 chars]"
                 out.append({"url": u, "content": text})
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - per-URL failure is reported in the tool result
                 out.append({"url": u, "error": f"fetch failed: {e}"})
         return json.dumps(out, indent=2)
 
@@ -444,7 +448,7 @@ class RepoToolProvider(RepoToolsMixin):
                 try:
                     self.file_tree = json.loads(cached_tree)
                     _cache_stats["repo_tree_hits"] += 1
-                except Exception:
+                except (TypeError, ValueError):  # corrupt cache entry: use the request's tree
                     self.file_tree = file_tree
                     _cache_stats["repo_tree_misses"] += 1
             else:
@@ -533,7 +537,7 @@ class RepoToolProvider(RepoToolsMixin):
         if self.on_server_tool_event:
             try:
                 self.on_server_tool_event(event)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - a consumer error must not abort the tool call; logged
                 print(f"[hermes-adapter] Failed to emit server tool event: {e}", flush=True)
 
     def _emit_tool_marker(self, tool_name: str, detail: str = ""):
@@ -706,7 +710,7 @@ def _execute_remote_mcp_tool(
         return f"Error: MCP server at {server_url} timed out after {_CUSTOM_MCP_TIMEOUT_SECONDS}s"
     except httpx.HTTPStatusError as exc:
         return f"Error: MCP server returned HTTP {exc.response.status_code}: {exc.response.text[:300]}"
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - tool handler: the error is returned to the model as the result
         return f"Error calling MCP tool '{tool_name}': {e}"
 
 
@@ -896,6 +900,11 @@ class HermesAgentAdapter:
         # Wall-clock budget for the whole run (seconds). Passed through to the
         # real AIAgent (agent.run_budget_seconds); 0/unset = unlimited.
         run_budget_seconds: Optional[int] = None,
+        # Spec 4.3: hermes approval prompt for dangerous commands. hermes has
+        # no constructor hook for it — it is a per-thread callback
+        # (tools.terminal_tool.set_approval_callback) consulted only in an
+        # interactive context — so run_conversation installs it around the turn.
+        approval_callback: Optional[Callable[..., str]] = None,
     ):
         self.on_tool_start = on_tool_start
         self.on_tool_end = on_tool_end
@@ -906,6 +915,7 @@ class HermesAgentAdapter:
         self.on_notice = on_notice
         self.on_notice_clear = on_notice_clear
         self.run_budget_seconds = run_budget_seconds
+        self.approval_callback = approval_callback
         # Accepted for parity with the bridge's agent_kwargs; the real agent
         # retries its upstream calls internally (no callback to hook).
         self.on_stream_retry = on_stream_retry
@@ -1083,8 +1093,8 @@ class HermesAgentAdapter:
                         cfg_provider = (cfg.get("model", {}) or {}).get("provider", "")
                         if cfg_provider:
                             provider = cfg_provider
-                except Exception:
-                    pass
+                except Exception:  # noqa: BLE001 - unreadable profile config: hermes resolves the provider itself
+                    logger.debug("profile config.yaml provider lookup failed", exc_info=True)
 
             # Create the real AIAgent
             print(
@@ -1102,7 +1112,7 @@ class HermesAgentAdapter:
                 try:
                     from hermes_constants import parse_reasoning_effort
                     reasoning_config = parse_reasoning_effort(reasoning_effort)
-                except Exception:
+                except Exception:  # noqa: BLE001 - older hermes (no helper) or a value it rejects: build the config here
                     reasoning_config = (
                         {"enabled": False} if reasoning_effort == "none"
                         else {"enabled": True, "effort": reasoning_effort}
@@ -1269,7 +1279,7 @@ class HermesAgentAdapter:
                     )
             if payload:
                 self.on_computer_use_frame(payload)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - frames are a UI enrichment; never break the tool callback
             print(f"[hermes-adapter] computer_use frame error: {exc}", flush=True)
 
     def _on_tool_complete(self, tc_id: str, name: str, args: dict, result: str):
@@ -1337,23 +1347,23 @@ class HermesAgentAdapter:
                 "ttl_ms": getattr(notice, "ttl_ms", None),
                 "key": getattr(notice, "key", None),
             }
-        except Exception:
-            # A malformed notice must never break the agent loop (D-D fail-open)
+        except Exception:  # noqa: BLE001 - a malformed notice must never break the agent loop (fail-open)
+            logger.debug("malformed agent notice dropped", exc_info=True)
             return
         print(f"[hermes-adapter] notice/{payload['level']}: {payload['text'][:120]}", flush=True)
         if self.on_notice and payload["text"]:
             try:
                 self.on_notice(payload)
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - a consumer error must not break the agent loop
+                logger.debug("on_notice consumer failed", exc_info=True)
 
     def _on_notice_clear(self, key):
         """Forward a notice-clear (sticky notice recovered) to SSE."""
         if self.on_notice_clear and key:
             try:
                 self.on_notice_clear(str(key))
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - a consumer error must not break the agent loop
+                logger.debug("on_notice_clear consumer failed", exc_info=True)
 
     def _on_tool_progress(self, event_type, name=None, preview=None, args=None, **kwargs):
         """Forward Hermes tool_progress events — especially MoA advisor blocks.
@@ -1402,8 +1412,60 @@ class HermesAgentAdapter:
             # emitted from tool_complete_callback (_on_tool_complete) only.
             # Other progress events (tool.started etc.) are covered by
             # tool_start_callback / tool_complete_callback — ignore to avoid dupes.
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - progress events are UI enrichment; never break the agent loop
             print(f"[hermes-adapter] tool_progress error: {exc}", flush=True)
+
+    # --- Approvals and interrupt (spec 4.3 / 4.4) ---
+
+    @contextlib.contextmanager
+    def _approval_context(self):
+        """Install the bridge approval callback for this turn's thread.
+
+        Mirrors hermes' own ACP adapter: set the per-thread approval callback
+        and mark the context interactive so the approval gate consults it
+        instead of auto-resolving. hermes copies both into its tool worker
+        threads (tools.thread_context). Restored afterwards because the
+        bridge reuses worker threads across requests.
+        """
+        callback = getattr(self, "approval_callback", None)
+        if callback is None:
+            yield
+            return
+        try:
+            from tools import terminal_tool
+            from tools.approval_context import (
+                reset_hermes_interactive_context,
+                set_hermes_interactive_context,
+            )
+        except ImportError as exc:
+            print(f"[hermes-adapter] approvals unavailable on this hermes-agent ({exc}); tools auto-resolve", flush=True)
+            yield
+            return
+        previous = terminal_tool._get_approval_callback()
+        terminal_tool.set_approval_callback(callback)
+        token = set_hermes_interactive_context(True)
+        try:
+            yield
+        finally:
+            reset_hermes_interactive_context(token)
+            terminal_tool.set_approval_callback(previous)
+
+    def interrupt(self) -> bool:
+        """Ask the real agent to stop (Stop button / client disconnect).
+
+        Safe from any thread: hermes' ``AIAgent.interrupt`` only sets flags,
+        which the agent loop checks between API calls and tool steps.
+        """
+        agent = getattr(self, "_agent", None)
+        interrupt = getattr(agent, "interrupt", None)
+        if not callable(interrupt):
+            return False
+        try:
+            interrupt(hard_cancel=True)
+        except TypeError:
+            # Older hermes-agent: no hard_cancel keyword.
+            interrupt()
+        return True
 
     # --- Main entry point ---
 
@@ -1425,19 +1487,20 @@ class HermesAgentAdapter:
         self._last_status_message = None
         self._last_fallback_switch_key = None
         try:
-            result = self._agent.run_conversation(
-                user_message=user_message,
-                system_message=self._ephemeral_system_prompt,
-                conversation_history=conversation_history or [],
-            )
+            with self._approval_context():
+                result = self._agent.run_conversation(
+                    user_message=user_message,
+                    system_message=self._ephemeral_system_prompt,
+                    conversation_history=conversation_history or [],
+                )
         finally:
             self._stop_cu_frame_poller()
             try:
                 from computer_use_frames import restore_spark_keep_cu_screenshots_patch
 
                 restore_spark_keep_cu_screenshots_patch()
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - teardown must continue to the registry cleanup below
+                logger.warning("restoring the computer_use screenshot patch failed", exc_info=True)
             # Deregister repo tools after the conversation to clean up the registry
             self._cleanup_repo_tools()
             # Deregister custom MCP tools after the conversation too

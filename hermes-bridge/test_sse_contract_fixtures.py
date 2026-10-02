@@ -135,7 +135,8 @@ class FixtureShapeTests(unittest.TestCase):
                         checked += 1
                     elif key == "transport_status":
                         expected = be.transport_status_event(
-                            payload["requested"], payload["actual"], payload.get("reason")
+                            payload["requested"], payload["actual"], payload.get("reason"),
+                            payload.get("capabilities"),
                         )
                         self.assertEqual(expected, payload)
                         checked += 1
@@ -144,6 +145,10 @@ class FixtureShapeTests(unittest.TestCase):
                             payload.get("prompt_tokens", 0),
                             payload.get("completion_tokens", 0),
                             payload.get("total_tokens", 0),
+                            payload.get("estimated_cost_usd"),
+                            cached_input_tokens=payload.get("cached_input_tokens"),
+                            reasoning_tokens=payload.get("reasoning_tokens"),
+                            cost_source=payload.get("cost_source"),
                         )
                         self.assertEqual(expected, payload)
                         checked += 1
@@ -151,6 +156,30 @@ class FixtureShapeTests(unittest.TestCase):
                         self.assertEqual(be.agent_notice_clear_event(payload["key"]), payload)
                         checked += 1
         self.assertGreater(checked, 0, "no bridge-owned events were cross-checked")
+
+    def test_agent_transports_report_priced_usage_and_capabilities(self):
+        """Spec 4.5 / 4.8: the agent-loop and ACP streams carry a real usage
+        block (tokens + cost) on the final chunk and a capability row on
+        transport_status, instead of the old hard-coded zeros."""
+        for name in ("agent-loop", "acp"):
+            frames = _frames(FIXTURE_DIR / f"{name}.jsonl")
+            with self.subTest(fixture=name):
+                final = frames[-1]
+                self.assertEqual(final["choices"][0]["finish_reason"], "stop")
+                usage = final["usage"]
+                self.assertGreater(usage["total_tokens"], 0)
+                self.assertGreater(usage["estimated_cost_usd"], 0)
+                self.assertIn(usage["cost_source"], {"pricing", "agent"})
+                statuses = [
+                    f["choices"][0]["delta"]["transport_status"]
+                    for f in frames
+                    if "transport_status" in f["choices"][0]["delta"]
+                ]
+                self.assertTrue(statuses)
+                self.assertEqual(
+                    set(statuses[0]["capabilities"]),
+                    {"approvals", "cancel", "stops_on_client_disconnect", "usage_in_stream", "session_resume"},
+                )
 
     def test_fixtures_contain_no_undeclared_event_keys(self):
         """A key in a fixture that the contract does not know is drift."""

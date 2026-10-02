@@ -82,7 +82,9 @@ class RoutingCacheTests(unittest.TestCase):
 
 class AsyncRunControlTests(unittest.TestCase):
     def tearDown(self):
-        hermes_runs._active_runs.clear()
+        import active_runs
+
+        active_runs.REGISTRY.clear()
 
     def test_cancel_and_approve_async_use_async_http(self):
         hermes_runs.register_active_run("conv-x", run_id="run-1", base_url=BASE, api_key="k")

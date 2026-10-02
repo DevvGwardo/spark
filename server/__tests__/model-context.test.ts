@@ -43,6 +43,17 @@ describe('buildUsageEvent', () => {
     });
   });
 
+  it('carries the turn cost when the backend priced it (Hermes bridge, spec 4.5)', () => {
+    const event = buildUsageEvent(
+      { inputTokens: 2000, outputTokens: 350, cachedInputTokens: 800, costUsd: 0.00909 },
+      'claude-sonnet-4',
+    );
+    expect(event.cost_usd).toBe(0.00909);
+    // Unpriced or nonsensical costs are left out rather than shown as $0.
+    expect(buildUsageEvent({ inputTokens: 1, outputTokens: 1, costUsd: -1 }, 'x')).not.toHaveProperty('cost_usd');
+    expect(buildUsageEvent({ inputTokens: 1, outputTokens: 1 }, 'x')).not.toHaveProperty('cost_usd');
+  });
+
   it('defaults missing values to zero and unknown windows to the fallback', () => {
     const event = buildUsageEvent({ inputTokens: 5, outputTokens: 2 }, 'mystery-model');
     expect(event).toEqual({

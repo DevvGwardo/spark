@@ -1,5 +1,5 @@
 import { useContextUsageStore } from '@/stores/context-usage-store';
-import { formatTokens } from '@/lib/tokens';
+import { formatTokens, formatTurnCost } from '@/lib/tokens';
 import { contextMeterBarClass } from '@/lib/context-meter';
 
 /**
@@ -19,11 +19,12 @@ export const ContextMeter: React.FC = () => {
   const percentage = Math.min(100, (used / usage.contextWindow) * 100);
   const barClass = contextMeterBarClass(percentage);
   const cached = usage.cachedInputTokens && usage.cachedInputTokens > 0 ? usage.cachedInputTokens : null;
+  const cost = typeof usage.costUsd === 'number' && usage.costUsd > 0 ? formatTurnCost(usage.costUsd) : null;
 
   return (
     <div
       className="flex items-center gap-2"
-      title={`${used.toLocaleString()} / ${usage.contextWindow.toLocaleString()} tokens on ${usage.model}${cached ? ` · ${cached.toLocaleString()} cached input tokens` : ''}`}
+      title={`${used.toLocaleString()} / ${usage.contextWindow.toLocaleString()} tokens on ${usage.model}${cached ? ` · ${cached.toLocaleString()} cached input tokens` : ''}${cost ? ` · last turn ${cost}` : ''}`}
       aria-label={`Context ${Math.round(percentage)}% (${formatTokens(used)} of ${formatTokens(usage.contextWindow)} tokens)`}
     >
       <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">
@@ -44,6 +45,11 @@ export const ContextMeter: React.FC = () => {
       <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/70">
         ({formatTokens(used)}/{formatTokens(usage.contextWindow)} tokens)
       </span>
+      {cost && (
+        <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/70" aria-label={`Last turn cost ${cost}`}>
+          {cost}
+        </span>
+      )}
     </div>
   );
 };
