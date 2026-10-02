@@ -1,7 +1,11 @@
+<p align="center">
+  <img src="assets/banner.jpg" alt="Spark Banner" />
+</p>
+
 <div align="center">
 
 <p align="center">
-  <img src="docs/spark-logo.png" alt="Spark logo" width="360">
+  <img src="assets/logo.jpg" alt="Spark logo" width="160">
 </p>
 
 # Spark
@@ -13,10 +17,6 @@
 [![Platform](https://img.shields.io/badge/platform-macOS%20%2B%20Windows%20%2B%20Linux-lightgrey?style=flat-square)](electron-builder.yml)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-green?style=flat-square)](package.json)
 [![Python](https://img.shields.io/badge/python-%3E%3D3.10-green?style=flat-square)](hermes-bridge/requirements.txt)
-
-<p align="center">
-  <img src="docs/spark-repo-banner.png" alt="Spark banner" width="100%">
-</p>
 
 [Screenshots](#screenshots) · [Quick Start](#quick-start) · [Features](#features) · [Architecture](#architecture) · [Contributing](CONTRIBUTING.md)
 
