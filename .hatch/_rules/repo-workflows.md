@@ -1,4 +1,6 @@
-<!-- hatch:begin v1 -->
+---
+targets: [claude, codex, copilot, cursor, opencode, zed]
+---
 ## Repo Workflows
 
 ### Dev commands
@@ -32,4 +34,3 @@
 - Feature work lives on `feat/*` branches (e.g. `feat/hermes-acp-transport`)
 - `main` is the PR target; keep PRs focused on a single concern
 - Run `npm run typecheck && npm run lint && npm test` before opening a PR
-<!-- hatch:end v1 -->
