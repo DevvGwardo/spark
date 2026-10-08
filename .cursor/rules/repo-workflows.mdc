@@ -1,4 +1,10 @@
-<!-- hatch:begin v1 -->
+---
+alwaysApply: true
+metadata:
+  generated: hatch@v1.2.0
+  source: .hatch/_rules/repo-workflows.md
+---
+
 ## Repo Workflows
 
 ### Dev commands
@@ -32,4 +38,3 @@
 - Feature work lives on `feat/*` branches (e.g. `feat/hermes-acp-transport`)
 - `main` is the PR target; keep PRs focused on a single concern
 - Run `npm run typecheck && npm run lint && npm test` before opening a PR
-<!-- hatch:end v1 -->
